@@ -1,4 +1,7 @@
-"""Session-Screen mit Live-View, Countdown und Foto-Aufnahme"""
+"""Session-Screen mit Live-View, Countdown und Foto-Aufnahme
+
+Optimiert für Lenovo Miix 310 (1280x800)
+"""
 
 import customtkinter as ctk
 import cv2
@@ -38,9 +41,9 @@ class SessionScreen(ctk.CTkFrame):
         self._setup_ui()
     
     def _setup_ui(self):
-        """Erstellt die UI"""
-        # Info-Leiste oben
-        info_bar = ctk.CTkFrame(self, fg_color=COLORS["bg_medium"], height=60)
+        """Erstellt die UI - kompakt für 800px Höhe"""
+        # Info-Leiste oben (kompakter)
+        info_bar = ctk.CTkFrame(self, fg_color=COLORS["bg_medium"], height=45)
         info_bar.pack(fill="x")
         info_bar.pack_propagate(False)
         
@@ -48,28 +51,28 @@ class SessionScreen(ctk.CTkFrame):
         self.progress_label = ctk.CTkLabel(
             info_bar,
             text="Foto 1 von 1",
-            font=FONTS["subheading"],
+            font=FONTS["body_bold"],
             text_color=COLORS["text_primary"]
         )
-        self.progress_label.pack(side="left", padx=30, pady=15)
+        self.progress_label.pack(side="left", padx=20, pady=10)
         
-        # Abbrechen-Button
+        # Abbrechen-Button (kompakter)
         cancel_btn = ctk.CTkButton(
             info_bar,
             text=self.config.get("ui_texts", {}).get("cancel", "ABBRECHEN"),
-            font=FONTS["button"],
-            width=150,
-            height=40,
+            font=FONTS["small"],
+            width=120,
+            height=32,
             fg_color=COLORS["bg_light"],
             hover_color=COLORS["error"],
             corner_radius=SIZES["corner_radius_small"],
             command=self._on_cancel
         )
-        cancel_btn.pack(side="right", padx=30, pady=10)
+        cancel_btn.pack(side="right", padx=20, pady=6)
         
-        # Hauptbereich mit Live-View
+        # Hauptbereich mit Live-View (weniger Padding)
         main_frame = ctk.CTkFrame(self, fg_color="transparent")
-        main_frame.pack(fill="both", expand=True, padx=40, pady=20)
+        main_frame.pack(fill="both", expand=True, padx=20, pady=10)
         
         # Live-View Container mit Rahmen
         self.preview_container = ctk.CTkFrame(

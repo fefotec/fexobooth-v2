@@ -1,4 +1,7 @@
-"""Filter-Auswahl Screen - Modern und Touch-optimiert"""
+"""Filter-Auswahl Screen - Modern und Touch-optimiert
+
+Optimiert für Lenovo Miix 310 (1280x800)
+"""
 
 import customtkinter as ctk
 from PIL import Image
@@ -16,14 +19,14 @@ logger = get_logger(__name__)
 
 
 class FilterButton(ctk.CTkFrame):
-    """Filter-Button mit Mini-Vorschau"""
+    """Filter-Button mit Mini-Vorschau - kompakt für 1280x800"""
     
     def __init__(self, parent, filter_key: str, filter_name: str,
                  preview_image: Optional[Image.Image] = None, on_click=None):
         super().__init__(
             parent,
-            width=140,
-            height=140,
+            width=SIZES["filter_button_size"],
+            height=SIZES["filter_button_size"],
             fg_color=COLORS["bg_card"],
             corner_radius=SIZES["corner_radius_small"],
             border_width=2,
@@ -43,27 +46,26 @@ class FilterButton(ctk.CTkFrame):
         
         # Vorschau-Bild
         self.preview_label = ctk.CTkLabel(self, text="", fg_color="transparent")
-        self.preview_label.pack(expand=True, fill="both", padx=8, pady=(8, 2))
+        self.preview_label.pack(expand=True, fill="both", padx=5, pady=(5, 2))
         self.preview_label.bind("<Button-1>", self._on_click)
         
         if preview_image:
             self.set_preview(preview_image)
         
-        # Filter-Name
+        # Filter-Name (kürzer)
         name_label = ctk.CTkLabel(
             self,
-            text=filter_name,
+            text=filter_name[:8],  # Kürzen wenn nötig
             font=FONTS["tiny"],
             text_color=COLORS["text_secondary"]
         )
-        name_label.pack(pady=(0, 8))
+        name_label.pack(pady=(0, 5))
         name_label.bind("<Button-1>", self._on_click)
     
     def set_preview(self, image: Image.Image):
         """Setzt das Vorschaubild"""
-        # Auf Button-Größe skalieren
         thumb = image.copy()
-        thumb.thumbnail((120, 90), Image.Resampling.LANCZOS)
+        thumb.thumbnail((85, 65), Image.Resampling.LANCZOS)  # Kleiner für 100px Button
         
         self.preview_ctk = ctk.CTkImage(light_image=thumb, size=thumb.size)
         self.preview_label.configure(image=self.preview_ctk)
@@ -109,19 +111,19 @@ class FilterScreen(ctk.CTkFrame):
         self._setup_ui()
     
     def _setup_ui(self):
-        """Erstellt die UI"""
-        # Titel
+        """Erstellt die UI - kompakt für 800px Höhe"""
+        # Titel (kompakter)
         title = ctk.CTkLabel(
             self,
             text=self.config.get("ui_texts", {}).get("choose_filter", "Wähle einen Filter"),
-            font=FONTS["heading"],
+            font=FONTS["subheading"],
             text_color=COLORS["text_primary"]
         )
-        title.pack(pady=(20, 10))
+        title.pack(pady=(10, 5))
         
-        # Hauptbereich: Links Vorschau, Rechts Filter
+        # Hauptbereich (weniger Padding)
         main_frame = ctk.CTkFrame(self, fg_color="transparent")
-        main_frame.pack(fill="both", expand=True, padx=30, pady=10)
+        main_frame.pack(fill="both", expand=True, padx=15, pady=5)
         main_frame.grid_columnconfigure(0, weight=3)
         main_frame.grid_columnconfigure(1, weight=1)
         main_frame.grid_rowconfigure(0, weight=1)
@@ -165,16 +167,16 @@ class FilterScreen(ctk.CTkFrame):
         # Filter-Buttons erstellen (2 pro Reihe)
         self._create_filter_buttons(filter_scroll)
         
-        # Button-Leiste unten
+        # Button-Leiste unten (kompakter)
         button_frame = ctk.CTkFrame(self, fg_color="transparent")
-        button_frame.pack(fill="x", padx=30, pady=20)
+        button_frame.pack(fill="x", padx=15, pady=10)
         
         # Zurück
         back_btn = ctk.CTkButton(
             button_frame,
             text="← Zurück",
-            font=FONTS["button"],
-            width=150,
+            font=FONTS["small"],
+            width=SIZES["button_width"],
             height=SIZES["button_height"],
             fg_color=COLORS["bg_light"],
             hover_color=COLORS["bg_card"],
@@ -187,7 +189,7 @@ class FilterScreen(ctk.CTkFrame):
         self.continue_btn = ctk.CTkButton(
             button_frame,
             text="Weiter →",
-            font=FONTS["button_large"],
+            font=FONTS["button"],
             width=SIZES["button_large_width"],
             height=SIZES["button_height"],
             fg_color=COLORS["primary"],
@@ -254,7 +256,7 @@ class FilterScreen(ctk.CTkFrame):
                 filtered_photos,
                 self.app.template_boxes,
                 self.app.overlay_image,
-                max_size=700
+                max_size=550  # Kleiner für 1280x800
             )
             self.preview_cache[cache_key] = preview
         else:

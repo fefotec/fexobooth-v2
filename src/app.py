@@ -101,7 +101,7 @@ class PhotoboothApp:
         """Erstellt die Top-Bar mit Logo und Status"""
         bar = ctk.CTkFrame(
             self.root,
-            height=70,
+            height=SIZES["topbar_height"],
             fg_color=COLORS["bg_medium"],
             corner_radius=0
         )

@@ -1,4 +1,7 @@
-"""Start-Screen mit moderner Template-Auswahl"""
+"""Start-Screen mit moderner Template-Auswahl
+
+Optimiert für Lenovo Miix 310 (1280x800)
+"""
 
 import customtkinter as ctk
 from typing import TYPE_CHECKING, Optional
@@ -17,7 +20,7 @@ logger = get_logger(__name__)
 
 
 class TemplateCard(ctk.CTkFrame):
-    """Moderne Template-Auswahl-Karte"""
+    """Template-Auswahl-Karte - kompakt für 1280x800"""
     
     def __init__(self, parent, title: str, preview_image: Optional[Image.Image] = None,
                  is_single: bool = False, on_click=None):
@@ -42,33 +45,31 @@ class TemplateCard(ctk.CTkFrame):
         self.bind("<Leave>", self._on_leave)
         self.bind("<Button-1>", self._on_click)
         
-        # Preview-Bereich
+        # Preview-Bereich (kompakter)
         preview_frame = ctk.CTkFrame(
             self,
             fg_color=COLORS["bg_medium"],
             corner_radius=SIZES["corner_radius_small"],
-            height=180
+            height=130  # Kompakter für 800px Höhe
         )
-        preview_frame.pack(fill="x", padx=15, pady=(15, 10))
+        preview_frame.pack(fill="x", padx=10, pady=(10, 5))
         preview_frame.pack_propagate(False)
         preview_frame.bind("<Button-1>", self._on_click)
         
         # Preview-Bild oder Icon
         if preview_image:
-            # Bild auf Größe skalieren
-            preview_image.thumbnail((280, 160), Image.Resampling.LANCZOS)
+            preview_image.thumbnail((210, 110), Image.Resampling.LANCZOS)
             self.preview_ctk = ctk.CTkImage(
                 light_image=preview_image,
                 size=(preview_image.width, preview_image.height)
             )
             preview_label = ctk.CTkLabel(preview_frame, image=self.preview_ctk, text="")
         else:
-            # Icon als Fallback
             icon = "📷" if is_single else "🖼️"
             preview_label = ctk.CTkLabel(
                 preview_frame,
                 text=icon,
-                font=("Segoe UI Emoji", 70)
+                font=("Segoe UI Emoji", 50)  # Kleiner für 800px
             )
         preview_label.pack(expand=True)
         preview_label.bind("<Button-1>", self._on_click)
@@ -80,15 +81,15 @@ class TemplateCard(ctk.CTkFrame):
             font=FONTS["subheading"],
             text_color=COLORS["text_primary"]
         )
-        title_label.pack(pady=(5, 10))
+        title_label.pack(pady=(5, 3))
         title_label.bind("<Button-1>", self._on_click)
         
-        # Untertitel
-        subtitle = "Ein Foto, volle Auflösung" if is_single else "Mehrere Fotos im Layout"
+        # Untertitel (kürzer)
+        subtitle = "Einzelfoto" if is_single else "Layout"
         subtitle_label = ctk.CTkLabel(
             self,
             text=subtitle,
-            font=FONTS["small"],
+            font=FONTS["tiny"],
             text_color=COLORS["text_muted"]
         )
         subtitle_label.pack()
@@ -121,7 +122,7 @@ class TemplateCard(ctk.CTkFrame):
 
 
 class StartScreen(ctk.CTkFrame):
-    """Moderner Start-Screen"""
+    """Start-Screen - optimiert für 1280x800"""
     
     def __init__(self, parent, app: "PhotoboothApp"):
         super().__init__(parent, fg_color=COLORS["bg_dark"])
@@ -139,32 +140,32 @@ class StartScreen(ctk.CTkFrame):
         center_frame = ctk.CTkFrame(self, fg_color="transparent")
         center_frame.place(relx=0.5, rely=0.5, anchor="center")
         
-        # Titel
+        # Titel (kompakter)
         title = ctk.CTkLabel(
             center_frame,
             text=self.config.get("ui_texts", {}).get("choose_mode", "Wähle dein Layout!"),
             font=FONTS["title"],
             text_color=COLORS["text_primary"]
         )
-        title.pack(pady=(0, 10))
+        title.pack(pady=(0, 5))
         
         # Untertitel
         subtitle = ctk.CTkLabel(
             center_frame,
-            text="Tippe auf eine Option um zu starten",
+            text="Tippe auf eine Option",
             font=FONTS["body"],
             text_color=COLORS["text_secondary"]
         )
-        subtitle.pack(pady=(0, 40))
+        subtitle.pack(pady=(0, 20))
         
         # Karten-Container
         cards_frame = ctk.CTkFrame(center_frame, fg_color="transparent")
-        cards_frame.pack(pady=20)
+        cards_frame.pack(pady=10)
         
         # Template-Karten erstellen
         self._create_template_cards(cards_frame)
         
-        # Start-Button
+        # Start-Button (kompakter)
         self.start_btn = ctk.CTkButton(
             center_frame,
             text=self.config.get("ui_texts", {}).get("start", "START"),
@@ -177,7 +178,7 @@ class StartScreen(ctk.CTkFrame):
             state="disabled",
             command=self._on_start
         )
-        self.start_btn.pack(pady=40)
+        self.start_btn.pack(pady=25)
     
     def _create_template_cards(self, parent):
         """Erstellt die Template-Karten"""
@@ -192,7 +193,7 @@ class StartScreen(ctk.CTkFrame):
                 preview_image=preview,
                 on_click=lambda c: self._select_card(c, "template1")
             )
-            card.pack(side="left", padx=15)
+            card.pack(side="left", padx=10)
             self.cards["template1"] = card
         
         # Template 2
@@ -206,7 +207,7 @@ class StartScreen(ctk.CTkFrame):
                 preview_image=preview,
                 on_click=lambda c: self._select_card(c, "template2")
             )
-            card.pack(side="left", padx=15)
+            card.pack(side="left", padx=10)
             self.cards["template2"] = card
         
         # Single-Foto
@@ -217,7 +218,7 @@ class StartScreen(ctk.CTkFrame):
                 is_single=True,
                 on_click=lambda c: self._select_card(c, "single")
             )
-            card.pack(side="left", padx=15)
+            card.pack(side="left", padx=10)
             self.cards["single"] = card
     
     def _load_template_preview(self, template_path: str) -> Optional[Image.Image]:
@@ -229,48 +230,40 @@ class StartScreen(ctk.CTkFrame):
             overlay, _ = TemplateLoader.load(template_path)
             return overlay
         except Exception as e:
-            logger.warning(f"Template-Vorschau konnte nicht geladen werden: {e}")
+            logger.warning(f"Template-Vorschau Fehler: {e}")
             return None
     
     def _select_card(self, card: TemplateCard, option: str):
         """Wählt eine Karte aus"""
-        # Alte Auswahl deselektieren
         if self.selected_card:
             self.selected_card.set_selected(False)
         
-        # Neue Auswahl
         card.set_selected(True)
         self.selected_card = card
         self.selected_option = option
         
-        # Start-Button aktivieren
         self.start_btn.configure(state="normal")
-        
-        logger.debug(f"Option ausgewählt: {option}")
+        logger.debug(f"Option: {option}")
     
     def _on_start(self):
-        """Start-Button gedrückt"""
+        """Start gedrückt"""
         if not self.selected_option:
             return
         
-        logger.info(f"Session starten: {self.selected_option}")
+        logger.info(f"Start: {self.selected_option}")
         
-        # Template laden
         if self.selected_option == "single":
             self.app.template_path = None
             self.app.template_boxes = [{"box": (0, 0, 1799, 1199), "angle": 0}]
             self.app.overlay_image = None
         else:
             if not self.app.load_template(self.selected_option):
-                # Fallback wenn Template nicht lädt
                 self.app.template_boxes = [{"box": (0, 0, 1799, 1199), "angle": 0}]
         
-        # Zu Session wechseln
         self.app.show_screen("session")
     
     def on_show(self):
         """Screen wird angezeigt"""
-        # Auswahl zurücksetzen
         if self.selected_card:
             self.selected_card.set_selected(False)
         self.selected_card = None

@@ -1,4 +1,7 @@
-"""Modernes Theme für Fexobooth"""
+"""Modernes Theme für Fexobooth
+
+Optimiert für Lenovo Miix 310 (1280x800 @ 10.1")
+"""
 
 # Farbpalette - Modern Dark mit Pink Akzent
 COLORS = {
@@ -29,35 +32,46 @@ COLORS = {
     "border_light": "#4a4a5a",
 }
 
-# Fonts
+# Fonts - Optimiert für 1280x800 Display
 FONTS = {
-    "title": ("Segoe UI", 42, "bold"),
-    "heading": ("Segoe UI", 28, "bold"),
-    "subheading": ("Segoe UI", 20, "bold"),
-    "body": ("Segoe UI", 16),
-    "body_bold": ("Segoe UI", 16, "bold"),
-    "small": ("Segoe UI", 14),
-    "tiny": ("Segoe UI", 12),
-    "countdown": ("Segoe UI", 280, "bold"),
-    "button": ("Segoe UI", 18, "bold"),
-    "button_large": ("Segoe UI", 24, "bold"),
+    "title": ("Segoe UI", 32, "bold"),        # War 42
+    "heading": ("Segoe UI", 22, "bold"),      # War 28
+    "subheading": ("Segoe UI", 16, "bold"),   # War 20
+    "body": ("Segoe UI", 14),                 # War 16
+    "body_bold": ("Segoe UI", 14, "bold"),
+    "small": ("Segoe UI", 12),                # War 14
+    "tiny": ("Segoe UI", 11),                 # War 12
+    "countdown": ("Segoe UI", 180, "bold"),   # War 280 - für 800px Höhe
+    "button": ("Segoe UI", 14, "bold"),       # War 18
+    "button_large": ("Segoe UI", 18, "bold"), # War 24
 }
 
-# Größen
+# Größen - Angepasst für 1280x800
 SIZES = {
-    "button_width": 200,
-    "button_height": 60,
-    "button_large_width": 280,
-    "button_large_height": 80,
-    "card_width": 320,
-    "card_height": 280,
-    "corner_radius": 16,
-    "corner_radius_small": 10,
-    "padding": 20,
-    "padding_small": 10,
+    # Buttons
+    "button_width": 140,              # War 200
+    "button_height": 45,              # War 60
+    "button_large_width": 200,        # War 280
+    "button_large_height": 55,        # War 80
+    
+    # Template-Karten
+    "card_width": 240,                # War 320
+    "card_height": 200,               # War 280
+    
+    # Abstände
+    "corner_radius": 12,              # War 16
+    "corner_radius_small": 8,         # War 10
+    "padding": 15,                    # War 20
+    "padding_small": 8,               # War 10
+    
+    # Top-Bar
+    "topbar_height": 50,              # War 70
+    
+    # Filter-Buttons
+    "filter_button_size": 100,        # War 140
 }
 
-# Button Styles
+
 def get_button_style(color: str = "primary"):
     """Gibt Button-Konfiguration zurück"""
     if color == "primary":
@@ -89,3 +103,9 @@ def get_button_style(color: str = "primary"):
             "corner_radius": SIZES["corner_radius"],
         }
     return get_button_style("primary")
+
+
+def scale_for_dpi(value: int, base_width: int = 1280) -> int:
+    """Skaliert einen Wert basierend auf der tatsächlichen Bildschirmbreite"""
+    # Kann später für DPI-Skalierung verwendet werden
+    return value
