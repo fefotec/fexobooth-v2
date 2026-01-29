@@ -1,0 +1,18 @@
+# GUI
+customtkinter>=5.2.0
+
+# Bildverarbeitung
+opencv-python>=4.8.0
+Pillow>=10.0.0
+
+# Video
+python-vlc>=3.0.0
+
+# Windows-spezifisch
+pywin32>=306; sys_platform == "win32"
+
+# QR-Code (optional für Galerie)
+qrcode>=7.4.0
+
+# Build
+pyinstaller>=6.0.0

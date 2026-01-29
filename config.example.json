@@ -1,0 +1,49 @@
+{
+  "admin_pin": "3198",
+  "countdown_time": 5,
+  "single_display_time": 2,
+  "final_time": 10,
+  "allow_single_mode": true,
+  "performance_mode": true,
+  "start_fullscreen": true,
+  "gallery_enabled": false,
+  "template1_enabled": true,
+  "template2_enabled": false,
+  "template_paths": {
+    "template1": "templates/example.zip",
+    "template2": ""
+  },
+  "logo_path": "assets/logo.png",
+  "logo_scale": 80,
+  "background_color": "#1a1a2e",
+  "camera_type": "webcam",
+  "camera_index": 0,
+  "camera_settings": {
+    "single_photo_width": 1920,
+    "single_photo_height": 1080,
+    "live_view_resolution": 640
+  },
+  "printer_name": "",
+  "max_prints_per_session": 1,
+  "print_adjustment": {
+    "offset_x": 0,
+    "offset_y": 0,
+    "zoom": 100
+  },
+  "ui_texts": {
+    "admin": "ADMIN",
+    "finish": "FERTIG",
+    "print": "DRUCKEN",
+    "redo": "NOCHMAL",
+    "cancel": "ABBRECHEN",
+    "start": "START",
+    "choose_mode": "Wähle dein Layout!",
+    "choose_filter": "Wähle einen Filter"
+  },
+  "video_start": "assets/videos/start.mp4",
+  "video_end": "assets/videos/end.mp4",
+  "canvas_width": 1800,
+  "canvas_height": 1200,
+  "admin_button_alpha": 0.1,
+  "hide_finish_button": true
+}

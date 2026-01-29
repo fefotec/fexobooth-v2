@@ -1,0 +1,72 @@
+"""Standard-Konfigurationswerte"""
+
+DEFAULT_CONFIG = {
+    # Sicherheit
+    "admin_pin": "3198",
+    
+    # Timing
+    "countdown_time": 5,
+    "single_display_time": 2,
+    "final_time": 10,
+    
+    # Modi
+    "allow_single_mode": True,
+    "performance_mode": True,
+    "start_fullscreen": True,
+    "gallery_enabled": False,
+    
+    # Templates
+    "template1_enabled": True,
+    "template2_enabled": False,
+    "template_paths": {
+        "template1": "",
+        "template2": ""
+    },
+    
+    # Branding
+    "logo_path": "",
+    "logo_scale": 80,
+    "background_color": "#1a1a2e",
+    
+    # Kamera
+    "camera_type": "webcam",
+    "camera_index": 0,
+    "camera_settings": {
+        "single_photo_width": 1920,
+        "single_photo_height": 1080,
+        "live_view_resolution": 640
+    },
+    
+    # Druck
+    "printer_name": "",
+    "max_prints_per_session": 1,
+    "print_adjustment": {
+        "offset_x": 0,
+        "offset_y": 0,
+        "zoom": 100
+    },
+    
+    # UI Texte
+    "ui_texts": {
+        "admin": "ADMIN",
+        "finish": "FERTIG",
+        "print": "DRUCKEN",
+        "redo": "NOCHMAL",
+        "cancel": "ABBRECHEN",
+        "start": "START",
+        "choose_mode": "Wähle dein Layout!",
+        "choose_filter": "Wähle einen Filter"
+    },
+    
+    # Videos
+    "video_start": "assets/videos/start.mp4",
+    "video_end": "assets/videos/end.mp4",
+    
+    # Canvas
+    "canvas_width": 1800,
+    "canvas_height": 1200,
+    
+    # Sonstiges
+    "admin_button_alpha": 0.1,
+    "hide_finish_button": True
+}
