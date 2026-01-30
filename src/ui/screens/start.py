@@ -59,18 +59,21 @@ class TemplateCard(ctk.CTkFrame):
         
         # Preview-Bild oder Icon
         if preview_image:
-            preview_image.thumbnail((210, 110), Image.Resampling.LANCZOS)
+            # Template-Vorschau skalieren
+            preview_copy = preview_image.copy()
+            preview_copy.thumbnail((200, 120), Image.Resampling.LANCZOS)
             self.preview_ctk = ctk.CTkImage(
-                light_image=preview_image,
-                size=(preview_image.width, preview_image.height)
+                light_image=preview_copy,
+                size=(preview_copy.width, preview_copy.height)
             )
             preview_label = ctk.CTkLabel(preview_frame, image=self.preview_ctk, text="")
+            preview_label.image = self.preview_ctk  # Referenz halten!
         else:
             icon = "📷" if is_single else "🖼️"
             preview_label = ctk.CTkLabel(
                 preview_frame,
                 text=icon,
-                font=("Segoe UI Emoji", 50)  # Kleiner für 800px
+                font=("Segoe UI Emoji", 50)
             )
         preview_label.pack(expand=True)
         preview_label.bind("<Button-1>", self._on_click)

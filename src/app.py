@@ -194,7 +194,7 @@ class PhotoboothApp:
         self._check_printer_status()
     
     def _check_usb_status(self):
-        """Prüft USB-Status - DEUTLICH sichtbar wenn nicht vorhanden"""
+        """Prüft USB-Status - BLINKEND wenn nicht vorhanden"""
         text, status = self.usb_manager.get_status_text()
         
         if status == "success":
@@ -203,16 +203,29 @@ class PhotoboothApp:
                 text_color=COLORS["success"],
                 fg_color=COLORS["bg_light"]
             )
+            self._usb_blink_state = False
         else:
-            # DEUTLICH: Rot und blinkend
-            self.usb_status.configure(
-                text=text,
-                text_color="#ffffff",
-                fg_color=COLORS["error"]
-            )
+            # BLINKEND: Rot/Orange wechselnd
+            if not hasattr(self, '_usb_blink_state'):
+                self._usb_blink_state = False
+            
+            self._usb_blink_state = not self._usb_blink_state
+            
+            if self._usb_blink_state:
+                self.usb_status.configure(
+                    text="⚠️ KEIN USB-STICK!",
+                    text_color="#ffffff",
+                    fg_color="#ff0000"  # Knallrot
+                )
+            else:
+                self.usb_status.configure(
+                    text="⚠️ USB FEHLT!",
+                    text_color="#000000",
+                    fg_color="#ffcc00"  # Gelb
+                )
         
-        # Nächster Check in 3 Sekunden
-        self.root.after(3000, self._check_usb_status)
+        # Schnellerer Check für Blink-Effekt
+        self.root.after(1000, self._check_usb_status)
     
     def _check_printer_status(self):
         """Prüft Drucker-Status"""

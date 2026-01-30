@@ -70,7 +70,7 @@ class AdminDialog(ctk.CTkToplevel):
             text_color=COLORS["text_primary"]
         ).pack(pady=(0, 20))
         
-        # PIN-Eingabe
+        # PIN-Eingabe (Auto-Submit bei 4 Zeichen)
         self.pin_entry = ctk.CTkEntry(
             center,
             show="●",
@@ -84,6 +84,7 @@ class AdminDialog(ctk.CTkToplevel):
         )
         self.pin_entry.pack(pady=10)
         self.pin_entry.bind("<Return>", lambda e: self._check_pin())
+        self.pin_entry.bind("<KeyRelease>", self._on_pin_key)
         self.pin_entry.focus()
         
         # Fehler-Label
@@ -137,6 +138,11 @@ class AdminDialog(ctk.CTkToplevel):
             command=self.destroy
         ).pack(pady=(15, 0))
     
+    def _on_pin_key(self, event):
+        """Auto-Check bei 4 Zeichen"""
+        if len(self.pin_entry.get()) >= 4:
+            self.after(100, self._check_pin)
+    
     def _numpad_press(self, key: str):
         """Numpad-Taste gedrückt"""
         if key == "⌫":
@@ -147,6 +153,9 @@ class AdminDialog(ctk.CTkToplevel):
             self._check_pin()
         else:
             self.pin_entry.insert("end", key)
+            # Auto-Check bei 4 Zeichen
+            if len(self.pin_entry.get()) >= 4:
+                self.after(100, self._check_pin)
     
     def _check_pin(self):
         """Prüft die PIN"""
