@@ -1,7 +1,15 @@
-"""Admin-Dialog - Modern und übersichtlich"""
+"""Admin-Dialog - Modern und übersichtlich
+
+Optimiert für Lenovo Miix 310 (1280x800)
+- Automatisch Fenstermodus beim Öffnen
+- Datei-Dialoge für Template/Logo-Pfade
+- Slider mit Wertanzeige
+- Drucker-Auswahl
+- Kamera-Erkennung
+"""
 
 import customtkinter as ctk
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import os
 
 from src.ui.theme import COLORS, FONTS, SIZES
@@ -17,12 +25,13 @@ class AdminDialog(ctk.CTkToplevel):
         super().__init__(parent)
         
         self.title("⚙️ Admin-Einstellungen")
-        self.geometry("700x600")
+        self.geometry("750x550")
         self.configure(fg_color=COLORS["bg_dark"])
         
         self.config_data = config.copy()
         self.result: Optional[Dict[str, Any]] = None
         self.is_authenticated = False
+        self.parent_window = parent
         
         # Modal machen
         self.transient(parent)
@@ -30,8 +39,8 @@ class AdminDialog(ctk.CTkToplevel):
         
         # Zentrieren
         self.update_idletasks()
-        x = (self.winfo_screenwidth() - 700) // 2
-        y = (self.winfo_screenheight() - 600) // 2
+        x = (self.winfo_screenwidth() - 750) // 2
+        y = (self.winfo_screenheight() - 550) // 2
         self.geometry(f"+{x}+{y}")
         
         # PIN-Abfrage zuerst
@@ -50,8 +59,8 @@ class AdminDialog(ctk.CTkToplevel):
         ctk.CTkLabel(
             center,
             text="🔐",
-            font=("Segoe UI Emoji", 60)
-        ).pack(pady=(0, 20))
+            font=("Segoe UI Emoji", 50)
+        ).pack(pady=(0, 15))
         
         # Titel
         ctk.CTkLabel(
@@ -59,15 +68,15 @@ class AdminDialog(ctk.CTkToplevel):
             text="Admin-Zugang",
             font=FONTS["heading"],
             text_color=COLORS["text_primary"]
-        ).pack(pady=(0, 30))
+        ).pack(pady=(0, 20))
         
         # PIN-Eingabe
         self.pin_entry = ctk.CTkEntry(
             center,
             show="●",
-            width=250,
-            height=60,
-            font=("Segoe UI", 32),
+            width=220,
+            height=50,
+            font=("Segoe UI", 28),
             justify="center",
             fg_color=COLORS["bg_medium"],
             border_color=COLORS["border"],
@@ -77,7 +86,7 @@ class AdminDialog(ctk.CTkToplevel):
         self.pin_entry.bind("<Return>", lambda e: self._check_pin())
         self.pin_entry.focus()
         
-        # Fehler-Label (versteckt)
+        # Fehler-Label
         self.pin_error = ctk.CTkLabel(
             center,
             text="",
@@ -88,7 +97,7 @@ class AdminDialog(ctk.CTkToplevel):
         
         # Numpad für Touch
         numpad_frame = ctk.CTkFrame(center, fg_color="transparent")
-        numpad_frame.pack(pady=20)
+        numpad_frame.pack(pady=15)
         
         buttons = [
             ["1", "2", "3"],
@@ -105,28 +114,28 @@ class AdminDialog(ctk.CTkToplevel):
                 btn = ctk.CTkButton(
                     row_frame,
                     text=num,
-                    width=70,
-                    height=70,
-                    font=("Segoe UI", 24),
+                    width=60,
+                    height=60,
+                    font=("Segoe UI", 22),
                     fg_color=COLORS["bg_light"] if num.isdigit() else COLORS["bg_card"],
                     hover_color=COLORS["bg_card"],
                     corner_radius=SIZES["corner_radius_small"],
                     command=lambda n=num: self._numpad_press(n)
                 )
-                btn.pack(side="left", padx=5, pady=5)
+                btn.pack(side="left", padx=4, pady=4)
         
         # Abbrechen
         ctk.CTkButton(
             center,
             text="Abbrechen",
-            font=FONTS["body"],
-            width=150,
-            height=40,
+            font=FONTS["small"],
+            width=120,
+            height=35,
             fg_color="transparent",
             hover_color=COLORS["bg_light"],
             text_color=COLORS["text_muted"],
             command=self.destroy
-        ).pack(pady=(20, 0))
+        ).pack(pady=(15, 0))
     
     def _numpad_press(self, key: str):
         """Numpad-Taste gedrückt"""
@@ -147,6 +156,14 @@ class AdminDialog(ctk.CTkToplevel):
         if entered == correct:
             self.is_authenticated = True
             self.pin_frame.destroy()
+            
+            # *** WICHTIG: Fullscreen deaktivieren für Admin ***
+            try:
+                self.parent_window.attributes("-fullscreen", False)
+                logger.info("Fullscreen deaktiviert für Admin-Modus")
+            except:
+                pass
+            
             self._show_settings()
         else:
             self.pin_entry.delete(0, "end")
@@ -163,7 +180,7 @@ class AdminDialog(ctk.CTkToplevel):
         """Zeigt Einstellungen"""
         # Hauptcontainer
         main = ctk.CTkFrame(self, fg_color="transparent")
-        main.pack(fill="both", expand=True, padx=20, pady=20)
+        main.pack(fill="both", expand=True, padx=15, pady=15)
         
         # Tabview
         tabview = ctk.CTkTabview(
@@ -171,7 +188,8 @@ class AdminDialog(ctk.CTkToplevel):
             fg_color=COLORS["bg_medium"],
             segmented_button_fg_color=COLORS["bg_light"],
             segmented_button_selected_color=COLORS["primary"],
-            segmented_button_unselected_color=COLORS["bg_card"]
+            segmented_button_unselected_color=COLORS["bg_card"],
+            height=420
         )
         tabview.pack(fill="both", expand=True)
         
@@ -183,60 +201,104 @@ class AdminDialog(ctk.CTkToplevel):
         
         # Button-Leiste
         btn_frame = ctk.CTkFrame(main, fg_color="transparent")
-        btn_frame.pack(fill="x", pady=(20, 0))
+        btn_frame.pack(fill="x", pady=(15, 0))
         
         ctk.CTkButton(
             btn_frame,
             text="Abbrechen",
-            font=FONTS["button"],
-            width=150,
-            height=50,
+            font=FONTS["small"],
+            width=120,
+            height=40,
             fg_color=COLORS["bg_light"],
             hover_color=COLORS["bg_card"],
             corner_radius=SIZES["corner_radius"],
-            command=self.destroy
+            command=self._cancel
         ).pack(side="left")
         
         ctk.CTkButton(
             btn_frame,
             text="💾 Speichern",
             font=FONTS["button"],
-            width=200,
-            height=50,
+            width=160,
+            height=40,
             fg_color=COLORS["success"],
             hover_color="#00e676",
             corner_radius=SIZES["corner_radius"],
             command=self._save
         ).pack(side="right")
     
+    def _create_slider_with_value(self, parent, label: str, key: str, 
+                                   min_val: int, max_val: int, suffix: str = "") -> ctk.CTkSlider:
+        """Erstellt einen Slider MIT Wertanzeige"""
+        frame = ctk.CTkFrame(parent, fg_color="transparent")
+        frame.pack(fill="x", pady=8)
+        
+        # Label und Wert in einer Zeile
+        label_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        label_frame.pack(fill="x")
+        
+        ctk.CTkLabel(
+            label_frame,
+            text=label,
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"]
+        ).pack(side="left")
+        
+        # Wert-Anzeige
+        value_label = ctk.CTkLabel(
+            label_frame,
+            text=f"{self.config_data.get(key, min_val)}{suffix}",
+            font=FONTS["body_bold"],
+            text_color=COLORS["primary"]
+        )
+        value_label.pack(side="right")
+        
+        # Slider
+        slider = ctk.CTkSlider(
+            frame,
+            from_=min_val,
+            to=max_val,
+            number_of_steps=max_val - min_val,
+            width=280,
+            fg_color=COLORS["bg_light"],
+            progress_color=COLORS["primary"],
+            button_color=COLORS["primary"],
+            button_hover_color=COLORS["primary_hover"]
+        )
+        slider.set(self.config_data.get(key, min_val))
+        slider.pack(anchor="w", pady=(5, 0))
+        
+        # Update-Callback
+        def update_value(val):
+            value_label.configure(text=f"{int(val)}{suffix}")
+        
+        slider.configure(command=update_value)
+        
+        return slider
+    
     def _create_general_tab(self, parent):
         """Allgemeine Einstellungen"""
-        # Scrollbar für lange Listen
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=10, pady=10)
         
         # Countdown
-        self._add_setting(
-            scroll, "Countdown (Sekunden)",
-            "countdown_time", "slider", 1, 15
+        self.countdown_slider = self._create_slider_with_value(
+            scroll, "Countdown:", "countdown_time", 1, 15, " Sek"
         )
         
-        # Anzeige-Zeit nach Foto
-        self._add_setting(
-            scroll, "Foto-Anzeige (Sekunden)",
-            "single_display_time", "slider", 1, 10
+        # Foto-Anzeige
+        self.single_slider = self._create_slider_with_value(
+            scroll, "Foto-Anzeige:", "single_display_time", 1, 10, " Sek"
         )
         
-        # Auto-Return Zeit
-        self._add_setting(
-            scroll, "Auto-Return (Sekunden)",
-            "final_time", "slider", 10, 60
+        # Auto-Return
+        self.final_slider = self._create_slider_with_value(
+            scroll, "Auto-Return:", "final_time", 10, 60, " Sek"
         )
         
         # Max Drucke
-        self._add_setting(
-            scroll, "Max. Drucke pro Session",
-            "max_prints_per_session", "slider", 0, 10
+        self.prints_slider = self._create_slider_with_value(
+            scroll, "Max. Drucke:", "max_prints_per_session", 0, 10, ""
         )
         
         # Checkboxen
@@ -246,194 +308,348 @@ class AdminDialog(ctk.CTkToplevel):
         self._add_checkbox(scroll, "Fertig-Button ausblenden", "hide_finish_button")
         
         # Neue PIN
+        pin_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        pin_frame.pack(fill="x", pady=(15, 5))
+        
         ctk.CTkLabel(
-            scroll,
-            text="Neue Admin-PIN (4-stellig):",
+            pin_frame,
+            text="Neue Admin-PIN:",
             font=FONTS["body"],
             text_color=COLORS["text_secondary"]
-        ).pack(anchor="w", pady=(20, 5))
+        ).pack(side="left")
         
         self.new_pin = ctk.CTkEntry(
-            scroll,
-            placeholder_text="Leer = keine Änderung",
-            width=200,
+            pin_frame,
+            placeholder_text="4-stellig",
+            width=100,
             fg_color=COLORS["bg_card"],
             border_color=COLORS["border"]
         )
-        self.new_pin.pack(anchor="w")
+        self.new_pin.pack(side="right")
     
     def _create_templates_tab(self, parent):
-        """Template-Einstellungen"""
+        """Template-Einstellungen mit Datei-Dialogen"""
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=10, pady=10)
         
         # Template 1
         self._add_checkbox(scroll, "Template 1 aktivieren", "template1_enabled")
-        
-        ctk.CTkLabel(
-            scroll, text="Template 1 Pfad (ZIP):",
-            font=FONTS["small"], text_color=COLORS["text_muted"]
-        ).pack(anchor="w", pady=(5, 2))
-        
-        self.t1_path = ctk.CTkEntry(
-            scroll, width=400,
-            fg_color=COLORS["bg_card"], border_color=COLORS["border"]
+        self.t1_path = self._create_file_picker(
+            scroll, 
+            "Template 1 (ZIP):",
+            self.config_data.get("template_paths", {}).get("template1", ""),
+            [("ZIP-Templates", "*.zip")]
         )
-        self.t1_path.insert(0, self.config_data.get("template_paths", {}).get("template1", ""))
-        self.t1_path.pack(anchor="w", pady=(0, 15))
         
         # Template 2
         self._add_checkbox(scroll, "Template 2 aktivieren", "template2_enabled")
-        
-        ctk.CTkLabel(
-            scroll, text="Template 2 Pfad (ZIP):",
-            font=FONTS["small"], text_color=COLORS["text_muted"]
-        ).pack(anchor="w", pady=(5, 2))
-        
-        self.t2_path = ctk.CTkEntry(
-            scroll, width=400,
-            fg_color=COLORS["bg_card"], border_color=COLORS["border"]
+        self.t2_path = self._create_file_picker(
+            scroll,
+            "Template 2 (ZIP):",
+            self.config_data.get("template_paths", {}).get("template2", ""),
+            [("ZIP-Templates", "*.zip")]
         )
-        self.t2_path.insert(0, self.config_data.get("template_paths", {}).get("template2", ""))
-        self.t2_path.pack(anchor="w", pady=(0, 15))
         
         # Logo
         ctk.CTkLabel(
-            scroll, text="Logo-Pfad:",
-            font=FONTS["small"], text_color=COLORS["text_muted"]
-        ).pack(anchor="w", pady=(20, 2))
+            scroll,
+            text="",
+            font=FONTS["tiny"]
+        ).pack()  # Spacer
         
-        self.logo_path = ctk.CTkEntry(
-            scroll, width=400,
-            fg_color=COLORS["bg_card"], border_color=COLORS["border"]
+        self.logo_path = self._create_file_picker(
+            scroll,
+            "Logo:",
+            self.config_data.get("logo_path", ""),
+            [("Bilder", "*.png *.jpg *.jpeg")]
         )
-        self.logo_path.insert(0, self.config_data.get("logo_path", ""))
-        self.logo_path.pack(anchor="w")
+    
+    def _create_file_picker(self, parent, label: str, initial_value: str, 
+                            filetypes: List[tuple]) -> ctk.CTkEntry:
+        """Erstellt ein Eingabefeld mit Datei-Dialog"""
+        frame = ctk.CTkFrame(parent, fg_color="transparent")
+        frame.pack(fill="x", pady=5)
+        
+        ctk.CTkLabel(
+            frame,
+            text=label,
+            font=FONTS["small"],
+            text_color=COLORS["text_muted"]
+        ).pack(anchor="w")
+        
+        input_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        input_frame.pack(fill="x", pady=(2, 0))
+        
+        entry = ctk.CTkEntry(
+            input_frame,
+            width=320,
+            fg_color=COLORS["bg_card"],
+            border_color=COLORS["border"]
+        )
+        entry.insert(0, initial_value)
+        entry.pack(side="left")
+        
+        def browse():
+            from tkinter import filedialog
+            path = filedialog.askopenfilename(
+                title=f"Wähle {label}",
+                filetypes=filetypes + [("Alle Dateien", "*.*")]
+            )
+            if path:
+                entry.delete(0, "end")
+                entry.insert(0, path)
+        
+        ctk.CTkButton(
+            input_frame,
+            text="📁",
+            width=40,
+            height=32,
+            font=("Segoe UI", 14),
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["primary"],
+            command=browse
+        ).pack(side="left", padx=(5, 0))
+        
+        return entry
     
     def _create_print_tab(self, parent):
-        """Druck-Einstellungen"""
+        """Druck-Einstellungen mit Drucker-Auswahl"""
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=10, pady=10)
         
+        # Drucker-Auswahl
+        ctk.CTkLabel(
+            scroll,
+            text="Drucker:",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"]
+        ).pack(anchor="w", pady=(5, 5))
+        
+        # Verfügbare Drucker ermitteln
+        printers = self._get_available_printers()
+        current_printer = self.config_data.get("printer_name", "")
+        
+        self.printer_dropdown = ctk.CTkOptionMenu(
+            scroll,
+            values=printers if printers else ["(Kein Drucker gefunden)"],
+            width=300,
+            fg_color=COLORS["bg_card"],
+            button_color=COLORS["primary"],
+            button_hover_color=COLORS["primary_hover"]
+        )
+        if current_printer and current_printer in printers:
+            self.printer_dropdown.set(current_printer)
+        elif printers:
+            self.printer_dropdown.set(printers[0])
+        self.printer_dropdown.pack(anchor="w", pady=(0, 15))
+        
+        # Druck-Vorschau Frame
+        preview_frame = ctk.CTkFrame(scroll, fg_color=COLORS["bg_card"], corner_radius=10)
+        preview_frame.pack(fill="x", pady=10)
+        
+        ctk.CTkLabel(
+            preview_frame,
+            text="📄 Druck-Anpassung",
+            font=FONTS["body_bold"],
+            text_color=COLORS["text_primary"]
+        ).pack(pady=(10, 5))
+        
+        # Offset-Werte mit Anzeige
         adjustment = self.config_data.get("print_adjustment", {})
         
-        # Drucker-Name
-        ctk.CTkLabel(
-            scroll, text="Drucker (leer = Standard):",
-            font=FONTS["body"], text_color=COLORS["text_secondary"]
-        ).pack(anchor="w", pady=(10, 5))
-        
-        self.printer_name = ctk.CTkEntry(
-            scroll, width=300,
-            fg_color=COLORS["bg_card"], border_color=COLORS["border"]
+        # Offset X
+        self.offset_x_slider = self._create_print_slider(
+            preview_frame, "Offset X:", adjustment.get("offset_x", 0), -100, 100, " px"
         )
-        self.printer_name.insert(0, self.config_data.get("printer_name", ""))
-        self.printer_name.pack(anchor="w", pady=(0, 20))
         
-        # Offsets
-        ctk.CTkLabel(
-            scroll, text="Offset X:",
-            font=FONTS["body"], text_color=COLORS["text_secondary"]
-        ).pack(anchor="w", pady=(10, 5))
-        
-        self.offset_x = ctk.CTkSlider(
-            scroll, from_=-100, to=100, number_of_steps=200, width=300,
-            fg_color=COLORS["bg_light"], progress_color=COLORS["primary"]
+        # Offset Y
+        self.offset_y_slider = self._create_print_slider(
+            preview_frame, "Offset Y:", adjustment.get("offset_y", 0), -100, 100, " px"
         )
-        self.offset_x.set(adjustment.get("offset_x", 0))
-        self.offset_x.pack(anchor="w")
         
-        ctk.CTkLabel(
-            scroll, text="Offset Y:",
-            font=FONTS["body"], text_color=COLORS["text_secondary"]
-        ).pack(anchor="w", pady=(15, 5))
-        
-        self.offset_y = ctk.CTkSlider(
-            scroll, from_=-100, to=100, number_of_steps=200, width=300,
-            fg_color=COLORS["bg_light"], progress_color=COLORS["primary"]
+        # Zoom
+        self.zoom_slider = self._create_print_slider(
+            preview_frame, "Zoom:", adjustment.get("zoom", 100), 50, 150, " %"
         )
-        self.offset_y.set(adjustment.get("offset_y", 0))
-        self.offset_y.pack(anchor="w")
+        
+        ctk.CTkLabel(preview_frame, text="").pack(pady=5)  # Spacer
+    
+    def _create_print_slider(self, parent, label: str, value: int, 
+                              min_val: int, max_val: int, suffix: str) -> ctk.CTkSlider:
+        """Slider für Druck-Einstellungen mit Wertanzeige"""
+        frame = ctk.CTkFrame(parent, fg_color="transparent")
+        frame.pack(fill="x", padx=15, pady=5)
+        
+        label_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        label_frame.pack(fill="x")
         
         ctk.CTkLabel(
-            scroll, text="Zoom (%):",
-            font=FONTS["body"], text_color=COLORS["text_secondary"]
-        ).pack(anchor="w", pady=(15, 5))
+            label_frame,
+            text=label,
+            font=FONTS["small"],
+            text_color=COLORS["text_secondary"]
+        ).pack(side="left")
         
-        self.zoom = ctk.CTkSlider(
-            scroll, from_=50, to=150, number_of_steps=100, width=300,
-            fg_color=COLORS["bg_light"], progress_color=COLORS["primary"]
+        value_label = ctk.CTkLabel(
+            label_frame,
+            text=f"{value}{suffix}",
+            font=FONTS["body_bold"],
+            text_color=COLORS["primary"]
         )
-        self.zoom.set(adjustment.get("zoom", 100))
-        self.zoom.pack(anchor="w")
+        value_label.pack(side="right")
+        
+        slider = ctk.CTkSlider(
+            frame,
+            from_=min_val,
+            to=max_val,
+            number_of_steps=max_val - min_val,
+            width=250,
+            fg_color=COLORS["bg_light"],
+            progress_color=COLORS["primary"]
+        )
+        slider.set(value)
+        slider.pack(anchor="w", pady=(3, 0))
+        
+        slider.configure(command=lambda v: value_label.configure(text=f"{int(v)}{suffix}"))
+        
+        return slider
+    
+    def _get_available_printers(self) -> List[str]:
+        """Ermittelt verfügbare Drucker"""
+        printers = []
+        try:
+            import win32print
+            printer_list = win32print.EnumPrinters(
+                win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
+            )
+            printers = [p[2] for p in printer_list]
+            
+            # Standard-Drucker zuerst
+            try:
+                default = win32print.GetDefaultPrinter()
+                if default in printers:
+                    printers.remove(default)
+                    printers.insert(0, f"⭐ {default} (Standard)")
+            except:
+                pass
+                
+        except ImportError:
+            printers = ["(win32print nicht verfügbar)"]
+        except Exception as e:
+            logger.warning(f"Drucker-Liste Fehler: {e}")
+            printers = ["(Fehler beim Laden)"]
+        
+        return printers
     
     def _create_camera_tab(self, parent):
-        """Kamera-Einstellungen"""
+        """Kamera-Einstellungen mit automatischer Erkennung"""
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=10, pady=10)
         
-        # Kamera-Index
+        # Kamera-Auswahl
         ctk.CTkLabel(
-            scroll, text="Kamera-Index:",
-            font=FONTS["body"], text_color=COLORS["text_secondary"]
-        ).pack(anchor="w", pady=(10, 5))
+            scroll,
+            text="Kamera:",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"]
+        ).pack(anchor="w", pady=(5, 5))
         
-        self.camera_index = ctk.CTkOptionMenu(
-            scroll, values=["0", "1", "2", "3", "4"],
-            fg_color=COLORS["bg_card"], button_color=COLORS["primary"]
+        # Verfügbare Kameras ermitteln
+        cameras = self._get_available_cameras()
+        current_index = self.config_data.get("camera_index", 0)
+        
+        self.camera_dropdown = ctk.CTkOptionMenu(
+            scroll,
+            values=cameras if cameras else ["(Keine Kamera gefunden)"],
+            width=350,
+            fg_color=COLORS["bg_card"],
+            button_color=COLORS["primary"],
+            button_hover_color=COLORS["primary_hover"]
         )
-        self.camera_index.set(str(self.config_data.get("camera_index", 0)))
-        self.camera_index.pack(anchor="w", pady=(0, 20))
+        
+        # Aktuelle Kamera setzen
+        for cam in cameras:
+            if cam.startswith(f"[{current_index}]"):
+                self.camera_dropdown.set(cam)
+                break
+        
+        self.camera_dropdown.pack(anchor="w", pady=(0, 10))
+        
+        # Refresh-Button
+        ctk.CTkButton(
+            scroll,
+            text="🔄 Kameras neu suchen",
+            font=FONTS["small"],
+            width=150,
+            height=32,
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["primary"],
+            command=self._refresh_cameras
+        ).pack(anchor="w", pady=(0, 20))
         
         # Auflösung
         cam_settings = self.config_data.get("camera_settings", {})
         
+        res_frame = ctk.CTkFrame(scroll, fg_color=COLORS["bg_card"], corner_radius=10)
+        res_frame.pack(fill="x", pady=10)
+        
         ctk.CTkLabel(
-            scroll, text="Foto-Breite:",
-            font=FONTS["body"], text_color=COLORS["text_secondary"]
-        ).pack(anchor="w", pady=(10, 5))
+            res_frame,
+            text="📷 Foto-Auflösung",
+            font=FONTS["body_bold"],
+            text_color=COLORS["text_primary"]
+        ).pack(pady=(10, 10))
+        
+        size_frame = ctk.CTkFrame(res_frame, fg_color="transparent")
+        size_frame.pack(pady=(0, 10))
+        
+        ctk.CTkLabel(size_frame, text="Breite:", font=FONTS["small"], 
+                     text_color=COLORS["text_muted"]).pack(side="left", padx=(10, 5))
         
         self.photo_width = ctk.CTkEntry(
-            scroll, width=150,
-            fg_color=COLORS["bg_card"], border_color=COLORS["border"]
+            size_frame, width=80,
+            fg_color=COLORS["bg_light"], border_color=COLORS["border"]
         )
         self.photo_width.insert(0, str(cam_settings.get("single_photo_width", 1920)))
-        self.photo_width.pack(anchor="w")
+        self.photo_width.pack(side="left")
         
-        ctk.CTkLabel(
-            scroll, text="Foto-Höhe:",
-            font=FONTS["body"], text_color=COLORS["text_secondary"]
-        ).pack(anchor="w", pady=(10, 5))
+        ctk.CTkLabel(size_frame, text="  Höhe:", font=FONTS["small"],
+                     text_color=COLORS["text_muted"]).pack(side="left", padx=(10, 5))
         
         self.photo_height = ctk.CTkEntry(
-            scroll, width=150,
-            fg_color=COLORS["bg_card"], border_color=COLORS["border"]
+            size_frame, width=80,
+            fg_color=COLORS["bg_light"], border_color=COLORS["border"]
         )
         self.photo_height.insert(0, str(cam_settings.get("single_photo_height", 1080)))
-        self.photo_height.pack(anchor="w")
+        self.photo_height.pack(side="left")
     
-    def _add_setting(self, parent, label: str, key: str, widget_type: str,
-                     min_val: int = 0, max_val: int = 100):
-        """Fügt eine Einstellung hinzu"""
-        frame = ctk.CTkFrame(parent, fg_color="transparent")
-        frame.pack(fill="x", pady=10)
+    def _get_available_cameras(self) -> List[str]:
+        """Ermittelt verfügbare Kameras mit Namen"""
+        cameras = []
+        try:
+            import cv2
+            for i in range(5):
+                cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+                if cap.isOpened():
+                    # Versuche Kamera-Info zu bekommen
+                    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    cameras.append(f"[{i}] Kamera {i} ({w}x{h})")
+                    cap.release()
+        except Exception as e:
+            logger.warning(f"Kamera-Suche Fehler: {e}")
         
-        ctk.CTkLabel(
-            frame, text=label,
-            font=FONTS["body"], text_color=COLORS["text_secondary"]
-        ).pack(anchor="w")
+        if not cameras:
+            cameras = ["[0] Standard-Kamera"]
         
-        if widget_type == "slider":
-            slider = ctk.CTkSlider(
-                frame, from_=min_val, to=max_val,
-                number_of_steps=max_val - min_val,
-                width=300,
-                fg_color=COLORS["bg_light"],
-                progress_color=COLORS["primary"]
-            )
-            slider.set(self.config_data.get(key, min_val))
-            slider.pack(anchor="w", pady=(5, 0))
-            setattr(self, f"setting_{key}", slider)
+        return cameras
+    
+    def _refresh_cameras(self):
+        """Aktualisiert die Kamera-Liste"""
+        cameras = self._get_available_cameras()
+        self.camera_dropdown.configure(values=cameras)
+        if cameras:
+            self.camera_dropdown.set(cameras[0])
     
     def _add_checkbox(self, parent, label: str, key: str):
         """Fügt eine Checkbox hinzu"""
@@ -441,20 +657,31 @@ class AdminDialog(ctk.CTkToplevel):
         
         cb = ctk.CTkCheckBox(
             parent, text=label, variable=var,
-            font=FONTS["body"],
+            font=FONTS["small"],
             fg_color=COLORS["primary"],
-            hover_color=COLORS["primary_hover"]
+            hover_color=COLORS["primary_hover"],
+            checkbox_width=22,
+            checkbox_height=22
         )
-        cb.pack(anchor="w", pady=5)
+        cb.pack(anchor="w", pady=4)
         setattr(self, f"check_{key}", var)
+    
+    def _cancel(self):
+        """Abbrechen - Fullscreen wiederherstellen wenn nötig"""
+        if self.config_data.get("start_fullscreen", True):
+            try:
+                self.parent_window.attributes("-fullscreen", True)
+            except:
+                pass
+        self.destroy()
     
     def _save(self):
         """Speichert die Einstellungen"""
         # Slider-Werte
-        for key in ["countdown_time", "single_display_time", "final_time", "max_prints_per_session"]:
-            slider = getattr(self, f"setting_{key}", None)
-            if slider:
-                self.config_data[key] = int(slider.get())
+        self.config_data["countdown_time"] = int(self.countdown_slider.get())
+        self.config_data["single_display_time"] = int(self.single_slider.get())
+        self.config_data["final_time"] = int(self.final_slider.get())
+        self.config_data["max_prints_per_session"] = int(self.prints_slider.get())
         
         # Checkboxen
         for key in ["allow_single_mode", "performance_mode", "start_fullscreen", "hide_finish_button",
@@ -468,16 +695,29 @@ class AdminDialog(ctk.CTkToplevel):
         self.config_data["template_paths"]["template2"] = self.t2_path.get()
         self.config_data["logo_path"] = self.logo_path.get()
         
-        # Druck
-        self.config_data["printer_name"] = self.printer_name.get()
+        # Drucker
+        printer = self.printer_dropdown.get()
+        if printer.startswith("⭐ "):
+            printer = printer[2:].replace(" (Standard)", "")
+        self.config_data["printer_name"] = printer
+        
+        # Druck-Anpassung
         self.config_data["print_adjustment"] = {
-            "offset_x": int(self.offset_x.get()),
-            "offset_y": int(self.offset_y.get()),
-            "zoom": int(self.zoom.get())
+            "offset_x": int(self.offset_x_slider.get()),
+            "offset_y": int(self.offset_y_slider.get()),
+            "zoom": int(self.zoom_slider.get())
         }
         
         # Kamera
-        self.config_data["camera_index"] = int(self.camera_index.get())
+        cam_selection = self.camera_dropdown.get()
+        # Extrahiere Index aus "[0] Kamera..."
+        if cam_selection.startswith("["):
+            try:
+                idx = int(cam_selection[1:cam_selection.index("]")])
+                self.config_data["camera_index"] = idx
+            except:
+                pass
+        
         self.config_data["camera_settings"]["single_photo_width"] = int(self.photo_width.get())
         self.config_data["camera_settings"]["single_photo_height"] = int(self.photo_height.get())
         
@@ -487,4 +727,12 @@ class AdminDialog(ctk.CTkToplevel):
         
         self.result = self.config_data
         logger.info("Admin-Einstellungen gespeichert")
+        
+        # Fullscreen wiederherstellen wenn gewünscht
+        if self.config_data.get("start_fullscreen", True):
+            try:
+                self.parent_window.attributes("-fullscreen", True)
+            except:
+                pass
+        
         self.destroy()

@@ -10,6 +10,7 @@ from PIL import Image
 import os
 
 from src.templates.loader import TemplateLoader
+from src.templates.default import create_default_template
 from src.ui.theme import COLORS, FONTS, SIZES
 from src.utils.logging import get_logger
 
@@ -182,33 +183,51 @@ class StartScreen(ctk.CTkFrame):
     
     def _create_template_cards(self, parent):
         """Erstellt die Template-Karten"""
+        has_custom_template = False
+        
         # Template 1
         if self.config.get("template1_enabled"):
             template_path = self.config.get("template_paths", {}).get("template1", "")
-            preview = self._load_template_preview(template_path)
-            
-            card = TemplateCard(
-                parent,
-                title="Template 1",
-                preview_image=preview,
-                on_click=lambda c: self._select_card(c, "template1")
-            )
-            card.pack(side="left", padx=10)
-            self.cards["template1"] = card
+            if template_path and os.path.exists(template_path):
+                preview = self._load_template_preview(template_path)
+                card = TemplateCard(
+                    parent,
+                    title="Template 1",
+                    preview_image=preview,
+                    on_click=lambda c: self._select_card(c, "template1")
+                )
+                card.pack(side="left", padx=10)
+                self.cards["template1"] = card
+                has_custom_template = True
         
         # Template 2
         if self.config.get("template2_enabled"):
             template_path = self.config.get("template_paths", {}).get("template2", "")
-            preview = self._load_template_preview(template_path)
+            if template_path and os.path.exists(template_path):
+                preview = self._load_template_preview(template_path)
+                card = TemplateCard(
+                    parent,
+                    title="Template 2",
+                    preview_image=preview,
+                    on_click=lambda c: self._select_card(c, "template2")
+                )
+                card.pack(side="left", padx=10)
+                self.cards["template2"] = card
+                has_custom_template = True
+        
+        # Standard 2x2 Template (wenn keine Custom-Templates aktiv)
+        if not has_custom_template:
+            # Vorschau für Standard-Template generieren
+            default_overlay, _ = create_default_template()
             
             card = TemplateCard(
                 parent,
-                title="Template 2",
-                preview_image=preview,
-                on_click=lambda c: self._select_card(c, "template2")
+                title="Standard 2x2",
+                preview_image=default_overlay,
+                on_click=lambda c: self._select_card(c, "default_2x2")
             )
             card.pack(side="left", padx=10)
-            self.cards["template2"] = card
+            self.cards["default_2x2"] = card
         
         # Single-Foto
         if self.config.get("allow_single_mode", True):
@@ -253,12 +272,26 @@ class StartScreen(ctk.CTkFrame):
         logger.info(f"Start: {self.selected_option}")
         
         if self.selected_option == "single":
+            # Single-Foto: Eine große Box
             self.app.template_path = None
             self.app.template_boxes = [{"box": (0, 0, 1799, 1199), "angle": 0}]
             self.app.overlay_image = None
+            
+        elif self.selected_option == "default_2x2":
+            # Standard 2x2 Template
+            overlay, boxes = create_default_template()
+            self.app.template_path = None
+            self.app.template_boxes = boxes
+            self.app.overlay_image = overlay
+            logger.info("Standard 2x2 Template geladen")
+            
         else:
+            # Custom Template laden
             if not self.app.load_template(self.selected_option):
-                self.app.template_boxes = [{"box": (0, 0, 1799, 1199), "angle": 0}]
+                # Fallback auf Standard-Template
+                overlay, boxes = create_default_template()
+                self.app.template_boxes = boxes
+                self.app.overlay_image = overlay
         
         self.app.show_screen("session")
     

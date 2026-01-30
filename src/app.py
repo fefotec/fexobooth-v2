@@ -194,20 +194,25 @@ class PhotoboothApp:
         self._check_printer_status()
     
     def _check_usb_status(self):
-        """Prüft USB-Status"""
-        if self.usb_manager.is_available():
+        """Prüft USB-Status - DEUTLICH sichtbar wenn nicht vorhanden"""
+        text, status = self.usb_manager.get_status_text()
+        
+        if status == "success":
             self.usb_status.configure(
-                text="✓ USB",
-                text_color=COLORS["success"]
+                text=text,
+                text_color=COLORS["success"],
+                fg_color=COLORS["bg_light"]
             )
         else:
+            # DEUTLICH: Rot und blinkend
             self.usb_status.configure(
-                text="⚠️ USB",
-                text_color=COLORS["warning"]
+                text=text,
+                text_color="#ffffff",
+                fg_color=COLORS["error"]
             )
         
-        # Nächster Check in 5 Sekunden
-        self.root.after(5000, self._check_usb_status)
+        # Nächster Check in 3 Sekunden
+        self.root.after(3000, self._check_usb_status)
     
     def _check_printer_status(self):
         """Prüft Drucker-Status"""
