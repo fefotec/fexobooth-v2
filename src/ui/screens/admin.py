@@ -555,6 +555,46 @@ class AdminDialog(ctk.CTkToplevel):
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=10, pady=10)
         
+        # Kamera-Typ Auswahl (NEU!)
+        ctk.CTkLabel(
+            scroll,
+            text="Kamera-Typ:",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"]
+        ).pack(anchor="w", pady=(5, 5))
+        
+        # Prüfen ob Canon EDSDK verfügbar ist
+        try:
+            from src.camera import CANON_AVAILABLE
+        except:
+            CANON_AVAILABLE = False
+        
+        camera_types = ["webcam"]
+        if CANON_AVAILABLE:
+            camera_types.append("canon")
+        
+        current_type = self.config_data.get("camera_type", "webcam")
+        
+        self.camera_type_dropdown = ctk.CTkOptionMenu(
+            scroll,
+            values=camera_types,
+            width=350,
+            fg_color=COLORS["bg_card"],
+            button_color=COLORS["primary"],
+            button_hover_color=COLORS["primary_hover"],
+            command=self._on_camera_type_change
+        )
+        self.camera_type_dropdown.set(current_type)
+        self.camera_type_dropdown.pack(anchor="w", pady=(0, 10))
+        
+        if not CANON_AVAILABLE:
+            ctk.CTkLabel(
+                scroll,
+                text="⚠️ Canon EDSDK nicht verfügbar (DLLs fehlen?)",
+                font=FONTS["tiny"],
+                text_color=COLORS["warning"]
+            ).pack(anchor="w", pady=(0, 10))
+        
         # Kamera-Auswahl
         ctk.CTkLabel(
             scroll,
@@ -635,23 +675,47 @@ class AdminDialog(ctk.CTkToplevel):
     def _get_available_cameras(self) -> List[str]:
         """Ermittelt verfügbare Kameras mit Namen"""
         cameras = []
-        try:
-            import cv2
-            for i in range(5):
-                cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
-                if cap.isOpened():
-                    # Versuche Kamera-Info zu bekommen
-                    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                    cameras.append(f"[{i}] Kamera {i} ({w}x{h})")
-                    cap.release()
-        except Exception as e:
-            logger.warning(f"Kamera-Suche Fehler: {e}")
+        
+        # Prüfen welcher Kamera-Typ ausgewählt ist
+        camera_type = "webcam"
+        if hasattr(self, 'camera_type_dropdown'):
+            camera_type = self.camera_type_dropdown.get()
+        else:
+            camera_type = self.config_data.get("camera_type", "webcam")
+        
+        if camera_type == "canon":
+            # Canon Kameras via EDSDK
+            try:
+                from src.camera.canon import CanonCameraManager
+                canon_cams = CanonCameraManager.list_cameras()
+                for cam in canon_cams:
+                    cameras.append(f"[{cam['index']}] 📷 {cam['name']}")
+                logger.info(f"Canon Kameras gefunden: {len(canon_cams)}")
+            except Exception as e:
+                logger.warning(f"Canon Kamera-Suche Fehler: {e}")
+        else:
+            # Webcams via OpenCV
+            try:
+                import cv2
+                for i in range(5):
+                    cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+                    if cap.isOpened():
+                        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                        cameras.append(f"[{i}] Webcam {i} ({w}x{h})")
+                        cap.release()
+            except Exception as e:
+                logger.warning(f"Webcam-Suche Fehler: {e}")
         
         if not cameras:
             cameras = ["[0] Standard-Kamera"]
         
         return cameras
+    
+    def _on_camera_type_change(self, choice):
+        """Wird aufgerufen wenn Kamera-Typ gewechselt wird"""
+        logger.info(f"Kamera-Typ gewechselt: {choice}")
+        self._refresh_cameras()
     
     def _refresh_cameras(self):
         """Aktualisiert die Kamera-Liste"""
@@ -717,9 +781,12 @@ class AdminDialog(ctk.CTkToplevel):
             "zoom": int(self.zoom_slider.get())
         }
         
-        # Kamera
+        # Kamera-Typ (NEU!)
+        self.config_data["camera_type"] = self.camera_type_dropdown.get()
+        
+        # Kamera-Index
         cam_selection = self.camera_dropdown.get()
-        # Extrahiere Index aus "[0] Kamera..."
+        # Extrahiere Index aus "[0] Kamera..." oder "[0] 📷 Canon..."
         if cam_selection.startswith("["):
             try:
                 idx = int(cam_selection[1:cam_selection.index("]")])
