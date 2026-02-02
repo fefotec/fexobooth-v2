@@ -346,8 +346,10 @@ class SessionScreen(ctk.CTkFrame):
             icon_size = min(container_w, container_h) // 4
             try:
                 import os
-                icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
-                                         "assets", "icons", "camera.png")
+                # Pfad: src/ui/screens -> src/ui -> src -> root -> assets/icons
+                src_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+                icon_path = os.path.join(src_dir, "assets", "icons", "camera.png")
+                logger.debug(f"Icon-Pfad: {icon_path}")
                 if os.path.exists(icon_path):
                     icon = Image.open(icon_path).convert("RGBA")
                     icon = icon.resize((icon_size, icon_size), Image.Resampling.LANCZOS)
@@ -425,7 +427,9 @@ class SessionScreen(ctk.CTkFrame):
         except:
             pass
         
-        self.after(150, self._capture_photo)
+        # Flash-Dauer aus Config oder 300ms default
+        flash_duration = self.config.get("flash_duration", 300)
+        self.after(flash_duration, self._capture_photo)
     
     def _capture_photo(self):
         """Erfasst das Foto - Flash bleibt bis Foto da ist"""
