@@ -159,8 +159,12 @@ class SessionScreen(ctk.CTkFrame):
                 
             elif i == self.current_photo_index and live_frame is not None:
                 # AKTUELLER SLOT: Live-View anzeigen
-                # Frame spiegeln und konvertieren
-                frame = cv2.flip(live_frame, 1)
+                # Optional: 180° Rotation (für kopfüber montierte Kameras)
+                frame = live_frame
+                if self.config.get("rotate_180", False):
+                    frame = cv2.rotate(frame, cv2.ROTATE_180)
+                # Frame spiegeln (Selfie-Modus)
+                frame = cv2.flip(frame, 1)
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 live_img = Image.fromarray(rgb)
                 live_img = self._fit_image_to_box(live_img, box_w, box_h)
@@ -453,7 +457,10 @@ class SessionScreen(ctk.CTkFrame):
         self.show_flash = False
         
         if frame is not None:
-            # Spiegeln und konvertieren
+            # Optional: 180° Rotation (für kopfüber montierte Kameras)
+            if self.config.get("rotate_180", False):
+                frame = cv2.rotate(frame, cv2.ROTATE_180)
+            # Spiegeln (Selfie-Modus) und konvertieren
             frame = cv2.flip(frame, 1)
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             photo = Image.fromarray(rgb)

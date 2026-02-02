@@ -636,6 +636,9 @@ class AdminDialog(ctk.CTkToplevel):
             command=self._refresh_cameras
         ).pack(anchor="w", pady=(0, 20))
         
+        # Bild um 180° drehen (für kopfüber montierte Kameras)
+        self._add_checkbox(scroll, "Bild um 180° drehen", "rotate_180")
+        
         # Auflösung
         cam_settings = self.config_data.get("camera_settings", {})
         
@@ -758,7 +761,7 @@ class AdminDialog(ctk.CTkToplevel):
         
         # Checkboxen
         for key in ["allow_single_mode", "performance_mode", "start_fullscreen", "hide_finish_button",
-                    "template1_enabled", "template2_enabled"]:
+                    "template1_enabled", "template2_enabled", "rotate_180"]:
             var = getattr(self, f"check_{key}", None)
             if var:
                 self.config_data[key] = var.get()
