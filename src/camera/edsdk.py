@@ -281,6 +281,10 @@ def _setup_functions():
     # EdsCreateFileStream - File Stream für Download
     EDSDK_DLL.EdsCreateFileStream.restype = c_uint
     EDSDK_DLL.EdsCreateFileStream.argtypes = [c_char_p, c_uint, c_uint, POINTER(c_void_p)]
+    
+    # EdsGetEvent - Event-Polling (WICHTIG für Windows!)
+    EDSDK_DLL.EdsGetEvent.restype = c_uint
+    EDSDK_DLL.EdsGetEvent.argtypes = []
 
 
 # ============================================================================
@@ -543,6 +547,25 @@ kEdsFileCreateDisposition_TruncateExisting = 4
 
 # Globaler Storage für Event-Handler (muss am Leben bleiben!)
 _object_event_handlers = {}
+
+
+def get_event() -> bool:
+    """Pollt EDSDK Events (MUSS regelmäßig aufgerufen werden auf Windows!)
+    
+    Ohne diesen Aufruf werden Event-Callbacks nicht ausgeführt.
+    
+    Returns:
+        True wenn erfolgreich
+    """
+    if EDSDK_DLL is None:
+        return False
+    
+    try:
+        EDSDK_DLL.EdsGetEvent()
+        return True
+    except Exception as e:
+        logger.debug(f"EdsGetEvent Fehler: {e}")
+        return False
 
 
 def set_object_event_handler(camera_ref: c_void_p, callback, context=None) -> bool:

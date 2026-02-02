@@ -204,9 +204,11 @@ class CanonCameraManager(CameraManager):
     
     def _on_object_event(self, event_type: int, obj_ref: c_void_p) -> int:
         """Callback für EDSDK Object Events (wird aufgerufen wenn Bild bereit ist)"""
+        logger.debug(f"Object Event empfangen: {hex(event_type)}")
+        
         # kEdsObjectEvent_DirItemRequestTransfer = 0x00000108
         if event_type == 0x00000108:
-            logger.info("Bild-Download Event empfangen")
+            logger.info("Bild-Download Event empfangen (DirItemRequestTransfer)")
             
             try:
                 # Bild direkt in Speicher laden
@@ -272,10 +274,26 @@ class CanonCameraManager(CameraManager):
                 return None
             
             # Auf Bild warten (kommt via Event-Handler in die Queue)
+            # WICHTIG: Wir müssen EdsGetEvent() pollen damit Callbacks aufgerufen werden!
             logger.info(f"Warte auf Bild (max {timeout}s)...")
-            try:
-                image_data = self._photo_queue.get(timeout=timeout)
-            except Empty:
+            start_time = time.time()
+            image_data = None
+            
+            while time.time() - start_time < timeout:
+                # Events pollen (WICHTIG für Windows!)
+                edsdk.get_event()
+                
+                # Prüfen ob Bild in Queue ist
+                try:
+                    image_data = self._photo_queue.get_nowait()
+                    break
+                except Empty:
+                    pass
+                
+                # Kurz warten um CPU zu schonen
+                time.sleep(0.05)
+            
+            if image_data is None:
                 logger.error(f"Timeout beim Warten auf Bild ({timeout}s)")
                 if was_live_view:
                     self.start_live_view()
