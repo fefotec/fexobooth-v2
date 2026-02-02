@@ -333,12 +333,31 @@ class SessionScreen(ctk.CTkFrame):
         self.preview_label.image = ctk_img
     
     def _display_flash(self):
-        """Zeigt weißen Flash"""
+        """Zeigt Flash mit FOTO! Text"""
         container_w = self.preview_container.winfo_width() - 10
         container_h = self.preview_container.winfo_height() - 10
         
         if container_w > 100 and container_h > 100:
+            # Weißer Hintergrund
             flash = Image.new("RGB", (container_w, container_h), (255, 255, 255))
+            draw = ImageDraw.Draw(flash)
+            
+            # "📸 FOTO!" Text
+            text = "📸 FOTO!"
+            font_size = min(container_w, container_h) // 6
+            try:
+                font = ImageFont.truetype("C:/Windows/Fonts/segoeui.ttf", font_size)
+            except:
+                font = ImageFont.load_default()
+            
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+            x = (container_w - text_w) // 2
+            y = (container_h - text_h) // 2
+            
+            draw.text((x, y), text, fill=(224, 6, 117), font=font)
+            
             ctk_img = ctk.CTkImage(light_image=flash, size=(container_w, container_h))
             self.preview_label.configure(image=ctk_img)
             self.preview_label.image = ctk_img
@@ -393,18 +412,25 @@ class SessionScreen(ctk.CTkFrame):
         self.after(150, self._capture_photo)
     
     def _capture_photo(self):
-        """Erfasst das Foto"""
+        """Erfasst das Foto - Flash bleibt bis Foto da ist"""
+        # Flash bleibt AN bis wir das Foto haben!
+        
+        # Frame direkt holen (kein langsamer Resolution-Switch)
+        # Die Live-View Auflösung reicht für die meisten Anwendungen
+        frame = self.app.camera_manager.get_frame(use_cache=False)
+        
+        # Optional: High-Res nur wenn Performance-Mode aus
+        if not self.config.get("performance_mode", True):
+            cam_settings = self.config.get("camera_settings", {})
+            high_res = self.app.camera_manager.get_high_res_frame(
+                cam_settings.get("single_photo_width", 1920),
+                cam_settings.get("single_photo_height", 1080)
+            )
+            if high_res is not None:
+                frame = high_res
+        
+        # Flash AUS - jetzt haben wir das Foto
         self.show_flash = False
-        
-        # High-Res Frame holen
-        cam_settings = self.config.get("camera_settings", {})
-        frame = self.app.camera_manager.get_high_res_frame(
-            cam_settings.get("single_photo_width", 1920),
-            cam_settings.get("single_photo_height", 1080)
-        )
-        
-        if frame is None:
-            frame = self.app.camera_manager.get_frame(use_cache=False)
         
         if frame is not None:
             # Spiegeln und konvertieren
@@ -412,13 +438,15 @@ class SessionScreen(ctk.CTkFrame):
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             photo = Image.fromarray(rgb)
             
-            # Speichern
+            # Speichern (async wäre besser, aber erstmal so)
             self.app.photos_taken.append(photo)
-            self.app.local_storage.save_single(photo, suffix=str(self.current_photo_index + 1))
             
-            logger.info(f"Foto gespeichert: {photo.size}")
+            # Speichern im Hintergrund starten
+            self.after(10, lambda: self._save_photo_async(photo, self.current_photo_index + 1))
             
-            # Foto kurz anzeigen (Template wird automatisch aktualisiert)
+            logger.info(f"Foto aufgenommen: {photo.size}")
+            
+            # Foto kurz anzeigen
             display_time = self.config.get("single_display_time", 2)
             self.photo_display_until = time.time() + display_time
             self.current_photo_index += 1
@@ -426,6 +454,14 @@ class SessionScreen(ctk.CTkFrame):
         else:
             logger.error("Foto-Aufnahme fehlgeschlagen")
             self._next_photo_or_finish()
+    
+    def _save_photo_async(self, photo: Image.Image, index: int):
+        """Speichert Foto im Hintergrund"""
+        try:
+            self.app.local_storage.save_single(photo, suffix=str(index))
+            logger.debug(f"Foto {index} gespeichert")
+        except Exception as e:
+            logger.error(f"Fehler beim Speichern: {e}")
     
     def _next_photo_or_finish(self):
         """Nächstes Foto oder zum Filter-Screen"""

@@ -91,6 +91,7 @@ class WebcamManager(CameraManager):
         """Holt ein hochauflösendes Frame für Capture
         
         Schaltet temporär auf höhere Auflösung um.
+        ACHTUNG: Kann langsam sein! Für schnelle Captures lieber get_frame() nutzen.
         """
         if not self.cap:
             return None
@@ -99,12 +100,22 @@ class WebcamManager(CameraManager):
         old_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         old_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         
+        # Wenn schon auf High-Res, direkt Frame holen
+        if old_w >= width and old_h >= height:
+            ret, frame = self.cap.read()
+            if ret and frame is not None:
+                logger.info(f"High-Res Frame (bereits aktiv): {frame.shape[1]}x{frame.shape[0]}")
+                return frame
+            return None
+        
         # Auf hohe Auflösung umschalten
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         
-        # Kurz warten und Frame holen
-        time.sleep(0.1)
+        # Mehrere Frames lesen um Buffer zu leeren (schneller als sleep)
+        for _ in range(3):
+            self.cap.read()
+        
         ret, frame = self.cap.read()
         
         # Zurück auf alte Auflösung
