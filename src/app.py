@@ -9,7 +9,7 @@ from PIL import Image
 import os
 
 from src.config.config import load_config, save_config
-from src.camera.webcam import WebcamManager
+from src.camera import get_camera_manager, CANON_AVAILABLE
 from src.storage.usb import USBManager
 from src.storage.local import LocalStorage
 from src.filters import FilterManager
@@ -49,7 +49,9 @@ class PhotoboothApp:
         self.root.bind("<F11>", lambda e: self._toggle_fullscreen())
         
         # Manager initialisieren
-        self.camera_manager = WebcamManager()
+        camera_type = config.get("camera_type", "webcam")
+        self.camera_manager = get_camera_manager(camera_type)
+        logger.info(f"Kamera-Typ: {camera_type} (Canon verfügbar: {CANON_AVAILABLE})")
         self.usb_manager = USBManager()
         self.local_storage = LocalStorage()
         self.filter_manager = FilterManager()

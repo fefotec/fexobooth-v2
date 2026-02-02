@@ -1,0 +1,458 @@
+"""Canon EDSDK Python Wrapper (ctypes)
+
+Low-level wrapper für Canon EDSDK DLL.
+Basiert auf EDSDK v13.20.10
+"""
+
+import ctypes
+from ctypes import c_uint, c_int, c_void_p, c_char_p, POINTER, byref, Structure, c_ubyte
+import os
+import sys
+from typing import Optional, List, Tuple
+from pathlib import Path
+
+from src.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
+# ============================================================================
+# DLL Loading
+# ============================================================================
+
+EDSDK_DLL = None
+
+def _find_edsdk_dll() -> Optional[str]:
+    """Sucht die EDSDK.dll"""
+    # Mögliche Pfade
+    search_paths = [
+        # Im Repo
+        Path(__file__).parent.parent.parent / "EDSDK" / "EDSDKv132010W" / "EDSDKv132010W" / "Windows" / "EDSDK_64" / "Dll",
+        # Im fexobooth Ordner auf Windows
+        Path("C:/fexobooth/EDSDK_64/Dll"),
+        Path("C:/fexobooth/fexobooth-v2/EDSDK/EDSDKv132010W/EDSDKv132010W/Windows/EDSDK_64/Dll"),
+        # Neben der exe
+        Path("."),
+    ]
+    
+    for path in search_paths:
+        dll_path = path / "EDSDK.dll"
+        if dll_path.exists():
+            logger.info(f"EDSDK.dll gefunden: {dll_path}")
+            return str(dll_path.parent)
+    
+    return None
+
+
+def load_edsdk() -> bool:
+    """Lädt die EDSDK DLL"""
+    global EDSDK_DLL
+    
+    if EDSDK_DLL is not None:
+        return True
+    
+    if sys.platform != "win32":
+        logger.warning("EDSDK ist nur unter Windows verfügbar")
+        return False
+    
+    dll_dir = _find_edsdk_dll()
+    if not dll_dir:
+        logger.error("EDSDK.dll nicht gefunden!")
+        return False
+    
+    try:
+        # DLL-Verzeichnis zum Suchpfad hinzufügen
+        os.add_dll_directory(dll_dir)
+        
+        # DLL laden
+        dll_path = os.path.join(dll_dir, "EDSDK.dll")
+        EDSDK_DLL = ctypes.WinDLL(dll_path)
+        
+        logger.info("EDSDK.dll erfolgreich geladen")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Fehler beim Laden der EDSDK.dll: {e}")
+        return False
+
+
+# ============================================================================
+# Error Codes
+# ============================================================================
+
+EDS_ERR_OK = 0x00000000
+EDS_ERR_DEVICE_NOT_FOUND = 0x00000080
+EDS_ERR_SESSION_NOT_OPEN = 0x00002003
+EDS_ERR_TAKE_PICTURE_AF_NG = 0x00008D01
+EDS_ERR_TAKE_PICTURE_CARD_NG = 0x00008D07
+
+def check_error(err: int, context: str = "") -> bool:
+    """Prüft EDSDK Fehlercode"""
+    if err == EDS_ERR_OK:
+        return True
+    logger.error(f"EDSDK Fehler {hex(err)} bei {context}")
+    return False
+
+
+# ============================================================================
+# Constants
+# ============================================================================
+
+# Property IDs
+kEdsPropID_ProductName = 0x00000002
+kEdsPropID_BodyIDEx = 0x00000015
+kEdsPropID_BatteryLevel = 0x00000008
+kEdsPropID_Evf_OutputDevice = 0x00000500
+kEdsPropID_SaveTo = 0x0000000b
+
+# EVF Output Device
+kEdsEvfOutputDevice_TFT = 1
+kEdsEvfOutputDevice_PC = 2
+
+# Save To
+kEdsSaveTo_Camera = 1
+kEdsSaveTo_Host = 2
+kEdsSaveTo_Both = 3
+
+# Camera Commands
+kEdsCameraCommand_TakePicture = 0x00000000
+kEdsCameraCommand_ExtendShutDownTimer = 0x00000001
+kEdsCameraCommand_BulbStart = 0x00000002
+kEdsCameraCommand_BulbEnd = 0x00000003
+
+# Camera State Commands
+kEdsCameraStatusCommand_UILock = 0x00000000
+kEdsCameraStatusCommand_UIUnLock = 0x00000001
+kEdsCameraStatusCommand_EnterDirectTransfer = 0x00000002
+kEdsCameraStatusCommand_ExitDirectTransfer = 0x00000003
+
+# Object Events
+kEdsObjectEvent_DirItemRequestTransfer = 0x00000108
+kEdsObjectEvent_DirItemCreated = 0x00000100
+
+# State Events  
+kEdsStateEvent_Shutdown = 0x00000001
+kEdsStateEvent_WillSoonShutDown = 0x00000005
+
+
+# ============================================================================
+# Structures
+# ============================================================================
+
+class EdsDeviceInfo(Structure):
+    _fields_ = [
+        ("szPortName", ctypes.c_char * 256),
+        ("szDeviceDescription", ctypes.c_char * 256),
+        ("deviceSubType", c_uint),
+        ("reserved", c_uint),
+    ]
+
+
+class EdsCapacity(Structure):
+    _fields_ = [
+        ("numberOfFreeClusters", c_int),
+        ("bytesPerSector", c_int),
+        ("reset", c_int),
+    ]
+
+
+# ============================================================================
+# API Functions
+# ============================================================================
+
+def _setup_functions():
+    """Konfiguriert die EDSDK Funktionen"""
+    if EDSDK_DLL is None:
+        return
+    
+    # EdsInitializeSDK
+    EDSDK_DLL.EdsInitializeSDK.restype = c_uint
+    EDSDK_DLL.EdsInitializeSDK.argtypes = []
+    
+    # EdsTerminateSDK
+    EDSDK_DLL.EdsTerminateSDK.restype = c_uint
+    EDSDK_DLL.EdsTerminateSDK.argtypes = []
+    
+    # EdsGetCameraList
+    EDSDK_DLL.EdsGetCameraList.restype = c_uint
+    EDSDK_DLL.EdsGetCameraList.argtypes = [POINTER(c_void_p)]
+    
+    # EdsGetChildCount
+    EDSDK_DLL.EdsGetChildCount.restype = c_uint
+    EDSDK_DLL.EdsGetChildCount.argtypes = [c_void_p, POINTER(c_int)]
+    
+    # EdsGetChildAtIndex
+    EDSDK_DLL.EdsGetChildAtIndex.restype = c_uint
+    EDSDK_DLL.EdsGetChildAtIndex.argtypes = [c_void_p, c_int, POINTER(c_void_p)]
+    
+    # EdsGetDeviceInfo
+    EDSDK_DLL.EdsGetDeviceInfo.restype = c_uint
+    EDSDK_DLL.EdsGetDeviceInfo.argtypes = [c_void_p, POINTER(EdsDeviceInfo)]
+    
+    # EdsOpenSession
+    EDSDK_DLL.EdsOpenSession.restype = c_uint
+    EDSDK_DLL.EdsOpenSession.argtypes = [c_void_p]
+    
+    # EdsCloseSession
+    EDSDK_DLL.EdsCloseSession.restype = c_uint
+    EDSDK_DLL.EdsCloseSession.argtypes = [c_void_p]
+    
+    # EdsRelease
+    EDSDK_DLL.EdsRelease.restype = c_uint
+    EDSDK_DLL.EdsRelease.argtypes = [c_void_p]
+    
+    # EdsSendCommand
+    EDSDK_DLL.EdsSendCommand.restype = c_uint
+    EDSDK_DLL.EdsSendCommand.argtypes = [c_void_p, c_uint, c_int]
+    
+    # EdsSetPropertyData
+    EDSDK_DLL.EdsSetPropertyData.restype = c_uint
+    EDSDK_DLL.EdsSetPropertyData.argtypes = [c_void_p, c_uint, c_int, c_uint, c_void_p]
+    
+    # EdsGetPropertyData
+    EDSDK_DLL.EdsGetPropertyData.restype = c_uint
+    EDSDK_DLL.EdsGetPropertyData.argtypes = [c_void_p, c_uint, c_int, c_uint, c_void_p]
+    
+    # EdsSetCapacity
+    EDSDK_DLL.EdsSetCapacity.restype = c_uint
+    EDSDK_DLL.EdsSetCapacity.argtypes = [c_void_p, EdsCapacity]
+    
+    # EdsDownloadEvfImage (Live View)
+    EDSDK_DLL.EdsDownloadEvfImage.restype = c_uint
+    EDSDK_DLL.EdsDownloadEvfImage.argtypes = [c_void_p, c_void_p]
+    
+    # EdsCreateEvfImageRef
+    EDSDK_DLL.EdsCreateEvfImageRef.restype = c_uint
+    EDSDK_DLL.EdsCreateEvfImageRef.argtypes = [c_void_p, POINTER(c_void_p)]
+    
+    # EdsCreateMemoryStream
+    EDSDK_DLL.EdsCreateMemoryStream.restype = c_uint
+    EDSDK_DLL.EdsCreateMemoryStream.argtypes = [c_uint, POINTER(c_void_p)]
+    
+    # EdsGetPointer
+    EDSDK_DLL.EdsGetPointer.restype = c_uint
+    EDSDK_DLL.EdsGetPointer.argtypes = [c_void_p, POINTER(c_void_p)]
+    
+    # EdsGetLength
+    EDSDK_DLL.EdsGetLength.restype = c_uint
+    EDSDK_DLL.EdsGetLength.argtypes = [c_void_p, POINTER(c_uint)]
+
+
+# ============================================================================
+# High-Level API
+# ============================================================================
+
+_sdk_initialized = False
+
+def initialize() -> bool:
+    """Initialisiert das EDSDK"""
+    global _sdk_initialized
+    
+    if _sdk_initialized:
+        return True
+    
+    if not load_edsdk():
+        return False
+    
+    _setup_functions()
+    
+    err = EDSDK_DLL.EdsInitializeSDK()
+    if not check_error(err, "EdsInitializeSDK"):
+        return False
+    
+    _sdk_initialized = True
+    logger.info("EDSDK initialisiert")
+    return True
+
+
+def terminate():
+    """Beendet das EDSDK"""
+    global _sdk_initialized
+    
+    if not _sdk_initialized or EDSDK_DLL is None:
+        return
+    
+    EDSDK_DLL.EdsTerminateSDK()
+    _sdk_initialized = False
+    logger.info("EDSDK beendet")
+
+
+def get_camera_list() -> List[dict]:
+    """Gibt Liste der angeschlossenen Kameras zurück"""
+    if not initialize():
+        return []
+    
+    cameras = []
+    camera_list = c_void_p()
+    
+    err = EDSDK_DLL.EdsGetCameraList(byref(camera_list))
+    if not check_error(err, "EdsGetCameraList"):
+        return []
+    
+    count = c_int()
+    err = EDSDK_DLL.EdsGetChildCount(camera_list, byref(count))
+    if not check_error(err, "EdsGetChildCount"):
+        EDSDK_DLL.EdsRelease(camera_list)
+        return []
+    
+    logger.info(f"Gefundene Kameras: {count.value}")
+    
+    for i in range(count.value):
+        camera_ref = c_void_p()
+        err = EDSDK_DLL.EdsGetChildAtIndex(camera_list, i, byref(camera_ref))
+        
+        if check_error(err, f"EdsGetChildAtIndex({i})"):
+            # Device Info holen
+            device_info = EdsDeviceInfo()
+            err = EDSDK_DLL.EdsGetDeviceInfo(camera_ref, byref(device_info))
+            
+            if check_error(err, "EdsGetDeviceInfo"):
+                cameras.append({
+                    "index": i,
+                    "ref": camera_ref,
+                    "name": device_info.szDeviceDescription.decode('utf-8', errors='ignore'),
+                    "port": device_info.szPortName.decode('utf-8', errors='ignore'),
+                })
+            else:
+                EDSDK_DLL.EdsRelease(camera_ref)
+    
+    EDSDK_DLL.EdsRelease(camera_list)
+    return cameras
+
+
+def open_session(camera_ref: c_void_p) -> bool:
+    """Öffnet eine Session mit der Kamera"""
+    if EDSDK_DLL is None:
+        return False
+    
+    err = EDSDK_DLL.EdsOpenSession(camera_ref)
+    return check_error(err, "EdsOpenSession")
+
+
+def close_session(camera_ref: c_void_p):
+    """Schließt die Session"""
+    if EDSDK_DLL is None:
+        return
+    
+    EDSDK_DLL.EdsCloseSession(camera_ref)
+
+
+def take_picture(camera_ref: c_void_p) -> bool:
+    """Löst die Kamera aus"""
+    if EDSDK_DLL is None:
+        return False
+    
+    err = EDSDK_DLL.EdsSendCommand(camera_ref, kEdsCameraCommand_TakePicture, 0)
+    return check_error(err, "TakePicture")
+
+
+def set_save_to_host(camera_ref: c_void_p) -> bool:
+    """Konfiguriert Speicherung zum PC"""
+    if EDSDK_DLL is None:
+        return False
+    
+    # Save to Host
+    save_to = c_uint(kEdsSaveTo_Host)
+    err = EDSDK_DLL.EdsSetPropertyData(
+        camera_ref, 
+        kEdsPropID_SaveTo, 
+        0,
+        ctypes.sizeof(save_to),
+        byref(save_to)
+    )
+    
+    if not check_error(err, "SetSaveTo"):
+        return False
+    
+    # Capacity setzen (damit Kamera weiß dass PC genug Platz hat)
+    capacity = EdsCapacity()
+    capacity.numberOfFreeClusters = 0x7FFFFFFF
+    capacity.bytesPerSector = 0x1000
+    capacity.reset = 1
+    
+    err = EDSDK_DLL.EdsSetCapacity(camera_ref, capacity)
+    return check_error(err, "SetCapacity")
+
+
+def start_live_view(camera_ref: c_void_p) -> bool:
+    """Startet Live View"""
+    if EDSDK_DLL is None:
+        return False
+    
+    # Live View auf PC aktivieren
+    device = c_uint(kEdsEvfOutputDevice_PC)
+    err = EDSDK_DLL.EdsSetPropertyData(
+        camera_ref,
+        kEdsPropID_Evf_OutputDevice,
+        0,
+        ctypes.sizeof(device),
+        byref(device)
+    )
+    
+    return check_error(err, "StartLiveView")
+
+
+def stop_live_view(camera_ref: c_void_p):
+    """Stoppt Live View"""
+    if EDSDK_DLL is None:
+        return
+    
+    device = c_uint(0)
+    EDSDK_DLL.EdsSetPropertyData(
+        camera_ref,
+        kEdsPropID_Evf_OutputDevice,
+        0,
+        ctypes.sizeof(device),
+        byref(device)
+    )
+
+
+def get_live_view_image(camera_ref: c_void_p) -> Optional[bytes]:
+    """Holt ein Live View Frame als JPEG bytes"""
+    if EDSDK_DLL is None:
+        return None
+    
+    try:
+        # Memory Stream erstellen
+        stream = c_void_p()
+        err = EDSDK_DLL.EdsCreateMemoryStream(0, byref(stream))
+        if not check_error(err, "CreateMemoryStream"):
+            return None
+        
+        # EVF Image Ref erstellen
+        evf_image = c_void_p()
+        err = EDSDK_DLL.EdsCreateEvfImageRef(stream, byref(evf_image))
+        if not check_error(err, "CreateEvfImageRef"):
+            EDSDK_DLL.EdsRelease(stream)
+            return None
+        
+        # Live View Image holen
+        err = EDSDK_DLL.EdsDownloadEvfImage(camera_ref, evf_image)
+        if not check_error(err, "DownloadEvfImage"):
+            EDSDK_DLL.EdsRelease(evf_image)
+            EDSDK_DLL.EdsRelease(stream)
+            return None
+        
+        # Daten aus Stream holen
+        length = c_uint()
+        EDSDK_DLL.EdsGetLength(stream, byref(length))
+        
+        pointer = c_void_p()
+        EDSDK_DLL.EdsGetPointer(stream, byref(pointer))
+        
+        # Bytes kopieren
+        data = ctypes.string_at(pointer, length.value)
+        
+        # Aufräumen
+        EDSDK_DLL.EdsRelease(evf_image)
+        EDSDK_DLL.EdsRelease(stream)
+        
+        return data
+        
+    except Exception as e:
+        logger.error(f"Fehler beim Holen des Live View: {e}")
+        return None
+
+
+# Cleanup bei Programmende
+import atexit
+atexit.register(terminate)
