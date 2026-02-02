@@ -182,7 +182,8 @@ class FinalScreen(ctk.CTkFrame):
         logger.info("Redo - neue Session")
         self.is_active = False
         self.app.reset_session()
-        self.app.show_screen("start")
+        # Video abspielen wenn konfiguriert
+        self.app.play_video("video_end", "start")
     
     def _on_print(self):
         """Drucken gedrückt"""
@@ -304,7 +305,8 @@ class FinalScreen(ctk.CTkFrame):
         logger.info("Session beendet")
         self.is_active = False
         self.app.reset_session()
-        self.app.show_screen("start")
+        # Video abspielen wenn konfiguriert
+        self.app.play_video("video_end", "start")
     
     def on_show(self):
         """Screen wird angezeigt"""

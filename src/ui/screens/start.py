@@ -303,7 +303,8 @@ class StartScreen(ctk.CTkFrame):
                 self.app.template_boxes = boxes
                 self.app.overlay_image = overlay
         
-        self.app.show_screen("session")
+        # Video abspielen wenn konfiguriert, sonst direkt zur Session
+        self.app.play_video("video_start", "session")
     
     def on_show(self):
         """Screen wird angezeigt"""

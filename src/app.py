@@ -260,6 +260,7 @@ class PhotoboothApp:
         from src.ui.screens.session import SessionScreen
         from src.ui.screens.filter import FilterScreen
         from src.ui.screens.final import FinalScreen
+        from src.ui.screens.video import VideoScreen
         
         # Alten Screen ausblenden
         if self.current_screen:
@@ -273,10 +274,11 @@ class PhotoboothApp:
             "session": SessionScreen,
             "filter": FilterScreen,
             "final": FinalScreen,
+            "video": VideoScreen,
         }
         
         # Screen erstellen falls nicht vorhanden oder neu erstellen für frischen State
-        if screen_name in ["session", "filter", "final"]:
+        if screen_name in ["session", "filter", "final", "video"]:
             # Diese Screens immer neu erstellen
             if screen_name in self.screens:
                 self.screens[screen_name].destroy()
@@ -305,6 +307,24 @@ class PhotoboothApp:
             self.config = dialog.result
             save_config(self.config)
             logger.info("Admin-Einstellungen gespeichert")
+    
+    def play_video(self, video_key: str, next_screen: str):
+        """Spielt ein Video ab und wechselt dann zum nächsten Screen
+        
+        Args:
+            video_key: Config-Key für Video (z.B. "video_start", "video_end")
+            next_screen: Screen nach Video-Ende
+        """
+        video_path = self.config.get(video_key, "")
+        
+        if not video_path or not os.path.exists(video_path):
+            logger.debug(f"Video nicht konfiguriert/gefunden: {video_key}")
+            self.show_screen(next_screen)
+            return
+        
+        # Video-Screen anzeigen und abspielen
+        self.show_screen("video")
+        self.current_screen.play(video_path, next_screen)
     
     def load_template(self, template_key: str) -> bool:
         """Lädt ein Template"""

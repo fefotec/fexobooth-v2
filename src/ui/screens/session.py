@@ -333,7 +333,7 @@ class SessionScreen(ctk.CTkFrame):
         self.preview_label.image = ctk_img
     
     def _display_flash(self):
-        """Zeigt Flash mit FOTO! Text"""
+        """Zeigt Flash mit Kamera-Icon und FOTO! Text"""
         container_w = self.preview_container.winfo_width() - 10
         container_h = self.preview_container.winfo_height() - 10
         
@@ -342,8 +342,24 @@ class SessionScreen(ctk.CTkFrame):
             flash = Image.new("RGB", (container_w, container_h), (255, 255, 255))
             draw = ImageDraw.Draw(flash)
             
-            # "📸 FOTO!" Text
-            text = "📸 FOTO!"
+            # Kamera-Icon laden und einfügen
+            icon_size = min(container_w, container_h) // 4
+            try:
+                import os
+                icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
+                                         "assets", "icons", "camera.png")
+                if os.path.exists(icon_path):
+                    icon = Image.open(icon_path).convert("RGBA")
+                    icon = icon.resize((icon_size, icon_size), Image.Resampling.LANCZOS)
+                    # Icon zentriert oben
+                    icon_x = (container_w - icon_size) // 2
+                    icon_y = (container_h // 2) - icon_size - 10
+                    flash.paste(icon, (icon_x, icon_y), icon)
+            except Exception as e:
+                logger.debug(f"Icon nicht geladen: {e}")
+            
+            # "FOTO!" Text
+            text = "FOTO!"
             font_size = min(container_w, container_h) // 6
             try:
                 font = ImageFont.truetype("C:/Windows/Fonts/segoeui.ttf", font_size)
@@ -354,7 +370,7 @@ class SessionScreen(ctk.CTkFrame):
             text_w = bbox[2] - bbox[0]
             text_h = bbox[3] - bbox[1]
             x = (container_w - text_w) // 2
-            y = (container_h - text_h) // 2
+            y = (container_h // 2) + 10
             
             draw.text((x, y), text, fill=(224, 6, 117), font=font)
             
