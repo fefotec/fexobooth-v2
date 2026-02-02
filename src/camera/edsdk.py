@@ -155,6 +155,24 @@ class EdsCapacity(Structure):
     ]
 
 
+class EdsDirectoryItemInfo(Structure):
+    """Info über ein Verzeichnis-Item (Bild auf der Kamera)"""
+    _fields_ = [
+        ("size", c_uint),           # Dateigröße (32-bit, für große Dateien size64 nutzen)
+        ("isFolder", c_int),        # 1 wenn Ordner
+        ("groupID", c_uint),        # Gruppen-ID
+        ("option", c_uint),         # Option
+        ("szFileName", ctypes.c_char * 256),  # Dateiname
+        ("format", c_uint),         # Format (JPEG, RAW, etc.)
+        ("dateTime", c_uint),       # Datum/Zeit
+    ]
+
+
+# Callback-Typ für Object Events
+# typedef EdsError (EDSCALLBACK *EdsObjectEventHandler)(EdsObjectEvent inEvent, EdsBaseRef inRef, EdsVoid *inContext)
+EdsObjectEventHandler = ctypes.CFUNCTYPE(c_uint, c_uint, c_void_p, c_void_p)
+
+
 # ============================================================================
 # API Functions
 # ============================================================================
@@ -235,6 +253,26 @@ def _setup_functions():
     # EdsGetLength
     EDSDK_DLL.EdsGetLength.restype = c_uint
     EDSDK_DLL.EdsGetLength.argtypes = [c_void_p, POINTER(c_uint)]
+    
+    # EdsSetObjectEventHandler - für Bild-Download Events
+    EDSDK_DLL.EdsSetObjectEventHandler.restype = c_uint
+    EDSDK_DLL.EdsSetObjectEventHandler.argtypes = [c_void_p, c_uint, EdsObjectEventHandler, c_void_p]
+    
+    # EdsGetDirectoryItemInfo - Info über aufgenommenes Bild
+    EDSDK_DLL.EdsGetDirectoryItemInfo.restype = c_uint
+    EDSDK_DLL.EdsGetDirectoryItemInfo.argtypes = [c_void_p, POINTER(EdsDirectoryItemInfo)]
+    
+    # EdsDownload - Bild herunterladen
+    EDSDK_DLL.EdsDownload.restype = c_uint
+    EDSDK_DLL.EdsDownload.argtypes = [c_void_p, c_uint, c_void_p]
+    
+    # EdsDownloadComplete - Download abschließen
+    EDSDK_DLL.EdsDownloadComplete.restype = c_uint
+    EDSDK_DLL.EdsDownloadComplete.argtypes = [c_void_p]
+    
+    # EdsCreateFileStream - File Stream für Download
+    EDSDK_DLL.EdsCreateFileStream.restype = c_uint
+    EDSDK_DLL.EdsCreateFileStream.argtypes = [c_char_p, c_uint, c_uint, POINTER(c_void_p)]
 
 
 # ============================================================================
@@ -450,6 +488,181 @@ def get_live_view_image(camera_ref: c_void_p) -> Optional[bytes]:
         
     except Exception as e:
         logger.error(f"Fehler beim Holen des Live View: {e}")
+        return None
+
+
+# ============================================================================
+# Image Download API
+# ============================================================================
+
+# File Stream Access Modes
+kEdsAccess_Read = 0
+kEdsAccess_Write = 1
+kEdsAccess_ReadWrite = 2
+
+# File Create Disposition
+kEdsFileCreateDisposition_CreateNew = 0
+kEdsFileCreateDisposition_CreateAlways = 1
+kEdsFileCreateDisposition_OpenExisting = 2
+kEdsFileCreateDisposition_OpenAlways = 3
+kEdsFileCreateDisposition_TruncateExisting = 4
+
+# Globaler Storage für Event-Handler (muss am Leben bleiben!)
+_object_event_handlers = {}
+
+
+def set_object_event_handler(camera_ref: c_void_p, callback, context=None) -> bool:
+    """Registriert einen Callback für Object Events (z.B. Bild aufgenommen)
+    
+    Args:
+        camera_ref: Kamera-Referenz
+        callback: Python-Funktion mit Signatur (event_type, object_ref) -> int
+        context: Optionaler Kontext (wird nicht verwendet)
+    
+    Returns:
+        True wenn erfolgreich
+    """
+    if EDSDK_DLL is None:
+        return False
+    
+    # Wrapper für den Python-Callback
+    def c_callback(event, obj_ref, ctx):
+        try:
+            return callback(event, obj_ref)
+        except Exception as e:
+            logger.error(f"Fehler im Object Event Handler: {e}")
+            return EDS_ERR_OK
+    
+    # Callback-Objekt erstellen und speichern (sonst wird es garbage collected!)
+    c_callback_obj = EdsObjectEventHandler(c_callback)
+    _object_event_handlers[id(camera_ref)] = c_callback_obj
+    
+    # Alle Object Events abonnieren (0xFFFFFFFF)
+    err = EDSDK_DLL.EdsSetObjectEventHandler(
+        camera_ref,
+        0xFFFFFFFF,  # kEdsObjectEvent_All
+        c_callback_obj,
+        None
+    )
+    
+    return check_error(err, "SetObjectEventHandler")
+
+
+def download_image(dir_item: c_void_p, save_path: str) -> bool:
+    """Lädt ein Bild von der Kamera herunter
+    
+    Args:
+        dir_item: Referenz auf das Directory Item (aus dem Event)
+        save_path: Pfad wo das Bild gespeichert werden soll
+    
+    Returns:
+        True wenn erfolgreich
+    """
+    if EDSDK_DLL is None:
+        return False
+    
+    try:
+        # Datei-Info holen
+        dir_info = EdsDirectoryItemInfo()
+        err = EDSDK_DLL.EdsGetDirectoryItemInfo(dir_item, byref(dir_info))
+        if not check_error(err, "GetDirectoryItemInfo"):
+            return False
+        
+        file_size = dir_info.size
+        logger.info(f"Lade Bild herunter: {dir_info.szFileName.decode('utf-8', errors='ignore')} ({file_size} bytes)")
+        
+        # File Stream erstellen
+        stream = c_void_p()
+        err = EDSDK_DLL.EdsCreateFileStream(
+            save_path.encode('utf-8'),
+            kEdsFileCreateDisposition_CreateAlways,
+            kEdsAccess_ReadWrite,
+            byref(stream)
+        )
+        if not check_error(err, "CreateFileStream"):
+            return False
+        
+        # Bild herunterladen
+        err = EDSDK_DLL.EdsDownload(dir_item, file_size, stream)
+        if not check_error(err, "Download"):
+            EDSDK_DLL.EdsRelease(stream)
+            return False
+        
+        # Download abschließen
+        err = EDSDK_DLL.EdsDownloadComplete(dir_item)
+        if not check_error(err, "DownloadComplete"):
+            EDSDK_DLL.EdsRelease(stream)
+            return False
+        
+        # Aufräumen
+        EDSDK_DLL.EdsRelease(stream)
+        
+        logger.info(f"Bild erfolgreich heruntergeladen: {save_path}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Fehler beim Herunterladen des Bildes: {e}")
+        return False
+
+
+def download_image_to_memory(dir_item: c_void_p) -> Optional[bytes]:
+    """Lädt ein Bild von der Kamera in den Speicher
+    
+    Args:
+        dir_item: Referenz auf das Directory Item (aus dem Event)
+    
+    Returns:
+        Bild als bytes oder None bei Fehler
+    """
+    if EDSDK_DLL is None:
+        return None
+    
+    try:
+        # Datei-Info holen
+        dir_info = EdsDirectoryItemInfo()
+        err = EDSDK_DLL.EdsGetDirectoryItemInfo(dir_item, byref(dir_info))
+        if not check_error(err, "GetDirectoryItemInfo"):
+            return None
+        
+        file_size = dir_info.size
+        logger.info(f"Lade Bild in Speicher: {dir_info.szFileName.decode('utf-8', errors='ignore')} ({file_size} bytes)")
+        
+        # Memory Stream erstellen
+        stream = c_void_p()
+        err = EDSDK_DLL.EdsCreateMemoryStream(file_size, byref(stream))
+        if not check_error(err, "CreateMemoryStream"):
+            return None
+        
+        # Bild herunterladen
+        err = EDSDK_DLL.EdsDownload(dir_item, file_size, stream)
+        if not check_error(err, "Download"):
+            EDSDK_DLL.EdsRelease(stream)
+            return None
+        
+        # Download abschließen
+        err = EDSDK_DLL.EdsDownloadComplete(dir_item)
+        if not check_error(err, "DownloadComplete"):
+            EDSDK_DLL.EdsRelease(stream)
+            return None
+        
+        # Daten aus Stream holen
+        pointer = c_void_p()
+        EDSDK_DLL.EdsGetPointer(stream, byref(pointer))
+        
+        length = c_uint()
+        EDSDK_DLL.EdsGetLength(stream, byref(length))
+        
+        # Bytes kopieren
+        data = ctypes.string_at(pointer, length.value)
+        
+        # Aufräumen
+        EDSDK_DLL.EdsRelease(stream)
+        
+        logger.info(f"Bild erfolgreich in Speicher geladen: {len(data)} bytes")
+        return data
+        
+    except Exception as e:
+        logger.error(f"Fehler beim Herunterladen des Bildes in Speicher: {e}")
         return None
 
 

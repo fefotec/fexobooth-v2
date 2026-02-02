@@ -439,32 +439,55 @@ class SessionScreen(ctk.CTkFrame):
         """Erfasst das Foto - Flash bleibt bis Foto da ist"""
         # Flash bleibt AN bis wir das Foto haben!
         
-        # Frame direkt holen (kein langsamer Resolution-Switch)
-        # Die Live-View Auflösung reicht für die meisten Anwendungen
-        frame = self.app.camera_manager.get_frame(use_cache=False)
+        photo = None
         
-        # Optional: High-Res nur wenn Performance-Mode aus
-        if not self.config.get("performance_mode", True):
-            cam_settings = self.config.get("camera_settings", {})
-            high_res = self.app.camera_manager.get_high_res_frame(
-                cam_settings.get("single_photo_width", 1920),
-                cam_settings.get("single_photo_height", 1080)
-            )
-            if high_res is not None:
-                frame = high_res
+        # Canon DSLR: Nutze capture_photo() für volle Auflösung
+        if hasattr(self.app.camera_manager, 'capture_photo'):
+            logger.info("Nutze DSLR capture_photo() für volle Auflösung")
+            photo = self.app.camera_manager.capture_photo(timeout=10.0)
+            
+            if photo is not None:
+                # PIL Image zu numpy für Rotation/Flip
+                frame = np.array(photo)
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                
+                # Optional: 180° Rotation
+                if self.config.get("rotate_180", False):
+                    frame = cv2.rotate(frame, cv2.ROTATE_180)
+                # Spiegeln (Selfie-Modus)
+                frame = cv2.flip(frame, 1)
+                
+                # Zurück zu PIL Image
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                photo = Image.fromarray(rgb)
+        
+        # Webcam: Nutze get_frame() / get_high_res_frame()
+        if photo is None:
+            frame = self.app.camera_manager.get_frame(use_cache=False)
+            
+            # Optional: High-Res nur wenn Performance-Mode aus
+            if not self.config.get("performance_mode", True):
+                cam_settings = self.config.get("camera_settings", {})
+                high_res = self.app.camera_manager.get_high_res_frame(
+                    cam_settings.get("single_photo_width", 1920),
+                    cam_settings.get("single_photo_height", 1080)
+                )
+                if high_res is not None:
+                    frame = high_res
+            
+            if frame is not None:
+                # Optional: 180° Rotation (für kopfüber montierte Kameras)
+                if self.config.get("rotate_180", False):
+                    frame = cv2.rotate(frame, cv2.ROTATE_180)
+                # Spiegeln (Selfie-Modus) und konvertieren
+                frame = cv2.flip(frame, 1)
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                photo = Image.fromarray(rgb)
         
         # Flash AUS - jetzt haben wir das Foto
         self.show_flash = False
         
-        if frame is not None:
-            # Optional: 180° Rotation (für kopfüber montierte Kameras)
-            if self.config.get("rotate_180", False):
-                frame = cv2.rotate(frame, cv2.ROTATE_180)
-            # Spiegeln (Selfie-Modus) und konvertieren
-            frame = cv2.flip(frame, 1)
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            photo = Image.fromarray(rgb)
-            
+        if photo is not None:
             # Speichern (async wäre besser, aber erstmal so)
             self.app.photos_taken.append(photo)
             

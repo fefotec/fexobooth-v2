@@ -8,6 +8,8 @@ import cv2
 import numpy as np
 import time
 import io
+import threading
+from queue import Queue, Empty
 from typing import Optional, List, Dict, Any
 from PIL import Image
 from ctypes import c_void_p
@@ -46,8 +48,9 @@ class CanonCameraManager(CameraManager):
         self._last_frame_time: float = 0
         self._frame_cache_duration: float = 0.033  # ~30fps
         
-        # Captured Photo (wartet auf Download)
-        self._captured_image: Optional[Image.Image] = None
+        # Captured Photo Queue (für async Download)
+        self._photo_queue: Queue = Queue()
+        self._capture_in_progress: bool = False
     
     @staticmethod
     def is_available() -> bool:
@@ -104,6 +107,10 @@ class CanonCameraManager(CameraManager):
         # Speicherung auf PC konfigurieren
         if not edsdk.set_save_to_host(self._camera_ref):
             logger.warning("SaveTo konnte nicht gesetzt werden")
+        
+        # Event-Handler für Bild-Download registrieren
+        if not edsdk.set_object_event_handler(self._camera_ref, self._on_object_event):
+            logger.warning("Object Event Handler konnte nicht registriert werden")
         
         self._is_initialized = True
         logger.info(f"Canon Kamera initialisiert: {self._camera_info['name']}")
@@ -191,21 +198,127 @@ class CanonCameraManager(CameraManager):
         
         return self._last_frame
     
+    def _on_object_event(self, event_type: int, obj_ref: c_void_p) -> int:
+        """Callback für EDSDK Object Events (wird aufgerufen wenn Bild bereit ist)"""
+        # kEdsObjectEvent_DirItemRequestTransfer = 0x00000108
+        if event_type == 0x00000108:
+            logger.info("Bild-Download Event empfangen")
+            
+            try:
+                # Bild direkt in Speicher laden
+                image_data = edsdk.download_image_to_memory(obj_ref)
+                
+                if image_data:
+                    # In Queue für capture_photo() legen
+                    self._photo_queue.put(image_data)
+                    logger.info(f"Bild in Queue gelegt: {len(image_data)} bytes")
+                else:
+                    logger.error("Bild-Download fehlgeschlagen")
+                    self._photo_queue.put(None)  # Signal dass Download fehlschlug
+                    
+            except Exception as e:
+                logger.error(f"Fehler beim Verarbeiten des Bild-Events: {e}")
+                self._photo_queue.put(None)
+            
+            # Objekt freigeben
+            if edsdk.EDSDK_DLL:
+                edsdk.EDSDK_DLL.EdsRelease(obj_ref)
+        
+        return 0  # EDS_ERR_OK
+    
+    def capture_photo(self, timeout: float = 10.0) -> Optional[Image.Image]:
+        """Nimmt ein Foto in voller DSLR-Auflösung auf
+        
+        Args:
+            timeout: Maximale Wartezeit in Sekunden
+            
+        Returns:
+            PIL Image in voller Auflösung oder None bei Fehler
+        """
+        if not self._is_initialized or not self._camera_ref:
+            logger.error("Kamera nicht initialisiert")
+            return None
+        
+        if self._capture_in_progress:
+            logger.warning("Capture bereits in Progress")
+            return None
+        
+        self._capture_in_progress = True
+        
+        try:
+            # Queue leeren (falls alte Events drin sind)
+            while not self._photo_queue.empty():
+                try:
+                    self._photo_queue.get_nowait()
+                except Empty:
+                    break
+            
+            # Live View pausieren für bessere Bildqualität
+            was_live_view = self._live_view_active
+            if was_live_view:
+                self.stop_live_view()
+                time.sleep(0.3)
+            
+            # Kamera auslösen
+            logger.info("Löse Kamera aus...")
+            if not edsdk.take_picture(self._camera_ref):
+                logger.error("Kamera auslösen fehlgeschlagen")
+                if was_live_view:
+                    self.start_live_view()
+                return None
+            
+            # Auf Bild warten (kommt via Event-Handler in die Queue)
+            logger.info(f"Warte auf Bild (max {timeout}s)...")
+            try:
+                image_data = self._photo_queue.get(timeout=timeout)
+            except Empty:
+                logger.error(f"Timeout beim Warten auf Bild ({timeout}s)")
+                if was_live_view:
+                    self.start_live_view()
+                return None
+            
+            # Live View wieder starten
+            if was_live_view:
+                time.sleep(0.2)
+                self.start_live_view()
+            
+            if image_data is None:
+                logger.error("Bild-Download war fehlerhaft")
+                return None
+            
+            # JPEG bytes zu PIL Image konvertieren
+            try:
+                image = Image.open(io.BytesIO(image_data))
+                logger.info(f"Foto aufgenommen: {image.size[0]}x{image.size[1]}")
+                return image
+            except Exception as e:
+                logger.error(f"Fehler beim Dekodieren des Bildes: {e}")
+                return None
+                
+        finally:
+            self._capture_in_progress = False
+    
     def get_high_res_frame(self, width: int = 0, height: int = 0) -> Optional[np.ndarray]:
         """Holt ein hochauflösendes Foto (volle Kamera-Auflösung)
         
-        Bei Canon: Löst Kamera aus und lädt das Bild.
-        TODO: Vollständige Implementation mit Event Handling
+        Bei Canon: Nutzt capture_photo() für echte DSLR-Qualität.
+        Gibt numpy array zurück für Kompatibilität mit Webcam-Interface.
         """
-        if not self._is_initialized or not self._camera_ref:
+        image = self.capture_photo()
+        if image is None:
             return None
         
-        # Aktuell: Einfach ein Live View Frame nehmen
-        # TODO: Echtes Foto-Capture implementieren
-        return self.get_frame(use_cache=False)
+        # PIL Image zu numpy array (BGR für OpenCV)
+        rgb = np.array(image)
+        if len(rgb.shape) == 3 and rgb.shape[2] == 3:
+            bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+            return bgr
+        return rgb
     
     def take_picture(self) -> bool:
-        """Löst die Kamera aus
+        """Löst die Kamera aus (ohne auf Bild zu warten)
+        
+        Für manuelles Auslösen. Nutze capture_photo() wenn du das Bild brauchst.
         
         Returns:
             True wenn erfolgreich ausgelöst
@@ -213,20 +326,7 @@ class CanonCameraManager(CameraManager):
         if not self._is_initialized or not self._camera_ref:
             return False
         
-        # Live View pausieren für Aufnahme
-        was_live_view = self._live_view_active
-        if was_live_view:
-            self.stop_live_view()
-            time.sleep(0.2)
-        
-        success = edsdk.take_picture(self._camera_ref)
-        
-        # Live View wieder starten
-        if was_live_view:
-            time.sleep(0.5)  # Warten bis Bild verarbeitet
-            self.start_live_view()
-        
-        return success
+        return edsdk.take_picture(self._camera_ref)
     
     @property
     def is_initialized(self) -> bool:
