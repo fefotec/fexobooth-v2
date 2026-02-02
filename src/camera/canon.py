@@ -108,6 +108,10 @@ class CanonCameraManager(CameraManager):
         if not edsdk.set_save_to_host(self._camera_ref):
             logger.warning("SaveTo konnte nicht gesetzt werden")
         
+        # Bildqualität auf JPG Large Fine setzen (kein RAW!)
+        if not edsdk.set_image_quality_jpg(self._camera_ref):
+            logger.warning("Bildqualität konnte nicht auf JPG gesetzt werden - bitte manuell prüfen!")
+        
         # Event-Handler für Bild-Download registrieren
         if not edsdk.set_object_event_handler(self._camera_ref, self._on_object_event):
             logger.warning("Object Event Handler konnte nicht registriert werden")

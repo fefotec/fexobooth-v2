@@ -103,6 +103,14 @@ kEdsPropID_BodyIDEx = 0x00000015
 kEdsPropID_BatteryLevel = 0x00000008
 kEdsPropID_Evf_OutputDevice = 0x00000500
 kEdsPropID_SaveTo = 0x0000000b
+kEdsPropID_ImageQuality = 0x00000100
+
+# Image Quality Werte (für JPG)
+# Format: 0x00LLSSpp (LL=LargeSize, SS=SecondarySize, pp=Primary/Secondary type)
+EdsImageQuality_LJF = 0x0013000f   # Large Fine JPG (beste JPG Qualität)
+EdsImageQuality_LJN = 0x0012000f   # Large Normal JPG
+EdsImageQuality_MJF = 0x0113000f   # Medium Fine JPG
+EdsImageQuality_SJF = 0x0213000f   # Small Fine JPG
 
 # EVF Output Device
 kEdsEvfOutputDevice_TFT = 1
@@ -409,6 +417,32 @@ def set_save_to_host(camera_ref: c_void_p) -> bool:
     
     err = EDSDK_DLL.EdsSetCapacity(camera_ref, capacity)
     return check_error(err, "SetCapacity")
+
+
+def set_image_quality_jpg(camera_ref: c_void_p) -> bool:
+    """Setzt die Bildqualität auf JPG Large Fine (beste JPG Qualität, kein RAW)
+    
+    Returns:
+        True wenn erfolgreich
+    """
+    if EDSDK_DLL is None:
+        return False
+    
+    quality = c_uint(EdsImageQuality_LJF)
+    err = EDSDK_DLL.EdsSetPropertyData(
+        camera_ref,
+        kEdsPropID_ImageQuality,
+        0,
+        ctypes.sizeof(quality),
+        byref(quality)
+    )
+    
+    if check_error(err, "SetImageQuality"):
+        logger.info("Bildqualität auf JPG Large Fine gesetzt")
+        return True
+    else:
+        logger.warning("Bildqualität konnte nicht gesetzt werden (evtl. manuell prüfen)")
+        return False
 
 
 def start_live_view(camera_ref: c_void_p) -> bool:
