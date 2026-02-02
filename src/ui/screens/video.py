@@ -16,13 +16,27 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# VLC-Import mit Fallback
-try:
-    import vlc
-    VLC_AVAILABLE = True
-except ImportError:
-    VLC_AVAILABLE = False
-    logger.warning("python-vlc nicht verfügbar - Videos werden übersprungen")
+# VLC-Import mit Fallback (auch für fehlende DLLs)
+VLC_AVAILABLE = False
+vlc = None
+
+def _check_vlc():
+    """Prüft ob VLC verfügbar ist"""
+    global VLC_AVAILABLE, vlc
+    try:
+        import vlc as _vlc
+        vlc = _vlc
+        # Test ob VLC wirklich funktioniert (DLLs vorhanden)
+        _test_instance = vlc.Instance()
+        if _test_instance:
+            VLC_AVAILABLE = True
+            _test_instance.release()
+            logger.info("VLC verfügbar")
+    except Exception as e:
+        logger.info(f"VLC nicht verfügbar - Videos werden übersprungen: {e}")
+        VLC_AVAILABLE = False
+
+# Lazy init - wird beim ersten Video-Abspielen geprüft
 
 
 class VideoScreen(ctk.CTkFrame):
@@ -78,13 +92,18 @@ class VideoScreen(ctk.CTkFrame):
         self.next_screen = next_screen
         self.on_complete = on_complete
         
+        # VLC lazy init
+        global VLC_AVAILABLE
+        if vlc is None:
+            _check_vlc()
+        
         if not VLC_AVAILABLE:
-            logger.warning("VLC nicht verfügbar, überspringe Video")
+            logger.info("VLC nicht verfügbar, überspringe Video")
             self._on_video_end()
             return
         
         if not video_path or not os.path.exists(video_path):
-            logger.warning(f"Video nicht gefunden: {video_path}")
+            logger.info(f"Video nicht gefunden: {video_path}")
             self._on_video_end()
             return
         
