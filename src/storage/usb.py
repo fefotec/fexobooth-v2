@@ -26,11 +26,12 @@ class USBManager:
         """Sucht USB-Stick mit Label 'fexobox' (Case-insensitive)"""
         current_time = time.time()
         
-        # Cache nutzen
+        # Cache nutzen (ohne Logging!)
         if current_time - self._last_check_time < self._check_interval:
             return self._cached_drive
         
         self._last_check_time = current_time
+        previous_drive = self._cached_drive
         self._cached_drive = None
         
         # Nur Windows
@@ -69,7 +70,9 @@ class USBManager:
                         # Case-insensitive Vergleich
                         if label.lower() == "fexobox":
                             self._cached_drive = drive
-                            logger.info(f"USB-Stick gefunden: {drive} (Label: {label})")
+                            # Nur loggen wenn NEU gefunden (nicht bei jedem Check)
+                            if previous_drive != drive:
+                                logger.info(f"USB-Stick gefunden: {drive} (Label: {label})")
                             return drive
                 except Exception as e:
                     logger.debug(f"Volume-Info Fehler für {drive}: {e}")

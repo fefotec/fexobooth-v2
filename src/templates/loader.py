@@ -1,8 +1,8 @@
-"""Template-Loader für ZIP-Templates (DSLR-Booth Format)
+"""Template-Loader für ZIP- und PNG-Templates (DSLR-Booth Format)
 
-Unterstützt nur ZIP-Templates mit:
-- template.png (Overlay mit Transparenz)
-- template.xml (Foto-Positionen im DSLR-Booth Format)
+Unterstützt:
+- ZIP-Templates mit template.png + template.xml (DSLR-Booth Format)
+- Einzelne PNG-Dateien (Overlay mit transparenten Bereichen für Fotos)
 """
 
 import os
@@ -37,11 +37,15 @@ class TemplateLoader:
             logger.error(f"Template nicht gefunden: {path}")
             return None, []
         
-        if not path.lower().endswith(".zip"):
-            logger.error(f"Nur ZIP-Templates werden unterstützt: {path}")
-            return None, []
+        lower_path = path.lower()
         
-        return TemplateLoader._load_zip(path)
+        if lower_path.endswith(".zip"):
+            return TemplateLoader._load_zip(path)
+        elif lower_path.endswith(".png"):
+            return TemplateLoader._load_png(path)
+        else:
+            logger.error(f"Nicht unterstütztes Template-Format: {path}")
+            return None, []
     
     @staticmethod
     def _load_zip(zip_path: str) -> Tuple[Optional[Image.Image], List[Dict]]:
@@ -118,6 +122,93 @@ class TemplateLoader:
                 pass
     
     @staticmethod
+    def _load_png(png_path: str) -> Tuple[Optional[Image.Image], List[Dict]]:
+        """Lädt ein PNG-Template und erkennt transparente Bereiche als Foto-Slots"""
+        try:
+            overlay = Image.open(png_path).convert("RGBA")
+            logger.info(f"PNG-Overlay geladen: {overlay.size[0]}x{overlay.size[1]}")
+            
+            # Transparente Bereiche finden
+            boxes = TemplateLoader._detect_transparent_regions(overlay)
+            
+            if boxes:
+                logger.info(f"Erkannte Foto-Slots: {len(boxes)}")
+            else:
+                # Fallback: Eine Box über das gesamte Bild
+                w, h = overlay.size
+                boxes = [{
+                    "box": (0, 0, w - 1, h - 1),
+                    "angle": 0.0,
+                    "number": 1
+                }]
+                logger.info("Keine transparenten Bereiche gefunden, Fallback: 1 Box")
+            
+            return overlay, boxes
+            
+        except Exception as e:
+            logger.error(f"Fehler beim Laden des PNG-Templates: {e}")
+            return None, []
+    
+    @staticmethod
+    def _detect_transparent_regions(img: Image.Image, min_area: int = 10000) -> List[Dict]:
+        """Erkennt transparente Rechtecke im Bild als Foto-Slots
+        
+        Args:
+            img: RGBA-Bild
+            min_area: Mindestfläche für einen gültigen Slot
+            
+        Returns:
+            Liste von Photo-Boxen
+        """
+        import numpy as np
+        
+        # Alpha-Kanal extrahieren
+        alpha = np.array(img.split()[3])
+        
+        # Binärmaske: Transparent = 255, Opak = 0
+        mask = (alpha < 128).astype(np.uint8) * 255
+        
+        # Konturen finden (benötigt OpenCV)
+        try:
+            import cv2
+            
+            # Morphologisches Closing um Löcher zu füllen
+            kernel = np.ones((5, 5), np.uint8)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+            
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            boxes = []
+            for i, contour in enumerate(contours):
+                x, y, w, h = cv2.boundingRect(contour)
+                area = w * h
+                
+                # Mindestgröße und Querformat-Check
+                if area >= min_area and w > 50 and h > 50:
+                    boxes.append({
+                        "box": (x, y, x + w - 1, y + h - 1),
+                        "angle": 0.0,
+                        "number": len(boxes) + 1
+                    })
+            
+            # Nach Y-Position sortieren (oben nach unten), dann X (links nach rechts)
+            boxes.sort(key=lambda b: (b["box"][1] // 100, b["box"][0]))
+            
+            # Nummern neu vergeben
+            for i, box in enumerate(boxes):
+                box["number"] = i + 1
+            
+            # Max 8 Boxen
+            return boxes[:8]
+            
+        except ImportError:
+            logger.warning("OpenCV nicht verfügbar für Masken-Erkennung")
+            return []
+        except Exception as e:
+            logger.error(f"Fehler bei Masken-Erkennung: {e}")
+            return []
+    
+    @staticmethod
     def _parse_xml(xml_path: str, overlay_size: Optional[Tuple[int, int]] = None) -> List[Dict]:
         """Parst die XML-Datei mit Photo-Positionen (DSLR-Booth Format)
         
@@ -177,8 +268,10 @@ class TemplateLoader:
     @staticmethod
     def get_template_info(path: str) -> Optional[Dict]:
         """Gibt Informationen über ein Template zurück ohne es vollständig zu laden"""
-        if not os.path.exists(path) or not path.lower().endswith(".zip"):
+        if not os.path.exists(path):
             return None
+        
+        lower_path = path.lower()
         
         info = {
             "path": path,
@@ -188,6 +281,14 @@ class TemplateLoader:
             "has_xml": False,
             "photo_count": 0
         }
+        
+        if lower_path.endswith(".png"):
+            info["has_png"] = True
+            info["photo_count"] = 0  # Wird erst bei vollem Laden erkannt
+            return info
+        
+        if not lower_path.endswith(".zip"):
+            return None
         
         try:
             with zipfile.ZipFile(path, "r") as zf:

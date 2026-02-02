@@ -244,11 +244,18 @@ class StartScreen(ctk.CTkFrame):
             self.cards["single"] = card
     
     def _load_template_preview(self, template_path: str) -> Optional[Image.Image]:
-        """Lädt Template-Vorschau"""
+        """Lädt Template-Vorschau (ZIP oder PNG)"""
         if not template_path or not os.path.exists(template_path):
             return None
         
         try:
+            # Für PNG direkt laden (schneller für Preview)
+            if template_path.lower().endswith(".png"):
+                preview = Image.open(template_path).convert("RGBA")
+                logger.debug(f"PNG-Vorschau geladen: {preview.size}")
+                return preview
+            
+            # Für ZIP den Loader nutzen
             overlay, _ = TemplateLoader.load(template_path)
             return overlay
         except Exception as e:

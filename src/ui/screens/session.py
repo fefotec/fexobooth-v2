@@ -238,7 +238,9 @@ class SessionScreen(ctk.CTkFrame):
         # Foto-Anzeige-Phase?
         if self.photo_display_until > 0:
             if time.time() < self.photo_display_until:
-                # Foto noch anzeigen
+                # Foto anzeigen - Template MIT den bisherigen Fotos rendern!
+                preview = self._build_template_preview(None)  # Kein Live-Frame
+                self._display_preview(preview)
                 self.after(50, self._update_live_view)
                 return
             else:
