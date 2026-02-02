@@ -19,7 +19,7 @@ DEFAULT_CONFIG = {
     "template1_enabled": True,
     "template2_enabled": False,
     "template_paths": {
-        "template1": "",
+        "template1": "assets/templates/template-fexobooth.zip",
         "template2": ""
     },
     
