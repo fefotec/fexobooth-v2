@@ -227,6 +227,7 @@ class SessionScreen(ctk.CTkFrame):
     def _update_live_view(self):
         """Aktualisiert die Live-Vorschau"""
         if not self.is_live:
+            logger.debug("_update_live_view: is_live=False, stopping")
             return
         
         # Flash-Effekt?
@@ -239,14 +240,19 @@ class SessionScreen(ctk.CTkFrame):
         if self.photo_display_until > 0:
             if time.time() < self.photo_display_until:
                 # Foto anzeigen - Template MIT den bisherigen Fotos rendern!
+                logger.debug(f"Display-Phase: Zeige Foto {self.current_photo_index}")
                 preview = self._build_template_preview(None)  # Kein Live-Frame
                 self._display_preview(preview)
                 self.after(50, self._update_live_view)
                 return
             else:
                 # Foto-Anzeige vorbei -> weiter
+                logger.debug("Display-Phase vorbei, starte nächstes Foto/Finish")
                 self.photo_display_until = 0
                 self._next_photo_or_finish()
+                # WICHTIG: Update-Loop weiterlaufen lassen!
+                if self.is_live:
+                    self.after(50, self._update_live_view)
                 return
         
         # Normaler Live-View mit Template
@@ -339,14 +345,18 @@ class SessionScreen(ctk.CTkFrame):
     
     def _start_countdown(self):
         """Startet den Countdown"""
+        logger.info(f"=== Starte Countdown für Foto {self.current_photo_index + 1}/{self.total_photos} ===")
         self.is_countdown_active = True
         self.countdown_value = self.config.get("countdown_time", 5)
-        logger.info(f"Countdown gestartet: {self.countdown_value}")
+        logger.info(f"Countdown gestartet: {self.countdown_value}, is_live={self.is_live}")
         self._countdown_tick()
     
     def _countdown_tick(self):
         """Ein Countdown-Tick"""
+        logger.debug(f"Countdown-Tick: value={self.countdown_value}, active={self.is_countdown_active}, live={self.is_live}")
+        
         if not self.is_countdown_active or not self.is_live:
+            logger.warning(f"Countdown abgebrochen: active={self.is_countdown_active}, live={self.is_live}")
             return
         
         if self.countdown_value > 0:
@@ -358,9 +368,11 @@ class SessionScreen(ctk.CTkFrame):
                 pass
             
             self.countdown_value -= 1
+            logger.debug(f"Countdown: {self.countdown_value + 1} -> {self.countdown_value}")
             self.after(1000, self._countdown_tick)
         else:
             # Countdown fertig -> Foto aufnehmen
+            logger.info("Countdown bei 0 -> Foto aufnehmen")
             self.is_countdown_active = False
             self._take_photo()
     
@@ -417,14 +429,15 @@ class SessionScreen(ctk.CTkFrame):
     
     def _next_photo_or_finish(self):
         """Nächstes Foto oder zum Filter-Screen"""
-        logger.info(f"Next: {self.current_photo_index}/{self.total_photos}")
+        logger.info(f"=== Next: {self.current_photo_index}/{self.total_photos}, photos_taken={len(self.app.photos_taken)} ===")
         
         if self.current_photo_index < self.total_photos:
             # Nächstes Foto
+            logger.info(f"Starte Countdown für nächstes Foto in 300ms")
             self.after(300, self._start_countdown)
         else:
             # Alle Fotos gemacht!
-            logger.info("Alle Fotos aufgenommen -> Filter-Screen")
+            logger.info("=== Alle Fotos aufgenommen -> Filter-Screen ===")
             self.is_live = False
             self.app.show_screen("filter")
     
