@@ -89,7 +89,7 @@ class StatisticsManager:
         
         Args:
             booking_id: Buchungsnummer (aus settings.json)
-            save_path: Pfad zum Speichern (USB oder lokal)
+            save_path: IGNORIERT - Statistik wird IMMER lokal gespeichert!
         """
         # Vorheriges Event abschließen falls vorhanden
         if self._current_stats:
@@ -101,12 +101,8 @@ class StatisticsManager:
             start_time=datetime.now().isoformat()
         )
         
-        # Speicherpfad setzen
-        if save_path:
-            self._stats_file_path = save_path / STATS_FILENAME
-        else:
-            # Fallback: Lokaler Ordner
-            self._stats_file_path = Path(__file__).parent.parent.parent / STATS_FILENAME
+        # Speicherpfad: IMMER im Software-Ordner (nicht auf USB - geht Kunden nichts an!)
+        self._stats_file_path = Path(__file__).parent.parent.parent / STATS_FILENAME
         
         # Existierende Statistiken laden
         self._load_existing_stats()
@@ -251,24 +247,16 @@ class StatisticsManager:
         return result
     
     def _auto_load_stats(self):
-        """Versucht Statistiken aus bekannten Pfaden zu laden"""
-        # Mögliche Pfade durchsuchen
+        """Versucht Statistiken aus dem Software-Ordner zu laden"""
+        # Mögliche Pfade durchsuchen (NUR lokal, nicht USB!)
         search_paths = [
-            # Projekt-Root
+            # Projekt-Root (Hauptspeicherort)
             Path(__file__).parent.parent.parent / STATS_FILENAME,
             # Aktuelles Verzeichnis
             Path.cwd() / STATS_FILENAME,
             # Windows Standard-Installation
             Path("C:/fexobooth/fexobooth-v2") / STATS_FILENAME,
         ]
-        
-        # USB-Laufwerke auf Windows durchsuchen
-        if os.name == "nt":
-            import string
-            for letter in string.ascii_uppercase:
-                usb_path = Path(f"{letter}:/") / STATS_FILENAME
-                if usb_path.exists():
-                    search_paths.insert(0, usb_path)  # USB hat Priorität
         
         # Erste gefundene Datei laden
         for path in search_paths:

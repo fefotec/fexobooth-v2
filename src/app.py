@@ -97,11 +97,14 @@ class PhotoboothApp:
             # Gecachtes Template in Config eintragen
             if self.booking_manager.apply_cached_template_to_config(self.config):
                 logger.info("📦 Gecachtes Template wird verwendet")
+            
+            # BookingSettings auf Config anwenden (allow_single_mode, gallery_enabled, etc.)
+            self.booking_manager.apply_settings_to_config(self.config)
         
         # Status-Timer starten
         self._start_status_checks()
         
-        # Galerie-Server starten wenn aktiviert
+        # Galerie-Server starten wenn aktiviert (NACH Settings-Anwendung!)
         self._init_gallery_server()
         
         logger.info("PhotoboothApp initialisiert")
@@ -374,16 +377,17 @@ class PhotoboothApp:
                     # Neue Buchung gefunden -> laden
                     if self.booking_manager.load_from_usb(usb_root, force=True):
                         self._update_booking_display()
-                        # allow_single_mode aus settings übernehmen
-                        if self.booking_manager.settings:
-                            self.config["allow_single_mode"] = self.booking_manager.settings.print_singles
+                        
+                        # Alle BookingSettings auf Config anwenden
+                        self.booking_manager.apply_settings_to_config(self.config)
+                        
+                        # Statistik-Event starten (lokal, nicht auf USB!)
+                        self._start_statistics_event(usb_root)
+                        
+                        # Galerie starten wenn in settings.json aktiviert
+                        if self.config.get("gallery_enabled", False):
+                            self._start_gallery_if_needed()
                             
-                            # Statistik-Event starten mit Buchungsnummer
-                            self._start_statistics_event(usb_root)
-                            
-                            # Galerie starten wenn in settings.json aktiviert
-                            if self.booking_manager.settings.online_gallery:
-                                self._start_gallery_if_needed()
                 elif not self.booking_manager.is_loaded:
                     # Noch keine Buchung geladen -> aus USB oder Cache laden
                     self.booking_manager.load_from_usb(usb_root)

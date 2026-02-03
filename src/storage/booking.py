@@ -332,6 +332,39 @@ class BookingManager:
         logger.info(f"📦 Gecachtes Template in Config eingetragen: {template_path}")
         return True
     
+    def apply_settings_to_config(self, config: Dict[str, Any]) -> bool:
+        """Wendet BookingSettings auf die App-Config an
+        
+        Mapping:
+        - print_singles → allow_single_mode
+        - online_gallery → gallery_enabled
+        - dslr_camera → camera_type
+        
+        Args:
+            config: Die App-Config (wird in-place modifiziert)
+            
+        Returns:
+            True wenn Settings angewendet wurden
+        """
+        if not self._settings:
+            return False
+        
+        # Single-Foto Modus
+        config["allow_single_mode"] = self._settings.print_singles
+        logger.info(f"   📋 allow_single_mode = {self._settings.print_singles}")
+        
+        # Galerie (Fallback: False wenn nicht gesetzt)
+        config["gallery_enabled"] = self._settings.online_gallery
+        logger.info(f"   📋 gallery_enabled = {self._settings.online_gallery}")
+        
+        # Kamera-Typ
+        if self._settings.dslr_camera:
+            config["camera_type"] = "canon"
+            logger.info(f"   📋 camera_type = canon (DSLR)")
+        
+        logger.info(f"✅ BookingSettings auf Config angewendet")
+        return True
+    
     def clear(self, clear_cache: bool = False):
         """Setzt Buchungsdaten zurück
         
