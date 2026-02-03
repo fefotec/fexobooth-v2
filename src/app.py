@@ -89,14 +89,17 @@ class PhotoboothApp:
         # UI Setup
         self._setup_ui()
         
-        # Gecachte Buchung anzeigen (falls vorhanden)
+        # SOFORT beim Start: USB prüfen und Settings laden (nicht auf Timer warten!)
+        self._load_settings_from_usb_immediately()
+        
+        # Falls kein USB: Gecachte Buchung verwenden
         if self.booking_manager.is_loaded:
             self._update_booking_display()
-            logger.info(f"📂 Letzte Buchung wiederhergestellt: {self.booking_manager.booking_id}")
+            logger.info(f"📂 Buchung aktiv: {self.booking_manager.booking_id}")
             
-            # Gecachtes Template in Config eintragen
+            # Template in Config eintragen
             if self.booking_manager.apply_cached_template_to_config(self.config):
-                logger.info("📦 Gecachtes Template wird verwendet")
+                logger.info("📦 Template wird verwendet")
             
             # BookingSettings auf Config anwenden (allow_single_mode, gallery_enabled, etc.)
             self.booking_manager.apply_settings_to_config(self.config)
@@ -108,6 +111,38 @@ class PhotoboothApp:
         self._init_gallery_server()
         
         logger.info("PhotoboothApp initialisiert")
+
+    def _load_settings_from_usb_immediately(self):
+        """Lädt Settings vom USB-Stick SOFORT beim App-Start
+        
+        Wichtig: Nicht auf den Timer warten - Settings müssen sofort geladen werden,
+        damit allow_single_mode, gallery_enabled etc. von Anfang an korrekt sind.
+        """
+        from pathlib import Path
+        
+        try:
+            usb_drive = self.usb_manager.find_usb_stick()
+            if not usb_drive:
+                logger.debug("Kein USB beim Start gefunden - verwende Cache")
+                return
+            
+            usb_root = Path(usb_drive)
+            settings_path = usb_root / "settings.json"
+            
+            if not settings_path.exists():
+                logger.debug(f"Keine settings.json auf USB: {usb_root}")
+                return
+            
+            # Settings vom USB laden (überschreibt Cache!)
+            logger.info(f"📂 USB gefunden beim Start: {usb_drive}")
+            if self.booking_manager.load_from_usb(usb_root, force=True):
+                logger.info(f"✅ Settings vom USB geladen: {self.booking_manager.booking_id}")
+                
+                # Statistik-Event starten
+                self._start_statistics_event(usb_root)
+            
+        except Exception as e:
+            logger.warning(f"USB-Check beim Start fehlgeschlagen: {e}")
 
     def _init_default_printer(self):
         """Setzt den Standard-Drucker falls keiner konfiguriert ist"""

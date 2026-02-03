@@ -258,18 +258,23 @@ class StatisticsManager:
             Path("C:/fexobooth/fexobooth-v2") / STATS_FILENAME,
         ]
         
+        logger.info(f"📊 Suche Statistik-Datei in: {[str(p) for p in search_paths]}")
+        
         # Erste gefundene Datei laden
         for path in search_paths:
+            logger.debug(f"   Prüfe: {path} (exists={path.exists()})")
             if path.exists():
                 try:
                     with open(path, "r", encoding="utf-8") as f:
                         data = json.load(f)
                         self._all_stats = data.get("events", [])
                         self._stats_file_path = path
-                        logger.info(f"📊 Statistiken auto-geladen: {path} ({len(self._all_stats)} Events)")
+                        logger.info(f"📊 Statistiken geladen: {path} ({len(self._all_stats)} Events)")
                         return
                 except Exception as e:
                     logger.warning(f"Statistik-Datei {path} lesen fehlgeschlagen: {e}")
+        
+        logger.info(f"📊 Keine Statistik-Datei gefunden - starte neu")
     
     def get_current_summary(self) -> str:
         """Gibt Zusammenfassung des aktuellen Events zurück"""
