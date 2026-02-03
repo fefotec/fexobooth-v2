@@ -488,13 +488,13 @@ def set_save_to_host(camera_ref: c_void_p) -> bool:
 
 def set_image_quality_jpg(camera_ref: c_void_p) -> bool:
     """Setzt die Bildqualität auf JPG Large Fine (beste JPG Qualität, kein RAW)
-    
+
     Returns:
         True wenn erfolgreich
     """
     if EDSDK_DLL is None:
         return False
-    
+
     quality = c_uint(EdsImageQuality_LJF)
     err = EDSDK_DLL.EdsSetPropertyData(
         camera_ref,
@@ -503,13 +503,82 @@ def set_image_quality_jpg(camera_ref: c_void_p) -> bool:
         ctypes.sizeof(quality),
         byref(quality)
     )
-    
+
     if check_error(err, "SetImageQuality"):
         logger.info("Bildqualität auf JPG Large Fine gesetzt")
         return True
     else:
         logger.warning("Bildqualität konnte nicht gesetzt werden (evtl. manuell prüfen)")
         return False
+
+
+def get_image_quality(camera_ref: c_void_p) -> Optional[int]:
+    """Liest die aktuelle Bildqualität-Einstellung
+
+    Returns:
+        Bildqualität-Wert oder None bei Fehler
+    """
+    if EDSDK_DLL is None:
+        return None
+
+    quality = c_uint()
+    err = EDSDK_DLL.EdsGetPropertyData(
+        camera_ref,
+        kEdsPropID_ImageQuality,
+        0,
+        ctypes.sizeof(quality),
+        byref(quality)
+    )
+
+    if check_error(err, "GetImageQuality"):
+        return quality.value
+    return None
+
+
+def get_save_to(camera_ref: c_void_p) -> Optional[int]:
+    """Liest die aktuelle SaveTo-Einstellung
+
+    Returns:
+        1=Camera, 2=Host, 3=Both, oder None bei Fehler
+    """
+    if EDSDK_DLL is None:
+        return None
+
+    save_to = c_uint()
+    err = EDSDK_DLL.EdsGetPropertyData(
+        camera_ref,
+        kEdsPropID_SaveTo,
+        0,
+        ctypes.sizeof(save_to),
+        byref(save_to)
+    )
+
+    if check_error(err, "GetSaveTo"):
+        return save_to.value
+    return None
+
+
+def log_camera_settings(camera_ref: c_void_p):
+    """Loggt die aktuellen Kamera-Einstellungen (für Debugging)"""
+    logger.info("=== Aktuelle Kamera-Einstellungen ===")
+
+    # SaveTo
+    save_to = get_save_to(camera_ref)
+    save_to_names = {1: "Camera", 2: "Host", 3: "Both"}
+    logger.info(f"  SaveTo: {save_to_names.get(save_to, f'Unknown({save_to})')}")
+
+    # Image Quality
+    quality = get_image_quality(camera_ref)
+    quality_names = {
+        0x0013000f: "JPG Large Fine",
+        0x0012000f: "JPG Large Normal",
+        0x0113000f: "JPG Medium Fine",
+        0x0213000f: "JPG Small Fine",
+    }
+    quality_name = quality_names.get(quality, f"Unknown(0x{quality:08x})" if quality else "None")
+    logger.info(f"  ImageQuality: {quality_name}")
+
+    logger.info("=" * 40)
 
 
 def start_live_view(camera_ref: c_void_p) -> bool:
@@ -614,20 +683,24 @@ _object_event_handlers = {}
 
 def get_event() -> bool:
     """Pollt EDSDK Events (MUSS regelmäßig aufgerufen werden auf Windows!)
-    
+
     Ohne diesen Aufruf werden Event-Callbacks nicht ausgeführt.
-    
+    Dies ist KRITISCH für die Foto-Aufnahme!
+
     Returns:
         True wenn erfolgreich
     """
     if EDSDK_DLL is None:
         return False
-    
+
     try:
-        EDSDK_DLL.EdsGetEvent()
-        return True
+        err = EDSDK_DLL.EdsGetEvent()
+        # Nur loggen wenn Fehler (nicht bei jedem Poll)
+        if err != EDS_ERR_OK:
+            logger.debug(f"EdsGetEvent returned: {hex(err)}")
+        return err == EDS_ERR_OK
     except Exception as e:
-        logger.debug(f"EdsGetEvent Fehler: {e}")
+        logger.debug(f"EdsGetEvent Exception: {e}")
         return False
 
 

@@ -138,17 +138,14 @@ class CanonCameraManager(CameraManager):
         except Exception as e:
             logger.warning(f"set_image_quality_jpg Exception (ignoriert): {e}")
         
-        # Event-Handler für Bild-Download - DEAKTIVIERT wegen Freeze-Problemen
-        # TODO: Event-Handler später wieder aktivieren wenn stabil
-        # try:
-        #     if not edsdk.set_object_event_handler(self._camera_ref, self._on_object_event):
-        #         logger.warning("Object Event Handler konnte nicht registriert werden")
-        # except Exception as e:
-        #     logger.warning(f"set_object_event_handler Exception (ignoriert): {e}")
-        logger.debug("Event-Handler übersprungen (Stabilität)")
-        
+        # Event-Handler wird bei capture_photo() registriert (nicht hier)
+        logger.debug("Event-Handler wird bei capture_photo() registriert")
+
         self._is_initialized = True
         logger.info(f"✅ Canon Kamera initialisiert: {self._camera_info['name']}")
+
+        # Kamera-Einstellungen loggen (für Debugging)
+        edsdk.log_camera_settings(self._camera_ref)
         
         return True
     
@@ -271,76 +268,222 @@ class CanonCameraManager(CameraManager):
         return self._last_frame
     
     def _on_object_event(self, event_type: int, obj_ref: c_void_p) -> int:
-        """Callback für EDSDK Object Events (wird aufgerufen wenn Bild bereit ist)"""
-        logger.debug(f"Object Event empfangen: {hex(event_type)}")
-        
+        """Callback für EDSDK Object Events (wird aufgerufen wenn Bild bereit ist)
+
+        Event-Typen:
+        - 0x00000100: DirItemCreated (Datei wurde erstellt)
+        - 0x00000108: DirItemRequestTransfer (Bild bereit zum Download)
+        """
+        # Event-Namen für besseres Logging
+        event_names = {
+            0x00000100: "DirItemCreated",
+            0x00000101: "DirItemRemoved",
+            0x00000102: "DirItemInfoChanged",
+            0x00000103: "DirItemContentChanged",
+            0x00000104: "DirItemRequestTransferDT",
+            0x00000105: "DirItemRequestTransferFTP",
+            0x00000108: "DirItemRequestTransfer",
+            0x00000109: "FolderUpdateItems",
+            0x0000010A: "VolumeInfoChanged",
+            0x0000010B: "VolumeUpdateItems",
+        }
+        event_name = event_names.get(event_type, f"Unknown({hex(event_type)})")
+        logger.info(f">>> OBJECT EVENT: {event_name} (0x{event_type:08x})")
+
         # kEdsObjectEvent_DirItemRequestTransfer = 0x00000108
         if event_type == 0x00000108:
-            logger.info("Bild-Download Event empfangen (DirItemRequestTransfer)")
-            
+            logger.info(">>> Bild bereit zum Download!")
+
             try:
                 # Bild direkt in Speicher laden
+                logger.info(">>> Starte Bild-Download in Speicher...")
                 image_data = edsdk.download_image_to_memory(obj_ref)
-                
+
                 if image_data:
                     # In Queue für capture_photo() legen
                     self._photo_queue.put(image_data)
-                    logger.info(f"Bild in Queue gelegt: {len(image_data)} bytes")
+                    logger.info(f">>> ✓ Bild in Queue: {len(image_data)} bytes ({len(image_data)/1024/1024:.2f} MB)")
                 else:
-                    logger.error("Bild-Download fehlgeschlagen")
-                    self._photo_queue.put(None)  # Signal dass Download fehlschlug
-                    
+                    logger.error(">>> ✗ Download fehlgeschlagen (keine Daten)")
+                    self._photo_queue.put(None)
+
             except Exception as e:
-                logger.error(f"Fehler beim Verarbeiten des Bild-Events: {e}")
+                logger.error(f">>> ✗ Exception beim Download: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
                 self._photo_queue.put(None)
-            
+
             # Objekt freigeben
-            if edsdk.EDSDK_DLL:
-                edsdk.EDSDK_DLL.EdsRelease(obj_ref)
-        
+            try:
+                if edsdk.EDSDK_DLL:
+                    edsdk.EDSDK_DLL.EdsRelease(obj_ref)
+                    logger.debug(">>> Objekt freigegeben")
+            except Exception as e:
+                logger.warning(f">>> Warnung: EdsRelease fehlgeschlagen: {e}")
+
+        elif event_type == 0x00000100:  # DirItemCreated
+            logger.info(">>> Datei auf Kamera erstellt (warte auf TransferRequest)")
+
         return 0  # EDS_ERR_OK
     
     def capture_photo(self, timeout: float = 10.0) -> Optional[Image.Image]:
-        """Nimmt ein Foto auf
-        
-        HINWEIS: Event-Handler ist deaktiviert wegen Stabilität.
-        Aktuell wird nur ein Live-View Frame zurückgegeben.
-        TODO: Echte DSLR-Auflösung wenn Event-Handler stabil läuft.
-        
+        """Nimmt ein Foto in voller DSLR-Auflösung auf
+
+        Prozess:
+        1. Live-View stoppen (wichtig für manche Kameras!)
+        2. Event-Handler registrieren
+        3. Foto auslösen (TakePicture)
+        4. Events pollen und auf Bild warten
+        5. Bild herunterladen
+        6. Live-View wieder starten
+
         Args:
-            timeout: Maximale Wartezeit in Sekunden (aktuell nicht verwendet)
-            
+            timeout: Maximale Wartezeit in Sekunden
+
         Returns:
-            PIL Image oder None bei Fehler
+            PIL Image in voller Auflösung oder None bei Fehler
         """
-        logger.info("=== capture_photo aufgerufen ===")
-        
+        logger.info("=" * 60)
+        logger.info("=== CAPTURE_PHOTO START (Volle DSLR-Auflösung) ===")
+        logger.info("=" * 60)
+
         if not self._is_initialized or not self._camera_ref:
-            logger.error("Kamera nicht initialisiert")
+            logger.error("capture_photo: Kamera nicht initialisiert!")
             return None
-        
+
+        # Queue für das aufgenommene Bild leeren
+        while not self._photo_queue.empty():
+            try:
+                self._photo_queue.get_nowait()
+            except Empty:
+                break
+
+        self._capture_in_progress = True
+        live_view_was_active = self._live_view_active
+
         try:
-            # Einfache Variante: Live-View Frame nehmen
-            # Das ist nicht volle DSLR-Auflösung, aber stabil!
-            logger.info("Nehme Live-View Frame (Event-Handler deaktiviert)")
-            
-            frame = self.get_frame(use_cache=False)
-            if frame is None:
-                logger.error("Kein Frame von Live-View erhalten")
-                return None
-            
-            # OpenCV BGR zu PIL RGB
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            image = Image.fromarray(rgb)
-            
-            logger.info(f"✅ Foto aufgenommen (Live-View): {image.size[0]}x{image.size[1]}")
+            # SCHRITT 1: Live-View stoppen (wichtig für EOS 2000D!)
+            if self._live_view_active:
+                logger.info("[1/6] Stoppe Live-View für Foto-Aufnahme...")
+                self.stop_live_view()
+                time.sleep(0.3)  # Kamera Zeit geben
+                logger.info("[1/6] ✓ Live-View gestoppt")
+            else:
+                logger.info("[1/6] Live-View war nicht aktiv")
+
+            # SCHRITT 2: Event-Handler registrieren
+            logger.info("[2/6] Registriere Event-Handler...")
+            try:
+                if edsdk.set_object_event_handler(self._camera_ref, self._on_object_event):
+                    logger.info("[2/6] ✓ Event-Handler registriert")
+                else:
+                    logger.warning("[2/6] ⚠ Event-Handler konnte nicht registriert werden")
+            except Exception as e:
+                logger.warning(f"[2/6] ⚠ Event-Handler Exception: {e}")
+
+            # SCHRITT 3: Foto auslösen
+            logger.info("[3/6] Löse Kamera aus (TakePicture)...")
+            if not edsdk.take_picture(self._camera_ref):
+                logger.error("[3/6] ✗ TakePicture fehlgeschlagen!")
+                return self._fallback_to_live_view(live_view_was_active)
+
+            logger.info("[3/6] ✓ Kamera ausgelöst, warte auf Bild...")
+
+            # SCHRITT 4: Events pollen und auf Bild warten
+            logger.info(f"[4/6] Warte auf Bild (max {timeout}s)...")
+            start_time = time.time()
+            image_data = None
+            poll_count = 0
+
+            while time.time() - start_time < timeout:
+                # Events pollen (WICHTIG für Windows!)
+                edsdk.get_event()
+                poll_count += 1
+
+                # Prüfen ob Bild in Queue
+                try:
+                    image_data = self._photo_queue.get_nowait()
+                    elapsed = time.time() - start_time
+                    logger.info(f"[4/6] ✓ Bild empfangen nach {elapsed:.2f}s ({poll_count} Polls)")
+                    break
+                except Empty:
+                    pass
+
+                # Kurz warten vor nächstem Poll
+                time.sleep(0.05)
+
+                # Fortschritt loggen
+                if poll_count % 40 == 0:  # Alle 2 Sekunden
+                    elapsed = time.time() - start_time
+                    logger.debug(f"[4/6] ... warte ({elapsed:.1f}s, {poll_count} Polls)")
+
+            if image_data is None:
+                elapsed = time.time() - start_time
+                logger.error(f"[4/6] ✗ Timeout nach {elapsed:.2f}s ({poll_count} Polls)!")
+                logger.error("[4/6] Kein Bild-Event empfangen. Mögliche Ursachen:")
+                logger.error("      - Event-Handler nicht korrekt registriert")
+                logger.error("      - Kamera hat nicht ausgelöst (AF-Fehler?)")
+                logger.error("      - SaveTo nicht auf Host gesetzt")
+                return self._fallback_to_live_view(live_view_was_active)
+
+            # SCHRITT 5: Bild dekodieren
+            logger.info(f"[5/6] Dekodiere Bild ({len(image_data)} bytes)...")
+            try:
+                image = Image.open(io.BytesIO(image_data))
+                image.load()  # Bild sofort laden
+                logger.info(f"[5/6] ✓ Bild dekodiert: {image.size[0]}x{image.size[1]} ({image.mode})")
+            except Exception as e:
+                logger.error(f"[5/6] ✗ Fehler beim Dekodieren: {e}")
+                return self._fallback_to_live_view(live_view_was_active)
+
+            # SCHRITT 6: Live-View wieder starten
+            if live_view_was_active:
+                logger.info("[6/6] Starte Live-View wieder...")
+                time.sleep(0.2)
+                if self.start_live_view():
+                    logger.info("[6/6] ✓ Live-View wieder aktiv")
+                else:
+                    logger.warning("[6/6] ⚠ Live-View konnte nicht neu gestartet werden")
+            else:
+                logger.info("[6/6] Live-View bleibt aus")
+
+            self._capture_in_progress = False
+
+            logger.info("=" * 60)
+            logger.info(f"=== CAPTURE_PHOTO ERFOLGREICH: {image.size[0]}x{image.size[1]} ===")
+            logger.info("=" * 60)
             return image
-            
+
         except Exception as e:
-            logger.error(f"capture_photo Fehler: {e}")
+            logger.error(f"capture_photo Exception: {e}")
             import traceback
             logger.error(traceback.format_exc())
+            return self._fallback_to_live_view(live_view_was_active)
+
+        finally:
+            self._capture_in_progress = False
+
+    def _fallback_to_live_view(self, restart_live_view: bool) -> Optional[Image.Image]:
+        """Fallback: Gibt Live-View Frame zurück wenn DSLR-Aufnahme fehlschlägt"""
+        logger.warning("=== FALLBACK auf Live-View Frame ===")
+
+        # Live-View wieder starten wenn nötig
+        if restart_live_view and not self._live_view_active:
+            logger.info("Starte Live-View für Fallback...")
+            self.start_live_view()
+            time.sleep(0.5)
+
+        frame = self.get_frame(use_cache=False)
+        if frame is None:
+            logger.error("Fallback fehlgeschlagen: Kein Live-View Frame!")
             return None
+
+        # OpenCV BGR zu PIL RGB
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        image = Image.fromarray(rgb)
+
+        logger.warning(f"Fallback-Bild: {image.size[0]}x{image.size[1]} (Live-View Auflösung)")
+        return image
     
     def get_high_res_frame(self, width: int = 0, height: int = 0) -> Optional[np.ndarray]:
         """Holt ein hochauflösendes Foto (volle Kamera-Auflösung)
