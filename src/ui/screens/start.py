@@ -137,7 +137,8 @@ class StartScreen(ctk.CTkFrame):
         self.selected_option: Optional[str] = None
         self.cards = {}
         self.cards_frame: Optional[ctk.CTkFrame] = None  # Container für Template-Karten
-        
+        self._usb_template_path: Optional[str] = None  # USB-Template wenn gefunden
+
         self._setup_ui()
     
     def _setup_ui(self):
@@ -189,8 +190,34 @@ class StartScreen(ctk.CTkFrame):
     def _create_template_cards(self, parent):
         """Erstellt die Template-Karten"""
         has_custom_template = False
-        
+
         logger.info("=== Erstelle Template-Karten ===")
+
+        # USB-Template hat höchste Priorität - wird als EINZIGE Option angezeigt!
+        if hasattr(self, '_usb_template_path') and self._usb_template_path:
+            logger.info(f"USB-Template aktiv: {self._usb_template_path}")
+            preview = self._load_template_preview(self._usb_template_path)
+
+            # Dateiname aus Pfad extrahieren für Anzeige
+            usb_filename = os.path.basename(self._usb_template_path)
+
+            card = TemplateCard(
+                parent,
+                title=f"USB: {usb_filename[:12]}",  # Kürzen wenn nötig
+                preview_image=preview,
+                on_click=lambda c: self._select_card(c, "usb_template")
+            )
+            card.pack(side="left", padx=10)
+            self.cards["usb_template"] = card
+
+            # Automatisch vorselektieren!
+            self._select_card(card, "usb_template")
+            self.start_btn.configure(state="normal")
+
+            logger.info(f"✅ USB-Template Karte erstellt und vorselektiert: {self._usb_template_path}")
+            logger.info(f"Erstellte Karten: {list(self.cards.keys())}")
+            return  # Keine weiteren Karten erstellen!
+
         logger.debug(f"template1_enabled: {self.config.get('template1_enabled')}")
         logger.debug(f"template2_enabled: {self.config.get('template2_enabled')}")
         logger.debug(f"template_paths: {self.config.get('template_paths', {})}")
@@ -372,15 +399,15 @@ class StartScreen(ctk.CTkFrame):
         """Start gedrückt"""
         if not self.selected_option:
             return
-        
+
         logger.info(f"Start: {self.selected_option}")
-        
+
         if self.selected_option == "single":
             # Single-Foto: Eine große Box
             self.app.template_path = None
             self.app.template_boxes = [{"box": (0, 0, 1799, 1199), "angle": 0}]
             self.app.overlay_image = None
-            
+
         elif self.selected_option == "default_2x2":
             # Standard 2x2 Template
             overlay, boxes = create_default_template()
@@ -388,50 +415,34 @@ class StartScreen(ctk.CTkFrame):
             self.app.template_boxes = boxes
             self.app.overlay_image = overlay
             logger.info("Standard 2x2 Template geladen")
-            
+
+        elif self.selected_option == "usb_template":
+            # USB-Template direkt laden
+            if hasattr(self, '_usb_template_path') and self._usb_template_path:
+                logger.info(f"Lade USB-Template: {self._usb_template_path}")
+                overlay, boxes = TemplateLoader.load(self._usb_template_path)
+                if overlay and boxes:
+                    self.app.template_path = self._usb_template_path
+                    self.app.template_boxes = boxes
+                    self.app.overlay_image = overlay
+                    logger.info(f"USB-Template geladen: {len(boxes)} Foto-Slots")
+                else:
+                    logger.error("USB-Template konnte nicht geladen werden!")
+                    return
+            else:
+                logger.error("USB-Template Pfad nicht gesetzt!")
+                return
+
         else:
-            # Custom Template laden
+            # Custom Template laden (template1, template2)
             if not self.app.load_template(self.selected_option):
                 # Fallback auf Standard-Template
                 overlay, boxes = create_default_template()
                 self.app.template_boxes = boxes
                 self.app.overlay_image = overlay
-        
+
         # Video abspielen wenn konfiguriert, sonst direkt zur Session
         self.app.play_video("video_start", "session")
-
-    def _load_usb_template_and_start(self, usb_template_path: str):
-        """Lädt ein USB-Template und startet die Session direkt.
-
-        Wird aufgerufen wenn ein Template auf einem USB-Stick gefunden wurde.
-        Überspringt die normale Template-Auswahl.
-        """
-        logger.info(f"=== Lade USB-Template: {usb_template_path} ===")
-
-        try:
-            # Template mit TemplateLoader laden
-            overlay, boxes = TemplateLoader.load(usb_template_path)
-
-            if overlay and boxes:
-                # App-Variablen setzen
-                self.app.template_path = usb_template_path
-                self.app.template_boxes = boxes
-                self.app.overlay_image = overlay
-                logger.info(f"USB-Template geladen: {len(boxes)} Foto-Slots, Overlay {overlay.size}")
-
-                # Session direkt starten (kein Video, sofort los)
-                self.app.show_screen("session")
-            else:
-                logger.warning(f"USB-Template ungültig: {usb_template_path}")
-                # Fallback: Normale Template-Auswahl zeigen
-                self._refresh_template_cards()
-                self.start_btn.configure(state="disabled")
-
-        except Exception as e:
-            logger.error(f"Fehler beim Laden des USB-Templates: {e}")
-            # Fallback: Normale Template-Auswahl zeigen
-            self._refresh_template_cards()
-            self.start_btn.configure(state="disabled")
 
     def on_show(self):
         """Screen wird angezeigt - Template-Karten neu laden falls Config geändert"""
@@ -440,18 +451,18 @@ class StartScreen(ctk.CTkFrame):
         # Config könnte sich geändert haben (Admin-Dialog)
         self.config = self.app.config
 
-        # USB-Template prüfen - hat Priorität über alle anderen!
-        usb_template = find_usb_template()
-        if usb_template:
-            logger.info(f"=== USB-Template gefunden: {usb_template} ===")
-            self._load_usb_template_and_start(usb_template)
-            return  # Nicht weitermachen, Session startet direkt
+        # USB-Template prüfen und speichern (wird in _create_template_cards verwendet)
+        self._usb_template_path = find_usb_template()
+        if self._usb_template_path:
+            logger.info(f"=== USB-Template gefunden: {self._usb_template_path} ===")
 
         # Alte Karten entfernen und neu erstellen (setzt auch selected_card = None)
         self._refresh_template_cards()
 
         # Start-Button deaktivieren bis eine Auswahl getroffen wird
-        self.start_btn.configure(state="disabled")
+        # (wird in _create_template_cards aktiviert wenn USB-Template vorselektiert)
+        if not self.selected_option:
+            self.start_btn.configure(state="disabled")
     
     def _refresh_template_cards(self):
         """Erstellt Template-Karten neu (nach Config-Änderung)"""
