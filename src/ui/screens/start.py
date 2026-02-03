@@ -135,6 +135,7 @@ class StartScreen(ctk.CTkFrame):
         self.selected_card: Optional[TemplateCard] = None
         self.selected_option: Optional[str] = None
         self.cards = {}
+        self.cards_frame: Optional[ctk.CTkFrame] = None  # Container für Template-Karten
         
         self._setup_ui()
     
@@ -162,12 +163,12 @@ class StartScreen(ctk.CTkFrame):
         )
         subtitle.pack(pady=(0, 20))
         
-        # Karten-Container
-        cards_frame = ctk.CTkFrame(center_frame, fg_color="transparent")
-        cards_frame.pack(pady=10)
+        # Karten-Container (als Instanzvariable für späteren Refresh)
+        self.cards_frame = ctk.CTkFrame(center_frame, fg_color="transparent")
+        self.cards_frame.pack(pady=10)
         
         # Template-Karten erstellen
-        self._create_template_cards(cards_frame)
+        self._create_template_cards(self.cards_frame)
         
         # Start-Button (kompakter)
         self.start_btn = ctk.CTkButton(
@@ -253,10 +254,25 @@ class StartScreen(ctk.CTkFrame):
             self.cards["default_2x2"] = card
         
         # Single-Foto
-        if self.config.get("allow_single_mode", True):
+        allow_single = self.config.get("allow_single_mode", True)
+        logger.info(f"Single-Foto Modus: {'aktiviert' if allow_single else 'DEAKTIVIERT (im Admin aktivieren!)'}")
+        
+        if allow_single:
             card = TemplateCard(
                 parent,
                 title="Single-Foto",
+                is_single=True,
+                on_click=lambda c: self._select_card(c, "single")
+            )
+            card.pack(side="left", padx=10)
+            self.cards["single"] = card
+        
+        # Fallback: Wenn keine Karten erstellt wurden, zeige Warnung und Standard
+        if not self.cards:
+            logger.error("KEINE KARTEN ERSTELLT! Zeige Notfall-Single-Karte")
+            card = TemplateCard(
+                parent,
+                title="Einzelfoto",
                 is_single=True,
                 on_click=lambda c: self._select_card(c, "single")
             )
@@ -391,23 +407,16 @@ class StartScreen(ctk.CTkFrame):
     
     def _refresh_template_cards(self):
         """Erstellt Template-Karten neu (nach Config-Änderung)"""
+        logger.info("=== Refresh Template-Karten ===")
+        
         # Alle alten Karten entfernen
-        for card in self.cards.values():
+        for key, card in self.cards.items():
+            logger.debug(f"Entferne alte Karte: {key}")
             card.destroy()
         self.cards = {}
         
-        # Cards-Container finden und neu befüllen
-        # Der Container ist das Frame wo die Karten drin sind
-        for widget in self.winfo_children():
-            if isinstance(widget, ctk.CTkFrame):
-                for child in widget.winfo_children():
-                    if isinstance(child, ctk.CTkFrame) and child.winfo_class() == 'CTkFrame':
-                        # Das könnte der cards_frame sein
-                        for card_widget in child.winfo_children():
-                            if isinstance(card_widget, TemplateCard):
-                                card_widget.destroy()
-                        # Neue Karten erstellen
-                        self._create_template_cards(child)
-                        return
-        
-        logger.warning("Cards-Container nicht gefunden für Refresh")
+        # Neue Karten im gespeicherten Container erstellen
+        if self.cards_frame is not None:
+            self._create_template_cards(self.cards_frame)
+        else:
+            logger.error("cards_frame ist None - kann keine Karten erstellen!")
