@@ -988,18 +988,6 @@ class AdminDialog(ctk.CTkToplevel):
             hover_color=COLORS["bg_card"],
             command=self._refresh_statistics
         ).pack(side="left")
-        
-        # Reset-Button
-        ctk.CTkButton(
-            scroll,
-            text="🗑️ Statistik zurücksetzen",
-            font=FONTS["small"],
-            width=180,
-            height=35,
-            fg_color=COLORS["error"],
-            hover_color="#ff5252",
-            command=self._reset_statistics
-        ).pack(pady=(10, 0))
     
     def _export_stats_csv(self):
         """Exportiert Statistiken als CSV"""
