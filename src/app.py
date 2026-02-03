@@ -120,6 +120,9 @@ class PhotoboothApp:
         # Galerie-Server starten wenn aktiviert (NACH Settings-Anwendung!)
         self._init_gallery_server()
         
+        # Developer Mode: Performance Overlay
+        self._init_performance_overlay()
+        
         logger.info("PhotoboothApp initialisiert")
 
     def _load_settings_from_usb_immediately(self):
@@ -200,6 +203,20 @@ class PhotoboothApp:
             logger.warning(f"Galerie-Modul nicht verfügbar: {e}")
         except Exception as e:
             logger.error(f"Galerie-Server Start fehlgeschlagen: {e}")
+
+    def _init_performance_overlay(self):
+        """Initialisiert Performance Overlay im Developer Mode"""
+        if not self.config.get("developer_mode", False):
+            self.performance_overlay = None
+            return
+        
+        try:
+            from src.ui.performance_overlay import PerformanceOverlay
+            self.performance_overlay = PerformanceOverlay(self)
+            logger.info("🛠️ Developer Mode: Performance Overlay aktiviert")
+        except Exception as e:
+            logger.warning(f"Performance Overlay konnte nicht geladen werden: {e}")
+            self.performance_overlay = None
 
     def _start_statistics_event(self, usb_root: Path = None):
         """Startet Statistik-Erfassung für aktuelle Buchung"""

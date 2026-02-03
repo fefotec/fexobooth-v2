@@ -114,6 +114,7 @@ class StatisticsManager:
         if self._current_stats:
             self._current_stats.photos_taken += count
             self._current_stats.end_time = datetime.now().isoformat()
+            self._save_stats()  # Sofort speichern für Live-Update im Admin
             logger.debug(f"📷 Foto erfasst (Total: {self._current_stats.photos_taken})")
     
     def record_session(self):
@@ -121,6 +122,7 @@ class StatisticsManager:
         if self._current_stats:
             self._current_stats.sessions_count += 1
             self._current_stats.end_time = datetime.now().isoformat()
+            self._save_stats()  # Sofort speichern für Live-Update im Admin
             logger.debug(f"📸 Session erfasst (Total: {self._current_stats.sessions_count})")
     
     def record_print_success(self, count: int = 1):

@@ -32,15 +32,25 @@ from src.app import PhotoboothApp
 
 def main():
     """Haupteinstiegspunkt"""
-    # Logging initialisieren
-    logger = setup_logging()
+    # Developer Mode via Kommandozeile oder Config
+    dev_mode_cli = "--dev" in sys.argv or "-d" in sys.argv
+    
+    # Config laden (früh, damit wir developer_mode prüfen können)
+    config = load_config()
+    dev_mode_config = config.get("developer_mode", False)
+    
+    # Developer Mode aktivieren wenn CLI oder Config es will
+    developer_mode = dev_mode_cli or dev_mode_config
+    
+    # Logging initialisieren MIT Developer Mode Info
+    logger = setup_logging(developer_mode=developer_mode)
     logger.info("=" * 50)
     logger.info("FEXOBOOTH STARTET")
+    if developer_mode:
+        logger.info("🛠️  DEVELOPER MODE AKTIV")
     logger.info("=" * 50)
     
     try:
-        # Config laden
-        config = load_config()
         logger.info(f"Config geladen")
         logger.info(f"  - Kamera: {config.get('camera_index', 0)}")
         logger.info(f"  - Countdown: {config.get('countdown_time', 5)}s")

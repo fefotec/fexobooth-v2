@@ -360,12 +360,16 @@ class SessionScreen(ctk.CTkFrame):
             self.after(33, self._update_live_view)
     
     def _add_countdown_overlay(self, img: Image.Image) -> Image.Image:
-        """Fügt ZENTRIERTEN Countdown zum Bild hinzu"""
+        """Fügt ZENTRIERTEN Countdown zum Bild hinzu
+        
+        Der Countdown wird EXAKT in der Bildmitte positioniert mit großer,
+        gut lesbarer Schrift und starkem Schatten.
+        """
         img = img.copy()
         draw = ImageDraw.Draw(img)
         
-        # Große Schrift für Countdown
-        font_size = min(img.width, img.height) // 3
+        # GROSSE Schrift für Countdown (1/2 der kleineren Dimension statt 1/3)
+        font_size = min(img.width, img.height) // 2
         try:
             font = ImageFont.truetype("C:/Windows/Fonts/segoeui.ttf", font_size)
         except:
@@ -376,20 +380,21 @@ class SessionScreen(ctk.CTkFrame):
         
         text = str(self.countdown_value)
         
-        # Text-Größe ermitteln
-        bbox = draw.textbbox((0, 0), text, font=font)
+        # Text-Größe ermitteln mit anchor="mm" (middle-middle) für exakte Zentrierung
+        bbox = draw.textbbox((0, 0), text, font=font, anchor="lt")
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
         
-        # ZENTRIERT positionieren
-        x = (img.width - text_w) // 2
-        y = (img.height - text_h) // 2
+        # EXAKT zentriert positionieren
+        x = (img.width - text_w) // 2 - bbox[0]  # bbox[0] korrigiert den linken Offset
+        y = (img.height - text_h) // 2 - bbox[1]  # bbox[1] korrigiert den oberen Offset
         
-        # Schatten für bessere Lesbarkeit
-        shadow_offset = 6
-        draw.text((x + shadow_offset, y + shadow_offset), text, fill=(0, 0, 0, 200), font=font)
+        # Mehrfacher Schatten für bessere Lesbarkeit (Outline-Effekt)
+        shadow_color = (0, 0, 0, 220)
+        for dx, dy in [(-4, -4), (4, -4), (-4, 4), (4, 4), (0, 6), (6, 0), (-6, 0), (0, -6)]:
+            draw.text((x + dx, y + dy), text, fill=shadow_color, font=font)
         
-        # Countdown-Zahl in Pink
+        # Countdown-Zahl in Pink (fexon Farbe)
         draw.text((x, y), text, fill=(224, 6, 117, 255), font=font)
         
         return img
