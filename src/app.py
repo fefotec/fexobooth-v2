@@ -780,6 +780,10 @@ class PhotoboothApp:
             save_config(self.config)
             logger.info("Admin-Einstellungen gespeichert")
             
+            # Galerie starten wenn gerade aktiviert wurde
+            if self.config.get("gallery_enabled", False):
+                self._start_gallery_if_needed()
+            
             # StartScreen aktualisieren wenn aktiv
             if self.current_screen_name == "start" and self.current_screen:
                 logger.info("Aktualisiere StartScreen nach Admin-Änderung...")
