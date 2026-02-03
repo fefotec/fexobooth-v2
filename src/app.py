@@ -243,6 +243,8 @@ class PhotoboothApp:
         synced = self.usb_manager.check_and_sync()
         if synced > 0:
             logger.info(f"Auto-Sync: {synced} Dateien auf USB kopiert")
+            # Kurze Sync-Benachrichtigung anzeigen
+            self._show_sync_notification(synced)
 
         text, status = self.usb_manager.get_status_text()
 
@@ -278,6 +280,27 @@ class PhotoboothApp:
 
         # Schnellerer Check für Blink-Effekt
         self.root.after(1000, self._check_usb_status)
+
+    def _show_sync_notification(self, count: int):
+        """Zeigt kurze Benachrichtigung wenn Dateien synchronisiert wurden"""
+        # USB-Status temporär auf Sync-Meldung setzen
+        self.usb_status.configure(
+            text=f"✅ {count} Datei(en) sync!",
+            text_color="#ffffff",
+            fg_color="#00d26a"  # Grün
+        )
+        # Nach 3 Sekunden wieder normalen Status anzeigen
+        self.root.after(3000, self._reset_usb_status_after_sync)
+
+    def _reset_usb_status_after_sync(self):
+        """Setzt USB-Status nach Sync-Benachrichtigung zurück"""
+        text, status = self.usb_manager.get_status_text()
+        if status == "success":
+            self.usb_status.configure(
+                text=text,
+                text_color=COLORS["success"],
+                fg_color=COLORS["bg_light"]
+            )
     
     def _check_printer_status(self):
         """Prüft Drucker-Status"""

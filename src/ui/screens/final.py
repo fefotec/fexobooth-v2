@@ -311,15 +311,19 @@ class FinalScreen(ctk.CTkFrame):
                        f"Druckbar: {printable_width}x{printable_height}px, "
                        f"Offset: ({offset_left},{offset_top}), DPI: {dpi_x}x{dpi_y}")
 
-            # Für randlos: Auf PHYSISCHE Größe drucken, nicht nur druckbaren Bereich
-            # Und den Drucker-Offset kompensieren
-            target_width = phys_width
-            target_height = phys_height
-
             # Druck-Einstellungen aus Config
             adjustment = self.config.get("print_adjustment", {})
             user_offset_x = adjustment.get("offset_x", 0)
             user_offset_y = adjustment.get("offset_y", 0)
+            zoom_percent = adjustment.get("zoom", 100)
+
+            # Zoom anwenden: >100% = Bild größer (mehr Beschnitt, besserer randlos)
+            # Für Canon Selphy empfohlen: 103-105%
+            zoom_factor = zoom_percent / 100.0
+            target_width = int(phys_width * zoom_factor)
+            target_height = int(phys_height * zoom_factor)
+
+            logger.info(f"Zoom: {zoom_percent}% -> Zielgröße: {target_width}x{target_height}px")
 
             # Bild skalieren (Cover-Modus)
             img_ratio = img.width / img.height
@@ -346,11 +350,16 @@ class FinalScreen(ctk.CTkFrame):
 
             dib = ImageWin.Dib(img)
 
-            # Negatives Offset um in den nicht-druckbaren Bereich zu drucken
-            print_x = -offset_left + user_offset_x
-            print_y = -offset_top + user_offset_y
+            # Bei Zoom: Bild zentrieren auf physischer Seite
+            # Standard-Position: negatives Offset für randlos
+            # Bei Zoom>100%: Zusätzlich zentrieren wegen Übermaß
+            zoom_offset_x = (target_width - phys_width) // 2
+            zoom_offset_y = (target_height - phys_height) // 2
 
-            logger.info(f"Druck-Position: ({print_x}, {print_y})")
+            print_x = -offset_left - zoom_offset_x + user_offset_x
+            print_y = -offset_top - zoom_offset_y + user_offset_y
+
+            logger.info(f"Druck-Position: ({print_x}, {print_y}) [Zoom-Offset: {zoom_offset_x}, {zoom_offset_y}]")
 
             dib.draw(
                 hDC.GetHandleOutput(),

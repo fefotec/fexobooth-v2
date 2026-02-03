@@ -44,7 +44,7 @@ DEFAULT_CONFIG = {
     "print_adjustment": {
         "offset_x": 0,      # Fein-Offset in Pixeln (horizontal)
         "offset_y": 0,      # Fein-Offset in Pixeln (vertikal)
-        "zoom": 100,        # Zoom in Prozent (100 = normale Größe)
+        "zoom": 103,        # Zoom in Prozent (103% für randlosen Druck empfohlen)
         "bleed_mm": 3       # Überdrucken in mm pro Seite (für randlosen Druck)
     },
     
