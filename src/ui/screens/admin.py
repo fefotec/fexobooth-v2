@@ -41,15 +41,26 @@ class AdminDialog(ctk.CTkToplevel):
         
         # PIN-Dialog Größe (größer für Numpad)
         pin_width = 400
-        pin_height = 550
+        pin_height = 500  # Etwas kleiner für bessere Zentrierung
         
         # Zentrieren auf dem Bildschirm
         self.update_idletasks()
         screen_w = self.winfo_screenwidth()
         screen_h = self.winfo_screenheight()
+        
+        # Exakt zentrieren (mit kleinem Offset nach unten für Taskbar)
         x = (screen_w - pin_width) // 2
-        y = (screen_h - pin_height) // 2
+        y = (screen_h - pin_height) // 2 + 20  # Leicht nach unten
+        
+        # Sicherstellen dass y nicht negativ wird
+        if y < 0:
+            y = 10
+        
         self.geometry(f"{pin_width}x{pin_height}+{x}+{y}")
+        
+        # Dialog in den Vordergrund bringen
+        self.lift()
+        self.focus_force()
 
         # PIN-Abfrage zuerst
         self._show_pin_dialog()
