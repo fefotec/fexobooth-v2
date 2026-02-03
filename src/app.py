@@ -358,13 +358,13 @@ class PhotoboothApp:
         is_dev_mode = self.config.get("developer_mode", False)
         admin_btn = ctk.CTkButton(
             status_frame,
-            text="⚙" if is_dev_mode else "",  # Text nur im Dev Mode
+            text="⚙" if is_dev_mode else "",  # Kein Text im Normal Mode
             width=40,
             height=40,
             font=("Segoe UI", 18),
             fg_color="transparent",
-            hover_color=COLORS["bg_light"] if is_dev_mode else "transparent",
-            text_color=COLORS["text_muted"] if is_dev_mode else "transparent",
+            hover_color=COLORS["bg_light"] if is_dev_mode else COLORS["bg_medium"],
+            text_color=COLORS["text_muted"] if is_dev_mode else COLORS["bg_medium"],
             command=self.show_admin_dialog
         )
         admin_btn.pack(side="right", padx=5)
