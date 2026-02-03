@@ -48,6 +48,11 @@ class CanonCameraManager(CameraManager):
         self._last_frame_time: float = 0
         self._frame_cache_duration: float = 0.033  # ~30fps
         
+        # Capture State
+        self._photo_queue: Queue = Queue()
+        self._capture_in_progress: bool = False
+        self._captured_image: Optional[Image.Image] = None
+        
         # Captured Photo Queue (für async Download)
         self._photo_queue: Queue = Queue()
         self._capture_in_progress: bool = False
@@ -126,13 +131,20 @@ class CanonCameraManager(CameraManager):
         if not edsdk.set_save_to_host(self._camera_ref):
             logger.warning("SaveTo konnte nicht gesetzt werden (nicht kritisch)")
         
-        # Bildqualität auf JPG Large Fine setzen (kein RAW!)
-        if not edsdk.set_image_quality_jpg(self._camera_ref):
-            logger.warning("Bildqualität konnte nicht auf JPG gesetzt werden - bitte manuell prüfen!")
+        # Bildqualität auf JPG Large Fine setzen (kein RAW!) - nicht kritisch wenn fehlschlägt
+        try:
+            if not edsdk.set_image_quality_jpg(self._camera_ref):
+                logger.warning("Bildqualität konnte nicht auf JPG gesetzt werden - bitte manuell prüfen!")
+        except Exception as e:
+            logger.warning(f"set_image_quality_jpg Exception (ignoriert): {e}")
         
-        # Event-Handler für Bild-Download registrieren
-        if not edsdk.set_object_event_handler(self._camera_ref, self._on_object_event):
-            logger.warning("Object Event Handler konnte nicht registriert werden")
+        # Event-Handler für Bild-Download registrieren - nicht kritisch wenn fehlschlägt
+        # (capture_photo funktioniert auch ohne Event-Handler, nur langsamer)
+        try:
+            if not edsdk.set_object_event_handler(self._camera_ref, self._on_object_event):
+                logger.warning("Object Event Handler konnte nicht registriert werden")
+        except Exception as e:
+            logger.warning(f"set_object_event_handler Exception (ignoriert): {e}")
         
         self._is_initialized = True
         logger.info(f"✅ Canon Kamera initialisiert: {self._camera_info['name']}")
@@ -259,6 +271,8 @@ class CanonCameraManager(CameraManager):
         Returns:
             PIL Image in voller Auflösung oder None bei Fehler
         """
+        logger.info(f"=== capture_photo aufgerufen (timeout={timeout}s) ===")
+        
         if not self._is_initialized or not self._camera_ref:
             logger.error("Kamera nicht initialisiert")
             return None
@@ -268,18 +282,23 @@ class CanonCameraManager(CameraManager):
             return None
         
         self._capture_in_progress = True
+        was_live_view = self._live_view_active
         
         try:
             # Queue leeren (falls alte Events drin sind)
+            queue_cleared = 0
             while not self._photo_queue.empty():
                 try:
                     self._photo_queue.get_nowait()
+                    queue_cleared += 1
                 except Empty:
                     break
+            if queue_cleared:
+                logger.debug(f"Queue geleert: {queue_cleared} alte Items")
             
             # Live View pausieren für bessere Bildqualität
-            was_live_view = self._live_view_active
             if was_live_view:
+                logger.debug("Pausiere Live View...")
                 self.stop_live_view()
                 time.sleep(0.3)
             
@@ -291,19 +310,27 @@ class CanonCameraManager(CameraManager):
                     self.start_live_view()
                 return None
             
+            logger.info("Kamera ausgelöst, warte auf Bild...")
+            
             # Auf Bild warten (kommt via Event-Handler in die Queue)
             # WICHTIG: Wir müssen EdsGetEvent() pollen damit Callbacks aufgerufen werden!
-            logger.info(f"Warte auf Bild (max {timeout}s)...")
             start_time = time.time()
             image_data = None
+            poll_count = 0
             
             while time.time() - start_time < timeout:
                 # Events pollen (WICHTIG für Windows!)
-                edsdk.get_event()
+                try:
+                    edsdk.get_event()
+                except Exception as e:
+                    logger.debug(f"get_event Fehler: {e}")
+                
+                poll_count += 1
                 
                 # Prüfen ob Bild in Queue ist
                 try:
                     image_data = self._photo_queue.get_nowait()
+                    logger.info(f"Bild aus Queue erhalten nach {poll_count} polls ({time.time()-start_time:.1f}s)")
                     break
                 except Empty:
                     pass
@@ -311,8 +338,11 @@ class CanonCameraManager(CameraManager):
                 # Kurz warten um CPU zu schonen
                 time.sleep(0.05)
             
+            elapsed = time.time() - start_time
+            
             if image_data is None:
-                logger.error(f"Timeout beim Warten auf Bild ({timeout}s)")
+                logger.error(f"Timeout beim Warten auf Bild ({elapsed:.1f}s, {poll_count} polls)")
+                logger.warning("Event-Handler hat kein Bild geliefert - prüfe ob Kamera auf JPG steht!")
                 if was_live_view:
                     self.start_live_view()
                 return None
@@ -322,21 +352,29 @@ class CanonCameraManager(CameraManager):
                 time.sleep(0.2)
                 self.start_live_view()
             
-            if image_data is None:
-                logger.error("Bild-Download war fehlerhaft")
-                return None
-            
             # JPEG bytes zu PIL Image konvertieren
             try:
                 image = Image.open(io.BytesIO(image_data))
-                logger.info(f"Foto aufgenommen: {image.size[0]}x{image.size[1]}")
+                logger.info(f"✅ Foto aufgenommen: {image.size[0]}x{image.size[1]} ({len(image_data)} bytes)")
                 return image
             except Exception as e:
                 logger.error(f"Fehler beim Dekodieren des Bildes: {e}")
                 return None
+        
+        except Exception as e:
+            logger.error(f"Unerwarteter Fehler in capture_photo: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
                 
         finally:
             self._capture_in_progress = False
+            # Sicherstellen dass Live View wieder läuft
+            if was_live_view and not self._live_view_active:
+                try:
+                    self.start_live_view()
+                except:
+                    pass
     
     def get_high_res_frame(self, width: int = 0, height: int = 0) -> Optional[np.ndarray]:
         """Holt ein hochauflösendes Foto (volle Kamera-Auflösung)

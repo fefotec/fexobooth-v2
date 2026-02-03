@@ -443,8 +443,17 @@ class SessionScreen(ctk.CTkFrame):
         
         # Canon DSLR: Nutze capture_photo() für volle Auflösung
         if hasattr(self.app.camera_manager, 'capture_photo'):
-            logger.info("Nutze DSLR capture_photo() für volle Auflösung")
-            photo = self.app.camera_manager.capture_photo(timeout=10.0)
+            logger.info("=== DSLR capture_photo() aufrufen ===")
+            try:
+                photo = self.app.camera_manager.capture_photo(timeout=10.0)
+                if photo:
+                    logger.info(f"DSLR Foto erhalten: {photo.size}")
+                else:
+                    logger.warning("DSLR capture_photo() gab None zurück, Fallback auf Live-View Frame")
+            except Exception as e:
+                logger.error(f"DSLR capture_photo() Exception: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
             
             if photo is not None:
                 # PIL Image zu numpy für Rotation/Flip

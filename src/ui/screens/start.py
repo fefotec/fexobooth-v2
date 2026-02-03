@@ -268,11 +268,25 @@ class StartScreen(ctk.CTkFrame):
     def _resolve_template_path(self, template_path: str) -> Optional[str]:
         """Löst Template-Pfad auf (relativ oder absolut)"""
         if not template_path:
+            logger.debug("Template-Pfad leer")
             return None
         
-        # Absoluter Pfad?
-        if os.path.isabs(template_path) and os.path.exists(template_path):
+        logger.debug(f"Prüfe Template-Pfad: '{template_path}'")
+        
+        # Direkt prüfen ob Pfad existiert (absolut oder relativ)
+        if os.path.exists(template_path):
+            logger.debug(f"Pfad existiert direkt: {template_path}")
             return template_path
+        
+        # Windows: Laufwerksbuchstaben wie D:/ sind absolut
+        if os.name == "nt" and len(template_path) >= 2 and template_path[1] == ':':
+            logger.warning(f"Windows-Pfad existiert nicht: {template_path}")
+            return None
+        
+        # Absoluter Pfad der nicht existiert
+        if os.path.isabs(template_path):
+            logger.warning(f"Absoluter Pfad existiert nicht: {template_path}")
+            return None
         
         # Relativer Pfad - versuche verschiedene Basis-Verzeichnisse
         search_bases = [
@@ -285,14 +299,12 @@ class StartScreen(ctk.CTkFrame):
             if base is None:
                 continue
             full_path = base / template_path
+            logger.debug(f"Versuche: {full_path}")
             if full_path.exists():
-                logger.debug(f"Template-Pfad aufgelöst: {template_path} -> {full_path}")
+                logger.info(f"Template-Pfad aufgelöst: {template_path} -> {full_path}")
                 return str(full_path)
         
-        # Pfad wie angegeben versuchen
-        if os.path.exists(template_path):
-            return template_path
-        
+        logger.warning(f"Template-Pfad nicht gefunden: {template_path}")
         return None
     
     def _load_template_preview(self, template_path: str) -> Optional[Image.Image]:
@@ -361,9 +373,41 @@ class StartScreen(ctk.CTkFrame):
         self.app.play_video("video_start", "session")
     
     def on_show(self):
-        """Screen wird angezeigt"""
+        """Screen wird angezeigt - Template-Karten neu laden falls Config geändert"""
+        logger.info("=== StartScreen on_show ===")
+        
+        # Config könnte sich geändert haben (Admin-Dialog)
+        self.config = self.app.config
+        
+        # Alte Karten entfernen und neu erstellen
+        self._refresh_template_cards()
+        
+        # Auswahl zurücksetzen
         if self.selected_card:
             self.selected_card.set_selected(False)
         self.selected_card = None
         self.selected_option = None
         self.start_btn.configure(state="disabled")
+    
+    def _refresh_template_cards(self):
+        """Erstellt Template-Karten neu (nach Config-Änderung)"""
+        # Alle alten Karten entfernen
+        for card in self.cards.values():
+            card.destroy()
+        self.cards = {}
+        
+        # Cards-Container finden und neu befüllen
+        # Der Container ist das Frame wo die Karten drin sind
+        for widget in self.winfo_children():
+            if isinstance(widget, ctk.CTkFrame):
+                for child in widget.winfo_children():
+                    if isinstance(child, ctk.CTkFrame) and child.winfo_class() == 'CTkFrame':
+                        # Das könnte der cards_frame sein
+                        for card_widget in child.winfo_children():
+                            if isinstance(card_widget, TemplateCard):
+                                card_widget.destroy()
+                        # Neue Karten erstellen
+                        self._create_template_cards(child)
+                        return
+        
+        logger.warning("Cards-Container nicht gefunden für Refresh")
