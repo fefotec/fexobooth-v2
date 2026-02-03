@@ -302,6 +302,28 @@ class AdminDialog(ctk.CTkToplevel):
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=10, pady=10)
         
+        # Flash-Bild (beim Foto-Auslösen)
+        ctk.CTkLabel(
+            scroll,
+            text="📸 Bild beim Foto-Auslösen:",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"]
+        ).pack(anchor="w", pady=(5, 2))
+        
+        self.flash_image_path = self._create_file_picker(
+            scroll,
+            "",
+            self.config_data.get("flash_image", ""),
+            [("Bilder", "*.png *.jpg *.jpeg *.gif")]
+        )
+        
+        ctk.CTkLabel(
+            scroll,
+            text="Leer = Standard-Smiley 😊",
+            font=FONTS["tiny"],
+            text_color=COLORS["text_muted"]
+        ).pack(anchor="w", pady=(0, 10))
+        
         # Countdown
         self.countdown_slider = self._create_slider_with_value(
             scroll, "Countdown:", "countdown_time", 1, 15, " Sek"
@@ -1135,6 +1157,9 @@ class AdminDialog(ctk.CTkToplevel):
     def _save(self):
         """Speichert die Einstellungen"""
         logger.info("=== Admin-Einstellungen speichern ===")
+        
+        # Flash-Bild
+        self.config_data["flash_image"] = self.flash_image_path.get().strip()
         
         # Slider-Werte
         self.config_data["countdown_time"] = int(self.countdown_slider.get())

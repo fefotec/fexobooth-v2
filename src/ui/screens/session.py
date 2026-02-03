@@ -383,7 +383,7 @@ class SessionScreen(ctk.CTkFrame):
         self.preview_label.image = ctk_img
     
     def _display_flash(self):
-        """Zeigt Flash-Screen - konfigurierbares Bild oder Emoji"""
+        """Zeigt Flash-Screen - konfigurierbares Bild oder Standard-Smiley"""
         container_w = self.preview_container.winfo_width() - 10
         container_h = self.preview_container.winfo_height() - 10
         
@@ -393,6 +393,8 @@ class SessionScreen(ctk.CTkFrame):
             
             # Option 1: Eigenes Bild aus Config
             flash_image_path = self.config.get("flash_image", "")
+            custom_loaded = False
+            
             if flash_image_path and os.path.exists(flash_image_path):
                 try:
                     custom_img = Image.open(flash_image_path).convert("RGBA")
@@ -403,35 +405,56 @@ class SessionScreen(ctk.CTkFrame):
                     img_x = (container_w - custom_img.width) // 2
                     img_y = (container_h - custom_img.height) // 2
                     flash.paste(custom_img, (img_x, img_y), custom_img)
+                    custom_loaded = True
                     logger.debug(f"Flash-Bild geladen: {flash_image_path}")
                 except Exception as e:
                     logger.warning(f"Flash-Bild konnte nicht geladen werden: {e}")
-                    flash_image_path = ""  # Fallback auf Emoji
             
-            # Option 2: Emoji (Fallback oder wenn kein Bild konfiguriert)
-            if not flash_image_path or not os.path.exists(flash_image_path):
+            # Option 2: Standard-Smiley zeichnen (kein Font nötig!)
+            if not custom_loaded:
                 draw = ImageDraw.Draw(flash)
-                emoji = self.config.get("flash_emoji", "📸")
                 
-                # Große Emoji-Schrift
-                font_size = min(container_w, container_h) // 2
-                try:
-                    # Windows Emoji Font
-                    font = ImageFont.truetype("C:/Windows/Fonts/seguiemj.ttf", font_size)
-                except:
-                    try:
-                        font = ImageFont.truetype("C:/Windows/Fonts/segoeui.ttf", font_size)
-                    except:
-                        font = ImageFont.load_default()
+                # Smiley-Größe
+                size = int(min(container_w, container_h) * 0.5)
+                cx, cy = container_w // 2, container_h // 2
+                radius = size // 2
                 
-                # Emoji zentrieren
-                bbox = draw.textbbox((0, 0), emoji, font=font)
-                text_w = bbox[2] - bbox[0]
-                text_h = bbox[3] - bbox[1]
-                x = (container_w - text_w) // 2
-                y = (container_h - text_h) // 2
+                # Gelber Kreis (Gesicht)
+                draw.ellipse(
+                    [cx - radius, cy - radius, cx + radius, cy + radius],
+                    fill=(255, 220, 50),
+                    outline=(200, 170, 30),
+                    width=max(3, size // 30)
+                )
                 
-                draw.text((x, y), emoji, fill=(0, 0, 0), font=font)
+                # Augen
+                eye_radius = size // 10
+                eye_y = cy - size // 6
+                eye_offset = size // 4
+                # Linkes Auge
+                draw.ellipse(
+                    [cx - eye_offset - eye_radius, eye_y - eye_radius,
+                     cx - eye_offset + eye_radius, eye_y + eye_radius],
+                    fill=(50, 50, 50)
+                )
+                # Rechtes Auge
+                draw.ellipse(
+                    [cx + eye_offset - eye_radius, eye_y - eye_radius,
+                     cx + eye_offset + eye_radius, eye_y + eye_radius],
+                    fill=(50, 50, 50)
+                )
+                
+                # Lächelnder Mund (Bogen)
+                mouth_width = size // 2
+                mouth_height = size // 4
+                mouth_y = cy + size // 10
+                draw.arc(
+                    [cx - mouth_width // 2, mouth_y - mouth_height // 2,
+                     cx + mouth_width // 2, mouth_y + mouth_height],
+                    start=0, end=180,
+                    fill=(50, 50, 50),
+                    width=max(4, size // 20)
+                )
             
             ctk_img = ctk.CTkImage(light_image=flash, size=(container_w, container_h))
             self.preview_label.configure(image=ctk_img)
