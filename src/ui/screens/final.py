@@ -245,118 +245,53 @@ class FinalScreen(ctk.CTkFrame):
         self.auto_return_time = time.time() + self.config.get("final_time", 30)
     
     def _print_image(self, image_path: Path):
-        """Druckt ein Bild RANDLOS (Windows) - optimiert für Canon Selphy
+        """Druckt ein Bild über Windows Shell (nutzt Drucker-Standardeinstellungen)
 
-        Für echten randlosen Druck wird das Bild etwas GRÖSSER als das Papier
-        gedruckt (Überdrucken/Bleed), damit die Ränder "abgeschnitten" werden.
+        Diese Methode nutzt die Windows-Druckfunktion, die die Treibereinstellungen
+        respektiert (inkl. randlos wenn im Treiber konfiguriert).
         """
         try:
-            import win32print
-            import win32ui
-            from PIL import ImageWin
+            import subprocess
+            import os
 
             printer_name = self.config.get("printer_name")
             if not printer_name:
+                import win32print
                 printer_name = win32print.GetDefaultPrinter()
 
             logger.info(f"Drucke auf: {printer_name}")
+            logger.info(f"Bild: {image_path}")
 
-            # Bild laden
-            img = Image.open(image_path)
-            logger.info(f"Bild-Größe: {img.size}")
+            # Methode 1: Versuche ShellExecute "print" (nutzt Standardprogramm)
+            # Dies respektiert die Drucker-Einstellungen aus Windows
+            try:
+                import win32api
+                import win32con
 
-            # Druck-Einstellungen
-            adjustment = self.config.get("print_adjustment", {})
-            offset_x = adjustment.get("offset_x", 0)
-            offset_y = adjustment.get("offset_y", 0)
-            zoom = adjustment.get("zoom", 100) / 100
+                # "print" Verb druckt mit Standardprogramm und Drucker-Settings
+                result = win32api.ShellExecute(
+                    0,                              # Handle
+                    "print",                        # Verb
+                    str(image_path),                # Datei
+                    f'/d:"{printer_name}"',         # Parameter: Drucker
+                    None,                           # Arbeitsverzeichnis
+                    win32con.SW_HIDE                # Fenster verstecken
+                )
 
-            # Überdrucken für randlosen Druck (in mm, wird zu Pixeln konvertiert)
-            # Canon Selphy braucht ca. 3-5mm Überdrucken pro Seite
-            bleed_mm = adjustment.get("bleed_mm", 3)
+                if result > 32:  # Erfolg
+                    logger.info(f"✅ Druck gestartet via ShellExecute auf: {printer_name}")
+                    return
+                else:
+                    logger.warning(f"ShellExecute fehlgeschlagen (Code {result}), versuche Fallback...")
 
-            # Drucker-DC erstellen
-            hDC = win32ui.CreateDC()
-            hDC.CreatePrinterDC(printer_name)
+            except Exception as e:
+                logger.warning(f"ShellExecute Fehler: {e}, versuche Fallback...")
 
-            # Druckbereich vom Drucker abfragen (in Pixel)
-            printer_width = hDC.GetDeviceCaps(110)   # PHYSICALWIDTH
-            printer_height = hDC.GetDeviceCaps(111)  # PHYSICALHEIGHT
-            printable_width = hDC.GetDeviceCaps(8)   # HORZRES
-            printable_height = hDC.GetDeviceCaps(10) # VERTRES
-            offset_left = hDC.GetDeviceCaps(112)     # PHYSICALOFFSETX
-            offset_top = hDC.GetDeviceCaps(113)      # PHYSICALOFFSETY
-            dpi_x = hDC.GetDeviceCaps(88)            # LOGPIXELSX
-            dpi_y = hDC.GetDeviceCaps(90)            # LOGPIXELSY
+            # Methode 2: Fallback auf manuelles GDI-Drucken
+            self._print_image_gdi(image_path, printer_name)
 
-            logger.info(f"Drucker: Physisch {printer_width}x{printer_height}px, "
-                       f"Druckbar {printable_width}x{printable_height}px, "
-                       f"DPI {dpi_x}x{dpi_y}")
-            logger.info(f"Drucker-Offset: ({offset_left}, {offset_top})px")
-
-            # Bleed in Pixel umrechnen (mm -> Pixel)
-            bleed_x = int(bleed_mm * dpi_x / 25.4)  # 25.4mm = 1 inch
-            bleed_y = int(bleed_mm * dpi_y / 25.4)
-
-            logger.info(f"Bleed: {bleed_mm}mm = ({bleed_x}, {bleed_y})px")
-
-            # Für randlosen Druck: Bild GRÖSSER als Papier drucken
-            # Bleed auf beiden Seiten hinzufügen
-            target_width = int(printer_width * zoom) + (2 * bleed_x)
-            target_height = int(printer_height * zoom) + (2 * bleed_y)
-
-            logger.info(f"Ziel-Größe mit Bleed: {target_width}x{target_height}px")
-
-            # Bild skalieren mit Aspect-Ratio-Fill (Cover-Modus)
-            img_ratio = img.width / img.height
-            target_ratio = target_width / target_height
-
-            if img_ratio > target_ratio:
-                # Bild ist breiter - auf Höhe skalieren und horizontal beschneiden
-                new_h = target_height
-                new_w = int(new_h * img_ratio)
-                img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                # Horizontal zentrieren und beschneiden
-                left = (new_w - target_width) // 2
-                img = img.crop((left, 0, left + target_width, target_height))
-            else:
-                # Bild ist höher - auf Breite skalieren und vertikal beschneiden
-                new_w = target_width
-                new_h = int(new_w / img_ratio)
-                img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                # Vertikal zentrieren und beschneiden
-                top = (new_h - target_height) // 2
-                img = img.crop((0, top, target_width, top + target_height))
-
-            logger.info(f"Bild skaliert auf: {img.size}")
-
-            # Drucken - Position berechnen für randlos
-            # 1. Drucker-Offset ausgleichen (in den nicht-druckbaren Bereich)
-            # 2. Bleed-Offset abziehen (Bild ragt über Papierrand)
-            # 3. User-Offset addieren (Feinabstimmung)
-            hDC.StartDoc("Fexobooth Print")
-            hDC.StartPage()
-
-            dib = ImageWin.Dib(img)
-
-            print_x = -offset_left - bleed_x + offset_x
-            print_y = -offset_top - bleed_y + offset_y
-
-            logger.info(f"Druck-Position: ({print_x}, {print_y})")
-
-            dib.draw(
-                hDC.GetHandleOutput(),
-                (print_x, print_y, print_x + target_width, print_y + target_height)
-            )
-
-            hDC.EndPage()
-            hDC.EndDoc()
-            hDC.DeleteDC()
-
-            logger.info(f"✅ Randlos gedruckt auf: {printer_name}")
-
-        except ImportError:
-            logger.warning("win32print nicht verfügbar - Druck nur unter Windows")
+        except ImportError as e:
+            logger.warning(f"Import-Fehler: {e} - Druck nur unter Windows")
             self.print_info.configure(
                 text="⚠️ Druck nur unter Windows verfügbar",
                 text_color=COLORS["warning"]
@@ -369,6 +304,87 @@ class FinalScreen(ctk.CTkFrame):
                 text=f"❌ Druckfehler: {e}",
                 text_color=COLORS["error"]
             )
+
+    def _print_image_gdi(self, image_path: Path, printer_name: str):
+        """Fallback: Druckt über GDI mit Drucker-DEVMODE (Treibereinstellungen)"""
+        import win32print
+        import win32ui
+        import win32con
+        from PIL import ImageWin
+
+        logger.info("Verwende GDI-Druck mit Treibereinstellungen...")
+
+        # Bild laden
+        img = Image.open(image_path)
+        logger.info(f"Bild-Größe: {img.size}")
+
+        # DEVMODE vom Drucker holen (enthält Randlos-Einstellung wenn konfiguriert)
+        hPrinter = win32print.OpenPrinter(printer_name)
+        try:
+            # Drucker-Properties abrufen (DEVMODE)
+            properties = win32print.GetPrinter(hPrinter, 2)
+            devmode = properties.get("pDevMode")
+
+            if devmode:
+                logger.info(f"DEVMODE geladen: {devmode.PaperSize}x, Orientation={devmode.Orientation}")
+        finally:
+            win32print.ClosePrinter(hPrinter)
+
+        # DC mit DEVMODE erstellen (nutzt Treibereinstellungen!)
+        hDC = win32ui.CreateDC()
+        if devmode:
+            hDC.CreatePrinterDC(printer_name)
+            # TODO: DEVMODE an CreateDC übergeben wenn möglich
+        else:
+            hDC.CreatePrinterDC(printer_name)
+
+        # Druckbereich abfragen
+        printable_width = hDC.GetDeviceCaps(8)   # HORZRES - druckbarer Bereich
+        printable_height = hDC.GetDeviceCaps(10) # VERTRES
+        dpi_x = hDC.GetDeviceCaps(88)
+        dpi_y = hDC.GetDeviceCaps(90)
+
+        logger.info(f"Druckbar: {printable_width}x{printable_height}px, DPI: {dpi_x}x{dpi_y}")
+
+        # Druck-Einstellungen
+        adjustment = self.config.get("print_adjustment", {})
+        offset_x = adjustment.get("offset_x", 0)
+        offset_y = adjustment.get("offset_y", 0)
+
+        # Bild auf druckbaren Bereich skalieren (Cover-Modus)
+        img_ratio = img.width / img.height
+        target_ratio = printable_width / printable_height
+
+        if img_ratio > target_ratio:
+            new_h = printable_height
+            new_w = int(new_h * img_ratio)
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            left = (new_w - printable_width) // 2
+            img = img.crop((left, 0, left + printable_width, printable_height))
+        else:
+            new_w = printable_width
+            new_h = int(new_w / img_ratio)
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            top = (new_h - printable_height) // 2
+            img = img.crop((0, top, printable_width, top + printable_height))
+
+        logger.info(f"Bild skaliert auf: {img.size}")
+
+        # Drucken
+        hDC.StartDoc("Fexobooth Print")
+        hDC.StartPage()
+
+        dib = ImageWin.Dib(img)
+        dib.draw(
+            hDC.GetHandleOutput(),
+            (offset_x, offset_y, printable_width + offset_x, printable_height + offset_y)
+        )
+
+        hDC.EndPage()
+        hDC.EndDoc()
+        hDC.DeleteDC()
+
+        logger.info(f"✅ GDI-Druck abgeschlossen auf: {printer_name}")
     
     def _on_finish(self):
         """Fertig gedrückt"""
