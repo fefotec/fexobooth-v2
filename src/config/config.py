@@ -100,15 +100,36 @@ def _find_usb_config() -> Optional[Dict[str, Any]]:
     return None
 
 
-def find_usb_template() -> Optional[str]:
-    """Sucht ZIP-Templates auf USB-Sticks (Wechseldatenträger).
+def find_usb_template(include_cache: bool = True) -> Optional[str]:
+    """Sucht ZIP-Templates auf USB-Sticks oder im Cache.
 
     Durchsucht alle Wechseldatenträger (USB-Sticks) nach ZIP-Dateien
-    im Root-Verzeichnis. Gibt den Pfad zum ersten gefundenen Template zurück.
+    im Root-Verzeichnis. Falls kein USB gefunden wird und include_cache=True,
+    wird das gecachte Template zurückgegeben (falls vorhanden).
 
+    Args:
+        include_cache: Wenn True, wird auch der Cache berücksichtigt
+        
     Returns:
         Pfad zur ZIP-Datei oder None wenn nichts gefunden
     """
+    # Erst auf USB suchen
+    usb_template = _find_usb_template_on_drive()
+    if usb_template:
+        return usb_template
+    
+    # Fallback: Cache prüfen
+    if include_cache:
+        cache_path = Path(__file__).parent.parent.parent / ".booking_cache" / "cached_template.zip"
+        if cache_path.exists():
+            print(f"Gecachtes Template gefunden: {cache_path}")
+            return str(cache_path)
+    
+    return None
+
+
+def _find_usb_template_on_drive() -> Optional[str]:
+    """Sucht ZIP-Templates nur auf USB-Sticks."""
     if os.name != "nt":
         return None
 

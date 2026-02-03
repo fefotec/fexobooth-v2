@@ -277,7 +277,7 @@ class BookingManager:
             logger.error(f"Fehler beim Laden von settings.json: {e}")
             return False
     
-    def _cache_template_from_usb(self, usb_root: Path):
+    def _cache_template_from_usb(self, usb_root: Path) -> bool:
         """Sucht und cached Template-ZIP vom USB"""
         # Mögliche Template-Pfade
         template_paths = [
@@ -288,10 +288,49 @@ class BookingManager:
         
         for path in template_paths:
             if path.exists():
-                self._cache_template(path)
-                return
+                return self._cache_template(path)
         
         logger.debug("Kein Template-ZIP auf USB gefunden")
+        return False
+    
+    def get_template_path_for_config(self) -> Optional[str]:
+        """Gibt den Pfad zum Template zurück (Cache oder USB)
+        
+        Für Einbindung in config["template_paths"]["template1"]
+        """
+        # Gecachtes Template bevorzugen
+        if TEMPLATE_CACHE_FILE.exists():
+            logger.debug(f"Verwende gecachtes Template: {TEMPLATE_CACHE_FILE}")
+            return str(TEMPLATE_CACHE_FILE)
+        
+        return None
+    
+    def apply_cached_template_to_config(self, config: Dict[str, Any]) -> bool:
+        """Trägt das gecachte Template in die Config ein
+        
+        Args:
+            config: Die App-Config (wird in-place modifiziert)
+            
+        Returns:
+            True wenn Template angewendet wurde
+        """
+        template_path = self.get_template_path_for_config()
+        
+        if not template_path:
+            return False
+        
+        # Template-Pfade sicherstellen
+        if "template_paths" not in config:
+            config["template_paths"] = {}
+        
+        # Als template1 eintragen (USB-Templates haben Priorität)
+        config["template_paths"]["usb_template"] = template_path
+        
+        # Aktivieren
+        config["usb_template_enabled"] = True
+        
+        logger.info(f"📦 Gecachtes Template in Config eingetragen: {template_path}")
+        return True
     
     def clear(self, clear_cache: bool = False):
         """Setzt Buchungsdaten zurück

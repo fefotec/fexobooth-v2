@@ -6,7 +6,6 @@ from datetime import datetime
 from typing import Optional
 from PIL import Image
 
-from src.storage.usb import USBManager
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -17,6 +16,17 @@ IMAGES_PATH = BASE_PATH / "BILDER"
 SINGLES_PATH = IMAGES_PATH / "Single"
 PRINTS_PATH = IMAGES_PATH / "Prints"
 
+# Singleton USBManager - wird von allen geteilt
+_shared_usb_manager = None
+
+def get_shared_usb_manager():
+    """Gibt den gemeinsamen USBManager zurück (Singleton)"""
+    global _shared_usb_manager
+    if _shared_usb_manager is None:
+        from src.storage.usb import USBManager
+        _shared_usb_manager = USBManager()
+    return _shared_usb_manager
+
 
 class LocalStorage:
     """Verwaltet lokale Bildspeicherung mit automatischer USB-Kopie"""
@@ -26,8 +36,8 @@ class LocalStorage:
         SINGLES_PATH.mkdir(parents=True, exist_ok=True)
         PRINTS_PATH.mkdir(parents=True, exist_ok=True)
         
-        # USB-Manager für automatische Kopie
-        self.usb_manager = USBManager()
+        # Gemeinsamen USB-Manager verwenden
+        self.usb_manager = get_shared_usb_manager()
         
         logger.info(f"Speicherpfade initialisiert: {IMAGES_PATH}")
     

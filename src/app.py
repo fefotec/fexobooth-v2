@@ -11,7 +11,7 @@ import os
 
 from src.config.config import load_config, save_config
 from src.camera import get_camera_manager, CANON_AVAILABLE
-from src.storage.usb import USBManager
+from src.storage.local import get_shared_usb_manager
 from src.storage.local import LocalStorage
 from src.storage.booking import get_booking_manager, BookingManager
 from src.storage.statistics import get_statistics_manager, StatisticsManager
@@ -59,7 +59,7 @@ class PhotoboothApp:
         camera_type = config.get("camera_type", "webcam")
         self.camera_manager = get_camera_manager(camera_type)
         logger.info(f"Kamera-Typ: {camera_type} (Canon verfügbar: {CANON_AVAILABLE})")
-        self.usb_manager = USBManager()
+        self.usb_manager = get_shared_usb_manager()
         self.booking_manager = get_booking_manager()
         self.statistics = get_statistics_manager()
         self.local_storage = LocalStorage()
@@ -93,6 +93,10 @@ class PhotoboothApp:
         if self.booking_manager.is_loaded:
             self._update_booking_display()
             logger.info(f"📂 Letzte Buchung wiederhergestellt: {self.booking_manager.booking_id}")
+            
+            # Gecachtes Template in Config eintragen
+            if self.booking_manager.apply_cached_template_to_config(self.config):
+                logger.info("📦 Gecachtes Template wird verwendet")
         
         # Status-Timer starten
         self._start_status_checks()
