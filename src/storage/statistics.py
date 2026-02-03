@@ -227,7 +227,14 @@ class StatisticsManager:
         return events
     
     def get_all_stats(self) -> List[Dict[str, Any]]:
-        """Gibt alle Events als rohe Dictionaries zurück"""
+        """Gibt alle Events als rohe Dictionaries zurück
+        
+        Lädt automatisch aus bekannten Speicherorten falls noch nicht geladen.
+        """
+        # Falls noch nichts geladen, versuche aus Standard-Pfaden zu laden
+        if not self._all_stats and not self._current_stats:
+            self._auto_load_stats()
+        
         # Aktuelle Stats auch einbeziehen
         result = self._all_stats.copy()
         if self._current_stats:
@@ -242,6 +249,39 @@ class StatisticsManager:
             if not already_in:
                 result.append(current_dict)
         return result
+    
+    def _auto_load_stats(self):
+        """Versucht Statistiken aus bekannten Pfaden zu laden"""
+        # Mögliche Pfade durchsuchen
+        search_paths = [
+            # Projekt-Root
+            Path(__file__).parent.parent.parent / STATS_FILENAME,
+            # Aktuelles Verzeichnis
+            Path.cwd() / STATS_FILENAME,
+            # Windows Standard-Installation
+            Path("C:/fexobooth/fexobooth-v2") / STATS_FILENAME,
+        ]
+        
+        # USB-Laufwerke auf Windows durchsuchen
+        if os.name == "nt":
+            import string
+            for letter in string.ascii_uppercase:
+                usb_path = Path(f"{letter}:/") / STATS_FILENAME
+                if usb_path.exists():
+                    search_paths.insert(0, usb_path)  # USB hat Priorität
+        
+        # Erste gefundene Datei laden
+        for path in search_paths:
+            if path.exists():
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        self._all_stats = data.get("events", [])
+                        self._stats_file_path = path
+                        logger.info(f"📊 Statistiken auto-geladen: {path} ({len(self._all_stats)} Events)")
+                        return
+                except Exception as e:
+                    logger.warning(f"Statistik-Datei {path} lesen fehlgeschlagen: {e}")
     
     def get_current_summary(self) -> str:
         """Gibt Zusammenfassung des aktuellen Events zurück"""
