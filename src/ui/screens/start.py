@@ -579,63 +579,114 @@ class StartScreen(ctk.CTkFrame):
             ssid = gallery_config.get("hotspot_ssid", "fexobox-gallery")
             password = gallery_config.get("hotspot_password", "fotobox123")
             
-            # QR-Code generieren
-            qr_img = generate_qr_code(url, size=100)
+            # QR-Code generieren (etwas größer)
+            qr_img = generate_qr_code(url, size=110)
             if not qr_img:
                 logger.warning("QR-Code konnte nicht generiert werden")
                 return
             
-            # Container mit Hintergrund für bessere Lesbarkeit
-            info_container = ctk.CTkFrame(
+            # Äußerer Container mit Akzent-Border
+            outer_container = ctk.CTkFrame(
                 self.qr_frame,
-                fg_color=COLORS["bg_card"],
-                corner_radius=10
+                fg_color=COLORS["primary"],  # Pink Rahmen
+                corner_radius=15
             )
-            info_container.pack(padx=5, pady=5)
+            outer_container.pack(padx=5, pady=5)
             
-            # Titel
-            ctk.CTkLabel(
-                info_container,
-                text="📱 Foto-Galerie",
-                font=FONTS["body_bold"],
-                text_color=COLORS["text_primary"]
-            ).pack(pady=(10, 5))
+            # Innerer Container
+            info_container = ctk.CTkFrame(
+                outer_container,
+                fg_color=COLORS["bg_medium"],
+                corner_radius=12
+            )
+            info_container.pack(padx=2, pady=2)
             
-            # WLAN-Info oben
+            # Header mit Icon
+            header_frame = ctk.CTkFrame(info_container, fg_color="transparent")
+            header_frame.pack(fill="x", pady=(12, 8))
+            
             ctk.CTkLabel(
-                info_container,
-                text=f"WLAN: {ssid}",
-                font=FONTS["small"],
-                text_color=COLORS["text_secondary"]
+                header_frame,
+                text="📸 FOTO-GALERIE",
+                font=("Segoe UI", 13, "bold"),
+                text_color=COLORS["primary"]
             ).pack()
             
-            ctk.CTkLabel(
+            # Trennlinie
+            ctk.CTkFrame(
                 info_container,
-                text=f"Passwort: {password}",
-                font=FONTS["small"],
+                fg_color=COLORS["border"],
+                height=1
+            ).pack(fill="x", padx=15, pady=(0, 10))
+            
+            # WLAN-Info mit Icons
+            wifi_frame = ctk.CTkFrame(info_container, fg_color="transparent")
+            wifi_frame.pack(fill="x", padx=12)
+            
+            # WLAN Name
+            ssid_frame = ctk.CTkFrame(wifi_frame, fg_color="transparent")
+            ssid_frame.pack(fill="x", pady=2)
+            
+            ctk.CTkLabel(
+                ssid_frame,
+                text="📶",
+                font=("Segoe UI Emoji", 12),
                 text_color=COLORS["text_secondary"]
-            ).pack(pady=(0, 8))
+            ).pack(side="left")
+            
+            ctk.CTkLabel(
+                ssid_frame,
+                text=f" {ssid}",
+                font=("Segoe UI", 12, "bold"),
+                text_color=COLORS["text_primary"]
+            ).pack(side="left")
+            
+            # Passwort
+            pw_frame = ctk.CTkFrame(wifi_frame, fg_color="transparent")
+            pw_frame.pack(fill="x", pady=2)
+            
+            ctk.CTkLabel(
+                pw_frame,
+                text="🔑",
+                font=("Segoe UI Emoji", 12),
+                text_color=COLORS["text_secondary"]
+            ).pack(side="left")
+            
+            ctk.CTkLabel(
+                pw_frame,
+                text=f" {password}",
+                font=("Segoe UI", 12),
+                text_color=COLORS["text_secondary"]
+            ).pack(side="left")
+            
+            # QR-Code Container mit weißem Hintergrund
+            qr_container = ctk.CTkFrame(
+                info_container,
+                fg_color="#ffffff",
+                corner_radius=8
+            )
+            qr_container.pack(pady=(12, 8), padx=15)
             
             # QR als CTkImage
-            self.qr_ctk_image = ctk.CTkImage(light_image=qr_img, size=(100, 100))
+            self.qr_ctk_image = ctk.CTkImage(light_image=qr_img, size=(110, 110))
             
             # QR-Code Label
             self.qr_label = ctk.CTkLabel(
-                info_container,
+                qr_container,
                 image=self.qr_ctk_image,
-                text=""
+                text="",
+                fg_color="#ffffff"
             )
-            self.qr_label.pack()
+            self.qr_label.pack(padx=8, pady=8)
             
             # Anleitung darunter
             self.qr_text_label = ctk.CTkLabel(
                 info_container,
-                text="Mit WLAN verbinden,\ndann QR-Code scannen",
-                font=FONTS["tiny"],
-                text_color=COLORS["text_muted"],
-                justify="center"
+                text="Verbinden → Scannen → Fertig!",
+                font=("Segoe UI", 10),
+                text_color=COLORS["text_muted"]
             )
-            self.qr_text_label.pack(pady=(5, 10))
+            self.qr_text_label.pack(pady=(0, 12))
             
             logger.info(f"✅ QR-Code mit WLAN-Info angezeigt: {url}")
             
