@@ -320,35 +320,34 @@ class SessionScreen(ctk.CTkFrame):
     def _display_preview(self, img: Image.Image):
         """Zeigt das Vorschau-Bild skaliert an - IMMER 100% sichtbar!
 
-        Nutzt die TATSÄCHLICHE Label-Größe für präzise Berechnung.
+        Berechnet verfügbaren Platz direkt vom Fenster, um CTkLabel-Probleme zu umgehen.
         """
-        # Label-Größe direkt holen (das ist der ECHTE verfügbare Platz!)
+        # Fenster-Größe holen - das ist die zuverlässigste Quelle
         try:
-            self.preview_label.update_idletasks()
-            label_w = self.preview_label.winfo_width()
-            label_h = self.preview_label.winfo_height()
+            win = self.winfo_toplevel()
+            win.update_idletasks()
+            win_w = win.winfo_width()
+            win_h = win.winfo_height()
 
-            # Fallback wenn Label noch nicht gerendert
-            if label_w < 100 or label_h < 100:
-                # Fenster-Größe minus alle Paddings und UI-Elemente
-                win_w = self.winfo_toplevel().winfo_width()
-                win_h = self.winfo_toplevel().winfo_height()
-                # main_frame: padx=15*2, pady=10*2 = 30, 20
-                # info_bar: height=45
-                # preview_container corner_radius nimmt auch Platz
-                label_w = win_w - 60
-                label_h = win_h - 100
+            # Fallback
+            if win_w < 400 or win_h < 300:
+                win_w = win.winfo_screenwidth()
+                win_h = win.winfo_screenheight()
         except:
-            label_w = 1200
-            label_h = 650
+            win_w = 1280
+            win_h = 800
 
-        # Sicherheitsabstand - CTkLabel kann intern noch Platz brauchen
-        available_w = label_w - 10
-        available_h = label_h - 10
+        # Verfügbarer Platz: Fenster minus UI-Elemente
+        # - info_bar: 45px
+        # - main_frame padding: 15*2 + 10*2 = 50
+        # - preview_container corner_radius: ~20
+        # - Sicherheitsabstand: 50
+        available_w = win_w - 80
+        available_h = win_h - 165
 
         # Einmalig loggen
         if not hasattr(self, '_logged_size'):
-            logger.info(f"Label: {label_w}x{label_h}, Verfügbar: {available_w}x{available_h}, Bild: {img.width}x{img.height}")
+            logger.info(f"Fenster: {win_w}x{win_h}, Verfügbar: {available_w}x{available_h}, Bild: {img.width}x{img.height}")
             self._logged_size = True
 
         # IMMER Fit-Modus: Bild komplett sichtbar, Aspect Ratio beibehalten
@@ -364,9 +363,14 @@ class SessionScreen(ctk.CTkFrame):
             new_h = available_h
             new_w = int(available_h * img_ratio)
 
-        # Sicherheitscheck - niemals größer als verfügbar!
-        new_w = max(100, min(new_w, available_w))
-        new_h = max(100, min(new_h, available_h))
+        # Sicherheitscheck
+        new_w = max(100, new_w)
+        new_h = max(100, new_h)
+
+        # Einmalig die berechnete Größe loggen
+        if not hasattr(self, '_logged_calc'):
+            logger.info(f"Skaliert auf: {new_w}x{new_h} (Ratio: {img_ratio:.2f})")
+            self._logged_calc = True
 
         # Skalieren mit hoher Qualität
         scaled_img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
