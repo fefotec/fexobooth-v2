@@ -374,9 +374,9 @@ class SessionScreen(ctk.CTkFrame):
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
         
-        # EXAKT zentriert positionieren
+        # Position: horizontal zentriert, vertikal im oberen Drittel
         x = (img.width - text_w) // 2 - bbox[0]  # bbox[0] korrigiert den linken Offset
-        y = (img.height - text_h) // 2 - bbox[1]  # bbox[1] korrigiert den oberen Offset
+        y = (img.height - text_h) // 3 - bbox[1]  # Oberes Drittel statt Mitte
         
         # Mehrfacher Schatten für bessere Lesbarkeit (Outline-Effekt)
         shadow_color = (0, 0, 0, 220)

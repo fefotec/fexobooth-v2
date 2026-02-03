@@ -354,20 +354,20 @@ class PhotoboothApp:
         status_frame = ctk.CTkFrame(bar, fg_color="transparent")
         status_frame.pack(side="right", padx=20, pady=10)
 
-        # Admin-Button NUR im Developer Mode sichtbar
-        if self.config.get("developer_mode", False):
-            admin_btn = ctk.CTkButton(
-                status_frame,
-                text="⚙",
-                width=40,
-                height=40,
-                font=("Segoe UI", 18),
-                fg_color="transparent",
-                hover_color=COLORS["bg_light"],
-                text_color=COLORS["text_muted"],
-                command=self.show_admin_dialog
-            )
-            admin_btn.pack(side="right", padx=5)
+        # Admin-Button - im Normal Mode unsichtbar aber klickbar (für Support)
+        is_dev_mode = self.config.get("developer_mode", False)
+        admin_btn = ctk.CTkButton(
+            status_frame,
+            text="⚙" if is_dev_mode else "",  # Text nur im Dev Mode
+            width=40,
+            height=40,
+            font=("Segoe UI", 18),
+            fg_color="transparent",
+            hover_color=COLORS["bg_light"] if is_dev_mode else "transparent",
+            text_color=COLORS["text_muted"] if is_dev_mode else "transparent",
+            command=self.show_admin_dialog
+        )
+        admin_btn.pack(side="right", padx=5)
 
         # Buchungsnummer-Anzeige (prominent, für Support-Anrufe)
         self.booking_label = ctk.CTkLabel(
