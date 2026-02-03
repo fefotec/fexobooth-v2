@@ -11,6 +11,7 @@ import os
 
 from src.templates.loader import TemplateLoader
 from src.templates.default import create_default_template
+from src.config.config import find_usb_template
 from src.ui.theme import COLORS, FONTS, SIZES
 from src.utils.logging import get_logger
 
@@ -398,17 +399,57 @@ class StartScreen(ctk.CTkFrame):
         
         # Video abspielen wenn konfiguriert, sonst direkt zur Session
         self.app.play_video("video_start", "session")
-    
+
+    def _load_usb_template_and_start(self, usb_template_path: str):
+        """Lädt ein USB-Template und startet die Session direkt.
+
+        Wird aufgerufen wenn ein Template auf einem USB-Stick gefunden wurde.
+        Überspringt die normale Template-Auswahl.
+        """
+        logger.info(f"=== Lade USB-Template: {usb_template_path} ===")
+
+        try:
+            # Template mit TemplateLoader laden
+            overlay, boxes = TemplateLoader.load(usb_template_path)
+
+            if overlay and boxes:
+                # App-Variablen setzen
+                self.app.template_path = usb_template_path
+                self.app.template_boxes = boxes
+                self.app.overlay_image = overlay
+                logger.info(f"USB-Template geladen: {len(boxes)} Foto-Slots, Overlay {overlay.size}")
+
+                # Session direkt starten (kein Video, sofort los)
+                self.app.show_screen("session")
+            else:
+                logger.warning(f"USB-Template ungültig: {usb_template_path}")
+                # Fallback: Normale Template-Auswahl zeigen
+                self._refresh_template_cards()
+                self.start_btn.configure(state="disabled")
+
+        except Exception as e:
+            logger.error(f"Fehler beim Laden des USB-Templates: {e}")
+            # Fallback: Normale Template-Auswahl zeigen
+            self._refresh_template_cards()
+            self.start_btn.configure(state="disabled")
+
     def on_show(self):
         """Screen wird angezeigt - Template-Karten neu laden falls Config geändert"""
         logger.info("=== StartScreen on_show ===")
-        
+
         # Config könnte sich geändert haben (Admin-Dialog)
         self.config = self.app.config
-        
+
+        # USB-Template prüfen - hat Priorität über alle anderen!
+        usb_template = find_usb_template()
+        if usb_template:
+            logger.info(f"=== USB-Template gefunden: {usb_template} ===")
+            self._load_usb_template_and_start(usb_template)
+            return  # Nicht weitermachen, Session startet direkt
+
         # Alte Karten entfernen und neu erstellen (setzt auch selected_card = None)
         self._refresh_template_cards()
-        
+
         # Start-Button deaktivieren bis eine Auswahl getroffen wird
         self.start_btn.configure(state="disabled")
     

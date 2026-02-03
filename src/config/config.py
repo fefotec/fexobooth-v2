@@ -78,8 +78,7 @@ def _find_usb_config() -> Optional[Dict[str, Any]]:
     # Windows: Suche Laufwerke D-Z nach "fexobox" Volume
     if os.name == "nt":
         import ctypes
-        from ctypes import wintypes
-        
+
         for letter in "DEFGHIJKLMNOPQRSTUVWXYZ":
             drive = f"{letter}:\\"
             if os.path.exists(drive):
@@ -97,5 +96,65 @@ def _find_usb_config() -> Optional[Dict[str, Any]]:
                                 return json.load(f)
                 except:
                     pass
-    
+
     return None
+
+
+def find_usb_template() -> Optional[str]:
+    """Sucht ZIP-Templates auf USB-Sticks (Wechseldatenträger).
+
+    Durchsucht alle Wechseldatenträger (USB-Sticks) nach ZIP-Dateien
+    im Root-Verzeichnis. Gibt den Pfad zum ersten gefundenen Template zurück.
+
+    Returns:
+        Pfad zur ZIP-Datei oder None wenn nichts gefunden
+    """
+    if os.name != "nt":
+        return None
+
+    import ctypes
+
+    # DRIVE_REMOVABLE = 2 (USB-Sticks, SD-Karten, etc.)
+    DRIVE_REMOVABLE = 2
+
+    for letter in "DEFGHIJKLMNOPQRSTUVWXYZ":
+        drive = f"{letter}:\\"
+
+        # Prüfen ob Laufwerk existiert und Wechseldatenträger ist
+        try:
+            if not os.path.exists(drive):
+                continue
+
+            drive_type = ctypes.windll.kernel32.GetDriveTypeW(drive)
+            if drive_type != DRIVE_REMOVABLE:
+                continue
+
+            # ZIP-Dateien im Root suchen
+            for item in os.listdir(drive):
+                if item.lower().endswith(".zip"):
+                    zip_path = os.path.join(drive, item)
+                    # Prüfen ob es ein gültiges Template ist (enthält PNG)
+                    if _is_valid_template_zip(zip_path):
+                        print(f"USB-Template gefunden: {zip_path}")
+                        return zip_path
+
+        except (OSError, PermissionError):
+            # Laufwerk nicht lesbar
+            continue
+
+    return None
+
+
+def _is_valid_template_zip(zip_path: str) -> bool:
+    """Prüft ob eine ZIP-Datei ein gültiges Template ist (enthält PNG)."""
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            for name in zf.namelist():
+                if name.lower().endswith(".png"):
+                    return True
+    except:
+        pass
+
+    return False
