@@ -215,19 +215,24 @@ class StartScreen(ctk.CTkFrame):
             self.start_btn.configure(state="normal")
 
             logger.info(f"✅ USB-Template Karte erstellt und vorselektiert: {self._usb_template_path}")
-            logger.info(f"Erstellte Karten: {list(self.cards.keys())}")
-            return  # Keine weiteren Karten erstellen!
+            # WICHTIG: Kein return hier! Single-Foto Karte soll auch erstellt werden
+            has_custom_template = True  # USB-Template zählt als Custom
 
-        logger.debug(f"template1_enabled: {self.config.get('template1_enabled')}")
-        logger.debug(f"template2_enabled: {self.config.get('template2_enabled')}")
-        logger.debug(f"template_paths: {self.config.get('template_paths', {})}")
-        
-        # Template 1
-        t1_enabled = self.config.get("template1_enabled", False)
+        # Bei USB-Template: Nur USB + Single anzeigen, keine Config-Templates
+        usb_active = hasattr(self, '_usb_template_path') and self._usb_template_path
+
+        if not usb_active:
+            logger.debug(f"template1_enabled: {self.config.get('template1_enabled')}")
+            logger.debug(f"template2_enabled: {self.config.get('template2_enabled')}")
+            logger.debug(f"template_paths: {self.config.get('template_paths', {})}")
+
+        # Template 1 (nur wenn kein USB-Template)
+        t1_enabled = self.config.get("template1_enabled", False) and not usb_active
         t1_path = self.config.get("template_paths", {}).get("template1", "")
         t1_resolved = self._resolve_template_path(t1_path) if t1_path else None
-        logger.info(f"Template 1: enabled={t1_enabled}, path='{t1_path}', resolved='{t1_resolved}'")
-        
+        if not usb_active:
+            logger.info(f"Template 1: enabled={t1_enabled}, path='{t1_path}', resolved='{t1_resolved}'")
+
         if t1_enabled:
             if t1_resolved:
                 preview = self._load_template_preview(t1_resolved)
@@ -244,11 +249,12 @@ class StartScreen(ctk.CTkFrame):
             else:
                 logger.warning(f"Template 1 aktiviert aber Pfad nicht gefunden: '{t1_path}'")
         
-        # Template 2
-        t2_enabled = self.config.get("template2_enabled", False)
+        # Template 2 (nur wenn kein USB-Template)
+        t2_enabled = self.config.get("template2_enabled", False) and not usb_active
         t2_path = self.config.get("template_paths", {}).get("template2", "")
         t2_resolved = self._resolve_template_path(t2_path) if t2_path else None
-        logger.info(f"Template 2: enabled={t2_enabled}, path='{t2_path}', resolved='{t2_resolved}'")
+        if not usb_active:
+            logger.info(f"Template 2: enabled={t2_enabled}, path='{t2_path}', resolved='{t2_resolved}'")
         
         if t2_enabled:
             if t2_resolved:
