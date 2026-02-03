@@ -42,6 +42,10 @@ def main():
     # Developer Mode aktivieren wenn CLI oder Config es will
     developer_mode = dev_mode_cli or dev_mode_config
     
+    # WICHTIG: Config aktualisieren damit App (Performance Overlay etc.) es weiß
+    if developer_mode:
+        config["developer_mode"] = True
+    
     # Logging initialisieren MIT Developer Mode Info
     logger = setup_logging(developer_mode=developer_mode)
     logger.info("=" * 50)
