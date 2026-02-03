@@ -25,7 +25,6 @@ class AdminDialog(ctk.CTkToplevel):
         super().__init__(parent)
 
         self.title("⚙️ Admin-Einstellungen")
-        self.geometry("750x550")
         self.configure(fg_color=COLORS["bg_dark"])
 
         self.config_data = config.copy()
@@ -37,14 +36,20 @@ class AdminDialog(ctk.CTkToplevel):
         self.transient(parent)
         self.grab_set()
 
-        # Zentrieren
-        self.update_idletasks()
-        x = (self.winfo_screenwidth() - 750) // 2
-        y = (self.winfo_screenheight() - 550) // 2
-        self.geometry(f"+{x}+{y}")
-
         # Kein Fensterrand für PIN-Dialog (Touch-freundlich)
         self.overrideredirect(True)
+        
+        # PIN-Dialog Größe (größer für Numpad)
+        pin_width = 400
+        pin_height = 550
+        
+        # Zentrieren auf dem Bildschirm
+        self.update_idletasks()
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        x = (screen_w - pin_width) // 2
+        y = (screen_h - pin_height) // 2
+        self.geometry(f"{pin_width}x{pin_height}+{x}+{y}")
 
         # PIN-Abfrage zuerst
         self._show_pin_dialog()
@@ -172,6 +177,15 @@ class AdminDialog(ctk.CTkToplevel):
             # Fensterrand für Admin-Einstellungen wiederherstellen
             self.overrideredirect(False)
             self.title("⚙️ Admin-Einstellungen")
+            
+            # Admin-Dialog vergrößern und zentrieren
+            admin_width = 750
+            admin_height = 550
+            screen_w = self.winfo_screenwidth()
+            screen_h = self.winfo_screenheight()
+            x = (screen_w - admin_width) // 2
+            y = (screen_h - admin_height) // 2
+            self.geometry(f"{admin_width}x{admin_height}+{x}+{y}")
 
             # *** WICHTIG: Fullscreen deaktivieren für Admin ***
             try:
