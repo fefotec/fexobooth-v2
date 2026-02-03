@@ -750,19 +750,7 @@ class PhotoboothApp:
         }
         
         # Screen erstellen falls nicht vorhanden oder neu erstellen für frischen State
-        if screen_name == "session":
-            # SessionScreen: NUR neu erstellen wenn keine Session läuft!
-            # Sonst geht der State (current_photo_index etc.) verloren bei Video-Rückkehr
-            session_active = len(self.photos_taken) > 0
-            if screen_name in self.screens and not session_active:
-                # Keine aktive Session -> frischen Screen erstellen
-                self.screens[screen_name].destroy()
-                self.screens[screen_name] = screen_classes[screen_name](self.container, self)
-            elif screen_name not in self.screens:
-                # Screen existiert noch nicht -> erstellen
-                self.screens[screen_name] = screen_classes[screen_name](self.container, self)
-            # Sonst: Session läuft, bestehenden Screen wiederverwenden!
-        elif screen_name in ["filter", "final", "video"]:
+        if screen_name in ["session", "filter", "final", "video"]:
             # Diese Screens immer neu erstellen
             if screen_name in self.screens:
                 self.screens[screen_name].destroy()
