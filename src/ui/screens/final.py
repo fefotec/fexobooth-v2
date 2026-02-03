@@ -259,6 +259,20 @@ class FinalScreen(ctk.CTkFrame):
             if not printer_name:
                 printer_name = win32print.GetDefaultPrinter()
 
+            # Prüfen ob der Drucker existiert
+            available_printers = [p[2] for p in win32print.EnumPrinters(
+                win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
+            )]
+
+            if printer_name not in available_printers:
+                logger.error(f"Drucker nicht gefunden: '{printer_name}'")
+                logger.info(f"Verfügbare Drucker: {available_printers}")
+                self.print_info.configure(
+                    text=f"❌ Drucker '{printer_name}' nicht gefunden!\nBitte im Admin-Bereich konfigurieren.",
+                    text_color=COLORS["error"]
+                )
+                return
+
             logger.info(f"Drucke auf: {printer_name}")
             logger.info(f"Bild: {image_path}")
 
@@ -359,8 +373,20 @@ class FinalScreen(ctk.CTkFrame):
             logger.error(f"Druckfehler: {e}")
             import traceback
             logger.error(traceback.format_exc())
+
+            # Benutzerfreundliche Fehlermeldung
+            error_str = str(e)
+            if "1801" in error_str or "unzulässig" in error_str.lower():
+                msg = "❌ Drucker nicht erreichbar!\nBitte im Admin konfigurieren."
+            elif "offline" in error_str.lower():
+                msg = "❌ Drucker ist offline!"
+            elif "paper" in error_str.lower() or "papier" in error_str.lower():
+                msg = "❌ Kein Papier im Drucker!"
+            else:
+                msg = f"❌ Druckfehler"
+
             self.print_info.configure(
-                text=f"❌ Druckfehler: {e}",
+                text=msg,
                 text_color=COLORS["error"]
             )
     

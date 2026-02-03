@@ -71,6 +71,9 @@ class PhotoboothApp:
         self.template_boxes: List[Dict] = []
         self.overlay_image: Optional[Image.Image] = None
         self.prints_in_session: int = 0
+
+        # USB-Template Cache (bleibt erhalten wenn USB abgezogen wird)
+        self.cached_usb_template: Optional[Dict] = None  # {path, name, overlay, boxes}
         
         # UI Setup
         self._setup_ui()
