@@ -85,12 +85,13 @@ class SessionScreen(ctk.CTkFrame):
         self.preview_container.pack(expand=True, fill="both")
         
         # Preview Label (für das gerenderte Template mit Live-View)
+        # WICHTIG: fill="both" damit das Label den gesamten Container ausfüllt!
         self.preview_label = ctk.CTkLabel(
             self.preview_container,
             text="",
             fg_color="transparent"
         )
-        self.preview_label.pack(expand=True, padx=5, pady=5)
+        self.preview_label.pack(expand=True, fill="both")
     
     def on_show(self):
         """Screen wird angezeigt"""
@@ -319,29 +320,35 @@ class SessionScreen(ctk.CTkFrame):
     def _display_preview(self, img: Image.Image):
         """Zeigt das Vorschau-Bild skaliert an - IMMER 100% sichtbar!
 
-        Nutzt die TATSÄCHLICHE Container-Größe statt geschätzter Werte.
+        Nutzt die TATSÄCHLICHE Label-Größe für präzise Berechnung.
         """
-        # Container-Größe direkt holen (das ist der echte verfügbare Platz!)
+        # Label-Größe direkt holen (das ist der ECHTE verfügbare Platz!)
         try:
-            self.preview_container.update_idletasks()
-            container_w = self.preview_container.winfo_width()
-            container_h = self.preview_container.winfo_height()
+            self.preview_label.update_idletasks()
+            label_w = self.preview_label.winfo_width()
+            label_h = self.preview_label.winfo_height()
 
-            # Fallback wenn Container noch nicht gerendert
-            if container_w < 100 or container_h < 100:
-                container_w = self.winfo_toplevel().winfo_width() - 40
-                container_h = self.winfo_toplevel().winfo_height() - 100
+            # Fallback wenn Label noch nicht gerendert
+            if label_w < 100 or label_h < 100:
+                # Fenster-Größe minus alle Paddings und UI-Elemente
+                win_w = self.winfo_toplevel().winfo_width()
+                win_h = self.winfo_toplevel().winfo_height()
+                # main_frame: padx=15*2, pady=10*2 = 30, 20
+                # info_bar: height=45
+                # preview_container corner_radius nimmt auch Platz
+                label_w = win_w - 60
+                label_h = win_h - 100
         except:
-            container_w = 1200
-            container_h = 700
+            label_w = 1200
+            label_h = 650
 
-        # Padding innerhalb des Containers abziehen
-        available_w = container_w - 20
-        available_h = container_h - 20
+        # Sicherheitsabstand - CTkLabel kann intern noch Platz brauchen
+        available_w = label_w - 10
+        available_h = label_h - 10
 
         # Einmalig loggen
         if not hasattr(self, '_logged_size'):
-            logger.info(f"Container: {container_w}x{container_h}, Verfügbar: {available_w}x{available_h}, Bild: {img.width}x{img.height}")
+            logger.info(f"Label: {label_w}x{label_h}, Verfügbar: {available_w}x{available_h}, Bild: {img.width}x{img.height}")
             self._logged_size = True
 
         # IMMER Fit-Modus: Bild komplett sichtbar, Aspect Ratio beibehalten
