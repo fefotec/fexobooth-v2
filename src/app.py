@@ -74,7 +74,10 @@ class PhotoboothApp:
 
         # USB-Template Cache (bleibt erhalten wenn USB abgezogen wird)
         self.cached_usb_template: Optional[Dict] = None  # {path, name, overlay, boxes}
-        
+
+        # USB-Sync Dialog State
+        self._sync_dialog_open: bool = False  # Verhindert mehrfache Dialoge
+
         # UI Setup
         self._setup_ui()
         
@@ -238,13 +241,18 @@ class PhotoboothApp:
         self._check_printer_status()
     
     def _check_usb_status(self):
-        """Prüft USB-Status - BLINKEND wenn nicht vorhanden, Auto-Sync wenn wieder da"""
-        # Auto-Sync: Prüft ob USB wieder verfügbar und synchronisiert ausstehende Dateien
-        synced = self.usb_manager.check_and_sync()
-        if synced > 0:
-            logger.info(f"Auto-Sync: {synced} Dateien auf USB kopiert")
-            # Kurze Sync-Benachrichtigung anzeigen
-            self._show_sync_notification(synced)
+        """Prüft USB-Status - BLINKEND wenn nicht vorhanden, Dialog bei Pending-Files"""
+        # Prüfen ob USB wieder verfügbar und Dateien pending sind
+        is_available = self.usb_manager.is_available()
+        pending_count = self.usb_manager.get_pending_count()
+
+        # USB wurde gerade eingesteckt und es gibt pending files -> Dialog zeigen
+        if is_available and pending_count > 0 and not self._sync_dialog_open:
+            if not hasattr(self, '_was_usb_available') or not self._was_usb_available:
+                self._was_usb_available = True
+                self._show_usb_sync_dialog(pending_count)
+        elif not is_available:
+            self._was_usb_available = False
 
         text, status = self.usb_manager.get_status_text()
 
@@ -280,6 +288,119 @@ class PhotoboothApp:
 
         # Schnellerer Check für Blink-Effekt
         self.root.after(1000, self._check_usb_status)
+
+    def _show_usb_sync_dialog(self, pending_count: int):
+        """Zeigt Dialog: Bilder auf USB kopieren? Ja/Nein"""
+        if self._sync_dialog_open:
+            return
+
+        self._sync_dialog_open = True
+        logger.info(f"USB-Sync Dialog: {pending_count} Dateien warten")
+
+        # Dialog erstellen
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title("USB-Stick erkannt")
+
+        # Ohne Fensterrahmen für konsistentes Aussehen
+        dialog.overrideredirect(True)
+
+        # Dialog-Größe und Position (zentriert)
+        dialog_width = 400
+        dialog_height = 200
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        x = (screen_w - dialog_width) // 2
+        y = (screen_h - dialog_height) // 2
+        dialog.geometry(f"{dialog_width}x{dialog_height}+{x}+{y}")
+
+        # Styling
+        dialog.configure(fg_color=COLORS["bg_medium"])
+
+        # Immer im Vordergrund
+        dialog.attributes("-topmost", True)
+        dialog.grab_set()
+
+        # Content Frame mit Rahmen
+        content = ctk.CTkFrame(
+            dialog,
+            fg_color=COLORS["bg_dark"],
+            corner_radius=15,
+            border_width=2,
+            border_color=COLORS["primary"]
+        )
+        content.pack(fill="both", expand=True, padx=3, pady=3)
+
+        # Icon und Titel
+        title_label = ctk.CTkLabel(
+            content,
+            text="💾 USB-Stick erkannt",
+            font=FONTS["heading"],
+            text_color=COLORS["primary"]
+        )
+        title_label.pack(pady=(20, 10))
+
+        # Frage
+        question_label = ctk.CTkLabel(
+            content,
+            text=f"{pending_count} Bild(er) warten auf Kopie.\nJetzt auf USB-Stick kopieren?",
+            font=FONTS["normal"],
+            text_color=COLORS["text_primary"]
+        )
+        question_label.pack(pady=(0, 20))
+
+        # Button-Container
+        btn_frame = ctk.CTkFrame(content, fg_color="transparent")
+        btn_frame.pack(pady=(0, 20))
+
+        def on_yes():
+            logger.info("USB-Sync: Benutzer hat JA geklickt")
+            dialog.destroy()
+            self._sync_dialog_open = False
+            # Sync durchführen
+            synced = self.usb_manager.sync_pending()
+            if synced > 0:
+                self._show_sync_notification(synced)
+
+        def on_no():
+            logger.info("USB-Sync: Benutzer hat NEIN geklickt")
+            dialog.destroy()
+            self._sync_dialog_open = False
+
+        # JA Button (grün, größer)
+        yes_btn = ctk.CTkButton(
+            btn_frame,
+            text="JA",
+            font=FONTS["button"],
+            width=120,
+            height=50,
+            fg_color=COLORS["success"],
+            hover_color="#00e676",
+            corner_radius=SIZES["corner_radius"],
+            command=on_yes
+        )
+        yes_btn.pack(side="left", padx=15)
+
+        # NEIN Button (grau)
+        no_btn = ctk.CTkButton(
+            btn_frame,
+            text="NEIN",
+            font=FONTS["button"],
+            width=120,
+            height=50,
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["bg_card"],
+            text_color=COLORS["text_primary"],
+            corner_radius=SIZES["corner_radius"],
+            command=on_no
+        )
+        no_btn.pack(side="left", padx=15)
+
+        # Dialog-Close Handler (falls irgendwie geschlossen)
+        def on_close():
+            self._sync_dialog_open = False
+            dialog.destroy()
+
+        dialog.protocol("WM_DELETE_WINDOW", on_close)
 
     def _show_sync_notification(self, count: int):
         """Zeigt kurze Benachrichtigung wenn Dateien synchronisiert wurden"""

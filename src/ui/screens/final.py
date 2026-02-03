@@ -281,6 +281,7 @@ class FinalScreen(ctk.CTkFrame):
             logger.info(f"Bild-Größe: {img.size}")
 
             # DEVMODE vom Drucker holen (enthält alle Treibereinstellungen inkl. Randlos)
+            devmode = None
             hPrinter = win32print.OpenPrinter(printer_name)
             try:
                 properties = win32print.GetPrinter(hPrinter, 2)
@@ -289,12 +290,20 @@ class FinalScreen(ctk.CTkFrame):
                     logger.info(f"DEVMODE: PaperSize={devmode.PaperSize}, "
                                f"Orientation={devmode.Orientation}, "
                                f"PrintQuality={devmode.PrintQuality}")
+                else:
+                    logger.warning("Kein DEVMODE vom Drucker - verwende Standardeinstellungen")
             finally:
                 win32print.ClosePrinter(hPrinter)
 
-            # DC erstellen - nutzt automatisch die Treibereinstellungen
+            # DC erstellen MIT DEVMODE für randlosen Druck!
             hDC = win32ui.CreateDC()
-            hDC.CreatePrinterDC(printer_name)
+            if devmode:
+                # WICHTIG: DEVMODE übergeben für Treibereinstellungen (randlos etc.)
+                hDC.CreatePrinterDC(printer_name, devmode)
+                logger.info("DC mit DEVMODE erstellt (randlose Einstellungen aktiv)")
+            else:
+                hDC.CreatePrinterDC(printer_name)
+                logger.warning("DC ohne DEVMODE erstellt (Standard-Einstellungen)")
 
             # Druckbereich abfragen
             # Für randlosen Druck: PHYSICALWIDTH/HEIGHT nutzen statt HORZRES/VERTRES
