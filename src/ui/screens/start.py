@@ -346,15 +346,26 @@ class StartScreen(ctk.CTkFrame):
     
     def _select_card(self, card: TemplateCard, option: str):
         """Wählt eine Karte aus"""
+        logger.debug(f"Karte ausgewählt: {option}")
+        
+        # Alte Auswahl zurücksetzen (mit Fehlerbehandlung für zerstörte Widgets)
         if self.selected_card:
-            self.selected_card.set_selected(False)
+            try:
+                self.selected_card.set_selected(False)
+            except Exception as e:
+                logger.debug(f"Alte Karte bereits zerstört: {e}")
         
-        card.set_selected(True)
-        self.selected_card = card
-        self.selected_option = option
-        
-        self.start_btn.configure(state="normal")
-        logger.debug(f"Option: {option}")
+        # Neue Auswahl setzen
+        try:
+            card.set_selected(True)
+            self.selected_card = card
+            self.selected_option = option
+            self.start_btn.configure(state="normal")
+            logger.info(f"Ausgewählt: {option}")
+        except Exception as e:
+            logger.error(f"Fehler beim Auswählen der Karte: {e}")
+            self.selected_card = None
+            self.selected_option = None
     
     def _on_start(self):
         """Start gedrückt"""
@@ -395,24 +406,27 @@ class StartScreen(ctk.CTkFrame):
         # Config könnte sich geändert haben (Admin-Dialog)
         self.config = self.app.config
         
-        # Alte Karten entfernen und neu erstellen
+        # Alte Karten entfernen und neu erstellen (setzt auch selected_card = None)
         self._refresh_template_cards()
         
-        # Auswahl zurücksetzen
-        if self.selected_card:
-            self.selected_card.set_selected(False)
-        self.selected_card = None
-        self.selected_option = None
+        # Start-Button deaktivieren bis eine Auswahl getroffen wird
         self.start_btn.configure(state="disabled")
     
     def _refresh_template_cards(self):
         """Erstellt Template-Karten neu (nach Config-Änderung)"""
         logger.info("=== Refresh Template-Karten ===")
         
+        # WICHTIG: Auswahl zurücksetzen BEVOR Karten zerstört werden!
+        self.selected_card = None
+        self.selected_option = None
+        
         # Alle alten Karten entfernen
         for key, card in self.cards.items():
             logger.debug(f"Entferne alte Karte: {key}")
-            card.destroy()
+            try:
+                card.destroy()
+            except Exception as e:
+                logger.debug(f"Karte {key} bereits zerstört: {e}")
         self.cards = {}
         
         # Neue Karten im gespeicherten Container erstellen

@@ -90,12 +90,16 @@ EDS_ERR_TAKE_PICTURE_CARD_NG = 0x00008D07
 # Error-Code Namen für besseres Logging
 ERROR_NAMES = {
     0x00000000: "OK",
+    0x00000081: "INVALID_PARAMETER",
     0x00000080: "DEVICE_NOT_FOUND",
     0x000000c0: "DEVICE_BUSY",
     0x00002003: "SESSION_NOT_OPEN",
     0x00002004: "SESSION_ALREADY_OPEN",
     0x00008D01: "TAKE_PICTURE_AF_NG",
     0x00008D07: "TAKE_PICTURE_CARD_NG",
+    0x0000a101: "EVF_DEVICE_BUSY",
+    0x0000a102: "EVF_INTERNAL_ERROR",  # Live-View nicht bereit
+    0x0000a103: "EVF_COORD_OUT_OF_RANGE",
 }
 
 def check_error(err: int, context: str = "") -> bool:

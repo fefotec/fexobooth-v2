@@ -169,7 +169,7 @@ class CanonCameraManager(CameraManager):
         logger.info("Canon Kamera freigegeben")
     
     def start_live_view(self) -> bool:
-        """Startet Live View"""
+        """Startet Live View mit Retry-Logik"""
         logger.debug("start_live_view aufgerufen...")
         
         if not self._is_initialized or not self._camera_ref:
@@ -180,19 +180,25 @@ class CanonCameraManager(CameraManager):
             logger.debug("Live View bereits aktiv")
             return True
         
-        try:
-            if edsdk.start_live_view(self._camera_ref):
-                self._live_view_active = True
-                # Kurz warten bis Live View startet
+        # Mehrere Versuche - Kamera braucht manchmal Zeit
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                if edsdk.start_live_view(self._camera_ref):
+                    self._live_view_active = True
+                    # Warten bis Live View bereit ist
+                    time.sleep(0.8)
+                    logger.info(f"Live View gestartet (Versuch {attempt + 1})")
+                    return True
+                else:
+                    logger.warning(f"start_live_view Versuch {attempt + 1} fehlgeschlagen")
+                    time.sleep(0.5)
+            except Exception as e:
+                logger.error(f"start_live_view Exception (Versuch {attempt + 1}): {e}")
                 time.sleep(0.5)
-                logger.info("Live View gestartet")
-                return True
-            else:
-                logger.warning("start_live_view gab False zurück")
-                return False
-        except Exception as e:
-            logger.error(f"start_live_view Exception: {e}")
-            return False
+        
+        logger.error("Live View konnte nach 3 Versuchen nicht gestartet werden")
+        return False
     
     def stop_live_view(self):
         """Stoppt Live View"""
@@ -229,11 +235,25 @@ class CanonCameraManager(CameraManager):
         try:
             jpeg_data = edsdk.get_live_view_image(self._camera_ref)
         except Exception as e:
-            logger.debug(f"get_live_view_image Exception: {e}")
+            # Nicht bei jedem Frame loggen - nur gelegentlich
+            if not hasattr(self, '_evf_error_count'):
+                self._evf_error_count = 0
+            self._evf_error_count += 1
+            if self._evf_error_count <= 3 or self._evf_error_count % 100 == 0:
+                logger.debug(f"get_live_view_image Fehler #{self._evf_error_count}: {e}")
             jpeg_data = None
         
         if jpeg_data is None:
+            # Bei vielen Fehlern: Live-View neu starten
+            if hasattr(self, '_evf_error_count') and self._evf_error_count > 0 and self._evf_error_count % 30 == 0:
+                logger.warning(f"Viele Live-View Fehler ({self._evf_error_count}), versuche Neustart...")
+                self._live_view_active = False
+                self.start_live_view()
             return self._last_frame  # Fallback auf letztes Frame
+        
+        # Erfolg - Fehler-Counter zurücksetzen
+        if hasattr(self, '_evf_error_count'):
+            self._evf_error_count = 0
         
         try:
             # JPEG zu numpy array
