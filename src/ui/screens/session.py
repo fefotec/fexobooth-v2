@@ -383,48 +383,55 @@ class SessionScreen(ctk.CTkFrame):
         self.preview_label.image = ctk_img
     
     def _display_flash(self):
-        """Zeigt Flash mit Kamera-Icon und FOTO! Text"""
+        """Zeigt Flash-Screen - konfigurierbares Bild oder Emoji"""
         container_w = self.preview_container.winfo_width() - 10
         container_h = self.preview_container.winfo_height() - 10
         
         if container_w > 100 and container_h > 100:
             # Weißer Hintergrund
             flash = Image.new("RGB", (container_w, container_h), (255, 255, 255))
-            draw = ImageDraw.Draw(flash)
             
-            # Kamera-Icon laden und einfügen
-            icon_size = min(container_w, container_h) // 4
-            try:
-                import os
-                # Pfad: src/ui/screens -> src/ui -> src -> root -> assets/icons
-                src_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-                icon_path = os.path.join(src_dir, "assets", "icons", "camera.png")
-                logger.debug(f"Icon-Pfad: {icon_path}")
-                if os.path.exists(icon_path):
-                    icon = Image.open(icon_path).convert("RGBA")
-                    icon = icon.resize((icon_size, icon_size), Image.Resampling.LANCZOS)
-                    # Icon zentriert oben
-                    icon_x = (container_w - icon_size) // 2
-                    icon_y = (container_h // 2) - icon_size - 10
-                    flash.paste(icon, (icon_x, icon_y), icon)
-            except Exception as e:
-                logger.debug(f"Icon nicht geladen: {e}")
+            # Option 1: Eigenes Bild aus Config
+            flash_image_path = self.config.get("flash_image", "")
+            if flash_image_path and os.path.exists(flash_image_path):
+                try:
+                    custom_img = Image.open(flash_image_path).convert("RGBA")
+                    # Bild skalieren (max 60% der Fläche, Aspect Ratio beibehalten)
+                    max_size = int(min(container_w, container_h) * 0.6)
+                    custom_img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+                    # Zentriert einfügen
+                    img_x = (container_w - custom_img.width) // 2
+                    img_y = (container_h - custom_img.height) // 2
+                    flash.paste(custom_img, (img_x, img_y), custom_img)
+                    logger.debug(f"Flash-Bild geladen: {flash_image_path}")
+                except Exception as e:
+                    logger.warning(f"Flash-Bild konnte nicht geladen werden: {e}")
+                    flash_image_path = ""  # Fallback auf Emoji
             
-            # "FOTO!" Text
-            text = "FOTO!"
-            font_size = min(container_w, container_h) // 6
-            try:
-                font = ImageFont.truetype("C:/Windows/Fonts/segoeui.ttf", font_size)
-            except:
-                font = ImageFont.load_default()
-            
-            bbox = draw.textbbox((0, 0), text, font=font)
-            text_w = bbox[2] - bbox[0]
-            text_h = bbox[3] - bbox[1]
-            x = (container_w - text_w) // 2
-            y = (container_h // 2) + 10
-            
-            draw.text((x, y), text, fill=(224, 6, 117), font=font)
+            # Option 2: Emoji (Fallback oder wenn kein Bild konfiguriert)
+            if not flash_image_path or not os.path.exists(flash_image_path):
+                draw = ImageDraw.Draw(flash)
+                emoji = self.config.get("flash_emoji", "📸")
+                
+                # Große Emoji-Schrift
+                font_size = min(container_w, container_h) // 2
+                try:
+                    # Windows Emoji Font
+                    font = ImageFont.truetype("C:/Windows/Fonts/seguiemj.ttf", font_size)
+                except:
+                    try:
+                        font = ImageFont.truetype("C:/Windows/Fonts/segoeui.ttf", font_size)
+                    except:
+                        font = ImageFont.load_default()
+                
+                # Emoji zentrieren
+                bbox = draw.textbbox((0, 0), emoji, font=font)
+                text_w = bbox[2] - bbox[0]
+                text_h = bbox[3] - bbox[1]
+                x = (container_w - text_w) // 2
+                y = (container_h - text_h) // 2
+                
+                draw.text((x, y), emoji, fill=(0, 0, 0), font=font)
             
             ctk_img = ctk.CTkImage(light_image=flash, size=(container_w, container_h))
             self.preview_label.configure(image=ctk_img)

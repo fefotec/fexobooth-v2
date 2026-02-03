@@ -19,17 +19,18 @@ logger = get_logger(__name__)
 
 
 class FilterButton(ctk.CTkFrame):
-    """Filter-Button mit Mini-Vorschau - kompakt für 1280x800"""
+    """Filter-Button mit Vorschau - clean ohne Namen"""
     
     def __init__(self, parent, filter_key: str, filter_name: str,
                  preview_image: Optional[Image.Image] = None, on_click=None):
+        # Größere Buttons ohne Namen = mehr Platz für Preview
         super().__init__(
             parent,
-            width=SIZES["filter_button_size"],
-            height=SIZES["filter_button_size"],
+            width=95,
+            height=75,
             fg_color=COLORS["bg_card"],
             corner_radius=SIZES["corner_radius_small"],
-            border_width=2,
+            border_width=3,
             border_color=COLORS["border"]
         )
         self.pack_propagate(False)
@@ -44,28 +45,18 @@ class FilterButton(ctk.CTkFrame):
         self.bind("<Leave>", self._on_leave)
         self.bind("<Button-1>", self._on_click)
         
-        # Vorschau-Bild
+        # Vorschau-Bild (füllt den ganzen Button)
         self.preview_label = ctk.CTkLabel(self, text="", fg_color="transparent")
-        self.preview_label.pack(expand=True, fill="both", padx=3, pady=(3, 1))
+        self.preview_label.pack(expand=True, fill="both", padx=4, pady=4)
         self.preview_label.bind("<Button-1>", self._on_click)
 
         if preview_image:
             self.set_preview(preview_image)
-
-        # Filter-Name (kürzer)
-        name_label = ctk.CTkLabel(
-            self,
-            text=filter_name[:7],  # Kürzen für 80px Button
-            font=FONTS["tiny"],
-            text_color=COLORS["text_secondary"]
-        )
-        name_label.pack(pady=(0, 3))
-        name_label.bind("<Button-1>", self._on_click)
     
     def set_preview(self, image: Image.Image):
         """Setzt das Vorschaubild"""
         thumb = image.copy()
-        thumb.thumbnail((65, 50), Image.Resampling.LANCZOS)  # Kompakter für 80px Button
+        thumb.thumbnail((85, 65), Image.Resampling.LANCZOS)  # Größer ohne Namen
 
         self.preview_ctk = ctk.CTkImage(light_image=thumb, size=thumb.size)
         self.preview_label.configure(image=self.preview_ctk)
@@ -200,15 +191,14 @@ class FilterScreen(ctk.CTkFrame):
         self.continue_btn.pack(side="right")
     
     def _create_filter_buttons(self, parent):
-        """Erstellt die Filter-Buttons - 3 pro Reihe für alle sichtbar"""
-        # Grid für 3 Spalten (9 Filter = 3 Reihen = ~270px)
+        """Erstellt die Filter-Buttons - 3 pro Reihe, clean ohne Namen"""
         row_frame = None
         col = 0
 
         for i, (key, name) in enumerate(AVAILABLE_FILTERS.items()):
             if col == 0:
                 row_frame = ctk.CTkFrame(parent, fg_color="transparent")
-                row_frame.pack(fill="x", pady=3)
+                row_frame.pack(fill="x", pady=5)
 
             btn = FilterButton(
                 row_frame,
@@ -216,7 +206,7 @@ class FilterScreen(ctk.CTkFrame):
                 filter_name=name,
                 on_click=lambda b: self._select_filter(b)
             )
-            btn.pack(side="left", padx=3)
+            btn.pack(side="left", padx=5)
             self.filter_buttons[key] = btn
 
             col = (col + 1) % 3
