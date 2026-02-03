@@ -23,49 +23,52 @@ class TemplateRenderer:
         background_color: str = "#000000"
     ) -> Image.Image:
         """Rendert Fotos in Template
-        
+
         Args:
             photos: Liste von Foto-Bildern
             boxes: Liste von Photo-Boxen {"box": (x1, y1, x2, y2), "angle": float}
             overlay: Overlay-Bild (optional)
             background_color: Hintergrundfarbe
-            
+
         Returns:
             Fertiges Bild
+
+        WICHTIG: Wenn ein Overlay vorhanden ist, wird dessen Größe als
+        Canvas-Größe verwendet, um Verzerrungen zu vermeiden!
         """
+        # Canvas-Größe: Overlay-Größe hat Priorität!
+        if overlay:
+            canvas_w, canvas_h = overlay.size
+        else:
+            canvas_w, canvas_h = self.canvas_width, self.canvas_height
+
         # Canvas erstellen
-        canvas = Image.new("RGBA", (self.canvas_width, self.canvas_height), background_color)
-        
+        canvas = Image.new("RGBA", (canvas_w, canvas_h), background_color)
+
         # Fotos einfügen
         for i, box_info in enumerate(boxes):
             if i >= len(photos):
                 break
-            
+
             photo = photos[i]
             box = box_info["box"]
             angle = box_info.get("angle", 0.0)
-            
+
             # Foto in Box einpassen
             fitted = self._fit_photo_to_box(photo, box)
-            
+
             # Rotation anwenden
             if angle != 0:
                 fitted = fitted.rotate(-angle, expand=True, resample=Image.Resampling.BICUBIC)
-            
+
             # An Position einfügen
             x1, y1 = box[0], box[1]
             canvas.paste(fitted, (x1, y1), fitted if fitted.mode == "RGBA" else None)
-        
-        # Overlay anwenden
+
+        # Overlay anwenden - KEINE Skalierung, Canvas hat bereits Overlay-Größe!
         if overlay:
-            # Overlay auf Canvas-Größe skalieren falls nötig
-            if overlay.size != (self.canvas_width, self.canvas_height):
-                overlay = overlay.resize(
-                    (self.canvas_width, self.canvas_height),
-                    Image.Resampling.LANCZOS
-                )
             canvas = Image.alpha_composite(canvas, overlay)
-        
+
         return canvas
     
     def _fit_photo_to_box(self, photo: Image.Image, box: tuple) -> Image.Image:

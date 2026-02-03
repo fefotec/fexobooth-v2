@@ -137,26 +137,34 @@ class SessionScreen(ctk.CTkFrame):
         )
     
     def _build_template_preview(self, live_frame: Optional[np.ndarray] = None) -> Image.Image:
-        """Baut das Template mit Live-View und bereits gemachten Fotos"""
-        canvas_w = self.config.get("canvas_width", 1800)
-        canvas_h = self.config.get("canvas_height", 1200)
-        
+        """Baut das Template mit Live-View und bereits gemachten Fotos
+
+        WICHTIG: Canvas-Größe wird vom Overlay übernommen, NICHT umgekehrt!
+        So bleibt das Overlay-PNG immer unverzerrt.
+        """
+        # Canvas-Größe: Wenn Overlay vorhanden, dessen Größe nutzen!
+        if self.app.overlay_image:
+            canvas_w, canvas_h = self.app.overlay_image.size
+        else:
+            canvas_w = self.config.get("canvas_width", 1800)
+            canvas_h = self.config.get("canvas_height", 1200)
+
         # Canvas erstellen
         canvas = Image.new("RGBA", (canvas_w, canvas_h), (20, 20, 30, 255))
-        
+
         boxes = self.app.template_boxes or [{"box": (0, 0, canvas_w-1, canvas_h-1), "angle": 0}]
-        
+
         for i, box_info in enumerate(boxes):
             x1, y1, x2, y2 = box_info["box"]
             box_w = x2 - x1 + 1
             box_h = y2 - y1 + 1
-            
+
             if i < len(self.app.photos_taken):
                 # Bereits gemachtes Foto anzeigen
                 photo = self.app.photos_taken[i].copy()
                 photo = self._fit_image_to_box(photo, box_w, box_h)
                 canvas.paste(photo, (x1, y1))
-                
+
             elif i == self.current_photo_index and live_frame is not None:
                 # AKTUELLER SLOT: Live-View anzeigen
                 # Optional: 180° Rotation (für kopfüber montierte Kameras)
@@ -169,35 +177,32 @@ class SessionScreen(ctk.CTkFrame):
                 live_img = Image.fromarray(rgb)
                 live_img = self._fit_image_to_box(live_img, box_w, box_h)
                 canvas.paste(live_img, (x1, y1))
-                
+
                 # Rahmen um aktiven Slot (Pink)
                 draw = ImageDraw.Draw(canvas)
                 draw.rectangle([x1, y1, x2, y2], outline=(224, 6, 117, 255), width=4)
-                
+
             else:
                 # Zukünftiger Slot: Grau mit Nummer
                 draw = ImageDraw.Draw(canvas)
                 draw.rectangle([x1, y1, x2, y2], fill=(40, 40, 50, 255), outline=(60, 60, 70, 255), width=2)
-                
+
                 # Nummer in der Mitte
                 try:
                     font = ImageFont.truetype("C:/Windows/Fonts/segoeui.ttf", 60)
                 except:
                     font = ImageFont.load_default()
-                
+
                 text = str(i + 1)
                 bbox = draw.textbbox((0, 0), text, font=font)
                 tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
                 tx = x1 + (box_w - tw) // 2
                 ty = y1 + (box_h - th) // 2
                 draw.text((tx, ty), text, fill=(80, 80, 90, 255), font=font)
-        
-        # Overlay anwenden wenn vorhanden
+
+        # Overlay anwenden - KEINE Skalierung nötig, Canvas hat bereits Overlay-Größe!
         if self.app.overlay_image:
-            overlay = self.app.overlay_image
-            if overlay.size != (canvas_w, canvas_h):
-                overlay = overlay.resize((canvas_w, canvas_h), Image.Resampling.LANCZOS)
-            canvas = Image.alpha_composite(canvas, overlay)
+            canvas = Image.alpha_composite(canvas, self.app.overlay_image)
         
         return canvas
     
@@ -312,47 +317,53 @@ class SessionScreen(ctk.CTkFrame):
         return img
     
     def _display_preview(self, img: Image.Image):
-        """Zeigt das Vorschau-Bild skaliert an - IMMER 100% sichtbar!"""
-        # Bildschirmgröße holen
+        """Zeigt das Vorschau-Bild skaliert an - IMMER 100% sichtbar!
+
+        Nutzt die TATSÄCHLICHE Container-Größe statt geschätzter Werte.
+        """
+        # Container-Größe direkt holen (das ist der echte verfügbare Platz!)
         try:
-            screen_w = self.winfo_toplevel().winfo_width()
-            screen_h = self.winfo_toplevel().winfo_height()
-            if screen_w < 400 or screen_h < 300:
-                screen_w = self.winfo_screenwidth()
-                screen_h = self.winfo_screenheight()
+            self.preview_container.update_idletasks()
+            container_w = self.preview_container.winfo_width()
+            container_h = self.preview_container.winfo_height()
+
+            # Fallback wenn Container noch nicht gerendert
+            if container_w < 100 or container_h < 100:
+                container_w = self.winfo_toplevel().winfo_width() - 40
+                container_h = self.winfo_toplevel().winfo_height() - 100
         except:
-            screen_w = 1280
-            screen_h = 800
-        
-        # Verfügbarer Platz: Screen minus TopBar (50px) und Padding (100px)
-        available_w = screen_w - 40
-        available_h = screen_h - 150
-        
+            container_w = 1200
+            container_h = 700
+
+        # Padding innerhalb des Containers abziehen
+        available_w = container_w - 20
+        available_h = container_h - 20
+
         # Einmalig loggen
         if not hasattr(self, '_logged_size'):
-            logger.info(f"Screen: {screen_w}x{screen_h}, Verfügbar: {available_w}x{available_h}, Bild: {img.width}x{img.height}")
+            logger.info(f"Container: {container_w}x{container_h}, Verfügbar: {available_w}x{available_h}, Bild: {img.width}x{img.height}")
             self._logged_size = True
-        
-        # IMMER Fit-Modus: Bild komplett sichtbar, mit Aspect Ratio
+
+        # IMMER Fit-Modus: Bild komplett sichtbar, Aspect Ratio beibehalten
         img_ratio = img.width / img.height
         available_ratio = available_w / available_h
-        
+
         if img_ratio > available_ratio:
-            # Bild ist breiter → auf Breite skalieren
+            # Bild ist breiter als Container → auf Breite begrenzen
             new_w = available_w
             new_h = int(available_w / img_ratio)
         else:
-            # Bild ist höher → auf Höhe skalieren
+            # Bild ist höher als Container → auf Höhe begrenzen
             new_h = available_h
             new_w = int(available_h * img_ratio)
-        
-        # Sicherheitscheck
+
+        # Sicherheitscheck - niemals größer als verfügbar!
         new_w = max(100, min(new_w, available_w))
         new_h = max(100, min(new_h, available_h))
-        
-        # Skalieren
+
+        # Skalieren mit hoher Qualität
         scaled_img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-        
+
         # CTkImage erstellen und anzeigen
         ctk_img = ctk.CTkImage(light_image=scaled_img, dark_image=scaled_img, size=(new_w, new_h))
         self.preview_label.configure(image=ctk_img)
