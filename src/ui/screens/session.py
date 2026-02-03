@@ -315,35 +315,47 @@ class SessionScreen(ctk.CTkFrame):
         """Zeigt das Vorschau-Bild skaliert an (formatfüllend)"""
         # Update erzwingen um korrekte Container-Größe zu bekommen
         self.preview_container.update_idletasks()
+        self.update_idletasks()
         
-        container_w = self.preview_container.winfo_width() - 10
-        container_h = self.preview_container.winfo_height() - 10
+        container_w = self.preview_container.winfo_width() - 20
+        container_h = self.preview_container.winfo_height() - 20
         
         # Fallback wenn Container noch nicht gerendert
-        if container_w < 100 or container_h < 100:
+        if container_w < 200 or container_h < 200:
             # Bildschirmgröße als Basis nehmen
             try:
                 screen_w = self.winfo_screenwidth()
                 screen_h = self.winfo_screenheight()
-                container_w = int(screen_w * 0.85)
-                container_h = int(screen_h * 0.65)
+                # Mehr Platz für Preview nutzen
+                container_w = int(screen_w * 0.9)
+                container_h = int(screen_h * 0.7)
+                logger.debug(f"Fallback Container-Größe: {container_w}x{container_h} (Screen: {screen_w}x{screen_h})")
             except:
-                container_w, container_h = 900, 550
+                container_w, container_h = 1000, 600
         
-        # Skalieren mit Aspect Ratio
+        # Einmalig loggen bei großer Änderung
+        if not hasattr(self, '_last_container_size') or abs(self._last_container_size[0] - container_w) > 50:
+            logger.info(f"Preview Container: {container_w}x{container_h}, Bild: {img.width}x{img.height}")
+            self._last_container_size = (container_w, container_h)
+        
+        # Skalieren mit Aspect Ratio (Fit-Modus - ganzes Bild sichtbar)
         img_ratio = img.width / img.height
         container_ratio = container_w / container_h
         
         if img_ratio > container_ratio:
+            # Bild ist breiter als Container
             new_w = container_w
             new_h = int(container_w / img_ratio)
         else:
+            # Bild ist höher als Container
             new_h = container_h
             new_w = int(container_h * img_ratio)
         
-        img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        # Skalieren
+        scaled_img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
         
-        ctk_img = ctk.CTkImage(light_image=img, size=(new_w, new_h))
+        # CTkImage mit expliziter Größe
+        ctk_img = ctk.CTkImage(light_image=scaled_img, dark_image=scaled_img, size=(new_w, new_h))
         self.preview_label.configure(image=ctk_img)
         self.preview_label.image = ctk_img
     
