@@ -39,6 +39,11 @@ logs/
 BILDER/
 config.json
 
+# Booking & USB Cache
+.booking_cache/
+.pending_usb_sync.json
+fexobooth_statistics.json
+
 # Temporäre Dateien
 *.tmp
 *.temp
