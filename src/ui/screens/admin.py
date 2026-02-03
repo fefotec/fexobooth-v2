@@ -1363,80 +1363,85 @@ class AdminDialog(ctk.CTkToplevel):
                 self.config_data[key] = value
                 logger.info(f"  {key} = {value}")
         
-        # Template-Pfade - sicherstellen dass Dict existiert
-        if "template_paths" not in self.config_data:
-            self.config_data["template_paths"] = {}
+        # Template-Pfade - nur wenn Tab erstellt wurde (Lazy Loading)
+        if hasattr(self, 't1_path'):
+            if "template_paths" not in self.config_data:
+                self.config_data["template_paths"] = {}
+            
+            t1_path = self.t1_path.get().strip()
+            t2_path = self.t2_path.get().strip()
+            
+            self.config_data["template_paths"]["template1"] = t1_path
+            self.config_data["template_paths"]["template2"] = t2_path
+            self.config_data["logo_path"] = self.logo_path.get().strip()
+            
+            logger.info(f"Template 1: enabled={self.config_data.get('template1_enabled')}, path='{t1_path}'")
+            logger.info(f"Template 2: enabled={self.config_data.get('template2_enabled')}, path='{t2_path}'")
         
-        t1_path = self.t1_path.get().strip()
-        t2_path = self.t2_path.get().strip()
-        
-        self.config_data["template_paths"]["template1"] = t1_path
-        self.config_data["template_paths"]["template2"] = t2_path
-        self.config_data["logo_path"] = self.logo_path.get().strip()
-        
-        logger.info(f"Template 1: enabled={self.config_data.get('template1_enabled')}, path='{t1_path}'")
-        logger.info(f"Template 2: enabled={self.config_data.get('template2_enabled')}, path='{t2_path}'")
-        
-        # Galerie-Einstellungen
-        if "gallery" not in self.config_data:
-            self.config_data["gallery"] = {}
-        
-        self.config_data["gallery"]["hotspot_ssid"] = self.gallery_ssid.get().strip()
-        self.config_data["gallery"]["hotspot_password"] = self.gallery_password.get().strip()
-        try:
-            self.config_data["gallery"]["port"] = int(self.gallery_port.get())
-        except ValueError:
-            self.config_data["gallery"]["port"] = 8080
-        
-        logger.info(f"Galerie: enabled={self.config_data.get('gallery_enabled')}, "
-                    f"ssid={self.config_data['gallery']['hotspot_ssid']}, "
-                    f"port={self.config_data['gallery']['port']}")
-        
-        # Video-Pfade
-        self.config_data["video_start"] = self.video_start_path.get().strip()
-        self.config_data["video_after_1"] = self.video_after_1_path.get().strip()
-        self.config_data["video_after_2"] = self.video_after_2_path.get().strip()
-        self.config_data["video_after_3"] = self.video_after_3_path.get().strip()
-        self.config_data["video_end"] = self.video_end_path.get().strip()
-        
-        logger.info(f"Videos: start={bool(self.config_data['video_start'])}, "
-                    f"after_1={bool(self.config_data['video_after_1'])}, "
-                    f"after_2={bool(self.config_data['video_after_2'])}, "
-                    f"after_3={bool(self.config_data['video_after_3'])}, "
-                    f"end={bool(self.config_data['video_end'])}")
-        
-        # Drucker
-        printer = self.printer_dropdown.get()
-        if printer.startswith("⭐ "):
-            printer = printer[2:].replace(" (Standard)", "")
-        self.config_data["printer_name"] = printer
-        
-        # Druck-Anpassung
-        self.config_data["print_adjustment"] = {
-            "offset_x": int(self.offset_x_slider.get()),
-            "offset_y": int(self.offset_y_slider.get()),
-            "zoom": int(self.zoom_slider.get())
-        }
-        
-        # Kamera-Typ (NEU!)
-        self.config_data["camera_type"] = self.camera_type_dropdown.get()
-        
-        # Kamera-Index
-        cam_selection = self.camera_dropdown.get()
-        # Extrahiere Index aus "[0] Kamera..." oder "[0] 📷 Canon..."
-        if cam_selection.startswith("["):
+        # Galerie-Einstellungen - nur wenn Tab erstellt wurde
+        if hasattr(self, 'gallery_ssid'):
+            if "gallery" not in self.config_data:
+                self.config_data["gallery"] = {}
+            
+            self.config_data["gallery"]["hotspot_ssid"] = self.gallery_ssid.get().strip()
+            self.config_data["gallery"]["hotspot_password"] = self.gallery_password.get().strip()
             try:
-                idx = int(cam_selection[1:cam_selection.index("]")])
-                self.config_data["camera_index"] = idx
-            except:
-                pass
+                self.config_data["gallery"]["port"] = int(self.gallery_port.get())
+            except ValueError:
+                self.config_data["gallery"]["port"] = 8080
+            
+            logger.info(f"Galerie: enabled={self.config_data.get('gallery_enabled')}, "
+                        f"ssid={self.config_data['gallery'].get('hotspot_ssid')}, "
+                        f"port={self.config_data['gallery'].get('port')}")
         
-        # camera_settings sicherstellen dass Dict existiert
-        if "camera_settings" not in self.config_data:
-            self.config_data["camera_settings"] = {}
+        # Video-Pfade - nur wenn Tab erstellt wurde
+        if hasattr(self, 'video_start_path'):
+            self.config_data["video_start"] = self.video_start_path.get().strip()
+            self.config_data["video_after_1"] = self.video_after_1_path.get().strip()
+            self.config_data["video_after_2"] = self.video_after_2_path.get().strip()
+            self.config_data["video_after_3"] = self.video_after_3_path.get().strip()
+            self.config_data["video_end"] = self.video_end_path.get().strip()
+            
+            logger.info(f"Videos: start={bool(self.config_data.get('video_start'))}, "
+                        f"after_1={bool(self.config_data.get('video_after_1'))}, "
+                        f"after_2={bool(self.config_data.get('video_after_2'))}, "
+                        f"after_3={bool(self.config_data.get('video_after_3'))}, "
+                        f"end={bool(self.config_data.get('video_end'))}")
         
-        self.config_data["camera_settings"]["single_photo_width"] = int(self.photo_width.get())
-        self.config_data["camera_settings"]["single_photo_height"] = int(self.photo_height.get())
+        # Drucker - nur wenn Tab erstellt wurde
+        if hasattr(self, 'printer_dropdown'):
+            printer = self.printer_dropdown.get()
+            if printer.startswith("⭐ "):
+                printer = printer[2:].replace(" (Standard)", "")
+            self.config_data["printer_name"] = printer
+            
+            # Druck-Anpassung
+            self.config_data["print_adjustment"] = {
+                "offset_x": int(self.offset_x_slider.get()),
+                "offset_y": int(self.offset_y_slider.get()),
+                "zoom": int(self.zoom_slider.get())
+            }
+        
+        # Kamera - nur wenn Tab erstellt wurde
+        if hasattr(self, 'camera_type_dropdown'):
+            self.config_data["camera_type"] = self.camera_type_dropdown.get()
+            
+            # Kamera-Index
+            cam_selection = self.camera_dropdown.get()
+            # Extrahiere Index aus "[0] Kamera..." oder "[0] 📷 Canon..."
+            if cam_selection.startswith("["):
+                try:
+                    idx = int(cam_selection[1:cam_selection.index("]")])
+                    self.config_data["camera_index"] = idx
+                except:
+                    pass
+            
+            # camera_settings sicherstellen dass Dict existiert
+            if "camera_settings" not in self.config_data:
+                self.config_data["camera_settings"] = {}
+            
+            self.config_data["camera_settings"]["single_photo_width"] = int(self.photo_width.get())
+            self.config_data["camera_settings"]["single_photo_height"] = int(self.photo_height.get())
         
         # Neue PIN
         if self.new_pin.get() and len(self.new_pin.get()) == 4:
