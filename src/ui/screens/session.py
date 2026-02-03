@@ -39,6 +39,7 @@ class SessionScreen(ctk.CTkFrame):
         self.is_live = False
         self.show_flash = False
         self.photo_display_until = 0
+        self._resuming_after_video = False  # Flag: Session nach Video fortsetzen
 
         # Cache für skaliertes Overlay (Performance)
         self._scaled_overlay = None
@@ -99,6 +100,17 @@ class SessionScreen(ctk.CTkFrame):
     
     def on_show(self):
         """Screen wird angezeigt"""
+        
+        # Nach Video-Unterbrechung: Nur fortsetzen, nicht zurücksetzen!
+        if self._resuming_after_video:
+            logger.info("Session fortgesetzt nach Video")
+            self._resuming_after_video = False
+            # Nur Live-View neu starten, NICHT Session zurücksetzen
+            self.is_live = True
+            self._update_live_view()
+            self.after(500, self._start_countdown)
+            return
+        
         logger.info("Session gestartet")
         
         # Kamera initialisieren
@@ -114,7 +126,7 @@ class SessionScreen(ctk.CTkFrame):
             self._show_error("Kamera konnte nicht geöffnet werden!")
             return
         
-        # Session initialisieren
+        # Session initialisieren (NUR bei neuem Start!)
         self.app.photos_taken = []
         self.current_photo_index = 0
         self.total_photos = len(self.app.template_boxes) if self.app.template_boxes else 1
@@ -630,15 +642,11 @@ class SessionScreen(ctk.CTkFrame):
         """Wird nach Zwischen-Video aufgerufen - setzt Session fort"""
         logger.info("Zwischen-Video fertig, setze Session fort")
         
-        # WICHTIG: Zurück zum Session-Screen wechseln!
+        # Flag setzen damit on_show() die Session NICHT zurücksetzt
+        self._resuming_after_video = True
+        
+        # Zurück zum Session-Screen wechseln (on_show wird aufgerufen)
         self.app.show_screen("session")
-        
-        # Live-View wieder starten
-        self.is_live = True
-        self._update_live_view()
-        
-        # Countdown nach kurzer Pause starten
-        self.after(500, self._start_countdown)
     
     def _on_cancel(self):
         """Abbrechen"""
