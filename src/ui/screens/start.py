@@ -544,7 +544,7 @@ class StartScreen(ctk.CTkFrame):
         self._update_qr_code()
     
     def _update_qr_code(self):
-        """Zeigt oder versteckt den QR-Code für die Galerie"""
+        """Zeigt oder versteckt den QR-Code für die Galerie mit WLAN-Anleitung"""
         # Alte QR-Elemente entfernen
         if self.qr_label:
             self.qr_label.destroy()
@@ -552,6 +552,10 @@ class StartScreen(ctk.CTkFrame):
         if self.qr_text_label:
             self.qr_text_label.destroy()
             self.qr_text_label = None
+        
+        # Zusätzliche Labels für WLAN-Info entfernen
+        for widget in self.qr_frame.winfo_children():
+            widget.destroy()
         
         # Prüfen ob Galerie aktiv
         if not _is_gallery_enabled(self.app):
@@ -567,36 +571,73 @@ class StartScreen(ctk.CTkFrame):
             from src.gallery import get_gallery_url, generate_qr_code
             
             # URL holen
-            port = self.config.get("gallery_port", 8080)
+            gallery_config = self.config.get("gallery", {})
+            port = gallery_config.get("port", self.config.get("gallery_port", 8080))
             url = get_gallery_url(port)
             
+            # WLAN-Daten aus Config
+            ssid = gallery_config.get("hotspot_ssid", "fexobox-gallery")
+            password = gallery_config.get("hotspot_password", "fotobox123")
+            
             # QR-Code generieren
-            qr_img = generate_qr_code(url, size=120)
+            qr_img = generate_qr_code(url, size=100)
             if not qr_img:
                 logger.warning("QR-Code konnte nicht generiert werden")
                 return
             
+            # Container mit Hintergrund für bessere Lesbarkeit
+            info_container = ctk.CTkFrame(
+                self.qr_frame,
+                fg_color=COLORS["bg_card"],
+                corner_radius=10
+            )
+            info_container.pack(padx=5, pady=5)
+            
+            # Titel
+            ctk.CTkLabel(
+                info_container,
+                text="📱 Foto-Galerie",
+                font=FONTS["body_bold"],
+                text_color=COLORS["text_primary"]
+            ).pack(pady=(10, 5))
+            
+            # WLAN-Info oben
+            ctk.CTkLabel(
+                info_container,
+                text=f"WLAN: {ssid}",
+                font=FONTS["small"],
+                text_color=COLORS["text_secondary"]
+            ).pack()
+            
+            ctk.CTkLabel(
+                info_container,
+                text=f"Passwort: {password}",
+                font=FONTS["small"],
+                text_color=COLORS["text_secondary"]
+            ).pack(pady=(0, 8))
+            
             # QR als CTkImage
-            self.qr_ctk_image = ctk.CTkImage(light_image=qr_img, size=(120, 120))
+            self.qr_ctk_image = ctk.CTkImage(light_image=qr_img, size=(100, 100))
             
             # QR-Code Label
             self.qr_label = ctk.CTkLabel(
-                self.qr_frame,
+                info_container,
                 image=self.qr_ctk_image,
                 text=""
             )
             self.qr_label.pack()
             
-            # Text darunter
+            # Anleitung darunter
             self.qr_text_label = ctk.CTkLabel(
-                self.qr_frame,
-                text="📱 Galerie scannen",
+                info_container,
+                text="Mit WLAN verbinden,\ndann QR-Code scannen",
                 font=FONTS["tiny"],
-                text_color=COLORS["text_muted"]
+                text_color=COLORS["text_muted"],
+                justify="center"
             )
-            self.qr_text_label.pack(pady=(5, 0))
+            self.qr_text_label.pack(pady=(5, 10))
             
-            logger.info(f"✅ QR-Code angezeigt: {url}")
+            logger.info(f"✅ QR-Code mit WLAN-Info angezeigt: {url}")
             
         except ImportError as e:
             logger.warning(f"Galerie-Modul nicht verfügbar: {e}")
