@@ -105,3 +105,31 @@ Siehe [CHANGELOG.md](CHANGELOG.md) für bekannte Probleme und Fixes.
 ---
 
 **Repository:** [github.com/fefotec/fexobooth-v2](https://github.com/fefotec/fexobooth-v2)
+
+## 🔧 Debugging & Logs
+
+### Log-Dateien
+Die Software schreibt detaillierte Logs nach:
+```
+logs/fexobooth_YYYYMMDD.log
+```
+
+**Log-Level:** DEBUG (alle Details)
+
+### Wichtige Log-Einträge
+- `📂 USB gefunden beim Start:` - USB wurde erkannt
+- `✅ Settings vom USB geladen:` - settings.json wurde geladen
+- `📋 Config nach Settings-Load:` - Zeigt aktive Einstellungen
+- `📊 Statistiken geladen:` - Statistik-Datei gefunden
+
+### Statistik-Datei
+```
+fexobooth_statistics.json  (im Projektordner, NICHT auf USB!)
+```
+
+## 🚀 Starten
+
+Doppelklick auf `start_fexobooth.bat` oder:
+```batch
+python src/main.py
+```
