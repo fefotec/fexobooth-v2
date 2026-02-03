@@ -224,7 +224,7 @@ class StartScreen(ctk.CTkFrame):
 
             card = TemplateCard(
                 parent,
-                title=f"USB: {usb_filename[:12]}",  # Kürzen wenn nötig
+                title="Druckvorlage",
                 preview_image=preview,
                 on_click=lambda c: self._select_card(c, "usb_template")
             )
