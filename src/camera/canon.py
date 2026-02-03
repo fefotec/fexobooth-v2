@@ -126,10 +126,13 @@ class CanonCameraManager(CameraManager):
         
         logger.info("Session erfolgreich geöffnet")
         
-        # Speicherung auf PC konfigurieren
-        logger.debug("Konfiguriere SaveTo Host...")
-        if not edsdk.set_save_to_host(self._camera_ref):
-            logger.warning("SaveTo konnte nicht gesetzt werden (nicht kritisch)")
+        # Speicherung auf SD-Karte konfigurieren (für Directory-Polling)
+        logger.debug("Konfiguriere SaveTo Camera (SD-Karte)...")
+        if not edsdk.set_save_to_camera(self._camera_ref):
+            logger.warning("SaveTo konnte nicht auf Camera gesetzt werden")
+            # Fallback: Versuche Host
+            logger.debug("Versuche SaveTo Host als Fallback...")
+            edsdk.set_save_to_host(self._camera_ref)
         
         # Bildqualität auf JPG Large Fine setzen (kein RAW!) - nicht kritisch wenn fehlschlägt
         try:
@@ -327,60 +330,94 @@ class CanonCameraManager(CameraManager):
         return 0  # EDS_ERR_OK
     
     def capture_photo(self, timeout: float = 10.0) -> Optional[Image.Image]:
-        """Nimmt ein Foto auf - nutzt aktuell LiveView-Frame als Workaround
+        """Nimmt ein Foto in voller DSLR-Auflösung auf
 
-        BEKANNTES PROBLEM: Der Event-basierte DSLR-Download (volle Auflösung)
-        verursacht Freezes auf Windows. Bis dies behoben ist, wird ein
-        hochauflösender LiveView-Frame verwendet.
-
-        TODO: Event-basiertes Capture reparieren für volle DSLR-Auflösung
+        Prozess:
+        1. LiveView stoppen (Kamera braucht das für manche Modelle)
+        2. Foto auslösen (TakePicture) - Kamera fokussiert und löst aus
+        3. Auf neues Bild warten (Directory-Polling statt Event-Handler)
+        4. Bild von Kamera herunterladen
+        5. LiveView wieder starten
 
         Args:
-            timeout: Maximale Wartezeit in Sekunden (aktuell nicht verwendet)
+            timeout: Maximale Wartezeit in Sekunden
 
         Returns:
-            PIL Image (LiveView-Auflösung) oder None bei Fehler
+            PIL Image in voller DSLR-Auflösung oder None bei Fehler
         """
         logger.info("=" * 60)
-        logger.info("=== CAPTURE_PHOTO (LiveView-Modus) ===")
+        logger.info("=== CAPTURE_PHOTO (Volle DSLR-Auflösung) ===")
         logger.info("=" * 60)
 
         if not self._is_initialized or not self._camera_ref:
             logger.error("capture_photo: Kamera nicht initialisiert!")
             return None
 
-        # WORKAROUND: Da Event-basierter Download Freezes verursacht,
-        # nutzen wir direkt den LiveView-Frame
-        logger.info("Nutze LiveView-Frame (Event-basierter Download deaktiviert)")
+        live_view_was_active = self._live_view_active
 
-        # LiveView starten falls nicht aktiv
-        if not self._live_view_active:
-            logger.info("Starte LiveView...")
-            if not self.start_live_view():
-                logger.error("LiveView konnte nicht gestartet werden!")
-                return None
-            time.sleep(0.3)  # Kurz warten bis LiveView bereit
+        try:
+            # SCHRITT 1: LiveView stoppen
+            if self._live_view_active:
+                logger.info("[1/5] Stoppe LiveView für Foto-Aufnahme...")
+                self.stop_live_view()
+                time.sleep(0.5)  # Kamera Zeit geben
+                logger.info("[1/5] ✓ LiveView gestoppt")
+            else:
+                logger.info("[1/5] LiveView war nicht aktiv")
 
-        # Mehrere Versuche für ein gutes Frame
-        best_frame = None
-        for attempt in range(3):
-            frame = self.get_frame(use_cache=False)
-            if frame is not None:
-                best_frame = frame
-                break
-            time.sleep(0.1)
+            # SCHRITT 2: Foto auslösen
+            logger.info("[2/5] Löse Kamera aus (TakePicture)...")
+            if not edsdk.take_picture(self._camera_ref):
+                logger.error("[2/5] ✗ TakePicture fehlgeschlagen!")
+                return self._fallback_to_live_view(live_view_was_active)
 
-        if best_frame is None:
-            logger.error("Kein LiveView-Frame verfügbar!")
-            return None
+            logger.info("[2/5] ✓ Kamera ausgelöst!")
 
-        # OpenCV BGR zu PIL RGB
-        rgb = cv2.cvtColor(best_frame, cv2.COLOR_BGR2RGB)
-        image = Image.fromarray(rgb)
+            # SCHRITT 3: Auf neues Bild warten und herunterladen
+            logger.info(f"[3/5] Warte auf Bild (max {timeout}s)...")
+            image_data = edsdk.wait_for_new_image(self._camera_ref, timeout=timeout)
 
-        logger.info(f"✓ Foto aufgenommen: {image.size[0]}x{image.size[1]} (LiveView)")
-        logger.info("=" * 60)
-        return image
+            if image_data is None:
+                logger.error("[3/5] ✗ Kein Bild empfangen!")
+                logger.error("    Mögliche Ursachen:")
+                logger.error("    - Keine SD-Karte in der Kamera")
+                logger.error("    - SaveTo nicht auf 'Both' oder 'Camera' gesetzt")
+                logger.error("    - Kamera hat nicht fokussiert (AF-Fehler)")
+                return self._fallback_to_live_view(live_view_was_active)
+
+            logger.info(f"[3/5] ✓ Bild empfangen: {len(image_data)} bytes")
+
+            # SCHRITT 4: Bild dekodieren
+            logger.info("[4/5] Dekodiere Bild...")
+            try:
+                image = Image.open(io.BytesIO(image_data))
+                image.load()  # Bild sofort laden
+                logger.info(f"[4/5] ✓ Bild dekodiert: {image.size[0]}x{image.size[1]} ({image.mode})")
+            except Exception as e:
+                logger.error(f"[4/5] ✗ Fehler beim Dekodieren: {e}")
+                return self._fallback_to_live_view(live_view_was_active)
+
+            # SCHRITT 5: LiveView wieder starten
+            if live_view_was_active:
+                logger.info("[5/5] Starte LiveView wieder...")
+                time.sleep(0.3)
+                if self.start_live_view():
+                    logger.info("[5/5] ✓ LiveView wieder aktiv")
+                else:
+                    logger.warning("[5/5] ⚠ LiveView konnte nicht neu gestartet werden")
+            else:
+                logger.info("[5/5] LiveView bleibt aus")
+
+            logger.info("=" * 60)
+            logger.info(f"=== CAPTURE ERFOLGREICH: {image.size[0]}x{image.size[1]} ===")
+            logger.info("=" * 60)
+            return image
+
+        except Exception as e:
+            logger.error(f"capture_photo Exception: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return self._fallback_to_live_view(live_view_was_active)
 
     def _fallback_to_live_view(self, restart_live_view: bool) -> Optional[Image.Image]:
         """Fallback: Gibt Live-View Frame zurück wenn DSLR-Aufnahme fehlschlägt"""

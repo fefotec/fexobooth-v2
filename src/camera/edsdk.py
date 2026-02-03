@@ -459,31 +459,56 @@ def take_picture(camera_ref: c_void_p) -> bool:
 
 
 def set_save_to_host(camera_ref: c_void_p) -> bool:
-    """Konfiguriert Speicherung zum PC"""
+    """Konfiguriert Speicherung zum PC (für Event-basiertes Capture)"""
     if EDSDK_DLL is None:
         return False
-    
+
     # Save to Host
     save_to = c_uint(kEdsSaveTo_Host)
     err = EDSDK_DLL.EdsSetPropertyData(
-        camera_ref, 
-        kEdsPropID_SaveTo, 
+        camera_ref,
+        kEdsPropID_SaveTo,
         0,
         ctypes.sizeof(save_to),
         byref(save_to)
     )
-    
+
     if not check_error(err, "SetSaveTo"):
         return False
-    
+
     # Capacity setzen (damit Kamera weiß dass PC genug Platz hat)
     capacity = EdsCapacity()
     capacity.numberOfFreeClusters = 0x7FFFFFFF
     capacity.bytesPerSector = 0x1000
     capacity.reset = 1
-    
+
     err = EDSDK_DLL.EdsSetCapacity(camera_ref, capacity)
     return check_error(err, "SetCapacity")
+
+
+def set_save_to_camera(camera_ref: c_void_p) -> bool:
+    """Konfiguriert Speicherung auf SD-Karte (für Directory-Polling Capture)
+
+    Diese Einstellung ist notwendig wenn man das Bild über Directory-Enumeration
+    herunterladen möchte statt über Event-Callbacks.
+    """
+    if EDSDK_DLL is None:
+        return False
+
+    # Save to Camera (SD-Karte)
+    save_to = c_uint(kEdsSaveTo_Camera)
+    err = EDSDK_DLL.EdsSetPropertyData(
+        camera_ref,
+        kEdsPropID_SaveTo,
+        0,
+        ctypes.sizeof(save_to),
+        byref(save_to)
+    )
+
+    if check_error(err, "SetSaveTo(Camera)"):
+        logger.info("SaveTo auf Camera (SD-Karte) gesetzt")
+        return True
+    return False
 
 
 def set_image_quality_jpg(camera_ref: c_void_p) -> bool:
@@ -857,6 +882,306 @@ def download_image_to_memory(dir_item: c_void_p) -> Optional[bytes]:
     except Exception as e:
         logger.error(f"Fehler beim Herunterladen des Bildes in Speicher: {e}")
         return None
+
+
+# ============================================================================
+# Directory Enumeration API (für Polling-basiertes Capture)
+# ============================================================================
+
+def get_first_volume(camera_ref: c_void_p) -> Optional[c_void_p]:
+    """Holt das erste Volume (Speicher) der Kamera
+
+    Returns:
+        Volume-Referenz oder None
+    """
+    if EDSDK_DLL is None:
+        return None
+
+    count = c_int()
+    err = EDSDK_DLL.EdsGetChildCount(camera_ref, byref(count))
+    if not check_error(err, "GetChildCount(camera)"):
+        return None
+
+    if count.value == 0:
+        logger.warning("Keine Volumes auf der Kamera gefunden")
+        return None
+
+    volume = c_void_p()
+    err = EDSDK_DLL.EdsGetChildAtIndex(camera_ref, 0, byref(volume))
+    if not check_error(err, "GetChildAtIndex(volume)"):
+        return None
+
+    return volume
+
+
+def get_dcim_folder(volume_ref: c_void_p) -> Optional[c_void_p]:
+    """Findet den DCIM-Ordner auf dem Volume
+
+    Returns:
+        DCIM-Ordner Referenz oder None
+    """
+    if EDSDK_DLL is None:
+        return None
+
+    count = c_int()
+    err = EDSDK_DLL.EdsGetChildCount(volume_ref, byref(count))
+    if not check_error(err, "GetChildCount(volume)"):
+        return None
+
+    for i in range(count.value):
+        item = c_void_p()
+        err = EDSDK_DLL.EdsGetChildAtIndex(volume_ref, i, byref(item))
+        if not check_error(err, f"GetChildAtIndex({i})"):
+            continue
+
+        info = EdsDirectoryItemInfo()
+        err = EDSDK_DLL.EdsGetDirectoryItemInfo(item, byref(info))
+        if check_error(err, "GetDirectoryItemInfo"):
+            name = info.szFileName.decode('utf-8', errors='ignore').upper()
+            if name == "DCIM" and info.isFolder:
+                logger.debug(f"DCIM Ordner gefunden")
+                return item
+
+        EDSDK_DLL.EdsRelease(item)
+
+    logger.warning("DCIM Ordner nicht gefunden")
+    return None
+
+
+def get_latest_folder(parent_ref: c_void_p) -> Optional[c_void_p]:
+    """Findet den zuletzt erstellten Unterordner (z.B. 100CANON)
+
+    Returns:
+        Ordner-Referenz oder None
+    """
+    if EDSDK_DLL is None:
+        return None
+
+    count = c_int()
+    err = EDSDK_DLL.EdsGetChildCount(parent_ref, byref(count))
+    if not check_error(err, "GetChildCount(parent)"):
+        return None
+
+    if count.value == 0:
+        return None
+
+    # Letzten Ordner holen (neuester ist typischerweise der letzte)
+    latest_folder = None
+    latest_index = -1
+
+    for i in range(count.value):
+        item = c_void_p()
+        err = EDSDK_DLL.EdsGetChildAtIndex(parent_ref, i, byref(item))
+        if not check_error(err, f"GetChildAtIndex({i})"):
+            continue
+
+        info = EdsDirectoryItemInfo()
+        err = EDSDK_DLL.EdsGetDirectoryItemInfo(item, byref(info))
+        if check_error(err, "GetDirectoryItemInfo") and info.isFolder:
+            name = info.szFileName.decode('utf-8', errors='ignore')
+            # Den mit dem höchsten Index nehmen (z.B. 103CANON > 100CANON)
+            if latest_folder is not None:
+                EDSDK_DLL.EdsRelease(latest_folder)
+            latest_folder = item
+            latest_index = i
+            logger.debug(f"Ordner gefunden: {name}")
+        else:
+            EDSDK_DLL.EdsRelease(item)
+
+    return latest_folder
+
+
+def get_latest_image_in_folder(folder_ref: c_void_p) -> Optional[c_void_p]:
+    """Findet das neueste Bild in einem Ordner
+
+    Returns:
+        Bild-Referenz oder None
+    """
+    if EDSDK_DLL is None:
+        return None
+
+    count = c_int()
+    err = EDSDK_DLL.EdsGetChildCount(folder_ref, byref(count))
+    if not check_error(err, "GetChildCount(folder)"):
+        return None
+
+    if count.value == 0:
+        logger.warning("Keine Dateien im Ordner")
+        return None
+
+    # Letzte Datei ist typischerweise das neueste Bild
+    item = c_void_p()
+    err = EDSDK_DLL.EdsGetChildAtIndex(folder_ref, count.value - 1, byref(item))
+    if not check_error(err, "GetChildAtIndex(latest)"):
+        return None
+
+    info = EdsDirectoryItemInfo()
+    err = EDSDK_DLL.EdsGetDirectoryItemInfo(item, byref(info))
+    if check_error(err, "GetDirectoryItemInfo"):
+        name = info.szFileName.decode('utf-8', errors='ignore')
+        logger.info(f"Neuestes Bild: {name} ({info.size} bytes)")
+        return item
+
+    EDSDK_DLL.EdsRelease(item)
+    return None
+
+
+def count_images_in_folder(folder_ref: c_void_p) -> int:
+    """Zählt die Bilder in einem Ordner
+
+    Returns:
+        Anzahl der Dateien
+    """
+    if EDSDK_DLL is None:
+        return 0
+
+    count = c_int()
+    err = EDSDK_DLL.EdsGetChildCount(folder_ref, byref(count))
+    if check_error(err, "GetChildCount"):
+        return count.value
+    return 0
+
+
+def download_latest_image(camera_ref: c_void_p) -> Optional[bytes]:
+    """Lädt das neueste Bild von der Kamera
+
+    Navigiert durch: Camera -> Volume -> DCIM -> LatestFolder -> LatestImage
+
+    Returns:
+        Bild als bytes oder None
+    """
+    if EDSDK_DLL is None:
+        return None
+
+    volume = None
+    dcim = None
+    folder = None
+    image = None
+
+    try:
+        # Volume holen
+        volume = get_first_volume(camera_ref)
+        if not volume:
+            logger.error("Kein Volume gefunden")
+            return None
+
+        # DCIM finden
+        dcim = get_dcim_folder(volume)
+        if not dcim:
+            logger.error("DCIM nicht gefunden")
+            return None
+
+        # Neuesten Unterordner finden
+        folder = get_latest_folder(dcim)
+        if not folder:
+            logger.error("Kein Foto-Ordner gefunden")
+            return None
+
+        # Neuestes Bild finden
+        image = get_latest_image_in_folder(folder)
+        if not image:
+            logger.error("Kein Bild im Ordner gefunden")
+            return None
+
+        # Bild herunterladen
+        data = download_image_to_memory(image)
+        return data
+
+    finally:
+        # Aufräumen (in umgekehrter Reihenfolge)
+        if image:
+            EDSDK_DLL.EdsRelease(image)
+        if folder:
+            EDSDK_DLL.EdsRelease(folder)
+        if dcim:
+            EDSDK_DLL.EdsRelease(dcim)
+        if volume:
+            EDSDK_DLL.EdsRelease(volume)
+
+
+def wait_for_new_image(camera_ref: c_void_p, timeout: float = 10.0, poll_interval: float = 0.1) -> Optional[bytes]:
+    """Wartet auf ein neues Bild nach TakePicture und lädt es herunter
+
+    Diese Funktion:
+    1. Merkt sich die aktuelle Anzahl an Bildern
+    2. Pollt regelmäßig EdsGetEvent()
+    3. Prüft ob ein neues Bild hinzugekommen ist
+    4. Lädt das neue Bild herunter
+
+    Args:
+        camera_ref: Kamera-Referenz
+        timeout: Maximale Wartezeit in Sekunden
+        poll_interval: Zeit zwischen Polls in Sekunden
+
+    Returns:
+        Bild als bytes oder None bei Timeout/Fehler
+    """
+    import time
+
+    if EDSDK_DLL is None:
+        return None
+
+    volume = None
+    dcim = None
+    folder = None
+
+    try:
+        # Navigiere zum Foto-Ordner
+        volume = get_first_volume(camera_ref)
+        if not volume:
+            logger.error("Kein Volume gefunden")
+            return None
+
+        dcim = get_dcim_folder(volume)
+        if not dcim:
+            logger.error("DCIM nicht gefunden")
+            return None
+
+        folder = get_latest_folder(dcim)
+        if not folder:
+            logger.error("Kein Foto-Ordner gefunden")
+            return None
+
+        # Aktuelle Anzahl merken
+        initial_count = count_images_in_folder(folder)
+        logger.info(f"Aktuelle Bildanzahl: {initial_count}")
+
+        # Auf neues Bild warten
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            # Events pollen (wichtig für Windows!)
+            get_event()
+
+            # Prüfen ob neues Bild da ist
+            current_count = count_images_in_folder(folder)
+            if current_count > initial_count:
+                logger.info(f"Neues Bild erkannt! ({initial_count} -> {current_count})")
+
+                # Kurz warten damit Kamera fertig schreibt
+                time.sleep(0.2)
+
+                # Neuestes Bild holen
+                image = get_latest_image_in_folder(folder)
+                if image:
+                    data = download_image_to_memory(image)
+                    EDSDK_DLL.EdsRelease(image)
+                    return data
+                else:
+                    logger.error("Konnte neues Bild nicht finden")
+                    return None
+
+            time.sleep(poll_interval)
+
+        logger.error(f"Timeout nach {timeout}s - kein neues Bild erkannt")
+        return None
+
+    finally:
+        if folder:
+            EDSDK_DLL.EdsRelease(folder)
+        if dcim:
+            EDSDK_DLL.EdsRelease(dcim)
+        if volume:
+            EDSDK_DLL.EdsRelease(volume)
 
 
 # Cleanup bei Programmende
