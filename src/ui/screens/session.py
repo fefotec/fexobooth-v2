@@ -629,9 +629,16 @@ class SessionScreen(ctk.CTkFrame):
     def _continue_after_video(self):
         """Wird nach Zwischen-Video aufgerufen - setzt Session fort"""
         logger.info("Zwischen-Video fertig, setze Session fort")
+        
+        # WICHTIG: Zurück zum Session-Screen wechseln!
+        self.app.show_screen("session")
+        
+        # Live-View wieder starten
         self.is_live = True
         self._update_live_view()
-        self.after(300, self._start_countdown)
+        
+        # Countdown nach kurzer Pause starten
+        self.after(500, self._start_countdown)
     
     def _on_cancel(self):
         """Abbrechen"""
