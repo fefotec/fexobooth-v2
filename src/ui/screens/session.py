@@ -38,7 +38,6 @@ class SessionScreen(ctk.CTkFrame):
         self.is_live = False
         self.show_flash = False
         self.photo_display_until = 0
-        self._resuming_after_video = False  # Flag: Session nach Video fortsetzen
 
         # Cache für skaliertes Overlay (Performance)
         self._scaled_overlay = None
@@ -110,8 +109,20 @@ class SessionScreen(ctk.CTkFrame):
             # Nur Live-View neu starten, NICHT Session zurücksetzen
             self.total_photos = len(self.app.template_boxes) if self.app.template_boxes else 1
             self.photo_display_until = 0
+            self.is_countdown_active = False  # Reset für neuen Countdown
             self._prepare_preview_overlay()
             self._update_progress()
+            
+            # Kamera sicherstellen (könnte während Video pausiert worden sein)
+            if not self.app.camera_manager.is_initialized():
+                cam_settings = self.config.get("camera_settings", {})
+                live_res = cam_settings.get("live_view_resolution", 640)
+                self.app.camera_manager.initialize(
+                    self.config.get("camera_index", 0),
+                    live_res,
+                    int(live_res * 0.75)
+                )
+            
             self.is_live = True
             self._update_live_view()
             self.after(500, self._start_countdown)
@@ -645,13 +656,16 @@ class SessionScreen(ctk.CTkFrame):
             self.app.show_screen("filter")
     
     def _continue_after_video(self):
-        """Wird nach Zwischen-Video aufgerufen - setzt Session fort"""
-        logger.info("Zwischen-Video fertig, setze Session fort")
+        """Wird nach Zwischen-Video aufgerufen - setzt Session fort
         
-        # Flag setzen damit on_show() die Session NICHT zurücksetzt
-        self._resuming_after_video = True
+        Da SessionScreen bei laufender Session wiederverwendet wird (nicht neu erstellt),
+        bleibt der gesamte State erhalten. on_show() erkennt via photos_taken dass
+        die Session fortgesetzt werden soll.
+        """
+        logger.info(f"Zwischen-Video fertig, setze Session fort (Index={self.app.current_photo_index})")
         
-        # Zurück zum Session-Screen wechseln (on_show wird aufgerufen)
+        # Zurück zum Session-Screen wechseln
+        # Der Screen wird NICHT neu erstellt (da photos_taken nicht leer ist)
         self.app.show_screen("session")
     
     def _on_cancel(self):
