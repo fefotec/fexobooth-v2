@@ -89,6 +89,11 @@ class PhotoboothApp:
         # UI Setup
         self._setup_ui()
         
+        # Gecachte Buchung anzeigen (falls vorhanden)
+        if self.booking_manager.is_loaded:
+            self._update_booking_display()
+            logger.info(f"📂 Letzte Buchung wiederhergestellt: {self.booking_manager.booking_id}")
+        
         # Status-Timer starten
         self._start_status_checks()
         
@@ -352,24 +357,33 @@ class PhotoboothApp:
         is_available = self.usb_manager.is_available()
         pending_count = self.usb_manager.get_pending_count()
 
-        # USB verfügbar -> settings.json laden
+        # USB verfügbar -> prüfen ob NEUE Buchung
         if is_available:
             usb_drive = self.usb_manager.find_usb_stick()
             if usb_drive:
                 usb_root = Path(usb_drive)
-                # settings.json laden (nur wenn noch nicht geladen oder neu)
-                if self.booking_manager.load_from_usb(usb_root):
+                
+                # Prüfen ob es eine neue Buchung ist
+                new_booking = self.booking_manager.check_usb_for_new_booking(usb_root)
+                
+                if new_booking:
+                    # Neue Buchung gefunden -> laden
+                    if self.booking_manager.load_from_usb(usb_root, force=True):
+                        self._update_booking_display()
+                        # allow_single_mode aus settings übernehmen
+                        if self.booking_manager.settings:
+                            self.config["allow_single_mode"] = self.booking_manager.settings.print_singles
+                            
+                            # Statistik-Event starten mit Buchungsnummer
+                            self._start_statistics_event(usb_root)
+                            
+                            # Galerie starten wenn in settings.json aktiviert
+                            if self.booking_manager.settings.online_gallery:
+                                self._start_gallery_if_needed()
+                elif not self.booking_manager.is_loaded:
+                    # Noch keine Buchung geladen -> aus USB oder Cache laden
+                    self.booking_manager.load_from_usb(usb_root)
                     self._update_booking_display()
-                    # allow_single_mode aus settings übernehmen
-                    if self.booking_manager.settings:
-                        self.config["allow_single_mode"] = self.booking_manager.settings.print_singles
-                        
-                        # Statistik-Event starten mit Buchungsnummer
-                        self._start_statistics_event(usb_root)
-                        
-                        # Galerie starten wenn in settings.json aktiviert
-                        if self.booking_manager.settings.online_gallery:
-                            self._start_gallery_if_needed()
 
         # USB wurde gerade eingesteckt und es gibt pending files -> Dialog zeigen
         if is_available and pending_count > 0 and not self._sync_dialog_open:
