@@ -371,15 +371,50 @@ def is_running() -> bool:
 
 
 def get_gallery_url(port: int = DEFAULT_PORT) -> str:
-    """Gibt die Galerie-URL zurück (für QR-Code)"""
-    # Lokale IP-Adresse ermitteln (Hotspot-IP)
+    """Gibt die Galerie-URL zurück (für QR-Code)
+    
+    Versucht die beste IP für den Hotspot zu finden:
+    1. Windows Mobile Hotspot (192.168.137.x Netzwerk)
+    2. Andere private Netzwerke (192.168.x.x, 10.x.x.x)
+    3. Fallback: Standard Hotspot-IP
+    """
+    import socket
+    
     try:
-        import socket
+        # Alle IP-Adressen des Systems sammeln
+        hostname = socket.gethostname()
+        all_ips = socket.getaddrinfo(hostname, None, socket.AF_INET)
+        local_ips = list(set([ip[4][0] for ip in all_ips if not ip[4][0].startswith('127.')]))
+        
+        logger.debug(f"Gefundene IPs: {local_ips}")
+        
+        # Priorität 1: Windows Mobile Hotspot (192.168.137.x)
+        for ip in local_ips:
+            if ip.startswith("192.168.137."):
+                logger.info(f"🌐 Hotspot-IP erkannt: {ip}")
+                return f"http://{ip}:{port}"
+        
+        # Priorität 2: Andere 192.168.x.x (häufig Hotspot/WLAN)
+        for ip in local_ips:
+            if ip.startswith("192.168."):
+                logger.info(f"🌐 Lokale IP: {ip}")
+                return f"http://{ip}:{port}"
+        
+        # Priorität 3: 10.x.x.x Netzwerke
+        for ip in local_ips:
+            if ip.startswith("10."):
+                logger.info(f"🌐 Private IP: {ip}")
+                return f"http://{ip}:{port}"
+        
+        # Fallback: Socket-Trick
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))  # Verbindet nicht wirklich
+        s.connect(("8.8.8.8", 80))
         local_ip = s.getsockname()[0]
         s.close()
-    except:
-        local_ip = "192.168.137.1"  # Windows Hotspot Standard-IP
-    
-    return f"http://{local_ip}:{port}"
+        logger.info(f"🌐 Fallback-IP: {local_ip}")
+        return f"http://{local_ip}:{port}"
+        
+    except Exception as e:
+        logger.warning(f"IP-Erkennung fehlgeschlagen: {e}")
+        # Standard Windows Mobile Hotspot IP
+        return f"http://192.168.137.1:{port}"
