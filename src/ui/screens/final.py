@@ -245,7 +245,7 @@ class FinalScreen(ctk.CTkFrame):
         self.auto_return_time = time.time() + self.config.get("final_time", 30)
     
     def _print_image(self, image_path: Path):
-        """Druckt ein Bild (Windows)"""
+        """Druckt ein Bild RANDLOS (Windows) - optimiert für Canon Selphy"""
         try:
             import win32print
             import win32ui
@@ -255,8 +255,11 @@ class FinalScreen(ctk.CTkFrame):
             if not printer_name:
                 printer_name = win32print.GetDefaultPrinter()
             
+            logger.info(f"Drucke auf: {printer_name}")
+            
             # Bild laden
             img = Image.open(image_path)
+            logger.debug(f"Bild-Größe: {img.size}")
             
             # Druck-Einstellungen
             adjustment = self.config.get("print_adjustment", {})
@@ -264,28 +267,69 @@ class FinalScreen(ctk.CTkFrame):
             offset_y = adjustment.get("offset_y", 0)
             zoom = adjustment.get("zoom", 100) / 100
             
-            # Größe berechnen (6x4 inch bei 300dpi)
-            base_width = int(1772 * zoom)
-            base_height = int(1181 * zoom)
-            img = img.resize((base_width, base_height), Image.Resampling.LANCZOS)
-            
-            # Drucken
+            # Drucker-DC erstellen
             hDC = win32ui.CreateDC()
             hDC.CreatePrinterDC(printer_name)
+            
+            # Druckbereich vom Drucker abfragen (in Pixel)
+            printer_width = hDC.GetDeviceCaps(110)   # PHYSICALWIDTH
+            printer_height = hDC.GetDeviceCaps(111)  # PHYSICALHEIGHT
+            printable_width = hDC.GetDeviceCaps(8)   # HORZRES
+            printable_height = hDC.GetDeviceCaps(10) # VERTRES
+            offset_left = hDC.GetDeviceCaps(112)     # PHYSICALOFFSETX
+            offset_top = hDC.GetDeviceCaps(113)      # PHYSICALOFFSETY
+            
+            logger.info(f"Drucker: Physisch {printer_width}x{printer_height}, Druckbar {printable_width}x{printable_height}")
+            logger.debug(f"Drucker-Offset: ({offset_left}, {offset_top})")
+            
+            # Für randlosen Druck: Bild auf PHYSISCHE Größe skalieren
+            # und mit negativem Offset drucken um Ränder zu überschreiben
+            target_width = int(printer_width * zoom)
+            target_height = int(printer_height * zoom)
+            
+            # Bild skalieren mit Aspect-Ratio-Fill (Cover-Modus)
+            img_ratio = img.width / img.height
+            target_ratio = target_width / target_height
+            
+            if img_ratio > target_ratio:
+                # Bild ist breiter - auf Höhe skalieren und horizontal beschneiden
+                new_h = target_height
+                new_w = int(new_h * img_ratio)
+                img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                # Horizontal zentrieren und beschneiden
+                left = (new_w - target_width) // 2
+                img = img.crop((left, 0, left + target_width, target_height))
+            else:
+                # Bild ist höher - auf Breite skalieren und vertikal beschneiden
+                new_w = target_width
+                new_h = int(new_w / img_ratio)
+                img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                # Vertikal zentrieren und beschneiden
+                top = (new_h - target_height) // 2
+                img = img.crop((0, top, target_width, top + target_height))
+            
+            logger.info(f"Skaliert auf: {img.size} für randlosen Druck")
+            
+            # Drucken - Position mit negativem Drucker-Offset für randlos
             hDC.StartDoc("Fexobooth Print")
             hDC.StartPage()
             
             dib = ImageWin.Dib(img)
+            
+            # Position: Drucker-Offset ausgleichen + User-Offset
+            print_x = -offset_left + offset_x
+            print_y = -offset_top + offset_y
+            
             dib.draw(
                 hDC.GetHandleOutput(),
-                (offset_x, offset_y, offset_x + base_width, offset_y + base_height)
+                (print_x, print_y, print_x + target_width, print_y + target_height)
             )
             
             hDC.EndPage()
             hDC.EndDoc()
             hDC.DeleteDC()
             
-            logger.info(f"Gedruckt auf: {printer_name}")
+            logger.info(f"✅ Gedruckt auf: {printer_name} (randlos)")
             
         except ImportError:
             logger.warning("win32print nicht verfügbar - Druck nur unter Windows")
@@ -295,6 +339,8 @@ class FinalScreen(ctk.CTkFrame):
             )
         except Exception as e:
             logger.error(f"Druckfehler: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             self.print_info.configure(
                 text=f"❌ Druckfehler: {e}",
                 text_color=COLORS["error"]

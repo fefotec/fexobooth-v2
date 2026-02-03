@@ -312,12 +312,23 @@ class SessionScreen(ctk.CTkFrame):
         return img
     
     def _display_preview(self, img: Image.Image):
-        """Zeigt das Vorschau-Bild skaliert an"""
+        """Zeigt das Vorschau-Bild skaliert an (formatfüllend)"""
+        # Update erzwingen um korrekte Container-Größe zu bekommen
+        self.preview_container.update_idletasks()
+        
         container_w = self.preview_container.winfo_width() - 10
         container_h = self.preview_container.winfo_height() - 10
         
+        # Fallback wenn Container noch nicht gerendert
         if container_w < 100 or container_h < 100:
-            container_w, container_h = 800, 500
+            # Bildschirmgröße als Basis nehmen
+            try:
+                screen_w = self.winfo_screenwidth()
+                screen_h = self.winfo_screenheight()
+                container_w = int(screen_w * 0.85)
+                container_h = int(screen_h * 0.65)
+            except:
+                container_w, container_h = 900, 550
         
         # Skalieren mit Aspect Ratio
         img_ratio = img.width / img.height
