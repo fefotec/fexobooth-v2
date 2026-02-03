@@ -100,7 +100,7 @@ class TemplateCard(ctk.CTkFrame):
         title_label.bind("<Button-1>", self._on_click)
         
         # Untertitel (kürzer)
-        subtitle = "Einzelfoto" if is_single else "Layout"
+        subtitle = "Einzelbild" if is_single else "Druck-Vorlage"
         subtitle_label = ctk.CTkLabel(
             self,
             text=subtitle,
