@@ -789,6 +789,23 @@ class PhotoboothApp:
         self.show_screen("video")
         self.current_screen.play(video_path, next_screen)
     
+    def play_video_and_return(self, video_path: str, callback):
+        """Spielt ein Video ab und ruft dann Callback auf (für Zwischen-Videos)
+        
+        Args:
+            video_path: Direkter Pfad zum Video
+            callback: Funktion die nach Video-Ende aufgerufen wird
+        """
+        if not video_path or not os.path.exists(video_path):
+            logger.debug(f"Zwischen-Video nicht gefunden: {video_path}")
+            callback()
+            return
+        
+        # Video-Screen anzeigen
+        self.show_screen("video")
+        # Abspielen mit Callback statt Screen-Wechsel
+        self.current_screen.play(video_path, "session", on_complete=callback)
+    
     def _resolve_template_path(self, template_path: str) -> str:
         """Löst Template-Pfad auf (relativ oder absolut)"""
         from pathlib import Path

@@ -179,13 +179,15 @@ class VideoScreen(ctk.CTkFrame):
             except:
                 pass
         
-        logger.info(f"Video fertig, wechsle zu: {self.next_screen}")
-        
-        # Callback ausführen
+        # Wenn Callback vorhanden: Callback aufrufen, NICHT Screen wechseln
+        # (Callback übernimmt die Kontrolle, z.B. bei Zwischen-Videos)
         if self.on_complete:
+            logger.info(f"Video fertig, rufe Callback auf")
             self.on_complete()
+            return
         
-        # Zum nächsten Screen
+        # Ohne Callback: Zum nächsten Screen wechseln
+        logger.info(f"Video fertig, wechsle zu: {self.next_screen}")
         self.app.show_screen(self.next_screen)
     
     def on_hide(self):

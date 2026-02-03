@@ -606,14 +606,32 @@ class SessionScreen(ctk.CTkFrame):
         logger.info(f"=== Next: {self.current_photo_index}/{self.total_photos}, photos_taken={len(self.app.photos_taken)} ===")
         
         if self.current_photo_index < self.total_photos:
-            # Nächstes Foto
-            logger.info(f"Starte Countdown für nächstes Foto in 300ms")
-            self.after(300, self._start_countdown)
+            # Prüfen ob Zwischen-Video abgespielt werden soll
+            # video_after_1, video_after_2, video_after_3 je nach aktuellem Foto
+            video_key = f"video_after_{self.current_photo_index}"
+            video_path = self.config.get(video_key, "")
+            
+            if video_path and os.path.exists(video_path):
+                # Video abspielen, dann zurück zur Session
+                logger.info(f"Spiele Zwischen-Video: {video_key}")
+                self.is_live = False
+                self.app.play_video_and_return(video_path, self._continue_after_video)
+            else:
+                # Kein Video, direkt weiter
+                logger.info(f"Kein Zwischen-Video für {video_key}, weiter zum nächsten Foto")
+                self.after(300, self._start_countdown)
         else:
             # Alle Fotos gemacht!
             logger.info("=== Alle Fotos aufgenommen -> Filter-Screen ===")
             self.is_live = False
             self.app.show_screen("filter")
+    
+    def _continue_after_video(self):
+        """Wird nach Zwischen-Video aufgerufen - setzt Session fort"""
+        logger.info("Zwischen-Video fertig, setze Session fort")
+        self.is_live = True
+        self._update_live_view()
+        self.after(300, self._start_countdown)
     
     def _on_cancel(self):
         """Abbrechen"""

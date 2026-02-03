@@ -218,6 +218,7 @@ class AdminDialog(ctk.CTkToplevel):
         self._create_print_tab(tabview.add("Druck"))
         self._create_camera_tab(tabview.add("Kamera"))
         self._create_gallery_tab(tabview.add("Galerie"))
+        self._create_videos_tab(tabview.add("Videos"))
         self._create_statistics_tab(tabview.add("Statistik"))
         
         # Button-Leiste
@@ -884,6 +885,108 @@ class AdminDialog(ctk.CTkToplevel):
             text_color=COLORS["warning"]
         ).pack(pady=(10, 0))
     
+    def _create_videos_tab(self, parent):
+        """Video-Einstellungen für Session-Videos"""
+        scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Info
+        info_frame = ctk.CTkFrame(scroll, fg_color=COLORS["bg_card"], corner_radius=10)
+        info_frame.pack(fill="x", pady=(0, 15))
+        
+        ctk.CTkLabel(
+            info_frame,
+            text="🎬 Session-Videos",
+            font=FONTS["body_bold"],
+            text_color=COLORS["text_primary"]
+        ).pack(pady=(10, 5))
+        
+        ctk.CTkLabel(
+            info_frame,
+            text="Videos werden zwischen den Fotos abgespielt.\nLeer lassen = Video wird übersprungen.",
+            font=FONTS["small"],
+            text_color=COLORS["text_muted"],
+            justify="center"
+        ).pack(pady=(0, 10))
+        
+        # Start-Video
+        ctk.CTkLabel(
+            scroll,
+            text="▶️ Start-Video (vor Session):",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"]
+        ).pack(anchor="w", pady=(10, 2))
+        
+        self.video_start_path = self._create_file_picker(
+            scroll, "",
+            self.config_data.get("video_start", ""),
+            [("Videos", "*.mp4 *.avi *.mkv *.mov")]
+        )
+        
+        # Video nach Foto 1
+        ctk.CTkLabel(
+            scroll,
+            text="📷 Video nach Foto 1:",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"]
+        ).pack(anchor="w", pady=(15, 2))
+        
+        self.video_after_1_path = self._create_file_picker(
+            scroll, "",
+            self.config_data.get("video_after_1", ""),
+            [("Videos", "*.mp4 *.avi *.mkv *.mov")]
+        )
+        
+        # Video nach Foto 2
+        ctk.CTkLabel(
+            scroll,
+            text="📷 Video nach Foto 2:",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"]
+        ).pack(anchor="w", pady=(15, 2))
+        
+        self.video_after_2_path = self._create_file_picker(
+            scroll, "",
+            self.config_data.get("video_after_2", ""),
+            [("Videos", "*.mp4 *.avi *.mkv *.mov")]
+        )
+        
+        # Video nach Foto 3
+        ctk.CTkLabel(
+            scroll,
+            text="📷 Video nach Foto 3:",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"]
+        ).pack(anchor="w", pady=(15, 2))
+        
+        self.video_after_3_path = self._create_file_picker(
+            scroll, "",
+            self.config_data.get("video_after_3", ""),
+            [("Videos", "*.mp4 *.avi *.mkv *.mov")]
+        )
+        
+        # End-Video
+        ctk.CTkLabel(
+            scroll,
+            text="🏁 End-Video (nach Session):",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"]
+        ).pack(anchor="w", pady=(15, 2))
+        
+        self.video_end_path = self._create_file_picker(
+            scroll, "",
+            self.config_data.get("video_end", ""),
+            [("Videos", "*.mp4 *.avi *.mkv *.mov")]
+        )
+        
+        # Hinweis
+        ctk.CTkLabel(
+            scroll,
+            text="💡 Tipp: Kurze Videos (3-5 Sek) in MP4/H.264 für beste Performance",
+            font=FONTS["tiny"],
+            text_color=COLORS["text_muted"]
+        ).pack(pady=(15, 0))
+    
     def _create_statistics_tab(self, parent):
         """Statistik-Anzeige und Export"""
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
@@ -1194,6 +1297,19 @@ class AdminDialog(ctk.CTkToplevel):
         logger.info(f"Galerie: enabled={self.config_data.get('gallery_enabled')}, "
                     f"ssid={self.config_data['gallery']['hotspot_ssid']}, "
                     f"port={self.config_data['gallery']['port']}")
+        
+        # Video-Pfade
+        self.config_data["video_start"] = self.video_start_path.get().strip()
+        self.config_data["video_after_1"] = self.video_after_1_path.get().strip()
+        self.config_data["video_after_2"] = self.video_after_2_path.get().strip()
+        self.config_data["video_after_3"] = self.video_after_3_path.get().strip()
+        self.config_data["video_end"] = self.video_end_path.get().strip()
+        
+        logger.info(f"Videos: start={bool(self.config_data['video_start'])}, "
+                    f"after_1={bool(self.config_data['video_after_1'])}, "
+                    f"after_2={bool(self.config_data['video_after_2'])}, "
+                    f"after_3={bool(self.config_data['video_after_3'])}, "
+                    f"end={bool(self.config_data['video_end'])}")
         
         # Drucker
         printer = self.printer_dropdown.get()
