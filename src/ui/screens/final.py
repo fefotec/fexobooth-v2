@@ -280,27 +280,34 @@ class FinalScreen(ctk.CTkFrame):
             img = Image.open(image_path)
             logger.info(f"Bild-Größe: {img.size}")
 
-            # DEVMODE vom Drucker holen (enthält alle Treibereinstellungen inkl. Randlos)
+            # DEVMODE und Print Processor vom Drucker holen
+            # Siehe: https://github.com/mhammond/pywin32/blob/main/win32/Demos/print_desktop.py
+            import win32gui
+            import pywintypes
+
             devmode = None
+            print_processor = None
             hPrinter = win32print.OpenPrinter(printer_name)
             try:
-                properties = win32print.GetPrinter(hPrinter, 2)
-                devmode = properties.get("pDevMode")
+                printer_info = win32print.GetPrinter(hPrinter, 2)
+                devmode = printer_info.get("pDevMode")
+                print_processor = printer_info.get("pPrintProcessor", "WinPrint")
+
                 if devmode:
                     logger.info(f"DEVMODE: PaperSize={devmode.PaperSize}, "
                                f"Orientation={devmode.Orientation}, "
                                f"PrintQuality={devmode.PrintQuality}")
+                    logger.info(f"Print Processor: {print_processor}")
                 else:
                     logger.warning("Kein DEVMODE vom Drucker - verwende Standardeinstellungen")
             finally:
                 win32print.ClosePrinter(hPrinter)
 
             # DC erstellen MIT DEVMODE für randlosen Druck!
-            # WICHTIG: win32gui.CreateDC() mit devmode, dann Handle zu win32ui konvertieren
-            import win32gui
-            if devmode:
+            # win32gui.CreateDC(print_processor, printer_name, devmode) - 3 Argumente!
+            if devmode and print_processor:
                 # CreateDC mit DEVMODE für Treibereinstellungen (randlos etc.)
-                hdc_handle = win32gui.CreateDC("WINSPOOL", printer_name, None, devmode)
+                hdc_handle = win32gui.CreateDC(print_processor, printer_name, devmode)
                 hDC = win32ui.CreateDCFromHandle(hdc_handle)
                 logger.info("DC mit DEVMODE erstellt (randlose Einstellungen aktiv)")
             else:
