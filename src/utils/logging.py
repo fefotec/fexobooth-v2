@@ -12,7 +12,7 @@ LOG_PATH = BASE_PATH / "logs"
 _logger: logging.Logger = None
 
 
-def setup_logging(level: int = logging.INFO) -> logging.Logger:
+def setup_logging(level: int = logging.DEBUG) -> logging.Logger:
     """Initialisiert das Logging-System"""
     global _logger
     

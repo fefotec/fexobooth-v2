@@ -86,15 +86,12 @@ class PhotoboothApp:
         # Drucker initialisieren wenn nicht gesetzt
         self._init_default_printer()
 
-        # UI Setup
-        self._setup_ui()
-        
-        # SOFORT beim Start: USB prüfen und Settings laden (nicht auf Timer warten!)
+        # WICHTIG: Settings ZUERST laden, BEVOR UI erstellt wird!
+        # Sonst zeigt die UI falsche Optionen (z.B. Single-Foto obwohl deaktiviert)
         self._load_settings_from_usb_immediately()
         
-        # Falls kein USB: Gecachte Buchung verwenden
+        # Settings auf Config anwenden (VOR UI-Setup!)
         if self.booking_manager.is_loaded:
-            self._update_booking_display()
             logger.info(f"📂 Buchung aktiv: {self.booking_manager.booking_id}")
             
             # Template in Config eintragen
@@ -103,6 +100,18 @@ class PhotoboothApp:
             
             # BookingSettings auf Config anwenden (allow_single_mode, gallery_enabled, etc.)
             self.booking_manager.apply_settings_to_config(self.config)
+        
+        # Log aktuelle Config nach Settings-Anwendung
+        logger.info(f"📋 Config nach Settings-Load:")
+        logger.info(f"   allow_single_mode = {self.config.get('allow_single_mode', True)}")
+        logger.info(f"   gallery_enabled = {self.config.get('gallery_enabled', False)}")
+
+        # UI Setup (NACH Settings, damit korrekte Optionen angezeigt werden!)
+        self._setup_ui()
+        
+        # Buchungsanzeige aktualisieren
+        if self.booking_manager.is_loaded:
+            self._update_booking_display()
         
         # Status-Timer starten
         self._start_status_checks()
