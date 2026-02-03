@@ -31,8 +31,7 @@ class SessionScreen(ctk.CTkFrame):
         self.app = app
         self.config = app.config
         
-        # Status
-        self.current_photo_index = 0
+        # Status (current_photo_index ist jetzt in self.app - bleibt bei Screen-Wechsel erhalten!)
         self.total_photos = 1
         self.countdown_value = 0
         self.is_countdown_active = False
@@ -101,17 +100,24 @@ class SessionScreen(ctk.CTkFrame):
     def on_show(self):
         """Screen wird angezeigt"""
         
-        # Nach Video-Unterbrechung: Nur fortsetzen, nicht zurücksetzen!
-        if self._resuming_after_video:
-            logger.info("Session fortgesetzt nach Video")
-            self._resuming_after_video = False
+        # Prüfen ob wir nach Video fortsetzen (photos_taken nicht leer = Session läuft bereits)
+        # WICHTIG: Der Screen wird bei show_screen() neu erstellt, daher können wir
+        # uns NICHT auf lokale Flags verlassen - nur app.photos_taken ist persistent!
+        resuming = len(self.app.photos_taken) > 0
+        
+        if resuming:
+            logger.info(f"Session fortgesetzt nach Video: Index={self.app.current_photo_index}, photos_taken={len(self.app.photos_taken)}")
             # Nur Live-View neu starten, NICHT Session zurücksetzen
+            self.total_photos = len(self.app.template_boxes) if self.app.template_boxes else 1
+            self.photo_display_until = 0
+            self._prepare_preview_overlay()
+            self._update_progress()
             self.is_live = True
             self._update_live_view()
             self.after(500, self._start_countdown)
             return
         
-        logger.info("Session gestartet")
+        logger.info("Session gestartet (neu)")
         
         # Kamera initialisieren
         cam_settings = self.config.get("camera_settings", {})
@@ -128,7 +134,7 @@ class SessionScreen(ctk.CTkFrame):
         
         # Session initialisieren (NUR bei neuem Start!)
         self.app.photos_taken = []
-        self.current_photo_index = 0
+        self.app.current_photo_index = 0
         self.total_photos = len(self.app.template_boxes) if self.app.template_boxes else 1
         self.photo_display_until = 0
 
@@ -178,7 +184,7 @@ class SessionScreen(ctk.CTkFrame):
     def _update_progress(self):
         """Aktualisiert die Fortschrittsanzeige"""
         self.progress_label.configure(
-            text=f"Foto {self.current_photo_index + 1} von {self.total_photos}"
+            text=f"Foto {self.app.current_photo_index + 1} von {self.total_photos}"
         )
     
     def _build_template_preview(self, live_frame: Optional[np.ndarray] = None) -> Image.Image:
@@ -225,7 +231,7 @@ class SessionScreen(ctk.CTkFrame):
                 photo = self._fit_image_to_box(photo, box_w, box_h)
                 canvas.paste(photo, (x1, y1))
 
-            elif i == self.current_photo_index and live_frame is not None:
+            elif i == self.app.current_photo_index and live_frame is not None:
                 # AKTUELLER SLOT: Live-View anzeigen
                 # Optional: 180° Rotation (für kopfüber montierte Kameras)
                 frame = live_frame
@@ -310,7 +316,7 @@ class SessionScreen(ctk.CTkFrame):
         if self.photo_display_until > 0:
             if time.time() < self.photo_display_until:
                 # Foto anzeigen - Template MIT den bisherigen Fotos rendern!
-                logger.debug(f"Display-Phase: Zeige Foto {self.current_photo_index}")
+                logger.debug(f"Display-Phase: Zeige Foto {self.app.current_photo_index}")
                 preview = self._build_template_preview(None)  # Kein Live-Frame
                 self._display_preview(preview)
                 self.after(50, self._update_live_view)
@@ -474,7 +480,7 @@ class SessionScreen(ctk.CTkFrame):
     
     def _start_countdown(self):
         """Startet den Countdown"""
-        logger.info(f"=== Starte Countdown für Foto {self.current_photo_index + 1}/{self.total_photos} ===")
+        logger.info(f"=== Starte Countdown für Foto {self.app.current_photo_index + 1}/{self.total_photos} ===")
         self.is_countdown_active = True
         self.countdown_value = self.config.get("countdown_time", 5)
         logger.info(f"Countdown gestartet: {self.countdown_value}, is_live={self.is_live}")
@@ -507,7 +513,7 @@ class SessionScreen(ctk.CTkFrame):
     
     def _take_photo(self):
         """Nimmt ein Foto auf"""
-        logger.info(f"Foto {self.current_photo_index + 1} aufnehmen")
+        logger.info(f"Foto {self.app.current_photo_index + 1} aufnehmen")
         
         # Flash
         self.show_flash = True
@@ -592,14 +598,14 @@ class SessionScreen(ctk.CTkFrame):
             self.app.statistics.record_photo()
             
             # Speichern im Hintergrund starten
-            self.after(10, lambda: self._save_photo_async(photo, self.current_photo_index + 1))
+            self.after(10, lambda: self._save_photo_async(photo, self.app.current_photo_index + 1))
             
             logger.info(f"Foto aufgenommen: {photo.size}")
             
             # Foto kurz anzeigen
             display_time = self.config.get("single_display_time", 2)
             self.photo_display_until = time.time() + display_time
-            self.current_photo_index += 1
+            self.app.current_photo_index += 1
             self._update_progress()
         else:
             logger.error("Foto-Aufnahme fehlgeschlagen")
@@ -615,12 +621,12 @@ class SessionScreen(ctk.CTkFrame):
     
     def _next_photo_or_finish(self):
         """Nächstes Foto oder zum Filter-Screen"""
-        logger.info(f"=== Next: {self.current_photo_index}/{self.total_photos}, photos_taken={len(self.app.photos_taken)} ===")
+        logger.info(f"=== Next: {self.app.current_photo_index}/{self.total_photos}, photos_taken={len(self.app.photos_taken)} ===")
         
-        if self.current_photo_index < self.total_photos:
+        if self.app.current_photo_index < self.total_photos:
             # Prüfen ob Zwischen-Video abgespielt werden soll
             # video_after_1, video_after_2, video_after_3 je nach aktuellem Foto
-            video_key = f"video_after_{self.current_photo_index}"
+            video_key = f"video_after_{self.app.current_photo_index}"
             video_path = self.config.get(video_key, "")
             
             if video_path and os.path.exists(video_path):

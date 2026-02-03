@@ -71,6 +71,7 @@ class PhotoboothApp:
         
         # Session-Status
         self.photos_taken: List[Image.Image] = []
+        self.current_photo_index: int = 0  # Aktueller Foto-Index (bleibt bei Screen-Wechsel erhalten!)
         self.current_filter: str = "none"
         self.template_path: Optional[str] = None
         self.template_boxes: List[Dict] = []
@@ -903,6 +904,7 @@ class PhotoboothApp:
     def reset_session(self):
         """Setzt die Session zurück"""
         self.photos_taken = []
+        self.current_photo_index = 0
         self.current_filter = "none"
         self.template_path = None
         self.template_boxes = []
