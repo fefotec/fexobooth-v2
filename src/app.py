@@ -141,6 +141,28 @@ class PhotoboothApp:
         except Exception as e:
             logger.error(f"Galerie-Server Start fehlgeschlagen: {e}")
 
+    def _start_gallery_if_needed(self):
+        """Startet Galerie wenn noch nicht gestartet (für settings.json Aktivierung)"""
+        try:
+            from src.gallery import is_running, start_server, get_gallery_url
+            
+            if is_running():
+                logger.debug("Galerie läuft bereits")
+                return
+            
+            # Galerie-Pfad ermitteln
+            gallery_path = self.usb_manager.get_images_path()
+            if not gallery_path:
+                gallery_path = self.local_storage.get_images_path()
+            
+            if gallery_path:
+                port = self.config.get("gallery_port", 8080)
+                start_server(gallery_path, port=port)
+                self.gallery_url = get_gallery_url(port)
+                logger.info(f"🌐 Galerie gestartet (via settings.json): {self.gallery_url}")
+        except Exception as e:
+            logger.error(f"Galerie-Start via settings.json fehlgeschlagen: {e}")
+
     def _enter_fullscreen(self):
         """Aktiviert echten Vollbildmodus"""
         screen_width = self.root.winfo_screenwidth()
@@ -328,6 +350,10 @@ class PhotoboothApp:
                     # allow_single_mode aus settings übernehmen
                     if self.booking_manager.settings:
                         self.config["allow_single_mode"] = self.booking_manager.settings.print_singles
+                        
+                        # Galerie starten wenn in settings.json aktiviert
+                        if self.booking_manager.settings.online_gallery:
+                            self._start_gallery_if_needed()
 
         # USB wurde gerade eingesteckt und es gibt pending files -> Dialog zeigen
         if is_available and pending_count > 0 and not self._sync_dialog_open:

@@ -21,6 +21,16 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _is_gallery_enabled(app: "PhotoboothApp") -> bool:
+    """Prüft ob Galerie aktiviert ist (Config oder settings.json)"""
+    # Erst settings.json prüfen (hat Priorität)
+    if app.booking_manager and app.booking_manager.is_loaded:
+        if app.booking_manager.settings.online_gallery:
+            return True
+    # Dann Config prüfen
+    return app.config.get("gallery_enabled", False)
+
+
 class TemplateCard(ctk.CTkFrame):
     """Template-Auswahl-Karte - kompakt für 1280x800"""
     
@@ -186,6 +196,12 @@ class StartScreen(ctk.CTkFrame):
             command=self._on_start
         )
         self.start_btn.pack(pady=25)
+        
+        # QR-Code Container (unten rechts, wird in on_show befüllt)
+        self.qr_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.qr_frame.place(relx=0.95, rely=0.95, anchor="se")
+        self.qr_label: Optional[ctk.CTkLabel] = None
+        self.qr_text_label: Optional[ctk.CTkLabel] = None
     
     def _create_template_cards(self, parent):
         """Erstellt die Template-Karten"""
@@ -523,6 +539,69 @@ class StartScreen(ctk.CTkFrame):
         # (wird in _create_template_cards aktiviert wenn USB-Template vorselektiert)
         if not self.selected_option:
             self.start_btn.configure(state="disabled")
+        
+        # QR-Code für Galerie anzeigen/ausblenden
+        self._update_qr_code()
+    
+    def _update_qr_code(self):
+        """Zeigt oder versteckt den QR-Code für die Galerie"""
+        # Alte QR-Elemente entfernen
+        if self.qr_label:
+            self.qr_label.destroy()
+            self.qr_label = None
+        if self.qr_text_label:
+            self.qr_text_label.destroy()
+            self.qr_text_label = None
+        
+        # Prüfen ob Galerie aktiv
+        if not _is_gallery_enabled(self.app):
+            logger.debug("Galerie nicht aktiv - kein QR-Code")
+            return
+        
+        # Prüfen ob gallery_show_qr aktiv (default: True)
+        if not self.config.get("gallery_show_qr", True):
+            logger.debug("QR-Code Anzeige deaktiviert")
+            return
+        
+        try:
+            from src.gallery import get_gallery_url, generate_qr_code
+            
+            # URL holen
+            port = self.config.get("gallery_port", 8080)
+            url = get_gallery_url(port)
+            
+            # QR-Code generieren
+            qr_img = generate_qr_code(url, size=120)
+            if not qr_img:
+                logger.warning("QR-Code konnte nicht generiert werden")
+                return
+            
+            # QR als CTkImage
+            self.qr_ctk_image = ctk.CTkImage(light_image=qr_img, size=(120, 120))
+            
+            # QR-Code Label
+            self.qr_label = ctk.CTkLabel(
+                self.qr_frame,
+                image=self.qr_ctk_image,
+                text=""
+            )
+            self.qr_label.pack()
+            
+            # Text darunter
+            self.qr_text_label = ctk.CTkLabel(
+                self.qr_frame,
+                text="📱 Galerie scannen",
+                font=FONTS["tiny"],
+                text_color=COLORS["text_muted"]
+            )
+            self.qr_text_label.pack(pady=(5, 0))
+            
+            logger.info(f"✅ QR-Code angezeigt: {url}")
+            
+        except ImportError as e:
+            logger.warning(f"Galerie-Modul nicht verfügbar: {e}")
+        except Exception as e:
+            logger.error(f"QR-Code Anzeige Fehler: {e}")
     
     def _refresh_template_cards(self):
         """Erstellt Template-Karten neu (nach Config-Änderung)"""
