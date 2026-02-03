@@ -11,8 +11,9 @@ python-vlc>=3.0.0
 # Windows-spezifisch
 pywin32>=306; sys_platform == "win32"
 
-# QR-Code (optional für Galerie)
+# QR-Code und Galerie-Server
 qrcode>=7.4.0
+flask>=3.0.0
 
 # Build
 pyinstaller>=6.0.0

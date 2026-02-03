@@ -13,7 +13,11 @@ DEFAULT_CONFIG = {
     "allow_single_mode": True,
     "performance_mode": True,
     "start_fullscreen": True,
+    
+    # Galerie (lokaler Webserver für QR-Code Download)
     "gallery_enabled": False,
+    "gallery_port": 8080,
+    "gallery_show_qr": True,  # QR-Code auf Final-Screen anzeigen
     
     # Templates
     "template1_enabled": True,

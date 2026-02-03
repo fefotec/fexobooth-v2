@@ -89,6 +89,9 @@ class PhotoboothApp:
         # Status-Timer starten
         self._start_status_checks()
         
+        # Galerie-Server starten wenn aktiviert
+        self._init_gallery_server()
+        
         logger.info("PhotoboothApp initialisiert")
 
     def _init_default_printer(self):
@@ -103,6 +106,40 @@ class PhotoboothApp:
                     logger.info(f"Standard-Drucker gesetzt: {default_printer}")
             except Exception as e:
                 logger.debug(f"Drucker-Init übersprungen: {e}")
+
+    def _init_gallery_server(self):
+        """Startet den Galerie-Webserver wenn aktiviert"""
+        if not self.config.get("gallery_enabled", False):
+            logger.debug("Galerie-Server deaktiviert")
+            return
+        
+        try:
+            from src.gallery import start_server, get_gallery_url
+            from pathlib import Path
+            
+            # Galerie-Pfad = USB BILDER Ordner oder lokaler Speicher
+            gallery_path = None
+            usb_path = self.usb_manager.get_images_path()
+            if usb_path:
+                gallery_path = usb_path
+            else:
+                # Fallback: Lokaler Bilder-Ordner
+                gallery_path = self.local_storage.get_images_path()
+            
+            if gallery_path:
+                port = self.config.get("gallery_port", 8080)
+                start_server(gallery_path, port=port)
+                
+                # URL für QR-Code speichern
+                self.gallery_url = get_gallery_url(port)
+                logger.info(f"🌐 Galerie verfügbar: {self.gallery_url}")
+            else:
+                logger.warning("Kein Bilder-Pfad für Galerie verfügbar")
+                
+        except ImportError as e:
+            logger.warning(f"Galerie-Modul nicht verfügbar: {e}")
+        except Exception as e:
+            logger.error(f"Galerie-Server Start fehlgeschlagen: {e}")
 
     def _enter_fullscreen(self):
         """Aktiviert echten Vollbildmodus"""
