@@ -214,10 +214,10 @@ class BookingManager:
             json_files = list(usb_root.glob("*.json"))
             
             if not json_files:
-                logger.debug(f"Keine JSON-Dateien auf USB: {usb_root}")
                 return None
             
             # Gültige Settings-Dateien filtern (müssen booking_id enthalten)
+            # KEIN Logging hier - wird sehr oft aufgerufen!
             valid_files = []
             for json_path in json_files:
                 try:
@@ -229,23 +229,19 @@ class BookingManager:
                     if data.get("booking_id") or data.get("customer_name"):
                         mtime = json_path.stat().st_mtime
                         valid_files.append((json_path, mtime))
-                        logger.debug(f"Gültige Settings-Datei: {json_path.name}")
-                except (json.JSONDecodeError, KeyError, IOError) as e:
-                    logger.debug(f"Überspringe {json_path.name}: {e}")
+                except (json.JSONDecodeError, KeyError, IOError):
                     continue
             
             if not valid_files:
-                logger.debug("Keine gültigen Settings-Dateien gefunden")
                 return None
             
             # Nach Änderungszeit sortieren (neueste zuerst)
             valid_files.sort(key=lambda x: x[1], reverse=True)
             
             newest = valid_files[0][0]
+            # Nur loggen wenn mehrere Dateien (interessant)
             if len(valid_files) > 1:
                 logger.info(f"📂 {len(valid_files)} Settings-Dateien gefunden, verwende neueste: {newest.name}")
-            else:
-                logger.debug(f"Settings-Datei gefunden: {newest.name}")
             
             return newest
             
