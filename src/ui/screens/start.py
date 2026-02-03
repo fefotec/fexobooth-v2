@@ -188,11 +188,20 @@ class StartScreen(ctk.CTkFrame):
         """Erstellt die Template-Karten"""
         has_custom_template = False
         
+        logger.info("=== Erstelle Template-Karten ===")
+        logger.debug(f"template1_enabled: {self.config.get('template1_enabled')}")
+        logger.debug(f"template2_enabled: {self.config.get('template2_enabled')}")
+        logger.debug(f"template_paths: {self.config.get('template_paths', {})}")
+        
         # Template 1
-        if self.config.get("template1_enabled"):
-            template_path = self.config.get("template_paths", {}).get("template1", "")
-            if template_path and os.path.exists(template_path):
-                preview = self._load_template_preview(template_path)
+        t1_enabled = self.config.get("template1_enabled", False)
+        t1_path = self.config.get("template_paths", {}).get("template1", "")
+        t1_resolved = self._resolve_template_path(t1_path) if t1_path else None
+        logger.info(f"Template 1: enabled={t1_enabled}, path='{t1_path}', resolved='{t1_resolved}'")
+        
+        if t1_enabled:
+            if t1_resolved:
+                preview = self._load_template_preview(t1_resolved)
                 card = TemplateCard(
                     parent,
                     title="Template 1",
@@ -202,12 +211,19 @@ class StartScreen(ctk.CTkFrame):
                 card.pack(side="left", padx=10)
                 self.cards["template1"] = card
                 has_custom_template = True
+                logger.info(f"✅ Template 1 Karte erstellt: {t1_resolved}")
+            else:
+                logger.warning(f"Template 1 aktiviert aber Pfad nicht gefunden: '{t1_path}'")
         
         # Template 2
-        if self.config.get("template2_enabled"):
-            template_path = self.config.get("template_paths", {}).get("template2", "")
-            if template_path and os.path.exists(template_path):
-                preview = self._load_template_preview(template_path)
+        t2_enabled = self.config.get("template2_enabled", False)
+        t2_path = self.config.get("template_paths", {}).get("template2", "")
+        t2_resolved = self._resolve_template_path(t2_path) if t2_path else None
+        logger.info(f"Template 2: enabled={t2_enabled}, path='{t2_path}', resolved='{t2_resolved}'")
+        
+        if t2_enabled:
+            if t2_resolved:
+                preview = self._load_template_preview(t2_resolved)
                 card = TemplateCard(
                     parent,
                     title="Template 2",
@@ -217,9 +233,13 @@ class StartScreen(ctk.CTkFrame):
                 card.pack(side="left", padx=10)
                 self.cards["template2"] = card
                 has_custom_template = True
+                logger.info(f"✅ Template 2 Karte erstellt: {t2_resolved}")
+            else:
+                logger.warning(f"Template 2 aktiviert aber Pfad nicht gefunden: '{t2_path}'")
         
         # Standard 2x2 Template (wenn keine Custom-Templates aktiv)
         if not has_custom_template:
+            logger.info("Keine Custom-Templates aktiv, zeige Standard 2x2")
             # Vorschau für Standard-Template generieren
             default_overlay, _ = create_default_template()
             
@@ -242,21 +262,55 @@ class StartScreen(ctk.CTkFrame):
             )
             card.pack(side="left", padx=10)
             self.cards["single"] = card
+        
+        logger.info(f"Erstellte Karten: {list(self.cards.keys())}")
+    
+    def _resolve_template_path(self, template_path: str) -> Optional[str]:
+        """Löst Template-Pfad auf (relativ oder absolut)"""
+        if not template_path:
+            return None
+        
+        # Absoluter Pfad?
+        if os.path.isabs(template_path) and os.path.exists(template_path):
+            return template_path
+        
+        # Relativer Pfad - versuche verschiedene Basis-Verzeichnisse
+        search_bases = [
+            Path(__file__).parent.parent.parent.parent,  # Projekt-Root
+            Path.cwd(),  # Aktuelles Verzeichnis
+            Path("C:/fexobooth/fexobooth-v2") if os.name == "nt" else None,  # Windows Install
+        ]
+        
+        for base in search_bases:
+            if base is None:
+                continue
+            full_path = base / template_path
+            if full_path.exists():
+                logger.debug(f"Template-Pfad aufgelöst: {template_path} -> {full_path}")
+                return str(full_path)
+        
+        # Pfad wie angegeben versuchen
+        if os.path.exists(template_path):
+            return template_path
+        
+        return None
     
     def _load_template_preview(self, template_path: str) -> Optional[Image.Image]:
         """Lädt Template-Vorschau (ZIP oder PNG)"""
-        if not template_path or not os.path.exists(template_path):
+        resolved = self._resolve_template_path(template_path)
+        if not resolved:
+            logger.warning(f"Template-Pfad nicht gefunden: {template_path}")
             return None
         
         try:
             # Für PNG direkt laden (schneller für Preview)
-            if template_path.lower().endswith(".png"):
-                preview = Image.open(template_path).convert("RGBA")
+            if resolved.lower().endswith(".png"):
+                preview = Image.open(resolved).convert("RGBA")
                 logger.debug(f"PNG-Vorschau geladen: {preview.size}")
                 return preview
             
             # Für ZIP den Loader nutzen
-            overlay, _ = TemplateLoader.load(template_path)
+            overlay, _ = TemplateLoader.load(resolved)
             return overlay
         except Exception as e:
             logger.warning(f"Template-Vorschau Fehler: {e}")

@@ -168,10 +168,13 @@ class AdminDialog(ctk.CTkToplevel):
             
             # *** WICHTIG: Fullscreen deaktivieren für Admin ***
             try:
-                self.parent_window.attributes("-fullscreen", False)
+                # overrideredirect entfernen damit Fenster normal angezeigt wird
+                self.parent_window.overrideredirect(False)
+                # Normale Fenstergröße
+                self.parent_window.geometry("1024x768")
                 logger.info("Fullscreen deaktiviert für Admin-Modus")
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"Fullscreen-Exit Fehler: {e}")
             
             self._show_settings()
         else:
@@ -746,13 +749,20 @@ class AdminDialog(ctk.CTkToplevel):
         """Abbrechen - Fullscreen wiederherstellen wenn nötig"""
         if self.config_data.get("start_fullscreen", True):
             try:
-                self.parent_window.attributes("-fullscreen", True)
-            except:
-                pass
+                screen_width = self.parent_window.winfo_screenwidth()
+                screen_height = self.parent_window.winfo_screenheight()
+                self.parent_window.overrideredirect(True)
+                self.parent_window.geometry(f"{screen_width}x{screen_height}+0+0")
+                self.parent_window.focus_force()
+                logger.info("Fullscreen wiederhergestellt")
+            except Exception as e:
+                logger.debug(f"Fullscreen-Restore Fehler: {e}")
         self.destroy()
     
     def _save(self):
         """Speichert die Einstellungen"""
+        logger.info("=== Admin-Einstellungen speichern ===")
+        
         # Slider-Werte
         self.config_data["countdown_time"] = int(self.countdown_slider.get())
         self.config_data["single_display_time"] = int(self.single_slider.get())
@@ -765,11 +775,21 @@ class AdminDialog(ctk.CTkToplevel):
             var = getattr(self, f"check_{key}", None)
             if var:
                 self.config_data[key] = var.get()
+                logger.debug(f"  {key} = {var.get()}")
         
-        # Template-Pfade
-        self.config_data["template_paths"]["template1"] = self.t1_path.get()
-        self.config_data["template_paths"]["template2"] = self.t2_path.get()
-        self.config_data["logo_path"] = self.logo_path.get()
+        # Template-Pfade - sicherstellen dass Dict existiert
+        if "template_paths" not in self.config_data:
+            self.config_data["template_paths"] = {}
+        
+        t1_path = self.t1_path.get().strip()
+        t2_path = self.t2_path.get().strip()
+        
+        self.config_data["template_paths"]["template1"] = t1_path
+        self.config_data["template_paths"]["template2"] = t2_path
+        self.config_data["logo_path"] = self.logo_path.get().strip()
+        
+        logger.info(f"Template 1: enabled={self.config_data.get('template1_enabled')}, path='{t1_path}'")
+        logger.info(f"Template 2: enabled={self.config_data.get('template2_enabled')}, path='{t2_path}'")
         
         # Drucker
         printer = self.printer_dropdown.get()
@@ -797,6 +817,10 @@ class AdminDialog(ctk.CTkToplevel):
             except:
                 pass
         
+        # camera_settings sicherstellen dass Dict existiert
+        if "camera_settings" not in self.config_data:
+            self.config_data["camera_settings"] = {}
+        
         self.config_data["camera_settings"]["single_photo_width"] = int(self.photo_width.get())
         self.config_data["camera_settings"]["single_photo_height"] = int(self.photo_height.get())
         
@@ -810,8 +834,13 @@ class AdminDialog(ctk.CTkToplevel):
         # Fullscreen wiederherstellen wenn gewünscht
         if self.config_data.get("start_fullscreen", True):
             try:
-                self.parent_window.attributes("-fullscreen", True)
-            except:
-                pass
+                screen_width = self.parent_window.winfo_screenwidth()
+                screen_height = self.parent_window.winfo_screenheight()
+                self.parent_window.overrideredirect(True)
+                self.parent_window.geometry(f"{screen_width}x{screen_height}+0+0")
+                self.parent_window.focus_force()
+                logger.info("Fullscreen wiederhergestellt")
+            except Exception as e:
+                logger.debug(f"Fullscreen-Restore Fehler: {e}")
         
         self.destroy()

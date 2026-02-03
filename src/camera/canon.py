@@ -72,22 +72,34 @@ class CanonCameraManager(CameraManager):
             camera_index: Index der Kamera (0 = erste Canon Kamera)
             width/height: Werden bei Canon ignoriert (Live View hat feste Auflösung)
         """
+        logger.info(f"=== Canon Kamera initialisieren (index={camera_index}) ===")
+        
+        # Wenn bereits initialisiert, erst aufräumen
         if self._is_initialized:
-            return True
+            logger.info("Bereits initialisiert, führe Cleanup durch...")
+            self.release()
         
         if not EDSDK_AVAILABLE:
             logger.error("EDSDK nicht verfügbar")
             return False
         
         # SDK initialisieren
+        logger.debug("SDK initialisieren...")
         if not edsdk.initialize():
+            logger.error("SDK-Initialisierung fehlgeschlagen")
             return False
         
         # Kamera-Liste holen
+        logger.debug("Kamera-Liste abrufen...")
         cameras = edsdk.get_camera_list()
+        logger.info(f"Gefundene Kameras: {len(cameras)}")
+        
         if not cameras:
             logger.error("Keine Canon Kamera gefunden")
             return False
+        
+        for i, cam in enumerate(cameras):
+            logger.debug(f"  [{i}] {cam.get('name', 'Unknown')} @ {cam.get('port', '?')}")
         
         if camera_index >= len(cameras):
             logger.error(f"Kamera-Index {camera_index} ungültig (nur {len(cameras)} Kameras)")
@@ -99,14 +111,20 @@ class CanonCameraManager(CameraManager):
         
         logger.info(f"Verbinde mit: {self._camera_info['name']}")
         
-        # Session öffnen
+        # Session öffnen (mit Retry-Logik in edsdk.open_session)
+        logger.debug("Öffne Kamera-Session...")
         if not edsdk.open_session(self._camera_ref):
             logger.error("Session konnte nicht geöffnet werden")
+            self._camera_ref = None
+            self._camera_info = None
             return False
         
+        logger.info("Session erfolgreich geöffnet")
+        
         # Speicherung auf PC konfigurieren
+        logger.debug("Konfiguriere SaveTo Host...")
         if not edsdk.set_save_to_host(self._camera_ref):
-            logger.warning("SaveTo konnte nicht gesetzt werden")
+            logger.warning("SaveTo konnte nicht gesetzt werden (nicht kritisch)")
         
         # Bildqualität auf JPG Large Fine setzen (kein RAW!)
         if not edsdk.set_image_quality_jpg(self._camera_ref):
@@ -117,7 +135,7 @@ class CanonCameraManager(CameraManager):
             logger.warning("Object Event Handler konnte nicht registriert werden")
         
         self._is_initialized = True
-        logger.info(f"Canon Kamera initialisiert: {self._camera_info['name']}")
+        logger.info(f"✅ Canon Kamera initialisiert: {self._camera_info['name']}")
         
         return True
     

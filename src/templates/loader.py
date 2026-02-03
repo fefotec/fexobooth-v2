@@ -50,11 +50,16 @@ class TemplateLoader:
     @staticmethod
     def _load_zip(zip_path: str) -> Tuple[Optional[Image.Image], List[Dict]]:
         """Lädt ein ZIP-Template"""
+        logger.info(f"=== Lade ZIP-Template: {zip_path} ===")
         temp_dir = tempfile.mkdtemp(prefix="fexobooth_template_")
+        logger.debug(f"Temp-Verzeichnis: {temp_dir}")
         
         try:
             # ZIP entpacken
+            logger.debug("Entpacke ZIP...")
             with zipfile.ZipFile(zip_path, "r") as zf:
+                file_list = zf.namelist()
+                logger.debug(f"Dateien im ZIP: {file_list}")
                 zf.extractall(temp_dir)
             
             overlay = None
@@ -65,15 +70,18 @@ class TemplateLoader:
             xml_path = None
             max_png_size = 0
             
+            all_files = []
             for root, dirs, files in os.walk(temp_dir):
                 for fn in files:
                     full_path = os.path.join(root, fn)
+                    all_files.append(full_path)
                     lower_fn = fn.lower()
                     
                     # Größte PNG finden (ignoriert Thumbnails/Previews)
                     if lower_fn.endswith(".png"):
                         try:
                             size = os.path.getsize(full_path)
+                            logger.debug(f"  PNG gefunden: {fn} ({size} bytes)")
                             if size > max_png_size:
                                 max_png_size = size
                                 png_path = full_path
@@ -82,19 +90,26 @@ class TemplateLoader:
                     
                     # XML finden
                     elif lower_fn.endswith(".xml"):
+                        logger.debug(f"  XML gefunden: {fn}")
                         xml_path = full_path
+            
+            logger.debug(f"Entpackte Dateien: {all_files}")
+            logger.info(f"Gewählte PNG: {png_path} ({max_png_size} bytes)")
+            logger.info(f"Gewählte XML: {xml_path}")
             
             # PNG laden
             if png_path:
                 overlay = Image.open(png_path).convert("RGBA")
-                logger.info(f"Overlay geladen: {overlay.size[0]}x{overlay.size[1]}")
+                logger.info(f"✅ Overlay geladen: {overlay.size[0]}x{overlay.size[1]}")
             else:
                 logger.warning(f"Keine PNG-Datei im Template gefunden: {zip_path}")
             
             # XML parsen
             if xml_path:
                 boxes = TemplateLoader._parse_xml(xml_path, overlay.size if overlay else None)
-                logger.info(f"Template-Boxen geladen: {len(boxes)} Foto-Slots")
+                logger.info(f"✅ Template-Boxen geladen: {len(boxes)} Foto-Slots")
+                for i, box in enumerate(boxes):
+                    logger.debug(f"  Box {i+1}: {box}")
             else:
                 logger.warning(f"Keine XML-Datei im Template gefunden: {zip_path}")
             
@@ -106,12 +121,17 @@ class TemplateLoader:
                     "angle": 0.0,
                     "number": 1
                 }]
-                logger.info("Fallback: Eine Box über das gesamte Bild")
+                logger.info("⚠️ Fallback: Eine Box über das gesamte Bild")
             
             return overlay, boxes
             
+        except zipfile.BadZipFile as e:
+            logger.error(f"Ungültiges ZIP-Format: {zip_path} - {e}")
+            return None, []
         except Exception as e:
             logger.error(f"Fehler beim Laden des ZIP-Templates: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
             return None, []
         
         finally:

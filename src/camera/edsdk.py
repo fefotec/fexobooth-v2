@@ -81,15 +81,29 @@ def load_edsdk() -> bool:
 
 EDS_ERR_OK = 0x00000000
 EDS_ERR_DEVICE_NOT_FOUND = 0x00000080
+EDS_ERR_DEVICE_BUSY = 0x000000c0
 EDS_ERR_SESSION_NOT_OPEN = 0x00002003
+EDS_ERR_SESSION_ALREADY_OPEN = 0x00002004
 EDS_ERR_TAKE_PICTURE_AF_NG = 0x00008D01
 EDS_ERR_TAKE_PICTURE_CARD_NG = 0x00008D07
+
+# Error-Code Namen für besseres Logging
+ERROR_NAMES = {
+    0x00000000: "OK",
+    0x00000080: "DEVICE_NOT_FOUND",
+    0x000000c0: "DEVICE_BUSY",
+    0x00002003: "SESSION_NOT_OPEN",
+    0x00002004: "SESSION_ALREADY_OPEN",
+    0x00008D01: "TAKE_PICTURE_AF_NG",
+    0x00008D07: "TAKE_PICTURE_CARD_NG",
+}
 
 def check_error(err: int, context: str = "") -> bool:
     """Prüft EDSDK Fehlercode"""
     if err == EDS_ERR_OK:
         return True
-    logger.error(f"EDSDK Fehler {hex(err)} bei {context}")
+    err_name = ERROR_NAMES.get(err, "UNKNOWN")
+    logger.error(f"EDSDK Fehler {hex(err)} ({err_name}) bei {context}")
     return False
 
 
@@ -370,11 +384,56 @@ def get_camera_list() -> List[dict]:
 
 
 def open_session(camera_ref: c_void_p) -> bool:
-    """Öffnet eine Session mit der Kamera"""
+    """Öffnet eine Session mit der Kamera
+    
+    Behandelt DEVICE_BUSY (0xc0) durch:
+    1. Versuch die Session erst zu schließen
+    2. Kurz warten und erneut versuchen
+    """
     if EDSDK_DLL is None:
         return False
     
+    import time
+    
     err = EDSDK_DLL.EdsOpenSession(camera_ref)
+    
+    # Wenn Device Busy oder Session bereits offen
+    if err in (EDS_ERR_DEVICE_BUSY, EDS_ERR_SESSION_ALREADY_OPEN):
+        logger.warning(f"Session-Fehler {hex(err)}, versuche Cleanup...")
+        
+        # Versuche Session zu schließen
+        try:
+            EDSDK_DLL.EdsCloseSession(camera_ref)
+            logger.info("Vorherige Session geschlossen")
+        except Exception as e:
+            logger.debug(f"CloseSession Fehler (ignoriert): {e}")
+        
+        # Kurz warten
+        time.sleep(0.5)
+        
+        # Erneut versuchen
+        err = EDSDK_DLL.EdsOpenSession(camera_ref)
+        
+        if err in (EDS_ERR_DEVICE_BUSY, EDS_ERR_SESSION_ALREADY_OPEN):
+            logger.warning("Session immer noch blockiert, versuche SDK-Neustart...")
+            
+            # SDK komplett neu initialisieren
+            global _sdk_initialized
+            try:
+                EDSDK_DLL.EdsTerminateSDK()
+            except:
+                pass
+            _sdk_initialized = False
+            
+            time.sleep(1.0)
+            
+            if not initialize():
+                logger.error("SDK-Neustart fehlgeschlagen")
+                return False
+            
+            # Letzter Versuch
+            err = EDSDK_DLL.EdsOpenSession(camera_ref)
+    
     return check_error(err, "EdsOpenSession")
 
 

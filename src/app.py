@@ -35,16 +35,20 @@ class PhotoboothApp:
         self.root.title("Fexobooth")
         self.root.configure(fg_color=COLORS["bg_dark"])
         
-        # Bildschirmgröße
+        # Bildschirmgröße ermitteln
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
-        self.root.geometry(f"{screen_width}x{screen_height}")
+        logger.info(f"Bildschirm: {screen_width}x{screen_height}")
         
         # Fullscreen wenn konfiguriert
+        self._is_fullscreen = False
         if config.get("start_fullscreen", True):
-            self.root.attributes("-fullscreen", True)
+            self._enter_fullscreen()
+        else:
+            # Fenster zentriert anzeigen
+            self.root.geometry(f"{screen_width}x{screen_height}+0+0")
         
-        # Escape zum Beenden
+        # Escape zum Beenden / F11 zum Toggle
         self.root.bind("<Escape>", lambda e: self._toggle_fullscreen())
         self.root.bind("<F11>", lambda e: self._toggle_fullscreen())
         
@@ -76,10 +80,44 @@ class PhotoboothApp:
         
         logger.info("PhotoboothApp initialisiert")
     
+    def _enter_fullscreen(self):
+        """Aktiviert echten Vollbildmodus"""
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        # Window-Dekoration entfernen
+        self.root.overrideredirect(True)
+        
+        # Fenster auf volle Bildschirmgröße setzen (Position 0,0)
+        self.root.geometry(f"{screen_width}x{screen_height}+0+0")
+        
+        # Immer im Vordergrund
+        self.root.attributes("-topmost", True)
+        self.root.after(100, lambda: self.root.attributes("-topmost", False))
+        
+        # Focus setzen
+        self.root.focus_force()
+        
+        self._is_fullscreen = True
+        logger.info(f"Vollbild aktiviert: {screen_width}x{screen_height}")
+    
+    def _exit_fullscreen(self):
+        """Beendet Vollbildmodus"""
+        # Window-Dekoration wiederherstellen
+        self.root.overrideredirect(False)
+        
+        # Normale Fenstergröße
+        self.root.geometry("1024x768")
+        
+        self._is_fullscreen = False
+        logger.info("Vollbild deaktiviert")
+    
     def _toggle_fullscreen(self):
         """Toggle Fullscreen"""
-        current = self.root.attributes("-fullscreen")
-        self.root.attributes("-fullscreen", not current)
+        if self._is_fullscreen:
+            self._exit_fullscreen()
+        else:
+            self._enter_fullscreen()
     
     def _setup_ui(self):
         """Erstellt die UI-Struktur"""
@@ -328,26 +366,82 @@ class PhotoboothApp:
         self.show_screen("video")
         self.current_screen.play(video_path, next_screen)
     
-    def load_template(self, template_key: str) -> bool:
-        """Lädt ein Template"""
-        template_path = self.config.get("template_paths", {}).get(template_key, "")
+    def _resolve_template_path(self, template_path: str) -> str:
+        """Löst Template-Pfad auf (relativ oder absolut)"""
+        from pathlib import Path
         
-        if not template_path or not os.path.exists(template_path):
-            logger.warning(f"Template nicht gefunden: {template_path}")
+        if not template_path:
+            return ""
+        
+        # Absoluter Pfad?
+        if os.path.isabs(template_path) and os.path.exists(template_path):
+            return template_path
+        
+        # Relativer Pfad - versuche verschiedene Basis-Verzeichnisse
+        search_bases = [
+            Path(__file__).parent.parent,  # src/..
+            Path.cwd(),  # Aktuelles Verzeichnis
+            Path("C:/fexobooth/fexobooth-v2") if os.name == "nt" else None,  # Windows Install
+        ]
+        
+        for base in search_bases:
+            if base is None:
+                continue
+            full_path = base / template_path
+            if full_path.exists():
+                logger.debug(f"Template-Pfad aufgelöst: {template_path} -> {full_path}")
+                return str(full_path)
+        
+        # Pfad wie angegeben zurückgeben
+        return template_path
+    
+    def load_template(self, template_key: str) -> bool:
+        """Lädt ein Template
+        
+        Args:
+            template_key: Key wie "template1", "template2"
+        """
+        logger.info(f"=== Template laden: {template_key} ===")
+        
+        # Debug: Alle Template-Pfade ausgeben
+        template_paths = self.config.get("template_paths", {})
+        logger.debug(f"Konfigurierte Template-Pfade: {template_paths}")
+        
+        template_path = template_paths.get(template_key, "")
+        logger.info(f"Template-Pfad für '{template_key}': {template_path}")
+        
+        if not template_path:
+            logger.warning(f"Kein Pfad für Template '{template_key}' konfiguriert!")
+            logger.debug(f"Verfügbare Keys: {list(template_paths.keys())}")
             self.template_path = None
             self.template_boxes = []
             self.overlay_image = None
             return False
         
-        overlay, boxes = TemplateLoader.load(template_path)
+        # Pfad auflösen (relativ -> absolut)
+        resolved_path = self._resolve_template_path(template_path)
+        logger.info(f"Aufgelöster Pfad: {resolved_path}")
+        
+        if not os.path.exists(resolved_path):
+            logger.error(f"Template-Datei existiert nicht: {resolved_path}")
+            self.template_path = None
+            self.template_boxes = []
+            self.overlay_image = None
+            return False
+        
+        logger.info(f"Lade Template von: {resolved_path}")
+        overlay, boxes = TemplateLoader.load(resolved_path)
         
         if overlay and boxes:
-            self.template_path = template_path
+            self.template_path = resolved_path
             self.template_boxes = boxes
             self.overlay_image = overlay
-            logger.info(f"Template geladen: {len(boxes)} Foto-Slots")
+            logger.info(f"✅ Template geladen: {len(boxes)} Foto-Slots, Overlay {overlay.size}")
+            for i, box in enumerate(boxes):
+                logger.debug(f"  Slot {i+1}: {box}")
             return True
         
+        logger.error(f"Template-Loader gab None zurück für: {resolved_path}")
         return False
     
     def reset_session(self):
