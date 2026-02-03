@@ -546,6 +546,9 @@ class SessionScreen(ctk.CTkFrame):
             # Speichern (async wäre besser, aber erstmal so)
             self.app.photos_taken.append(photo)
             
+            # Statistik: Foto erfasst
+            self.app.statistics.record_photo()
+            
             # Speichern im Hintergrund starten
             self.after(10, lambda: self._save_photo_async(photo, self.current_photo_index + 1))
             

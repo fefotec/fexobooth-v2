@@ -13,6 +13,7 @@ from src.camera import get_camera_manager, CANON_AVAILABLE
 from src.storage.usb import USBManager
 from src.storage.local import LocalStorage
 from src.storage.booking import get_booking_manager, BookingManager
+from src.storage.statistics import get_statistics_manager, StatisticsManager
 from src.filters import FilterManager
 from src.templates.loader import TemplateLoader
 from src.templates.renderer import TemplateRenderer
@@ -59,6 +60,7 @@ class PhotoboothApp:
         logger.info(f"Kamera-Typ: {camera_type} (Canon verfügbar: {CANON_AVAILABLE})")
         self.usb_manager = USBManager()
         self.booking_manager = get_booking_manager()
+        self.statistics = get_statistics_manager()
         self.local_storage = LocalStorage()
         self.filter_manager = FilterManager()
         self.renderer = TemplateRenderer(
@@ -140,6 +142,16 @@ class PhotoboothApp:
             logger.warning(f"Galerie-Modul nicht verfügbar: {e}")
         except Exception as e:
             logger.error(f"Galerie-Server Start fehlgeschlagen: {e}")
+
+    def _start_statistics_event(self, usb_root: Path = None):
+        """Startet Statistik-Erfassung für aktuelle Buchung"""
+        booking_id = self.booking_manager.booking_id if self.booking_manager.is_loaded else ""
+        
+        # Speicherpfad: USB wenn verfügbar, sonst lokal
+        save_path = usb_root if usb_root else self.local_storage.get_base_path()
+        
+        # Event starten (beendet vorheriges automatisch)
+        self.statistics.start_event(booking_id=booking_id, save_path=save_path)
 
     def _start_gallery_if_needed(self):
         """Startet Galerie wenn noch nicht gestartet (für settings.json Aktivierung)"""
@@ -350,6 +362,9 @@ class PhotoboothApp:
                     # allow_single_mode aus settings übernehmen
                     if self.booking_manager.settings:
                         self.config["allow_single_mode"] = self.booking_manager.settings.print_singles
+                        
+                        # Statistik-Event starten mit Buchungsnummer
+                        self._start_statistics_event(usb_root)
                         
                         # Galerie starten wenn in settings.json aktiviert
                         if self.booking_manager.settings.online_gallery:

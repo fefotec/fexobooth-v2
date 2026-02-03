@@ -219,6 +219,9 @@ class FinalScreen(ctk.CTkFrame):
                 self.prints_count += 1
                 self.app.prints_in_session = self.prints_count
                 
+                # Statistik: Print erfasst
+                self.app.statistics.record_print_success()
+                
                 # Info aktualisieren
                 remaining = max_prints - self.prints_count
                 if remaining > 0:
@@ -407,6 +410,10 @@ class FinalScreen(ctk.CTkFrame):
         """Fertig gedrückt"""
         logger.info("Session beendet")
         self.is_active = False
+        
+        # Statistik: Session erfasst
+        self.app.statistics.record_session()
+        
         self.app.reset_session()
         # Video abspielen wenn konfiguriert
         self.app.play_video("video_end", "start")
