@@ -78,6 +78,9 @@ class PhotoboothApp:
         # USB-Sync Dialog State
         self._sync_dialog_open: bool = False  # Verhindert mehrfache Dialoge
 
+        # Drucker initialisieren wenn nicht gesetzt
+        self._init_default_printer()
+
         # UI Setup
         self._setup_ui()
         
@@ -85,7 +88,20 @@ class PhotoboothApp:
         self._start_status_checks()
         
         logger.info("PhotoboothApp initialisiert")
-    
+
+    def _init_default_printer(self):
+        """Setzt den Standard-Drucker falls keiner konfiguriert ist"""
+        if not self.config.get("printer_name"):
+            try:
+                import win32print
+                default_printer = win32print.GetDefaultPrinter()
+                if default_printer:
+                    self.config["printer_name"] = default_printer
+                    save_config(self.config)
+                    logger.info(f"Standard-Drucker gesetzt: {default_printer}")
+            except Exception as e:
+                logger.debug(f"Drucker-Init übersprungen: {e}")
+
     def _enter_fullscreen(self):
         """Aktiviert echten Vollbildmodus"""
         screen_width = self.root.winfo_screenwidth()
@@ -343,7 +359,7 @@ class PhotoboothApp:
         question_label = ctk.CTkLabel(
             content,
             text=f"{pending_count} Bild(er) warten auf Kopie.\nJetzt auf USB-Stick kopieren?",
-            font=FONTS["normal"],
+            font=FONTS["body"],
             text_color=COLORS["text_primary"]
         )
         question_label.pack(pady=(0, 20))
