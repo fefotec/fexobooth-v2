@@ -316,74 +316,59 @@ class FinalScreen(ctk.CTkFrame):
                 logger.warning("DC ohne DEVMODE erstellt (Standard-Einstellungen)")
 
             # Druckbereich abfragen
-            # Für randlosen Druck: PHYSICALWIDTH/HEIGHT nutzen statt HORZRES/VERTRES
-            phys_width = hDC.GetDeviceCaps(110)   # PHYSICALWIDTH
-            phys_height = hDC.GetDeviceCaps(111)  # PHYSICALHEIGHT
+            # HORZRES/VERTRES = druckbarer Bereich (das was der Drucker tatsächlich druckt)
             printable_width = hDC.GetDeviceCaps(8)   # HORZRES
             printable_height = hDC.GetDeviceCaps(10) # VERTRES
-            offset_left = hDC.GetDeviceCaps(112)  # PHYSICALOFFSETX
-            offset_top = hDC.GetDeviceCaps(113)   # PHYSICALOFFSETY
-            dpi_x = hDC.GetDeviceCaps(88)
-            dpi_y = hDC.GetDeviceCaps(90)
 
-            logger.info(f"Physisch: {phys_width}x{phys_height}px, "
-                       f"Druckbar: {printable_width}x{printable_height}px, "
-                       f"Offset: ({offset_left},{offset_top}), DPI: {dpi_x}x{dpi_y}")
+            # Debug-Info
+            phys_width = hDC.GetDeviceCaps(110)   # PHYSICALWIDTH
+            phys_height = hDC.GetDeviceCaps(111)  # PHYSICALHEIGHT
+            offset_x = hDC.GetDeviceCaps(112)     # PHYSICALOFFSETX
+            offset_y = hDC.GetDeviceCaps(113)     # PHYSICALOFFSETY
 
-            # Druck-Einstellungen aus Config
-            adjustment = self.config.get("print_adjustment", {})
-            user_offset_x = adjustment.get("offset_x", 0)
-            user_offset_y = adjustment.get("offset_y", 0)
-            zoom_percent = adjustment.get("zoom", 100)
+            logger.info(f"Druckbar: {printable_width}x{printable_height}px, "
+                       f"Physisch: {phys_width}x{phys_height}px, "
+                       f"Offset: ({offset_x},{offset_y})")
 
-            # Zoom anwenden: >100% = Bild größer (mehr Beschnitt, besserer randlos)
-            # Für Canon Selphy empfohlen: 103-105%
-            zoom_factor = zoom_percent / 100.0
-            target_width = int(phys_width * zoom_factor)
-            target_height = int(phys_height * zoom_factor)
+            # EINFACHER ANSATZ: Bild auf druckbaren Bereich skalieren
+            # Das ist der bewährte Weg - der Drucker-Treiber kümmert sich um randlos
+            # Ref: https://gist.github.com/buptxge/2fc61a3f914645cf8ae2c9a258ca06c9
 
-            logger.info(f"Zoom: {zoom_percent}% -> Zielgröße: {target_width}x{target_height}px")
+            # Bild auf Druckgröße skalieren (Cover-Modus = Bild füllt gesamten Bereich)
+            target_width = printable_width
+            target_height = printable_height
 
-            # Bild skalieren (Cover-Modus)
             img_ratio = img.width / img.height
             target_ratio = target_width / target_height
 
             if img_ratio > target_ratio:
+                # Bild ist breiter - nach Höhe skalieren, dann horizontal beschneiden
                 new_h = target_height
                 new_w = int(new_h * img_ratio)
                 img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
                 left = (new_w - target_width) // 2
                 img = img.crop((left, 0, left + target_width, target_height))
             else:
+                # Bild ist höher - nach Breite skalieren, dann vertikal beschneiden
                 new_w = target_width
                 new_h = int(new_w / img_ratio)
                 img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
                 top = (new_h - target_height) // 2
                 img = img.crop((0, top, target_width, top + target_height))
 
-            logger.info(f"Bild skaliert auf: {img.size}")
+            logger.info(f"Bild skaliert auf: {img.size} für Druckbereich {target_width}x{target_height}")
 
-            # Drucken - Position kompensiert den Drucker-Offset für randlos
+            # Drucken - EINFACH bei (0,0) starten, Bild füllt gesamten druckbaren Bereich
             hDC.StartDoc("Fexobooth Print")
             hDC.StartPage()
 
             dib = ImageWin.Dib(img)
 
-            # Bei Zoom: Bild zentrieren auf physischer Seite
-            # Standard-Position: negatives Offset für randlos
-            # Bei Zoom>100%: Zusätzlich zentrieren wegen Übermaß
-            zoom_offset_x = (target_width - phys_width) // 2
-            zoom_offset_y = (target_height - phys_height) // 2
+            # Standard-Druck: (0, 0) bis (breite, höhe)
+            # Der Drucker-Treiber (DEVMODE) bestimmt ob randlos oder nicht
+            dib.draw(hDC.GetHandleOutput(), (0, 0, target_width, target_height))
 
-            print_x = -offset_left - zoom_offset_x + user_offset_x
-            print_y = -offset_top - zoom_offset_y + user_offset_y
-
-            logger.info(f"Druck-Position: ({print_x}, {print_y}) [Zoom-Offset: {zoom_offset_x}, {zoom_offset_y}]")
-
-            dib.draw(
-                hDC.GetHandleOutput(),
-                (print_x, print_y, print_x + target_width, print_y + target_height)
-            )
+            logger.info(f"Gedruckt: (0, 0) -> ({target_width}, {target_height})")
 
             hDC.EndPage()
             hDC.EndDoc()
