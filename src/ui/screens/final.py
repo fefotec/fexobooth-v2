@@ -245,32 +245,40 @@ class FinalScreen(ctk.CTkFrame):
         self.auto_return_time = time.time() + self.config.get("final_time", 30)
     
     def _print_image(self, image_path: Path):
-        """Druckt ein Bild RANDLOS (Windows) - optimiert für Canon Selphy"""
+        """Druckt ein Bild RANDLOS (Windows) - optimiert für Canon Selphy
+
+        Für echten randlosen Druck wird das Bild etwas GRÖSSER als das Papier
+        gedruckt (Überdrucken/Bleed), damit die Ränder "abgeschnitten" werden.
+        """
         try:
             import win32print
             import win32ui
             from PIL import ImageWin
-            
+
             printer_name = self.config.get("printer_name")
             if not printer_name:
                 printer_name = win32print.GetDefaultPrinter()
-            
+
             logger.info(f"Drucke auf: {printer_name}")
-            
+
             # Bild laden
             img = Image.open(image_path)
-            logger.debug(f"Bild-Größe: {img.size}")
-            
+            logger.info(f"Bild-Größe: {img.size}")
+
             # Druck-Einstellungen
             adjustment = self.config.get("print_adjustment", {})
             offset_x = adjustment.get("offset_x", 0)
             offset_y = adjustment.get("offset_y", 0)
             zoom = adjustment.get("zoom", 100) / 100
-            
+
+            # Überdrucken für randlosen Druck (in mm, wird zu Pixeln konvertiert)
+            # Canon Selphy braucht ca. 3-5mm Überdrucken pro Seite
+            bleed_mm = adjustment.get("bleed_mm", 3)
+
             # Drucker-DC erstellen
             hDC = win32ui.CreateDC()
             hDC.CreatePrinterDC(printer_name)
-            
+
             # Druckbereich vom Drucker abfragen (in Pixel)
             printer_width = hDC.GetDeviceCaps(110)   # PHYSICALWIDTH
             printer_height = hDC.GetDeviceCaps(111)  # PHYSICALHEIGHT
@@ -278,19 +286,31 @@ class FinalScreen(ctk.CTkFrame):
             printable_height = hDC.GetDeviceCaps(10) # VERTRES
             offset_left = hDC.GetDeviceCaps(112)     # PHYSICALOFFSETX
             offset_top = hDC.GetDeviceCaps(113)      # PHYSICALOFFSETY
-            
-            logger.info(f"Drucker: Physisch {printer_width}x{printer_height}, Druckbar {printable_width}x{printable_height}")
-            logger.debug(f"Drucker-Offset: ({offset_left}, {offset_top})")
-            
-            # Für randlosen Druck: Bild auf PHYSISCHE Größe skalieren
-            # und mit negativem Offset drucken um Ränder zu überschreiben
-            target_width = int(printer_width * zoom)
-            target_height = int(printer_height * zoom)
-            
+            dpi_x = hDC.GetDeviceCaps(88)            # LOGPIXELSX
+            dpi_y = hDC.GetDeviceCaps(90)            # LOGPIXELSY
+
+            logger.info(f"Drucker: Physisch {printer_width}x{printer_height}px, "
+                       f"Druckbar {printable_width}x{printable_height}px, "
+                       f"DPI {dpi_x}x{dpi_y}")
+            logger.info(f"Drucker-Offset: ({offset_left}, {offset_top})px")
+
+            # Bleed in Pixel umrechnen (mm -> Pixel)
+            bleed_x = int(bleed_mm * dpi_x / 25.4)  # 25.4mm = 1 inch
+            bleed_y = int(bleed_mm * dpi_y / 25.4)
+
+            logger.info(f"Bleed: {bleed_mm}mm = ({bleed_x}, {bleed_y})px")
+
+            # Für randlosen Druck: Bild GRÖSSER als Papier drucken
+            # Bleed auf beiden Seiten hinzufügen
+            target_width = int(printer_width * zoom) + (2 * bleed_x)
+            target_height = int(printer_height * zoom) + (2 * bleed_y)
+
+            logger.info(f"Ziel-Größe mit Bleed: {target_width}x{target_height}px")
+
             # Bild skalieren mit Aspect-Ratio-Fill (Cover-Modus)
             img_ratio = img.width / img.height
             target_ratio = target_width / target_height
-            
+
             if img_ratio > target_ratio:
                 # Bild ist breiter - auf Höhe skalieren und horizontal beschneiden
                 new_h = target_height
@@ -307,30 +327,34 @@ class FinalScreen(ctk.CTkFrame):
                 # Vertikal zentrieren und beschneiden
                 top = (new_h - target_height) // 2
                 img = img.crop((0, top, target_width, top + target_height))
-            
-            logger.info(f"Skaliert auf: {img.size} für randlosen Druck")
-            
-            # Drucken - Position mit negativem Drucker-Offset für randlos
+
+            logger.info(f"Bild skaliert auf: {img.size}")
+
+            # Drucken - Position berechnen für randlos
+            # 1. Drucker-Offset ausgleichen (in den nicht-druckbaren Bereich)
+            # 2. Bleed-Offset abziehen (Bild ragt über Papierrand)
+            # 3. User-Offset addieren (Feinabstimmung)
             hDC.StartDoc("Fexobooth Print")
             hDC.StartPage()
-            
+
             dib = ImageWin.Dib(img)
-            
-            # Position: Drucker-Offset ausgleichen + User-Offset
-            print_x = -offset_left + offset_x
-            print_y = -offset_top + offset_y
-            
+
+            print_x = -offset_left - bleed_x + offset_x
+            print_y = -offset_top - bleed_y + offset_y
+
+            logger.info(f"Druck-Position: ({print_x}, {print_y})")
+
             dib.draw(
                 hDC.GetHandleOutput(),
                 (print_x, print_y, print_x + target_width, print_y + target_height)
             )
-            
+
             hDC.EndPage()
             hDC.EndDoc()
             hDC.DeleteDC()
-            
-            logger.info(f"✅ Gedruckt auf: {printer_name} (randlos)")
-            
+
+            logger.info(f"✅ Randlos gedruckt auf: {printer_name}")
+
         except ImportError:
             logger.warning("win32print nicht verfügbar - Druck nur unter Windows")
             self.print_info.configure(
