@@ -221,30 +221,41 @@ class AdminDialog(ctk.CTkToplevel):
                 self.after(50)
     
     def _show_settings(self):
-        """Zeigt Einstellungen"""
+        """Zeigt Einstellungen - mit Lazy Loading für schnelleren Start"""
         # Hauptcontainer
         main = ctk.CTkFrame(self, fg_color="transparent")
         main.pack(fill="both", expand=True, padx=15, pady=15)
         
         # Tabview
-        tabview = ctk.CTkTabview(
+        self.tabview = ctk.CTkTabview(
             main,
             fg_color=COLORS["bg_medium"],
             segmented_button_fg_color=COLORS["bg_light"],
             segmented_button_selected_color=COLORS["primary"],
             segmented_button_unselected_color=COLORS["bg_card"],
-            height=420
+            height=420,
+            command=self._on_tab_changed  # Lazy Loading
         )
-        tabview.pack(fill="both", expand=True)
+        self.tabview.pack(fill="both", expand=True)
         
-        # Tabs
-        self._create_general_tab(tabview.add("Allgemein"))
-        self._create_templates_tab(tabview.add("Templates"))
-        self._create_print_tab(tabview.add("Druck"))
-        self._create_camera_tab(tabview.add("Kamera"))
-        self._create_gallery_tab(tabview.add("Galerie"))
-        self._create_videos_tab(tabview.add("Videos"))
-        self._create_statistics_tab(tabview.add("Statistik"))
+        # Tab-Namen und ihre Erstellungsfunktionen
+        self._tab_creators = {
+            "Allgemein": self._create_general_tab,
+            "Templates": self._create_templates_tab,
+            "Druck": self._create_print_tab,
+            "Kamera": self._create_camera_tab,
+            "Galerie": self._create_gallery_tab,
+            "Videos": self._create_videos_tab,
+            "Statistik": self._create_statistics_tab,
+        }
+        self._tabs_created = set()
+        
+        # Alle Tabs hinzufügen (leer)
+        for tab_name in self._tab_creators.keys():
+            self.tabview.add(tab_name)
+        
+        # Nur ersten Tab sofort erstellen
+        self._create_tab_content("Allgemein")
         
         # Button-Leiste
         btn_frame = ctk.CTkFrame(main, fg_color="transparent")
@@ -273,6 +284,23 @@ class AdminDialog(ctk.CTkToplevel):
             corner_radius=SIZES["corner_radius"],
             command=self._save
         ).pack(side="right")
+    
+    def _on_tab_changed(self):
+        """Callback wenn Tab gewechselt wird - Lazy Loading"""
+        current_tab = self.tabview.get()
+        self._create_tab_content(current_tab)
+    
+    def _create_tab_content(self, tab_name: str):
+        """Erstellt Tab-Inhalt nur wenn noch nicht erstellt"""
+        if tab_name in self._tabs_created:
+            return  # Schon erstellt
+        
+        if tab_name in self._tab_creators:
+            creator = self._tab_creators[tab_name]
+            tab_frame = self.tabview.tab(tab_name)
+            creator(tab_frame)
+            self._tabs_created.add(tab_name)
+            logger.debug(f"Tab '{tab_name}' erstellt (lazy)")
     
     def _create_slider_with_value(self, parent, label: str, key: str, 
                                    min_val: int, max_val: int, suffix: str = "") -> ctk.CTkSlider:
@@ -363,6 +391,11 @@ class AdminDialog(ctk.CTkToplevel):
         # Auto-Return
         self.final_slider = self._create_slider_with_value(
             scroll, "Auto-Return:", "final_time", 10, 60, " Sek"
+        )
+        
+        # Auslöse-Bild (Flash) Dauer
+        self.flash_slider = self._create_slider_with_value(
+            scroll, "Auslöse-Bild:", "flash_duration", 100, 1000, " ms"
         )
         
         # Max Drucke
@@ -1316,6 +1349,7 @@ class AdminDialog(ctk.CTkToplevel):
         self.config_data["countdown_time"] = int(self.countdown_slider.get())
         self.config_data["single_display_time"] = int(self.single_slider.get())
         self.config_data["final_time"] = int(self.final_slider.get())
+        self.config_data["flash_duration"] = int(self.flash_slider.get())
         self.config_data["max_prints_per_session"] = int(self.prints_slider.get())
         
         # Checkboxen - alle auslesen und speichern
