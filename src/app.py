@@ -780,12 +780,20 @@ class PhotoboothApp:
         """
         video_path = self.config.get(video_key, "")
         
-        if not video_path or not os.path.exists(video_path):
-            logger.debug(f"Video nicht konfiguriert/gefunden: {video_key}")
+        logger.info(f"🎬 play_video aufgerufen: key={video_key}, path='{video_path}'")
+        
+        if not video_path:
+            logger.info(f"🎬 Video '{video_key}' nicht konfiguriert - überspringe")
+            self.show_screen(next_screen)
+            return
+        
+        if not os.path.exists(video_path):
+            logger.warning(f"🎬 Video-Datei nicht gefunden: {video_path}")
             self.show_screen(next_screen)
             return
         
         # Video-Screen anzeigen und abspielen
+        logger.info(f"🎬 Starte Video: {video_path}")
         self.show_screen("video")
         self.current_screen.play(video_path, next_screen)
     
@@ -796,12 +804,20 @@ class PhotoboothApp:
             video_path: Direkter Pfad zum Video
             callback: Funktion die nach Video-Ende aufgerufen wird
         """
-        if not video_path or not os.path.exists(video_path):
-            logger.debug(f"Zwischen-Video nicht gefunden: {video_path}")
+        logger.info(f"🎬 play_video_and_return aufgerufen: path='{video_path}'")
+        
+        if not video_path:
+            logger.info(f"🎬 Zwischen-Video nicht konfiguriert - überspringe")
+            callback()
+            return
+        
+        if not os.path.exists(video_path):
+            logger.warning(f"🎬 Zwischen-Video nicht gefunden: {video_path}")
             callback()
             return
         
         # Video-Screen anzeigen
+        logger.info(f"🎬 Starte Zwischen-Video: {video_path}")
         self.show_screen("video")
         # Abspielen mit Callback statt Screen-Wechsel
         self.current_screen.play(video_path, "session", on_complete=callback)

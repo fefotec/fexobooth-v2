@@ -95,17 +95,21 @@ class VideoScreen(ctk.CTkFrame):
         # VLC lazy init
         global VLC_AVAILABLE
         if vlc is None:
+            logger.info("🎬 VideoScreen: Prüfe VLC-Verfügbarkeit...")
             _check_vlc()
         
         if not VLC_AVAILABLE:
-            logger.info("VLC nicht verfügbar, überspringe Video")
+            logger.warning("🎬 VLC nicht verfügbar! Videos werden übersprungen.")
+            logger.warning("🎬 Installiere VLC: https://www.videolan.org/vlc/")
             self._on_video_end()
             return
         
         if not video_path or not os.path.exists(video_path):
-            logger.info(f"Video nicht gefunden: {video_path}")
+            logger.warning(f"🎬 Video nicht gefunden: {video_path}")
             self._on_video_end()
             return
+        
+        logger.info(f"🎬 VLC verfügbar, spiele ab: {video_path}")
         
         try:
             # VLC Instance erstellen
