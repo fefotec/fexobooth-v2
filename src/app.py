@@ -12,6 +12,7 @@ from src.config.config import load_config, save_config
 from src.camera import get_camera_manager, CANON_AVAILABLE
 from src.storage.usb import USBManager
 from src.storage.local import LocalStorage
+from src.storage.booking import get_booking_manager, BookingManager
 from src.filters import FilterManager
 from src.templates.loader import TemplateLoader
 from src.templates.renderer import TemplateRenderer
@@ -57,6 +58,7 @@ class PhotoboothApp:
         self.camera_manager = get_camera_manager(camera_type)
         logger.info(f"Kamera-Typ: {camera_type} (Canon verfügbar: {CANON_AVAILABLE})")
         self.usb_manager = USBManager()
+        self.booking_manager = get_booking_manager()
         self.local_storage = LocalStorage()
         self.filter_manager = FilterManager()
         self.renderer = TemplateRenderer(
@@ -221,6 +223,20 @@ class PhotoboothApp:
         )
         admin_btn.pack(side="right", padx=5)
 
+        # Buchungsnummer-Anzeige (prominent, für Support-Anrufe)
+        self.booking_label = ctk.CTkLabel(
+            status_frame,
+            text="Buchung: ---",
+            font=FONTS["body_bold"] if "body_bold" in FONTS else FONTS["body"],
+            text_color=COLORS["primary"],
+            fg_color=COLORS["bg_light"],
+            corner_radius=8,
+            width=180,
+            padx=12,
+            pady=5
+        )
+        self.booking_label.pack(side="right", padx=10)
+
         # USB-Status (feste Breite damit Position stabil bleibt)
         self.usb_status = ctk.CTkLabel(
             status_frame,
@@ -258,9 +274,23 @@ class PhotoboothApp:
     
     def _check_usb_status(self):
         """Prüft USB-Status - BLINKEND wenn nicht vorhanden, Dialog bei Pending-Files"""
+        from pathlib import Path
+        
         # Prüfen ob USB wieder verfügbar und Dateien pending sind
         is_available = self.usb_manager.is_available()
         pending_count = self.usb_manager.get_pending_count()
+
+        # USB verfügbar -> settings.json laden
+        if is_available:
+            usb_drive = self.usb_manager.find_usb_stick()
+            if usb_drive:
+                usb_root = Path(usb_drive)
+                # settings.json laden (nur wenn noch nicht geladen oder neu)
+                if self.booking_manager.load_from_usb(usb_root):
+                    self._update_booking_display()
+                    # allow_single_mode aus settings übernehmen
+                    if self.booking_manager.settings:
+                        self.config["allow_single_mode"] = self.booking_manager.settings.print_singles
 
         # USB wurde gerade eingesteckt und es gibt pending files -> Dialog zeigen
         if is_available and pending_count > 0 and not self._sync_dialog_open:
@@ -304,6 +334,23 @@ class PhotoboothApp:
 
         # Schnellerer Check für Blink-Effekt
         self.root.after(1000, self._check_usb_status)
+
+    def _update_booking_display(self):
+        """Aktualisiert die Buchungsanzeige in der Top-Bar"""
+        if self.booking_manager.is_loaded:
+            booking_id = self.booking_manager.booking_id
+            self.booking_label.configure(
+                text=f"📋 {booking_id}",
+                text_color=COLORS["success"],
+                fg_color=COLORS["bg_light"]
+            )
+            logger.info(f"Buchungsanzeige aktualisiert: {booking_id}")
+        else:
+            self.booking_label.configure(
+                text="Buchung: ---",
+                text_color=COLORS["text_muted"],
+                fg_color=COLORS["bg_light"]
+            )
 
     def _show_usb_sync_dialog(self, pending_count: int):
         """Zeigt Dialog: Bilder auf USB kopieren? Ja/Nein"""
