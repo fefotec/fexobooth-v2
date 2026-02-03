@@ -68,7 +68,7 @@ SIZES = {
     "topbar_height": 50,              # War 70
     
     # Filter-Buttons
-    "filter_button_size": 100,        # War 140
+    "filter_button_size": 80,         # Kompakter für alle Filter sichtbar
 }
 
 

@@ -183,8 +183,23 @@ class PhotoboothApp:
         # Status-Bereich rechts
         status_frame = ctk.CTkFrame(bar, fg_color="transparent")
         status_frame.pack(side="right", padx=20, pady=10)
-        
-        # USB-Status
+
+        # Admin-Button ZUERST (bleibt ganz rechts, wackelt nicht)
+        admin_alpha = self.config.get("admin_button_alpha", 0.1)
+        admin_btn = ctk.CTkButton(
+            status_frame,
+            text="⚙",
+            width=40,
+            height=40,
+            font=("Segoe UI", 18),
+            fg_color="transparent",
+            hover_color=COLORS["bg_light"],
+            text_color=COLORS["text_muted"],
+            command=self.show_admin_dialog
+        )
+        admin_btn.pack(side="right", padx=5)
+
+        # USB-Status (feste Breite damit Position stabil bleibt)
         self.usb_status = ctk.CTkLabel(
             status_frame,
             text="⚠️ USB",
@@ -192,11 +207,12 @@ class PhotoboothApp:
             text_color=COLORS["warning"],
             fg_color=COLORS["bg_light"],
             corner_radius=8,
+            width=160,  # Feste Breite für stabiles Layout
             padx=10,
             pady=5
         )
         self.usb_status.pack(side="right", padx=5)
-        
+
         # Drucker-Status
         self.printer_status = ctk.CTkLabel(
             status_frame,
@@ -211,21 +227,6 @@ class PhotoboothApp:
         self.printer_status.pack(side="right", padx=5)
         self.printer_status.pack_forget()  # Verstecken wenn OK
         
-        # Admin-Button (sehr dezent)
-        admin_alpha = self.config.get("admin_button_alpha", 0.1)
-        admin_btn = ctk.CTkButton(
-            status_frame,
-            text="⚙",
-            width=40,
-            height=40,
-            font=("Segoe UI", 18),
-            fg_color="transparent",
-            hover_color=COLORS["bg_light"],
-            text_color=COLORS["text_muted"],
-            command=self.show_admin_dialog
-        )
-        admin_btn.pack(side="right", padx=5)
-        
         return bar
     
     def _start_status_checks(self):
@@ -234,9 +235,14 @@ class PhotoboothApp:
         self._check_printer_status()
     
     def _check_usb_status(self):
-        """Prüft USB-Status - BLINKEND wenn nicht vorhanden"""
+        """Prüft USB-Status - BLINKEND wenn nicht vorhanden, Auto-Sync wenn wieder da"""
+        # Auto-Sync: Prüft ob USB wieder verfügbar und synchronisiert ausstehende Dateien
+        synced = self.usb_manager.check_and_sync()
+        if synced > 0:
+            logger.info(f"Auto-Sync: {synced} Dateien auf USB kopiert")
+
         text, status = self.usb_manager.get_status_text()
-        
+
         if status == "success":
             self.usb_status.configure(
                 text=text,
@@ -248,22 +254,25 @@ class PhotoboothApp:
             # BLINKEND: Rot/Orange wechselnd
             if not hasattr(self, '_usb_blink_state'):
                 self._usb_blink_state = False
-            
+
             self._usb_blink_state = not self._usb_blink_state
-            
+
+            pending = self.usb_manager.get_pending_count()
+            pending_text = f" [{pending}]" if pending > 0 else ""
+
             if self._usb_blink_state:
                 self.usb_status.configure(
-                    text="⚠️ KEIN USB-STICK!",
+                    text=f"⚠️ KEIN USB!{pending_text}",
                     text_color="#ffffff",
                     fg_color="#ff0000"  # Knallrot
                 )
             else:
                 self.usb_status.configure(
-                    text="⚠️ USB FEHLT!",
+                    text=f"⚠️ USB FEHLT!{pending_text}",
                     text_color="#000000",
                     fg_color="#ffcc00"  # Gelb
                 )
-        
+
         # Schnellerer Check für Blink-Effekt
         self.root.after(1000, self._check_usb_status)
     

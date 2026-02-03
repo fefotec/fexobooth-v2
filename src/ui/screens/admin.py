@@ -20,29 +20,32 @@ logger = get_logger(__name__)
 
 class AdminDialog(ctk.CTkToplevel):
     """Moderner Admin-Einstellungen Dialog"""
-    
+
     def __init__(self, parent, config: Dict[str, Any]):
         super().__init__(parent)
-        
+
         self.title("⚙️ Admin-Einstellungen")
         self.geometry("750x550")
         self.configure(fg_color=COLORS["bg_dark"])
-        
+
         self.config_data = config.copy()
         self.result: Optional[Dict[str, Any]] = None
         self.is_authenticated = False
         self.parent_window = parent
-        
+
         # Modal machen
         self.transient(parent)
         self.grab_set()
-        
+
         # Zentrieren
         self.update_idletasks()
         x = (self.winfo_screenwidth() - 750) // 2
         y = (self.winfo_screenheight() - 550) // 2
         self.geometry(f"+{x}+{y}")
-        
+
+        # Kein Fensterrand für PIN-Dialog (Touch-freundlich)
+        self.overrideredirect(True)
+
         # PIN-Abfrage zuerst
         self._show_pin_dialog()
     
@@ -110,20 +113,20 @@ class AdminDialog(ctk.CTkToplevel):
         for row in buttons:
             row_frame = ctk.CTkFrame(numpad_frame, fg_color="transparent")
             row_frame.pack()
-            
+
             for num in row:
                 btn = ctk.CTkButton(
                     row_frame,
                     text=num,
-                    width=60,
-                    height=60,
-                    font=("Segoe UI", 22),
+                    width=75,
+                    height=75,
+                    font=("Segoe UI", 26),
                     fg_color=COLORS["bg_light"] if num.isdigit() else COLORS["bg_card"],
                     hover_color=COLORS["bg_card"],
                     corner_radius=SIZES["corner_radius_small"],
                     command=lambda n=num: self._numpad_press(n)
                 )
-                btn.pack(side="left", padx=4, pady=4)
+                btn.pack(side="left", padx=5, pady=5)
         
         # Abbrechen
         ctk.CTkButton(
@@ -165,7 +168,11 @@ class AdminDialog(ctk.CTkToplevel):
         if entered == correct:
             self.is_authenticated = True
             self.pin_frame.destroy()
-            
+
+            # Fensterrand für Admin-Einstellungen wiederherstellen
+            self.overrideredirect(False)
+            self.title("⚙️ Admin-Einstellungen")
+
             # *** WICHTIG: Fullscreen deaktivieren für Admin ***
             try:
                 # overrideredirect entfernen damit Fenster normal angezeigt wird
@@ -175,7 +182,7 @@ class AdminDialog(ctk.CTkToplevel):
                 logger.info("Fullscreen deaktiviert für Admin-Modus")
             except Exception as e:
                 logger.debug(f"Fullscreen-Exit Fehler: {e}")
-            
+
             self._show_settings()
         else:
             self.pin_entry.delete(0, "end")

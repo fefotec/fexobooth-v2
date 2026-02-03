@@ -46,27 +46,27 @@ class FilterButton(ctk.CTkFrame):
         
         # Vorschau-Bild
         self.preview_label = ctk.CTkLabel(self, text="", fg_color="transparent")
-        self.preview_label.pack(expand=True, fill="both", padx=5, pady=(5, 2))
+        self.preview_label.pack(expand=True, fill="both", padx=3, pady=(3, 1))
         self.preview_label.bind("<Button-1>", self._on_click)
-        
+
         if preview_image:
             self.set_preview(preview_image)
-        
+
         # Filter-Name (kürzer)
         name_label = ctk.CTkLabel(
             self,
-            text=filter_name[:8],  # Kürzen wenn nötig
+            text=filter_name[:7],  # Kürzen für 80px Button
             font=FONTS["tiny"],
             text_color=COLORS["text_secondary"]
         )
-        name_label.pack(pady=(0, 5))
+        name_label.pack(pady=(0, 3))
         name_label.bind("<Button-1>", self._on_click)
     
     def set_preview(self, image: Image.Image):
         """Setzt das Vorschaubild"""
         thumb = image.copy()
-        thumb.thumbnail((85, 65), Image.Resampling.LANCZOS)  # Kleiner für 100px Button
-        
+        thumb.thumbnail((65, 50), Image.Resampling.LANCZOS)  # Kompakter für 80px Button
+
         self.preview_ctk = ctk.CTkImage(light_image=thumb, size=thumb.size)
         self.preview_label.configure(image=self.preview_ctk)
     
@@ -200,26 +200,26 @@ class FilterScreen(ctk.CTkFrame):
         self.continue_btn.pack(side="right")
     
     def _create_filter_buttons(self, parent):
-        """Erstellt die Filter-Buttons"""
-        # Grid für 2 Spalten
+        """Erstellt die Filter-Buttons - 3 pro Reihe für alle sichtbar"""
+        # Grid für 3 Spalten (9 Filter = 3 Reihen = ~270px)
         row_frame = None
         col = 0
-        
+
         for i, (key, name) in enumerate(AVAILABLE_FILTERS.items()):
             if col == 0:
                 row_frame = ctk.CTkFrame(parent, fg_color="transparent")
-                row_frame.pack(fill="x", pady=5)
-            
+                row_frame.pack(fill="x", pady=3)
+
             btn = FilterButton(
                 row_frame,
                 filter_key=key,
                 filter_name=name,
                 on_click=lambda b: self._select_filter(b)
             )
-            btn.pack(side="left", padx=5)
+            btn.pack(side="left", padx=3)
             self.filter_buttons[key] = btn
-            
-            col = (col + 1) % 2
+
+            col = (col + 1) % 3
     
     def _select_filter(self, button: FilterButton):
         """Wählt einen Filter aus"""
