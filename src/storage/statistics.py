@@ -85,29 +85,56 @@ class StatisticsManager:
         return self._current_stats
     
     def start_event(self, booking_id: str = "", save_path: Optional[Path] = None):
-        """Startet ein neues Event/Buchung
+        """Startet oder setzt ein Event fort
+        
+        Logik:
+        - Gleiche Buchung + gleicher Tag → Event fortsetzen (Werte addieren)
+        - Gleiche Buchung + anderer Tag → Neues Event
+        - Andere Buchung → Neues Event
         
         Args:
             booking_id: Buchungsnummer (aus settings.json)
             save_path: IGNORIERT - Statistik wird IMMER lokal gespeichert!
         """
-        # Vorheriges Event abschließen falls vorhanden
-        if self._current_stats:
-            self._finalize_current()
-        
-        # Neues Event starten
-        self._current_stats = EventStats(
-            booking_id=booking_id,
-            start_time=datetime.now().isoformat()
-        )
-        
         # Speicherpfad: IMMER im Software-Ordner (nicht auf USB - geht Kunden nichts an!)
         self._stats_file_path = Path(__file__).parent.parent.parent / STATS_FILENAME
         
         # Existierende Statistiken laden
         self._load_existing_stats()
         
-        logger.info(f"📊 Event gestartet: {booking_id or 'Ohne Buchungsnummer'}")
+        # Heutiges Datum
+        today = datetime.now().strftime("%Y-%m-%d")
+        
+        # Prüfen ob es ein Event mit gleicher Buchung UND gleichem Tag gibt
+        existing_event = None
+        existing_index = -1
+        
+        for i, event in enumerate(self._all_stats):
+            event_booking = event.get("booking_id", "")
+            event_start = event.get("start_time", "")
+            
+            # Datum aus start_time extrahieren (Format: 2026-02-03T19:15:00)
+            event_date = event_start[:10] if event_start else ""
+            
+            if event_booking == booking_id and event_date == today:
+                existing_event = event
+                existing_index = i
+                logger.info(f"📊 Bestehendes Event gefunden: {booking_id} vom {event_date}")
+                break
+        
+        if existing_event:
+            # Event fortsetzen - Werte übernehmen
+            self._current_stats = EventStats.from_dict(existing_event)
+            # Aus Liste entfernen (wird beim Speichern wieder hinzugefügt)
+            self._all_stats.pop(existing_index)
+            logger.info(f"📊 Event fortgesetzt: {booking_id} (Fotos: {self._current_stats.photos_taken}, Prints: {self._current_stats.prints_completed})")
+        else:
+            # Neues Event starten
+            self._current_stats = EventStats(
+                booking_id=booking_id,
+                start_time=datetime.now().isoformat()
+            )
+            logger.info(f"📊 Neues Event gestartet: {booking_id or 'Ohne Buchungsnummer'}")
     
     def record_photo(self, count: int = 1):
         """Erfasst geschossene Fotos"""

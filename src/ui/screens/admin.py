@@ -1028,10 +1028,23 @@ class AdminDialog(ctk.CTkToplevel):
         ).pack(pady=(10, 5))
         
         if current:
+            # Zeitraum formatieren
+            time_info = ""
+            if current.start_time:
+                try:
+                    from datetime import datetime
+                    start_dt = datetime.fromisoformat(current.start_time)
+                    time_info = f"\n📅 {start_dt.strftime('%d.%m.%Y')} ab {start_dt.strftime('%H:%M')}"
+                    if current.end_time:
+                        end_dt = datetime.fromisoformat(current.end_time)
+                        time_info = f"\n📅 {start_dt.strftime('%d.%m.%Y')} {start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')}"
+                except:
+                    pass
+            
             stats_text = (
                 f"Buchung: {current.booking_id or 'Keine'}\n"
                 f"Fotos: {current.photos_taken}  |  Prints: {current.prints_completed}\n"
-                f"Sessions: {current.sessions_count}"
+                f"Sessions: {current.sessions_count}{time_info}"
             )
         else:
             stats_text = "Keine aktive Session"
@@ -1057,13 +1070,35 @@ class AdminDialog(ctk.CTkToplevel):
         ).pack(pady=(10, 5))
         
         if all_stats:
-            # Letzte 5 anzeigen
+            # Letzte 5 anzeigen (mit Datum/Uhrzeit)
             history_text = ""
             for stat in all_stats[-5:]:
                 booking = stat.get("booking_id", "?")
                 photos = stat.get("photos_taken", 0)
                 prints = stat.get("prints_completed", 0)
-                history_text += f"• {booking}: {photos} Fotos, {prints} Prints\n"
+                
+                # Datum und Zeitraum formatieren
+                start_time = stat.get("start_time", "")
+                end_time = stat.get("end_time", "")
+                time_str = ""
+                
+                if start_time:
+                    try:
+                        from datetime import datetime
+                        start_dt = datetime.fromisoformat(start_time)
+                        date_str = start_dt.strftime("%d.%m.")
+                        start_str = start_dt.strftime("%H:%M")
+                        
+                        if end_time:
+                            end_dt = datetime.fromisoformat(end_time)
+                            end_str = end_dt.strftime("%H:%M")
+                            time_str = f" ({date_str} {start_str}-{end_str})"
+                        else:
+                            time_str = f" ({date_str} {start_str})"
+                    except:
+                        pass
+                
+                history_text += f"• {booking}: {photos} Fotos, {prints} Prints{time_str}\n"
             
             ctk.CTkLabel(
                 history_frame,
