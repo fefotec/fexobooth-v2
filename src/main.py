@@ -32,19 +32,16 @@ from src.app import PhotoboothApp
 
 def main():
     """Haupteinstiegspunkt"""
-    # Developer Mode via Kommandozeile oder Config
-    dev_mode_cli = "--dev" in sys.argv or "-d" in sys.argv
+    # Developer Mode NUR via Kommandozeile (--dev oder -d)
+    # Config-Wert wird IGNORIERT - nur CLI zählt!
+    developer_mode = "--dev" in sys.argv or "-d" in sys.argv
     
-    # Config laden (früh, damit wir developer_mode prüfen können)
+    # Config laden
     config = load_config()
-    dev_mode_config = config.get("developer_mode", False)
     
-    # Developer Mode aktivieren wenn CLI oder Config es will
-    developer_mode = dev_mode_cli or dev_mode_config
-    
-    # WICHTIG: Config aktualisieren damit App (Performance Overlay etc.) es weiß
-    if developer_mode:
-        config["developer_mode"] = True
+    # Developer Mode in Config setzen (für App-Komponenten)
+    # WICHTIG: Explizit auf False setzen wenn kein --dev!
+    config["developer_mode"] = developer_mode
     
     # Logging initialisieren MIT Developer Mode Info
     logger = setup_logging(developer_mode=developer_mode)
