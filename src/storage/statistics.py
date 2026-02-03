@@ -226,11 +226,43 @@ class StatisticsManager:
             events.append(EventStats.from_dict(data))
         return events
     
+    def get_all_stats(self) -> List[Dict[str, Any]]:
+        """Gibt alle Events als rohe Dictionaries zurück"""
+        # Aktuelle Stats auch einbeziehen
+        result = self._all_stats.copy()
+        if self._current_stats:
+            current_dict = self._current_stats.to_dict()
+            # Prüfen ob schon enthalten
+            already_in = False
+            for event in result:
+                if (event.get("booking_id") == current_dict["booking_id"] and 
+                    event.get("start_time") == current_dict["start_time"]):
+                    already_in = True
+                    break
+            if not already_in:
+                result.append(current_dict)
+        return result
+    
     def get_current_summary(self) -> str:
         """Gibt Zusammenfassung des aktuellen Events zurück"""
         if self._current_stats:
             return self._current_stats.get_summary()
         return "Kein aktives Event"
+    
+    def reset_all(self):
+        """Setzt alle Statistiken zurück"""
+        self._all_stats = []
+        self._current_stats = None
+        
+        # Datei löschen
+        if self._stats_file_path and self._stats_file_path.exists():
+            try:
+                self._stats_file_path.unlink()
+                logger.info(f"📊 Statistik-Datei gelöscht: {self._stats_file_path}")
+            except Exception as e:
+                logger.error(f"Statistik-Datei löschen fehlgeschlagen: {e}")
+        
+        logger.info("📊 Alle Statistiken zurückgesetzt")
 
 
 # Singleton-Instanz
@@ -243,3 +275,7 @@ def get_statistics_manager() -> StatisticsManager:
     if _stats_manager is None:
         _stats_manager = StatisticsManager()
     return _stats_manager
+
+
+# Öffentliche Instanz für einfachen Import
+statistics_manager = get_statistics_manager()

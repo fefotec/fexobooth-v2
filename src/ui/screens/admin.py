@@ -217,6 +217,8 @@ class AdminDialog(ctk.CTkToplevel):
         self._create_templates_tab(tabview.add("Templates"))
         self._create_print_tab(tabview.add("Druck"))
         self._create_camera_tab(tabview.add("Kamera"))
+        self._create_gallery_tab(tabview.add("Galerie"))
+        self._create_statistics_tab(tabview.add("Statistik"))
         
         # Button-Leiste
         btn_frame = ctk.CTkFrame(main, fg_color="transparent")
@@ -325,16 +327,6 @@ class AdminDialog(ctk.CTkToplevel):
         self._add_checkbox(scroll, "Performance-Modus", "performance_mode")
         self._add_checkbox(scroll, "Vollbild beim Start", "start_fullscreen")
         self._add_checkbox(scroll, "Fertig-Button ausblenden", "hide_finish_button")
-        
-        # Galerie-Einstellungen (Trennlinie)
-        ctk.CTkLabel(
-            scroll,
-            text="─── 📱 Online-Galerie ───",
-            font=FONTS["small"],
-            text_color=COLORS["text_muted"]
-        ).pack(pady=(15, 5))
-        
-        self._add_checkbox(scroll, "Galerie aktivieren (QR-Code)", "gallery_enabled")
         
         # Neue PIN
         pin_frame = ctk.CTkFrame(scroll, fg_color="transparent")
@@ -762,6 +754,370 @@ class AdminDialog(ctk.CTkToplevel):
         cb.pack(anchor="w", pady=4)
         setattr(self, f"check_{key}", var)
     
+    def _create_gallery_tab(self, parent):
+        """Galerie/Webserver-Einstellungen"""
+        scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Galerie aktivieren
+        self._add_checkbox(scroll, "Galerie aktivieren (QR-Code)", "gallery_enabled")
+        
+        # Info-Box
+        info_frame = ctk.CTkFrame(scroll, fg_color=COLORS["bg_card"], corner_radius=10)
+        info_frame.pack(fill="x", pady=(15, 10))
+        
+        ctk.CTkLabel(
+            info_frame,
+            text="📱 So funktioniert's",
+            font=FONTS["body_bold"],
+            text_color=COLORS["text_primary"]
+        ).pack(pady=(10, 5))
+        
+        ctk.CTkLabel(
+            info_frame,
+            text="Gäste verbinden sich mit dem WLAN-Hotspot\nund scannen den QR-Code auf dem Startbildschirm.",
+            font=FONTS["small"],
+            text_color=COLORS["text_muted"],
+            justify="center"
+        ).pack(pady=(0, 10))
+        
+        # Hotspot-Einstellungen
+        hotspot_frame = ctk.CTkFrame(scroll, fg_color=COLORS["bg_card"], corner_radius=10)
+        hotspot_frame.pack(fill="x", pady=10)
+        
+        ctk.CTkLabel(
+            hotspot_frame,
+            text="📶 Hotspot-Einstellungen",
+            font=FONTS["body_bold"],
+            text_color=COLORS["text_primary"]
+        ).pack(pady=(10, 10))
+        
+        # SSID
+        ssid_frame = ctk.CTkFrame(hotspot_frame, fg_color="transparent")
+        ssid_frame.pack(fill="x", padx=15, pady=5)
+        
+        ctk.CTkLabel(
+            ssid_frame,
+            text="WLAN-Name (SSID):",
+            font=FONTS["small"],
+            text_color=COLORS["text_secondary"]
+        ).pack(side="left")
+        
+        gallery_config = self.config_data.get("gallery", {})
+        
+        self.gallery_ssid = ctk.CTkEntry(
+            ssid_frame,
+            width=180,
+            fg_color=COLORS["bg_light"],
+            border_color=COLORS["border"]
+        )
+        self.gallery_ssid.insert(0, gallery_config.get("hotspot_ssid", "fexobox-gallery"))
+        self.gallery_ssid.pack(side="right")
+        
+        # Passwort
+        pw_frame = ctk.CTkFrame(hotspot_frame, fg_color="transparent")
+        pw_frame.pack(fill="x", padx=15, pady=5)
+        
+        ctk.CTkLabel(
+            pw_frame,
+            text="WLAN-Passwort:",
+            font=FONTS["small"],
+            text_color=COLORS["text_secondary"]
+        ).pack(side="left")
+        
+        self.gallery_password = ctk.CTkEntry(
+            pw_frame,
+            width=180,
+            fg_color=COLORS["bg_light"],
+            border_color=COLORS["border"]
+        )
+        self.gallery_password.insert(0, gallery_config.get("hotspot_password", "fotobox123"))
+        self.gallery_password.pack(side="right")
+        
+        # Port
+        port_frame = ctk.CTkFrame(hotspot_frame, fg_color="transparent")
+        port_frame.pack(fill="x", padx=15, pady=(5, 15))
+        
+        ctk.CTkLabel(
+            port_frame,
+            text="Webserver-Port:",
+            font=FONTS["small"],
+            text_color=COLORS["text_secondary"]
+        ).pack(side="left")
+        
+        self.gallery_port = ctk.CTkEntry(
+            port_frame,
+            width=80,
+            fg_color=COLORS["bg_light"],
+            border_color=COLORS["border"]
+        )
+        self.gallery_port.insert(0, str(gallery_config.get("port", 8080)))
+        self.gallery_port.pack(side="right")
+        
+        # Hinweis
+        ctk.CTkLabel(
+            scroll,
+            text="⚠️ Hotspot muss einmalig via setup_hotspot.ps1 eingerichtet werden",
+            font=FONTS["tiny"],
+            text_color=COLORS["warning"]
+        ).pack(pady=(10, 0))
+    
+    def _create_statistics_tab(self, parent):
+        """Statistik-Anzeige und Export"""
+        scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Aktuelle Statistik laden
+        try:
+            from src.storage.statistics import statistics_manager
+            current = statistics_manager.current
+            all_stats = statistics_manager.get_all_stats()
+        except Exception as e:
+            logger.warning(f"Statistik laden fehlgeschlagen: {e}")
+            current = None
+            all_stats = []
+        
+        # Aktuelle Session
+        current_frame = ctk.CTkFrame(scroll, fg_color=COLORS["bg_card"], corner_radius=10)
+        current_frame.pack(fill="x", pady=(0, 10))
+        
+        ctk.CTkLabel(
+            current_frame,
+            text="📊 Aktuelle Session",
+            font=FONTS["body_bold"],
+            text_color=COLORS["text_primary"]
+        ).pack(pady=(10, 5))
+        
+        if current:
+            stats_text = (
+                f"Buchung: {current.booking_id or 'Keine'}\n"
+                f"Fotos: {current.photos_taken}  |  Prints: {current.prints_completed}\n"
+                f"Sessions: {current.sessions_count}"
+            )
+        else:
+            stats_text = "Keine aktive Session"
+        
+        self.current_stats_label = ctk.CTkLabel(
+            current_frame,
+            text=stats_text,
+            font=FONTS["small"],
+            text_color=COLORS["text_secondary"],
+            justify="center"
+        )
+        self.current_stats_label.pack(pady=(0, 10))
+        
+        # Bisherige Events
+        history_frame = ctk.CTkFrame(scroll, fg_color=COLORS["bg_card"], corner_radius=10)
+        history_frame.pack(fill="x", pady=10)
+        
+        ctk.CTkLabel(
+            history_frame,
+            text="📋 Bisherige Events",
+            font=FONTS["body_bold"],
+            text_color=COLORS["text_primary"]
+        ).pack(pady=(10, 5))
+        
+        if all_stats:
+            # Letzte 5 anzeigen
+            history_text = ""
+            for stat in all_stats[-5:]:
+                booking = stat.get("booking_id", "?")
+                photos = stat.get("photos_taken", 0)
+                prints = stat.get("prints_completed", 0)
+                history_text += f"• {booking}: {photos} Fotos, {prints} Prints\n"
+            
+            ctk.CTkLabel(
+                history_frame,
+                text=history_text.strip(),
+                font=FONTS["tiny"],
+                text_color=COLORS["text_muted"],
+                justify="left"
+            ).pack(padx=15, pady=(0, 10), anchor="w")
+        else:
+            ctk.CTkLabel(
+                history_frame,
+                text="Noch keine Events aufgezeichnet",
+                font=FONTS["small"],
+                text_color=COLORS["text_muted"]
+            ).pack(pady=(0, 10))
+        
+        # Export-Buttons
+        btn_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        btn_frame.pack(fill="x", pady=15)
+        
+        ctk.CTkButton(
+            btn_frame,
+            text="📤 Als CSV exportieren",
+            font=FONTS["small"],
+            width=150,
+            height=35,
+            fg_color=COLORS["primary"],
+            hover_color=COLORS["primary_hover"],
+            command=self._export_stats_csv
+        ).pack(side="left", padx=(0, 10))
+        
+        ctk.CTkButton(
+            btn_frame,
+            text="🔄 Aktualisieren",
+            font=FONTS["small"],
+            width=120,
+            height=35,
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["bg_card"],
+            command=self._refresh_statistics
+        ).pack(side="left")
+        
+        # Reset-Button
+        ctk.CTkButton(
+            scroll,
+            text="🗑️ Statistik zurücksetzen",
+            font=FONTS["small"],
+            width=180,
+            height=35,
+            fg_color=COLORS["error"],
+            hover_color="#ff5252",
+            command=self._reset_statistics
+        ).pack(pady=(10, 0))
+    
+    def _export_stats_csv(self):
+        """Exportiert Statistiken als CSV"""
+        try:
+            from src.storage.statistics import statistics_manager
+            from tkinter import filedialog
+            
+            all_stats = statistics_manager.get_all_stats()
+            if not all_stats:
+                self._show_message("Keine Statistiken zum Exportieren vorhanden.")
+                return
+            
+            # Datei-Dialog
+            path = filedialog.asksaveasfilename(
+                title="Statistik exportieren",
+                defaultextension=".csv",
+                filetypes=[("CSV-Dateien", "*.csv"), ("Alle Dateien", "*.*")],
+                initialfilename="fexobooth_statistik.csv"
+            )
+            
+            if not path:
+                return
+            
+            # CSV schreiben
+            import csv
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f, delimiter=";")
+                writer.writerow(["Buchung", "Start", "Ende", "Fotos", "Prints", "Fehldrucke", "Sessions"])
+                
+                for stat in all_stats:
+                    writer.writerow([
+                        stat.get("booking_id", ""),
+                        stat.get("start_time", ""),
+                        stat.get("end_time", ""),
+                        stat.get("photos_taken", 0),
+                        stat.get("prints_completed", 0),
+                        stat.get("prints_failed", 0),
+                        stat.get("sessions_count", 0)
+                    ])
+            
+            self._show_message(f"✅ Exportiert: {path}")
+            logger.info(f"Statistik exportiert: {path}")
+            
+        except Exception as e:
+            logger.error(f"Export-Fehler: {e}")
+            self._show_message(f"❌ Fehler: {e}")
+    
+    def _refresh_statistics(self):
+        """Aktualisiert die Statistik-Anzeige"""
+        try:
+            from src.storage.statistics import statistics_manager
+            current = statistics_manager.current
+            
+            if current:
+                stats_text = (
+                    f"Buchung: {current.booking_id or 'Keine'}\n"
+                    f"Fotos: {current.photos_taken}  |  Prints: {current.prints_completed}\n"
+                    f"Sessions: {current.sessions_count}"
+                )
+            else:
+                stats_text = "Keine aktive Session"
+            
+            self.current_stats_label.configure(text=stats_text)
+            logger.info("Statistik aktualisiert")
+        except Exception as e:
+            logger.warning(f"Statistik-Refresh Fehler: {e}")
+    
+    def _reset_statistics(self):
+        """Setzt alle Statistiken zurück (mit Bestätigung)"""
+        # Bestätigungs-Dialog
+        confirm = ctk.CTkToplevel(self)
+        confirm.title("Bestätigung")
+        confirm.geometry("300x150")
+        confirm.transient(self)
+        confirm.grab_set()
+        
+        # Zentrieren
+        confirm.update_idletasks()
+        x = (confirm.winfo_screenwidth() - 300) // 2
+        y = (confirm.winfo_screenheight() - 150) // 2
+        confirm.geometry(f"+{x}+{y}")
+        
+        ctk.CTkLabel(
+            confirm,
+            text="⚠️ Alle Statistiken löschen?",
+            font=FONTS["body_bold"]
+        ).pack(pady=(20, 10))
+        
+        ctk.CTkLabel(
+            confirm,
+            text="Diese Aktion kann nicht rückgängig\ngemacht werden!",
+            font=FONTS["small"],
+            text_color=COLORS["text_muted"]
+        ).pack()
+        
+        btn_frame = ctk.CTkFrame(confirm, fg_color="transparent")
+        btn_frame.pack(pady=15)
+        
+        def do_reset():
+            try:
+                from src.storage.statistics import statistics_manager
+                statistics_manager.reset_all()
+                self._refresh_statistics()
+                logger.info("Statistiken zurückgesetzt")
+            except Exception as e:
+                logger.error(f"Reset-Fehler: {e}")
+            confirm.destroy()
+        
+        ctk.CTkButton(
+            btn_frame,
+            text="Abbrechen",
+            width=80,
+            fg_color=COLORS["bg_light"],
+            command=confirm.destroy
+        ).pack(side="left", padx=5)
+        
+        ctk.CTkButton(
+            btn_frame,
+            text="Löschen",
+            width=80,
+            fg_color=COLORS["error"],
+            command=do_reset
+        ).pack(side="left", padx=5)
+    
+    def _show_message(self, text: str):
+        """Zeigt eine kurze Nachricht"""
+        msg = ctk.CTkToplevel(self)
+        msg.title("")
+        msg.geometry("300x100")
+        msg.transient(self)
+        msg.overrideredirect(True)
+        
+        msg.update_idletasks()
+        x = (msg.winfo_screenwidth() - 300) // 2
+        y = (msg.winfo_screenheight() - 100) // 2
+        msg.geometry(f"+{x}+{y}")
+        
+        ctk.CTkLabel(msg, text=text, font=FONTS["body"]).pack(expand=True)
+        msg.after(2000, msg.destroy)
+    
     def _cancel(self):
         """Abbrechen - Fullscreen wiederherstellen wenn nötig"""
         if self.config_data.get("start_fullscreen", True):
@@ -810,6 +1166,21 @@ class AdminDialog(ctk.CTkToplevel):
         
         logger.info(f"Template 1: enabled={self.config_data.get('template1_enabled')}, path='{t1_path}'")
         logger.info(f"Template 2: enabled={self.config_data.get('template2_enabled')}, path='{t2_path}'")
+        
+        # Galerie-Einstellungen
+        if "gallery" not in self.config_data:
+            self.config_data["gallery"] = {}
+        
+        self.config_data["gallery"]["hotspot_ssid"] = self.gallery_ssid.get().strip()
+        self.config_data["gallery"]["hotspot_password"] = self.gallery_password.get().strip()
+        try:
+            self.config_data["gallery"]["port"] = int(self.gallery_port.get())
+        except ValueError:
+            self.config_data["gallery"]["port"] = 8080
+        
+        logger.info(f"Galerie: enabled={self.config_data.get('gallery_enabled')}, "
+                    f"ssid={self.config_data['gallery']['hotspot_ssid']}, "
+                    f"port={self.config_data['gallery']['port']}")
         
         # Drucker
         printer = self.printer_dropdown.get()
