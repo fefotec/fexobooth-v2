@@ -5,6 +5,7 @@ Moderne Photobooth-Software für fexobox
 
 import customtkinter as ctk
 from typing import Dict, Any, Optional, List
+from pathlib import Path
 from PIL import Image
 import os
 
