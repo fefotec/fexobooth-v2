@@ -419,12 +419,62 @@ class PhotoboothApp:
         dialog.protocol("WM_DELETE_WINDOW", on_close)
 
     def _show_sync_notification(self, count: int):
-        """Zeigt kurze Benachrichtigung wenn Dateien synchronisiert wurden"""
-        # USB-Status temporär auf Sync-Meldung setzen
+        """Zeigt Erfolgs-Dialog wenn Dateien synchronisiert wurden"""
+        logger.info(f"USB-Sync erfolgreich: {count} Dateien kopiert")
+
+        # Erfolgs-Dialog erstellen
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.overrideredirect(True)
+
+        # Größe und Position
+        dialog_width = 350
+        dialog_height = 150
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        x = (screen_w - dialog_width) // 2
+        y = (screen_h - dialog_height) // 2
+        dialog.geometry(f"{dialog_width}x{dialog_height}+{x}+{y}")
+
+        dialog.configure(fg_color=COLORS["bg_medium"])
+        dialog.attributes("-topmost", True)
+
+        # Content
+        content = ctk.CTkFrame(
+            dialog,
+            fg_color=COLORS["success"],
+            corner_radius=15
+        )
+        content.pack(fill="both", expand=True, padx=3, pady=3)
+
+        # Erfolgs-Icon und Text
+        ctk.CTkLabel(
+            content,
+            text="✅",
+            font=("Segoe UI Emoji", 40),
+            text_color="#ffffff"
+        ).pack(pady=(20, 5))
+
+        ctk.CTkLabel(
+            content,
+            text=f"{count} Bild(er) auf USB kopiert!",
+            font=FONTS["body_bold"],
+            text_color="#ffffff"
+        ).pack(pady=(0, 20))
+
+        # Dialog nach 2 Sekunden automatisch schließen
+        def close_dialog():
+            try:
+                dialog.destroy()
+            except:
+                pass
+
+        dialog.after(2000, close_dialog)
+
+        # USB-Status auch aktualisieren
         self.usb_status.configure(
-            text=f"✅ {count} Datei(en) sync!",
+            text=f"✅ {count} sync!",
             text_color="#ffffff",
-            fg_color="#00d26a"  # Grün
+            fg_color="#00d26a"
         )
         # Nach 3 Sekunden wieder normalen Status anzeigen
         self.root.after(3000, self._reset_usb_status_after_sync)

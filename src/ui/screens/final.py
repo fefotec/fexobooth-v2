@@ -296,12 +296,15 @@ class FinalScreen(ctk.CTkFrame):
                 win32print.ClosePrinter(hPrinter)
 
             # DC erstellen MIT DEVMODE für randlosen Druck!
-            hDC = win32ui.CreateDC()
+            # WICHTIG: win32gui.CreateDC() mit devmode, dann Handle zu win32ui konvertieren
+            import win32gui
             if devmode:
-                # WICHTIG: DEVMODE übergeben für Treibereinstellungen (randlos etc.)
-                hDC.CreatePrinterDC(printer_name, devmode)
+                # CreateDC mit DEVMODE für Treibereinstellungen (randlos etc.)
+                hdc_handle = win32gui.CreateDC("WINSPOOL", printer_name, None, devmode)
+                hDC = win32ui.CreateDCFromHandle(hdc_handle)
                 logger.info("DC mit DEVMODE erstellt (randlose Einstellungen aktiv)")
             else:
+                hDC = win32ui.CreateDC()
                 hDC.CreatePrinterDC(printer_name)
                 logger.warning("DC ohne DEVMODE erstellt (Standard-Einstellungen)")
 
