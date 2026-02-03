@@ -406,6 +406,33 @@ class FinalScreen(ctk.CTkFrame):
                 text_color=COLORS["error"]
             )
     
+    def _save_final_image(self):
+        """Speichert das finale Bild IMMER (nicht nur bei Druck)
+        
+        Wird bei on_show() aufgerufen, damit jedes erstellte Bild
+        gespeichert wird, unabhängig ob gedruckt wird oder nicht.
+        """
+        if self.final_image is None:
+            logger.warning("Kein finales Bild zum Speichern")
+            return
+        
+        try:
+            # In Prints-Ordner speichern
+            saved_path = self.app.local_storage.save_print(
+                self.final_image,
+                suffix="final"
+            )
+            
+            if saved_path:
+                logger.info(f"✅ Finales Bild gespeichert: {saved_path}")
+                # Auch auf USB kopieren wenn verfügbar
+                self.app.usb_manager.copy_to_usb(saved_path, "Prints")
+            else:
+                logger.warning("Finales Bild konnte nicht gespeichert werden")
+                
+        except Exception as e:
+            logger.error(f"Fehler beim Speichern des finalen Bildes: {e}")
+
     def _on_finish(self):
         """Fertig gedrückt"""
         logger.info("Session beendet")
@@ -426,6 +453,9 @@ class FinalScreen(ctk.CTkFrame):
         
         # Finales Bild rendern
         self.final_image = self._render_final_image()
+        
+        # IMMER speichern (nicht nur bei Druck!)
+        self._save_final_image()
         
         # Vorschau anzeigen (angepasst für 800px Bildschirmhöhe)
         preview = self.final_image.copy()

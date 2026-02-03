@@ -280,14 +280,14 @@ class AdminDialog(ctk.CTkToplevel):
             text_color=COLORS["text_secondary"]
         ).pack(side="left")
         
-        # Wert-Anzeige
+        # Wert-Anzeige (mit Padding rechts damit nicht am Rand klebt)
         value_label = ctk.CTkLabel(
             label_frame,
             text=f"{self.config_data.get(key, min_val)}{suffix}",
             font=FONTS["body_bold"],
             text_color=COLORS["primary"]
         )
-        value_label.pack(side="right")
+        value_label.pack(side="right", padx=(0, 15))
         
         # Slider
         slider = ctk.CTkSlider(

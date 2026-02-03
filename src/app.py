@@ -123,6 +123,11 @@ class PhotoboothApp:
         # Developer Mode: Performance Overlay
         self._init_performance_overlay()
         
+        # Statistik IMMER starten (auch ohne USB/Buchung)
+        if not self.statistics.current:
+            self._start_statistics_event()
+            logger.info("📊 Statistik gestartet (ohne USB)")
+        
         logger.info("PhotoboothApp initialisiert")
 
     def _load_settings_from_usb_immediately(self):
