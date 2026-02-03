@@ -769,13 +769,16 @@ class AdminDialog(ctk.CTkToplevel):
         self.config_data["final_time"] = int(self.final_slider.get())
         self.config_data["max_prints_per_session"] = int(self.prints_slider.get())
         
-        # Checkboxen
-        for key in ["allow_single_mode", "performance_mode", "start_fullscreen", "hide_finish_button",
-                    "template1_enabled", "template2_enabled", "rotate_180"]:
+        # Checkboxen - alle auslesen und speichern
+        checkbox_keys = ["allow_single_mode", "performance_mode", "start_fullscreen", "hide_finish_button",
+                         "template1_enabled", "template2_enabled", "rotate_180"]
+        logger.info("Checkbox-Werte:")
+        for key in checkbox_keys:
             var = getattr(self, f"check_{key}", None)
             if var:
-                self.config_data[key] = var.get()
-                logger.debug(f"  {key} = {var.get()}")
+                value = var.get()
+                self.config_data[key] = value
+                logger.info(f"  {key} = {value}")
         
         # Template-Pfade - sicherstellen dass Dict existiert
         if "template_paths" not in self.config_data:

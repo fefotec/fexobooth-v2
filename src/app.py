@@ -347,6 +347,15 @@ class PhotoboothApp:
             self.config = dialog.result
             save_config(self.config)
             logger.info("Admin-Einstellungen gespeichert")
+            
+            # StartScreen aktualisieren wenn aktiv
+            if self.current_screen_name == "start" and self.current_screen:
+                logger.info("Aktualisiere StartScreen nach Admin-Änderung...")
+                # Config im Screen aktualisieren
+                self.current_screen.config = self.config
+                # on_show aufrufen für Refresh
+                if hasattr(self.current_screen, "on_show"):
+                    self.current_screen.on_show()
     
     def play_video(self, video_key: str, next_screen: str):
         """Spielt ein Video ab und wechselt dann zum nächsten Screen
