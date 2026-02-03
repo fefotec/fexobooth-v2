@@ -227,8 +227,8 @@ class PhotoboothApp:
         """Startet Statistik-Erfassung für aktuelle Buchung"""
         booking_id = self.booking_manager.booking_id if self.booking_manager.is_loaded else ""
         
-        # Speicherpfad: USB wenn verfügbar, sonst lokal
-        save_path = usb_root if usb_root else self.local_storage.get_base_path()
+        # Speicherpfad: Wird ignoriert - Statistik speichert immer lokal
+        save_path = usb_root  # Parameter wird in start_event() ignoriert
         
         # Event starten (beendet vorheriges automatisch)
         self.statistics.start_event(booking_id=booking_id, save_path=save_path)
