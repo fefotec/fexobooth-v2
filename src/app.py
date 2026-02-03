@@ -145,13 +145,8 @@ class PhotoboothApp:
                 return
             
             usb_root = Path(usb_drive)
-            settings_path = usb_root / "settings.json"
             
-            if not settings_path.exists():
-                logger.debug(f"Keine settings.json auf USB: {usb_root}")
-                return
-            
-            # Settings vom USB laden (überschreibt Cache!)
+            # Settings vom USB laden (sucht alle .json Dateien, nimmt neueste)
             logger.info(f"📂 USB gefunden beim Start: {usb_drive}")
             if self.booking_manager.load_from_usb(usb_root, force=True):
                 logger.info(f"✅ Settings vom USB geladen: {self.booking_manager.booking_id}")

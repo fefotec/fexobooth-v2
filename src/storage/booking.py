@@ -198,15 +198,72 @@ class BookingManager:
             logger.warning(f"Template-Cache fehlgeschlagen: {e}")
             return False
     
+    def _find_settings_file(self, usb_root: Path) -> Optional[Path]:
+        """Findet die beste Settings-Datei auf dem USB-Stick
+        
+        Logik:
+        1. Sucht alle .json Dateien im Root des USB-Sticks
+        2. Prüft ob sie gültige Booking-Daten enthalten (booking_id)
+        3. Gibt die NEUESTE (zuletzt geändert) zurück
+        
+        Returns:
+            Pfad zur besten Settings-Datei oder None
+        """
+        try:
+            # Alle JSON-Dateien im Root finden
+            json_files = list(usb_root.glob("*.json"))
+            
+            if not json_files:
+                logger.debug(f"Keine JSON-Dateien auf USB: {usb_root}")
+                return None
+            
+            # Gültige Settings-Dateien filtern (müssen booking_id enthalten)
+            valid_files = []
+            for json_path in json_files:
+                try:
+                    with open(json_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    
+                    # Prüfen ob es eine gültige Settings-Datei ist
+                    # Muss mindestens booking_id ODER customer_name enthalten
+                    if data.get("booking_id") or data.get("customer_name"):
+                        mtime = json_path.stat().st_mtime
+                        valid_files.append((json_path, mtime))
+                        logger.debug(f"Gültige Settings-Datei: {json_path.name}")
+                except (json.JSONDecodeError, KeyError, IOError) as e:
+                    logger.debug(f"Überspringe {json_path.name}: {e}")
+                    continue
+            
+            if not valid_files:
+                logger.debug("Keine gültigen Settings-Dateien gefunden")
+                return None
+            
+            # Nach Änderungszeit sortieren (neueste zuerst)
+            valid_files.sort(key=lambda x: x[1], reverse=True)
+            
+            newest = valid_files[0][0]
+            if len(valid_files) > 1:
+                logger.info(f"📂 {len(valid_files)} Settings-Dateien gefunden, verwende neueste: {newest.name}")
+            else:
+                logger.debug(f"Settings-Datei gefunden: {newest.name}")
+            
+            return newest
+            
+        except Exception as e:
+            logger.error(f"Fehler beim Suchen von Settings-Dateien: {e}")
+            return None
+    
     def check_usb_for_new_booking(self, usb_root: Path) -> Optional[str]:
         """Prüft ob USB eine ANDERE Buchung enthält
         
-        Returns:
-            Neue booking_id wenn unterschiedlich, None wenn gleich oder keine settings.json
-        """
-        settings_path = usb_root / "settings.json"
+        Sucht nach allen gültigen .json Dateien und nimmt die neueste.
         
-        if not settings_path.exists():
+        Returns:
+            Neue booking_id wenn unterschiedlich, None wenn gleich oder keine gefunden
+        """
+        settings_path = self._find_settings_file(usb_root)
+        
+        if not settings_path:
             return None
         
         try:
@@ -227,7 +284,10 @@ class BookingManager:
             return None
     
     def load_from_usb(self, usb_root: Path, force: bool = False) -> bool:
-        """Lädt settings.json vom USB-Stick
+        """Lädt Settings vom USB-Stick
+        
+        Sucht nach allen gültigen .json Dateien und nimmt die neueste.
+        Der Dateiname muss NICHT "settings.json" sein!
         
         Args:
             usb_root: Wurzelverzeichnis des USB-Sticks (z.B. E:\\)
@@ -236,10 +296,10 @@ class BookingManager:
         Returns:
             True wenn erfolgreich geladen
         """
-        settings_path = usb_root / "settings.json"
+        settings_path = self._find_settings_file(usb_root)
         
-        if not settings_path.exists():
-            logger.debug(f"Keine settings.json gefunden: {settings_path}")
+        if not settings_path:
+            logger.debug(f"Keine gültige Settings-Datei auf USB: {usb_root}")
             return False
         
         try:
@@ -257,7 +317,8 @@ class BookingManager:
             self._settings_path = settings_path
             self._last_check_path = settings_path
             
-            logger.info(f"✅ Buchung geladen: {self._settings.booking_id}")
+            logger.info(f"✅ Buchung geladen aus: {settings_path.name}")
+            logger.info(f"   Booking-ID: {self._settings.booking_id}")
             logger.info(f"   Kunde: {self._settings.customer_name}")
             logger.info(f"   Einzeldruck: {'Ja' if self._settings.print_singles else 'Nein'}")
             logger.info(f"   Template: {self._settings.template_type}")
@@ -271,10 +332,10 @@ class BookingManager:
             return True
             
         except json.JSONDecodeError as e:
-            logger.error(f"settings.json ungültiges JSON: {e}")
+            logger.error(f"{settings_path.name} ungültiges JSON: {e}")
             return False
         except Exception as e:
-            logger.error(f"Fehler beim Laden von settings.json: {e}")
+            logger.error(f"Fehler beim Laden von {settings_path.name}: {e}")
             return False
     
     def _cache_template_from_usb(self, usb_root: Path) -> bool:
