@@ -2,11 +2,13 @@
 
 Spielt ein Video ab und wechselt dann zum nächsten Screen.
 Verwendet OpenCV statt VLC - kein extra Install nötig!
+Optimiert für Performance auf schwacher Hardware.
 """
 
 import customtkinter as ctk
 import cv2
 import os
+import time
 from PIL import Image
 from typing import TYPE_CHECKING, Optional, Callable
 
@@ -37,7 +39,10 @@ class VideoScreen(ctk.CTkFrame):
         self.cap: Optional[cv2.VideoCapture] = None
         self.is_playing = False
         self.fps = 30
-        self.frame_delay = 33  # ms zwischen Frames
+        self.frame_time = 0.033  # Sekunden pro Frame
+        self.last_frame_time = 0
+        self.target_width = 0
+        self.target_height = 0
         
         self._setup_ui()
     
@@ -50,20 +55,6 @@ class VideoScreen(ctk.CTkFrame):
             fg_color="#000000"
         )
         self.video_label.pack(fill="both", expand=True)
-        
-        # Skip-Button (unten rechts, dezent)
-        self.skip_btn = ctk.CTkButton(
-            self,
-            text="Überspringen →",
-            font=FONTS["small"],
-            width=120,
-            height=35,
-            fg_color=COLORS["bg_medium"],
-            hover_color=COLORS["bg_light"],
-            corner_radius=8,
-            command=self._skip_video
-        )
-        self.skip_btn.place(relx=0.95, rely=0.95, anchor="se")
     
     def play(self, video_path: str, next_screen: str = "start", on_complete: Optional[Callable] = None):
         """Spielt ein Video ab
@@ -95,69 +86,78 @@ class VideoScreen(ctk.CTkFrame):
             self.fps = self.cap.get(cv2.CAP_PROP_FPS)
             if self.fps <= 0 or self.fps > 120:
                 self.fps = 30
-            self.frame_delay = int(1000 / self.fps)
+            self.frame_time = 1.0 / self.fps
+            
+            # Zielgröße einmalig berechnen
+            self.target_width = self.winfo_width()
+            self.target_height = self.winfo_height()
+            if self.target_width < 100:
+                self.target_width = 1280
+            if self.target_height < 100:
+                self.target_height = 800
             
             self.is_playing = True
+            self.last_frame_time = time.time()
+            
             logger.info(f"🎬 Video gestartet: {video_path} ({self.fps:.1f} FPS)")
             
-            # Ersten Frame anzeigen und Loop starten
-            self._play_next_frame()
+            # Playback Loop starten (schnell!)
+            self._play_loop()
             
         except Exception as e:
             logger.error(f"🎬 Video-Fehler: {e}")
             self._on_video_end()
     
-    def _play_next_frame(self):
-        """Zeigt den nächsten Frame an"""
+    def _play_loop(self):
+        """Optimierter Playback-Loop"""
         if not self.is_playing or self.cap is None:
             return
+        
+        # Zeit seit letztem Frame
+        now = time.time()
+        elapsed = now - self.last_frame_time
+        
+        # Frames überspringen wenn wir hinterherhinken
+        frames_to_skip = int(elapsed / self.frame_time) - 1
+        if frames_to_skip > 0:
+            for _ in range(min(frames_to_skip, 5)):  # Max 5 Frames überspringen
+                self.cap.read()
         
         ret, frame = self.cap.read()
         
         if not ret:
-            # Video zu Ende
             logger.info("🎬 Video zu Ende")
             self._on_video_end()
             return
         
+        self.last_frame_time = now
+        
         try:
-            # Frame auf Bildschirmgröße skalieren
-            screen_w = self.winfo_width()
-            screen_h = self.winfo_height()
+            # Frame skalieren (INTER_NEAREST ist schneller!)
+            frame_h, frame_w = frame.shape[:2]
+            scale = min(self.target_width / frame_w, self.target_height / frame_h)
+            new_w = int(frame_w * scale)
+            new_h = int(frame_h * scale)
             
-            if screen_w > 100 and screen_h > 100:
-                # Aspect Ratio beibehalten
-                frame_h, frame_w = frame.shape[:2]
-                scale = min(screen_w / frame_w, screen_h / frame_h)
-                new_w = int(frame_w * scale)
-                new_h = int(frame_h * scale)
-                
-                frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+            frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
             
-            # BGR zu RGB konvertieren
+            # BGR zu RGB
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             
-            # Zu PIL Image
+            # Direkt zu CTkImage (ohne PIL Zwischenschritt)
             img = Image.fromarray(frame_rgb)
-            
-            # Zu CTkImage
-            ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(img.width, img.height))
+            ctk_img = ctk.CTkImage(light_image=img, size=(new_w, new_h))
             
             # Anzeigen
             self.video_label.configure(image=ctk_img)
-            self.video_label.image = ctk_img  # Referenz halten!
+            self.video_label.image = ctk_img
             
         except Exception as e:
-            logger.debug(f"Frame-Fehler: {e}")
+            pass  # Frame überspringen bei Fehler
         
-        # Nächsten Frame planen
+        # Nächsten Frame so schnell wie möglich (1ms delay für UI-Update)
         if self.is_playing:
-            self.after(self.frame_delay, self._play_next_frame)
-    
-    def _skip_video(self):
-        """Video überspringen"""
-        logger.info("🎬 Video übersprungen")
-        self._on_video_end()
+            self.after(1, self._play_loop)
     
     def _on_video_end(self):
         """Video ist fertig"""
