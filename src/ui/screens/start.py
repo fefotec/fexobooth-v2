@@ -154,43 +154,39 @@ class StartScreen(ctk.CTkFrame):
         self._setup_ui()
 
     def _setup_ui(self):
-        """Erstellt die UI"""
-        # Hintergrundbild laden wenn konfiguriert
-        self._setup_background()
+        """Erstellt die UI - ohne transparente Frames für Hintergrundbild-Kompatibilität"""
+        # WICHTIG: Hintergrundbild wird SPÄTER geladen, NACH allen Widgets!
+        # Siehe on_show() - dort wird _setup_background() aufgerufen und bg_label.lower() gesetzt
 
-        # Galerie-Banner ZUERST (unten) - damit es Platz reserviert
-        self.gallery_banner = ctk.CTkFrame(self, fg_color="transparent")
-        self.gallery_banner.pack(side="bottom", fill="x", pady=(0, 8))
         self.qr_label: Optional[ctk.CTkLabel] = None
 
-        # Zentrierter Hauptcontainer (nimmt restlichen Platz)
-        center_frame = ctk.CTkFrame(self, fg_color="transparent")
-        center_frame.pack(expand=True, fill="both")
-
-        # Innerer Container für vertikale Zentrierung
-        inner_frame = ctk.CTkFrame(center_frame, fg_color="transparent")
-        inner_frame.place(relx=0.5, rely=0.5, anchor="center")
+        # Hauptinhalt-Container (zentriert auf dem Screen via place)
+        # WICHTIG: Kein fg_color - nutzt Parent-Hintergrund, lässt Bild durchscheinen
+        self.content_frame = ctk.CTkFrame(self, fg_color=COLORS["bg_dark"])
+        self.content_frame.place(relx=0.5, rely=0.45, anchor="center")
 
         # Titel
-        title = ctk.CTkLabel(
-            inner_frame,
+        self.title_label = ctk.CTkLabel(
+            self.content_frame,
             text=self.config.get("ui_texts", {}).get("choose_mode", "Wähle dein Layout!"),
             font=FONTS["title"],
-            text_color=COLORS["text_primary"]
+            text_color=COLORS["text_primary"],
+            fg_color="transparent"
         )
-        title.pack(pady=(0, 5))
+        self.title_label.pack(pady=(15, 5))
 
         # Untertitel
-        subtitle = ctk.CTkLabel(
-            inner_frame,
+        self.subtitle_label = ctk.CTkLabel(
+            self.content_frame,
             text="Tippe auf eine Option",
             font=FONTS["body"],
-            text_color=COLORS["text_secondary"]
+            text_color=COLORS["text_secondary"],
+            fg_color="transparent"
         )
-        subtitle.pack(pady=(0, 15))
+        self.subtitle_label.pack(pady=(0, 15))
 
         # Karten-Container
-        self.cards_frame = ctk.CTkFrame(inner_frame, fg_color="transparent")
+        self.cards_frame = ctk.CTkFrame(self.content_frame, fg_color="transparent")
         self.cards_frame.pack()
 
         # Template-Karten erstellen
@@ -198,7 +194,7 @@ class StartScreen(ctk.CTkFrame):
 
         # Start-Button (groß und auffällig, unter den Karten)
         self.start_btn = ctk.CTkButton(
-            inner_frame,
+            self.content_frame,
             text=f"▶  {self.config.get('ui_texts', {}).get('start', 'START')}",
             font=("Segoe UI", 24, "bold"),
             width=280,
@@ -212,10 +208,18 @@ class StartScreen(ctk.CTkFrame):
             state="disabled",
             command=self._on_start
         )
-        self.start_btn.pack(pady=(25, 0))
+        self.start_btn.pack(pady=(25, 20))
+
+        # Galerie-Banner (unten, über dem Hintergrundbild)
+        self.gallery_banner = ctk.CTkFrame(self, fg_color="transparent")
+        self.gallery_banner.place(relx=0.5, rely=0.95, anchor="center")
 
     def _setup_background(self):
-        """Lädt und zeigt optionales Hintergrundbild (oder entfernt es)"""
+        """Lädt und zeigt optionales Hintergrundbild
+
+        Das Bild wird als unterster Layer angezeigt.
+        Der content_frame (mit Karten etc.) schwebt darüber.
+        """
         # Altes Hintergrundbild entfernen falls vorhanden
         if self._bg_label:
             try:
@@ -228,11 +232,19 @@ class StartScreen(ctk.CTkFrame):
         bg_path = self.config.get("startscreen_background", "")
         if not bg_path or not os.path.exists(bg_path):
             logger.debug("Kein Hintergrundbild konfiguriert")
+            # Ohne Hintergrundbild: content_frame ist unsichtbar (gleiche Farbe wie Hintergrund)
+            if hasattr(self, 'content_frame') and self.content_frame:
+                self.content_frame.configure(
+                    fg_color=COLORS["bg_dark"],
+                    corner_radius=0,
+                    border_width=0
+                )
             return
 
         try:
             # Bild laden und auf Bildschirmgröße skalieren
             bg_img = Image.open(bg_path)
+            logger.debug(f"Hintergrundbild geladen: {bg_img.size} ({bg_img.mode})")
 
             # Zielgröße (1280x800 oder Bildschirmgröße)
             target_w = 1280
@@ -259,24 +271,36 @@ class StartScreen(ctk.CTkFrame):
             # Als CTkImage speichern
             self._bg_image = ctk.CTkImage(light_image=bg_img, dark_image=bg_img, size=(target_w, target_h))
 
-            # Hintergrund-Label erstellen - füllt gesamten Bereich
+            # Hintergrund-Label erstellen
             self._bg_label = ctk.CTkLabel(
                 self,
                 image=self._bg_image,
-                text="",
-                fg_color="transparent"
+                text=""
             )
             # Position: oben links, füllt gesamten Parent
             self._bg_label.place(x=0, y=0, relwidth=1.0, relheight=1.0)
 
-            # WICHTIG: Tkinter lower() um unter alle anderen Widgets zu kommen
-            self._bg_label.tkraise()  # Erst nach oben...
-            self._bg_label.lower()    # ...dann ganz nach unten
+            # KRITISCH: Unter ALLE anderen Widgets setzen
+            # lower() setzt das Widget ganz nach unten im Stacking
+            self._bg_label.lower()
 
-            logger.info(f"✅ Hintergrundbild geladen und platziert: {bg_path}")
+            # Mit Hintergrundbild: content_frame halbtransparent erscheinen lassen
+            # (abgerundete Karte mit dunklem Hintergrund auf dem Bild)
+            if hasattr(self, 'content_frame') and self.content_frame:
+                self.content_frame.configure(
+                    fg_color=COLORS["bg_medium"],  # Etwas heller als bg_dark
+                    corner_radius=20,
+                    border_width=2,
+                    border_color=COLORS["border"]
+                )
+
+            logger.info(f"✅ Hintergrundbild geladen: {bg_path}")
+            logger.debug(f"   bg_label Stacking-Order: unterstes Widget")
 
         except Exception as e:
             logger.warning(f"Hintergrundbild konnte nicht geladen werden: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
 
     def _create_template_cards(self, parent):
         """Erstellt die Template-Karten"""
@@ -591,9 +615,6 @@ class StartScreen(ctk.CTkFrame):
         # Config könnte sich geändert haben (Admin-Dialog)
         self.config = self.app.config
 
-        # Hintergrundbild aktualisieren (falls im Admin geändert)
-        self._setup_background()
-
         # USB-Template prüfen mit Caching-Logik
         current_usb_template = find_usb_template()
 
@@ -642,13 +663,19 @@ class StartScreen(ctk.CTkFrame):
             self._disable_start_button()
         else:
             self._enable_start_button()
-        
+
         # QR-Code für Galerie anzeigen/ausblenden
         self._update_qr_code()
 
-        # Hintergrundbild ganz nach unten (unter alle anderen Widgets)
-        if self._bg_label:
-            self._bg_label.lower()
+        # Hintergrundbild aktualisieren (falls im Admin geändert)
+        # WICHTIG: Am Ende aufrufen, damit lower() alle anderen Widgets kennt
+        self._setup_background()
+
+        # Sicherstellen dass content_frame über dem Hintergrundbild liegt
+        if hasattr(self, 'content_frame') and self.content_frame:
+            self.content_frame.tkraise()
+        if hasattr(self, 'gallery_banner') and self.gallery_banner:
+            self.gallery_banner.tkraise()
     
     def _update_qr_code(self):
         """Zeigt horizontales Galerie-Banner am unteren Rand"""
