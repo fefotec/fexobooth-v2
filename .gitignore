@@ -49,10 +49,11 @@ fexobooth_statistics.json
 *.temp
 _temp_*/
 
-# PyInstaller
-*.spec
+# PyInstaller Build Output
 build/
 dist/
+installer_files/
+installer_output/
 
 # OS
 .DS_Store
