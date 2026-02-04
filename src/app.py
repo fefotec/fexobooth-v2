@@ -801,10 +801,13 @@ class PhotoboothApp:
             save_config(self.config)
             logger.info("Admin-Einstellungen gespeichert")
             
-            # Galerie starten wenn gerade aktiviert wurde
+            # Galerie/Hotspot starten oder stoppen je nach Einstellung
             if self.config.get("gallery_enabled", False):
                 self._start_gallery_if_needed()
-            
+            else:
+                # Galerie deaktiviert -> Hotspot stoppen
+                self._stop_hotspot_if_running()
+
             # StartScreen aktualisieren wenn aktiv
             if self.current_screen_name == "start" and self.current_screen:
                 logger.info("Aktualisiere StartScreen nach Admin-Änderung...")
