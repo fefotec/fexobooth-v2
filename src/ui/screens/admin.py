@@ -570,25 +570,43 @@ class AdminDialog(ctk.CTkToplevel):
             text_color=COLORS["text_primary"]
         ).pack(pady=(10, 5))
         
-        # Offset-Werte mit Anzeige
+        # Offset-Werte mit Anzeige und Hinweisen
         adjustment = self.config_data.get("print_adjustment", {})
-        
+
         # Offset X
         self.offset_x_slider = self._create_print_slider(
             preview_frame, "Offset X:", adjustment.get("offset_x", 0), -100, 100, " px"
         )
-        
+        ctk.CTkLabel(
+            preview_frame,
+            text="← minus = links  |  plus = rechts →",
+            font=FONTS["tiny"],
+            text_color=COLORS["text_muted"]
+        ).pack(padx=15, anchor="w")
+
         # Offset Y
         self.offset_y_slider = self._create_print_slider(
             preview_frame, "Offset Y:", adjustment.get("offset_y", 0), -100, 100, " px"
         )
-        
+        ctk.CTkLabel(
+            preview_frame,
+            text="↑ minus = hoch  |  plus = runter ↓",
+            font=FONTS["tiny"],
+            text_color=COLORS["text_muted"]
+        ).pack(padx=15, anchor="w")
+
         # Zoom
         self.zoom_slider = self._create_print_slider(
             preview_frame, "Zoom:", adjustment.get("zoom", 100), 50, 150, " %"
         )
-        
-        ctk.CTkLabel(preview_frame, text="").pack(pady=5)  # Spacer
+        ctk.CTkLabel(
+            preview_frame,
+            text="103% empfohlen für randlosen Druck",
+            font=FONTS["tiny"],
+            text_color=COLORS["text_muted"]
+        ).pack(padx=15, anchor="w")
+
+        ctk.CTkLabel(preview_frame, text="").pack(pady=3)  # Spacer
     
     def _create_print_slider(self, parent, label: str, value: int, 
                               min_val: int, max_val: int, suffix: str) -> ctk.CTkSlider:
