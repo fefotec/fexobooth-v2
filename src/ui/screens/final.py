@@ -248,9 +248,9 @@ class FinalScreen(ctk.CTkFrame):
         self.auto_return_time = time.time() + self.config.get("final_time", 30)
     
     def _print_image(self, image_path: Path):
-        """Druckt ein Bild RANDLOS über GDI mit Drucker-DEVMODE
+        """Druckt ein Bild über GDI - einfache Methode wie in alter Version
 
-        Nutzt die Windows-Treibereinstellungen (DEVMODE) für randlosen Druck.
+        Verwendet feste Pixelwerte die zum 10x15cm Fotodrucker passen.
         Kein Dialog - vollautomatisch im Hintergrund.
         """
         try:
@@ -279,132 +279,61 @@ class FinalScreen(ctk.CTkFrame):
             logger.info(f"Drucke auf: {printer_name}")
             logger.info(f"Bild: {image_path}")
 
+            # Einstellungen aus Config
+            adjustment = self.config.get("print_adjustment", {})
+            offset_x = adjustment.get("offset_x", 0)
+            offset_y = adjustment.get("offset_y", 0)
+            zoom = adjustment.get("zoom", 100) / 100
+
             # Bild laden
             img = Image.open(image_path)
-            logger.info(f"Bild-Größe: {img.size}")
+            logger.info(f"Original-Bild: {img.size}")
 
-            # DEVMODE und Print Processor vom Drucker holen
-            # Siehe: https://github.com/mhammond/pywin32/blob/main/win32/Demos/print_desktop.py
-            import win32gui
-            import pywintypes
+            # Feste Basisgröße für 10x15cm Fotodrucker (wie in alter Version)
+            # 1772 x 1181 Pixel = 10x15cm bei 300dpi
+            base_width = int(1772 * zoom)
+            base_height = int(1181 * zoom)
 
-            devmode = None
-            print_processor = None
-            hPrinter = win32print.OpenPrinter(printer_name)
-            try:
-                printer_info = win32print.GetPrinter(hPrinter, 2)
-                devmode = printer_info.get("pDevMode")
-                print_processor = printer_info.get("pPrintProcessor", "WinPrint")
-
-                if devmode:
-                    logger.info(f"DEVMODE: PaperSize={devmode.PaperSize}, "
-                               f"Orientation={devmode.Orientation}, "
-                               f"PrintQuality={devmode.PrintQuality}")
-                    logger.info(f"Print Processor: {print_processor}")
-                else:
-                    logger.warning("Kein DEVMODE vom Drucker - verwende Standardeinstellungen")
-            finally:
-                win32print.ClosePrinter(hPrinter)
-
-            # DC erstellen MIT DEVMODE für randlosen Druck!
-            # win32gui.CreateDC(print_processor, printer_name, devmode) - 3 Argumente!
-            if devmode and print_processor:
-                # CreateDC mit DEVMODE für Treibereinstellungen (randlos etc.)
-                hdc_handle = win32gui.CreateDC(print_processor, printer_name, devmode)
-                hDC = win32ui.CreateDCFromHandle(hdc_handle)
-                logger.info("DC mit DEVMODE erstellt (randlose Einstellungen aktiv)")
-            else:
-                hDC = win32ui.CreateDC()
-                hDC.CreatePrinterDC(printer_name)
-                logger.warning("DC ohne DEVMODE erstellt (Standard-Einstellungen)")
-
-            # Druckbereich abfragen
-            # HORZRES/VERTRES = druckbarer Bereich (das was der Drucker tatsächlich druckt)
-            printable_width = hDC.GetDeviceCaps(8)   # HORZRES
-            printable_height = hDC.GetDeviceCaps(10) # VERTRES
-
-            # Debug-Info
-            phys_width = hDC.GetDeviceCaps(110)   # PHYSICALWIDTH
-            phys_height = hDC.GetDeviceCaps(111)  # PHYSICALHEIGHT
-            offset_x = hDC.GetDeviceCaps(112)     # PHYSICALOFFSETX
-            offset_y = hDC.GetDeviceCaps(113)     # PHYSICALOFFSETY
-
-            logger.info(f"Druckbar: {printable_width}x{printable_height}px, "
-                       f"Physisch: {phys_width}x{phys_height}px, "
-                       f"Offset: ({offset_x},{offset_y})")
-
-            # RANDLOSER DRUCK: Physische Papiergröße verwenden und mit negativem Offset starten
-            #
-            # Bei randlosem Druck:
-            # - PHYSICALWIDTH/HEIGHT = echte Papiergröße in Pixel
-            # - PHYSICALOFFSETX/Y = wo der druckbare Bereich beginnt (positiver Wert)
-            # - Um randlos zu drucken: bei (-offset_x, -offset_y) starten und phys_width/height verwenden
-            #
-            # Beispiel: Offset=(50,50), Phys=(1800,1200), Printable=(1700,1100)
-            # → Drucken von (-50,-50) bis (1750, 1150) = gesamte Papierfläche
-
-            # Zoom-Einstellung aus Config (100 = normal, >100 = größer/mehr Überlappung)
-            zoom_percent = self.config.get("print_adjustment", {}).get("zoom", 100)
-            zoom_factor = zoom_percent / 100.0
-
-            # Offset-Anpassung aus Config (für Feintuning)
-            config_offset_x = self.config.get("print_adjustment", {}).get("offset_x", 0)
-            config_offset_y = self.config.get("print_adjustment", {}).get("offset_y", 0)
-
-            # Zielgröße = physische Papiergröße (für randlos)
-            # Mit Zoom-Faktor: >100% = Bild größer = mehr Überlappung an Rändern
-            target_width = int(phys_width * zoom_factor)
-            target_height = int(phys_height * zoom_factor)
-
-            logger.info(f"Randlos-Modus: Physisch={phys_width}x{phys_height}, "
-                       f"Zoom={zoom_percent}%, Ziel={target_width}x{target_height}")
-
+            # Bild auf Zielgröße skalieren (mit Cover-Modus)
             img_ratio = img.width / img.height
-            target_ratio = target_width / target_height
+            target_ratio = base_width / base_height
 
             if img_ratio > target_ratio:
                 # Bild ist breiter - nach Höhe skalieren, dann horizontal beschneiden
-                new_h = target_height
+                new_h = base_height
                 new_w = int(new_h * img_ratio)
                 img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                left = (new_w - target_width) // 2
-                img = img.crop((left, 0, left + target_width, target_height))
+                left = (new_w - base_width) // 2
+                img = img.crop((left, 0, left + base_width, base_height))
             else:
                 # Bild ist höher - nach Breite skalieren, dann vertikal beschneiden
-                new_w = target_width
+                new_w = base_width
                 new_h = int(new_w / img_ratio)
                 img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                top = (new_h - target_height) // 2
-                img = img.crop((0, top, target_width, top + target_height))
+                top = (new_h - base_height) // 2
+                img = img.crop((0, top, base_width, top + base_height))
 
-            logger.info(f"Bild skaliert auf: {img.size}")
+            logger.info(f"Bild skaliert auf: {img.size} (Zoom: {int(zoom*100)}%)")
 
-            # Drucken mit negativem Offset für randlosen Druck
+            # Einfacher Drucker-DC (wie alte Version - funktioniert!)
+            hDC = win32ui.CreateDC()
+            hDC.CreatePrinterDC(printer_name)
+
             hDC.StartDoc("Fexobooth Print")
             hDC.StartPage()
 
             dib = ImageWin.Dib(img)
-
-            # Startposition: negativer physischer Offset + Config-Anpassung
-            # Bei Zoom >100%: Bild ist größer, also noch weiter nach links/oben verschieben
-            extra_offset_x = (target_width - phys_width) // 2
-            extra_offset_y = (target_height - phys_height) // 2
-
-            start_x = -offset_x - extra_offset_x + config_offset_x
-            start_y = -offset_y - extra_offset_y + config_offset_y
-            end_x = start_x + target_width
-            end_y = start_y + target_height
-
-            dib.draw(hDC.GetHandleOutput(), (start_x, start_y, end_x, end_y))
-
-            logger.info(f"Randlos gedruckt: ({start_x}, {start_y}) -> ({end_x}, {end_y}), "
-                       f"Offset-Korrektur: phys=({offset_x},{offset_y}), config=({config_offset_x},{config_offset_y})")
+            dib.draw(
+                hDC.GetHandleOutput(),
+                (offset_x, offset_y, offset_x + base_width, offset_y + base_height)
+            )
 
             hDC.EndPage()
             hDC.EndDoc()
             hDC.DeleteDC()
 
-            logger.info(f"✅ Randlos gedruckt auf: {printer_name} (Zoom: {zoom_percent}%)")
+            logger.info(f"✅ Gedruckt auf: {printer_name} "
+                       f"(Größe: {base_width}x{base_height}, Offset: {offset_x},{offset_y})")
 
         except ImportError as e:
             logger.warning(f"Import-Fehler: {e} - Druck nur unter Windows")

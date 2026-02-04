@@ -171,15 +171,21 @@ class PhotoboothApp:
                 logger.debug(f"Drucker-Init übersprungen: {e}")
 
     def _init_gallery_server(self):
-        """Startet den Galerie-Webserver wenn aktiviert"""
+        """Startet den Galerie-Webserver und Hotspot wenn aktiviert"""
         if not self.config.get("gallery_enabled", False):
             logger.debug("Galerie-Server deaktiviert")
+            # Hotspot stoppen wenn Galerie deaktiviert
+            self._stop_hotspot_if_running()
             return
-        
+
         try:
-            from src.gallery import start_server, get_gallery_url
+            from src.gallery import start_server, get_gallery_url, start_hotspot
             from pathlib import Path
-            
+
+            # ERST Hotspot starten (damit Gäste sich verbinden können)
+            logger.info("📶 Starte Hotspot für Galerie...")
+            start_hotspot()
+
             # Galerie-Pfad = USB BILDER Ordner oder lokaler Speicher
             gallery_path = None
             usb_path = self.usb_manager.get_images_path()
@@ -188,21 +194,33 @@ class PhotoboothApp:
             else:
                 # Fallback: Lokaler Bilder-Ordner
                 gallery_path = self.local_storage.get_images_path()
-            
+
             if gallery_path:
                 port = self.config.get("gallery_port", 8080)
                 start_server(gallery_path, port=port)
-                
+
                 # URL für QR-Code speichern
                 self.gallery_url = get_gallery_url(port)
                 logger.info(f"🌐 Galerie verfügbar: {self.gallery_url}")
             else:
                 logger.warning("Kein Bilder-Pfad für Galerie verfügbar")
-                
+
         except ImportError as e:
             logger.warning(f"Galerie-Modul nicht verfügbar: {e}")
         except Exception as e:
             logger.error(f"Galerie-Server Start fehlgeschlagen: {e}")
+
+    def _stop_hotspot_if_running(self):
+        """Stoppt den Hotspot wenn er läuft (Galerie deaktiviert)"""
+        try:
+            from src.gallery import is_hotspot_active, stop_hotspot
+            if is_hotspot_active():
+                logger.info("📶 Stoppe Hotspot (Galerie deaktiviert)...")
+                stop_hotspot()
+        except ImportError:
+            pass  # Galerie-Modul nicht verfügbar
+        except Exception as e:
+            logger.debug(f"Hotspot-Stop übersprungen: {e}")
 
     def _init_performance_overlay(self):
         """Initialisiert Performance Overlay im Developer Mode"""
@@ -229,26 +247,29 @@ class PhotoboothApp:
         self.statistics.start_event(booking_id=booking_id, save_path=save_path)
 
     def _start_gallery_if_needed(self):
-        """Startet Galerie wenn noch nicht gestartet (für settings.json Aktivierung)"""
+        """Startet Galerie + Hotspot wenn noch nicht gestartet"""
         try:
-            from src.gallery import is_running, start_server, get_gallery_url
-            
+            from src.gallery import is_running, start_server, get_gallery_url, start_hotspot
+
+            # Hotspot starten (auch wenn Galerie schon läuft - Hotspot könnte aus sein)
+            start_hotspot()
+
             if is_running():
                 logger.debug("Galerie läuft bereits")
                 return
-            
+
             # Galerie-Pfad ermitteln
             gallery_path = self.usb_manager.get_images_path()
             if not gallery_path:
                 gallery_path = self.local_storage.get_images_path()
-            
+
             if gallery_path:
                 port = self.config.get("gallery_port", 8080)
                 start_server(gallery_path, port=port)
                 self.gallery_url = get_gallery_url(port)
-                logger.info(f"🌐 Galerie gestartet (via settings.json): {self.gallery_url}")
+                logger.info(f"🌐 Galerie gestartet: {self.gallery_url}")
         except Exception as e:
-            logger.error(f"Galerie-Start via settings.json fehlgeschlagen: {e}")
+            logger.error(f"Galerie-Start fehlgeschlagen: {e}")
 
     def _enter_fullscreen(self):
         """Aktiviert echten Vollbildmodus"""
