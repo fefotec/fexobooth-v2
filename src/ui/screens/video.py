@@ -1,7 +1,8 @@
 """Video-Screen für Start/End Videos
 
 Spielt ein Video ab und wechselt dann zum nächsten Screen.
-Nutzt OpenCV für die Wiedergabe - KEIN VLC erforderlich!
+Nutzt Windows Media Foundation (MSMF) als primäres Backend für beste Kompatibilität.
+Threading verhindert UI-Einfrieren auf schwacher Hardware.
 """
 
 import customtkinter as ctk
@@ -9,6 +10,7 @@ import cv2
 import os
 import threading
 import time
+import queue
 from PIL import Image
 from typing import TYPE_CHECKING, Optional, Callable
 
@@ -24,7 +26,8 @@ logger = get_logger(__name__)
 class VideoScreen(ctk.CTkFrame):
     """Spielt ein Video ab und wechselt dann zum Ziel-Screen
 
-    Nutzt OpenCV statt VLC - leichtgewichtiger und keine Installation nötig!
+    Nutzt Windows Media Foundation für Hardware-beschleunigtes Decoding.
+    Fallback auf andere Backends wenn MSMF nicht funktioniert.
     """
 
     def __init__(self, parent, app: "PhotoboothApp"):
@@ -35,14 +38,19 @@ class VideoScreen(ctk.CTkFrame):
         self.next_screen: str = "start"
         self.on_complete: Optional[Callable] = None
 
-        # OpenCV Video
+        # Video-Zustand
         self.cap: Optional[cv2.VideoCapture] = None
         self.is_playing = False
-        self._stop_requested = False
+        self._stop_event = threading.Event()
+        self._video_thread: Optional[threading.Thread] = None
+        self._end_called = False
+
+        # Frame-Queue für Thread-sichere Kommunikation
+        self._frame_queue: queue.Queue = queue.Queue(maxsize=3)
 
         # FPS-Steuerung
-        self.target_fps = 30
-        self.frame_delay = 1.0 / self.target_fps
+        self.target_fps = 25
+        self.frame_delay_ms = 40
 
         self._setup_ui()
 
@@ -60,17 +68,19 @@ class VideoScreen(ctk.CTkFrame):
         self.video_label = ctk.CTkLabel(
             self.video_frame,
             text="",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"],
             fg_color="#000000"
         )
         self.video_label.pack(expand=True, fill="both")
 
-        # Skip-Button (unten rechts, dezent)
+        # Skip-Button (unten rechts)
         self.skip_btn = ctk.CTkButton(
             self,
             text="Überspringen →",
             font=FONTS["small"],
-            width=120,
-            height=35,
+            width=140,
+            height=40,
             fg_color=COLORS["bg_medium"],
             hover_color=COLORS["bg_light"],
             corner_radius=8,
@@ -78,127 +88,220 @@ class VideoScreen(ctk.CTkFrame):
         )
         self.skip_btn.place(relx=0.95, rely=0.95, anchor="se")
 
-    def play(self, video_path: str, next_screen: str = "start", on_complete: Optional[Callable] = None):
-        """Spielt ein Video ab
+    def _try_open_video(self, video_path: str) -> Optional[cv2.VideoCapture]:
+        """Versucht das Video mit verschiedenen Backends zu öffnen
 
-        Args:
-            video_path: Pfad zum Video
-            next_screen: Screen-Name nach Video-Ende
-            on_complete: Callback nach Video-Ende (optional)
+        Reihenfolge:
+        1. MSMF (Windows Media Foundation) - beste Kompatibilität auf Windows
+        2. FFMPEG - falls vorhanden
+        3. Default - OpenCV Standard
         """
+        backends = [
+            (cv2.CAP_MSMF, "MSMF"),
+            (cv2.CAP_FFMPEG, "FFMPEG"),
+            (cv2.CAP_ANY, "Default"),
+        ]
+
+        for backend_id, backend_name in backends:
+            try:
+                logger.info(f"Versuche {backend_name} Backend...")
+                cap = cv2.VideoCapture(video_path, backend_id)
+
+                if cap.isOpened():
+                    # Test: Ersten Frame lesen
+                    ret, frame = cap.read()
+                    if ret and frame is not None and frame.size > 0:
+                        # Zurückspulen
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        logger.info(f"Video geöffnet mit {backend_name}")
+                        return cap
+                    else:
+                        logger.warning(f"{backend_name}: Frame-Test fehlgeschlagen")
+                        cap.release()
+                else:
+                    logger.debug(f"{backend_name}: Nicht verfügbar")
+
+            except Exception as e:
+                logger.debug(f"{backend_name} Fehler: {e}")
+
+        return None
+
+    def play(self, video_path: str, next_screen: str = "start", on_complete: Optional[Callable] = None):
+        """Spielt ein Video ab"""
         self.video_path = video_path
         self.next_screen = next_screen
         self.on_complete = on_complete
-        self._stop_requested = False
+
+        # Vorherige Wiedergabe stoppen
+        self._stop_playback()
+
+        # Reset
+        self._stop_event.clear()
+        self._end_called = False
 
         # Prüfen ob Video existiert
         if not video_path or not os.path.exists(video_path):
-            logger.info(f"Video nicht gefunden: {video_path}")
-            self._on_video_end()
+            logger.warning(f"Video nicht gefunden: {video_path}")
+            self.after(100, self._on_video_end)
             return
 
-        try:
-            # Video mit OpenCV öffnen
-            self.cap = cv2.VideoCapture(video_path)
+        logger.info(f"Starte Video: {video_path}")
 
-            if not self.cap.isOpened():
-                logger.error(f"Konnte Video nicht öffnen: {video_path}")
-                self._on_video_end()
-                return
+        # Status anzeigen
+        self.video_label.configure(text="Video wird geladen...", image=None)
+        self.update_idletasks()
 
-            # FPS aus Video lesen
-            video_fps = self.cap.get(cv2.CAP_PROP_FPS)
-            if video_fps > 0:
-                self.target_fps = min(video_fps, 30)  # Max 30 FPS für Performance
-                self.frame_delay = 1.0 / self.target_fps
-
-            logger.info(f"Video gestartet: {video_path} ({self.target_fps:.1f} FPS)")
-
-            self.is_playing = True
-            self._play_next_frame()
-
-        except Exception as e:
-            logger.error(f"Video-Fehler: {e}")
-            self._on_video_end()
-
-    def _play_next_frame(self):
-        """Zeigt den nächsten Frame des Videos an"""
-        if not self.is_playing or self._stop_requested:
-            self._cleanup_and_end()
-            return
+        # Video öffnen (im Main-Thread, aber schnell)
+        self.cap = self._try_open_video(video_path)
 
         if self.cap is None:
-            self._cleanup_and_end()
+            logger.error(f"Konnte Video nicht öffnen: {video_path}")
+            self.video_label.configure(text="Video konnte nicht geladen werden")
+            self.after(2000, self._on_video_end)
             return
 
-        start_time = time.time()
+        # FPS aus Video lesen
+        video_fps = self.cap.get(cv2.CAP_PROP_FPS)
+        if video_fps > 0 and video_fps < 120:
+            self.target_fps = min(video_fps, 30)
+        else:
+            self.target_fps = 25
 
-        # Frame lesen
-        ret, frame = self.cap.read()
+        self.frame_delay_ms = max(25, int(1000 / self.target_fps))
 
-        if not ret:
-            # Video zu Ende
-            logger.info("Video fertig (EOF)")
-            self._cleanup_and_end()
+        total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        duration = total_frames / self.target_fps if self.target_fps > 0 else 0
+        logger.info(f"Video: {self.target_fps:.0f} FPS, {total_frames} Frames, {duration:.1f}s")
+
+        self.is_playing = True
+
+        # Video-Reader-Thread starten
+        self._video_thread = threading.Thread(target=self._video_reader_thread, daemon=True)
+        self._video_thread.start()
+
+        # Frame-Display im Main-Thread starten
+        self.after(10, self._display_next_frame)
+
+    def _video_reader_thread(self):
+        """Liest Frames in separatem Thread"""
+        frame_time = 1.0 / self.target_fps
+        frames_read = 0
+
+        while not self._stop_event.is_set() and self.cap is not None:
+            start_time = time.time()
+
+            try:
+                ret, frame = self.cap.read()
+
+                if not ret or frame is None:
+                    logger.info(f"Video Ende nach {frames_read} Frames")
+                    break
+
+                frames_read += 1
+
+                # Frame in Queue (non-blocking)
+                try:
+                    self._frame_queue.put_nowait(frame)
+                except queue.Full:
+                    pass  # Queue voll, Frame überspringen
+
+                # Timing
+                elapsed = time.time() - start_time
+                sleep_time = max(0.001, frame_time - elapsed)
+                time.sleep(sleep_time)
+
+            except Exception as e:
+                logger.error(f"Reader-Fehler: {e}")
+                break
+
+        # Ende-Signal senden
+        if not self._stop_event.is_set():
+            try:
+                self._frame_queue.put(None, timeout=0.5)
+            except:
+                pass
+
+    def _display_next_frame(self):
+        """Zeigt den nächsten Frame an (Main-Thread)"""
+        if not self.is_playing or self._stop_event.is_set():
             return
 
         try:
-            # Frame skalieren auf Container-Größe
+            frame = self._frame_queue.get_nowait()
+
+            if frame is None:
+                # Video zu Ende
+                self._cleanup_and_end()
+                return
+
+            self._show_frame(frame)
+
+        except queue.Empty:
+            pass  # Kein Frame, später erneut versuchen
+
+        # Nächsten Frame planen
+        if self.is_playing and not self._stop_event.is_set():
+            self.after(self.frame_delay_ms, self._display_next_frame)
+
+    def _show_frame(self, frame):
+        """Zeigt einen Frame an"""
+        try:
             container_w = self.video_frame.winfo_width()
             container_h = self.video_frame.winfo_height()
 
-            if container_w > 10 and container_h > 10:
-                # Video-Größe
-                frame_h, frame_w = frame.shape[:2]
+            if container_w < 50 or container_h < 50:
+                return
 
-                # Aspect Ratio beibehalten (Letterbox)
-                scale = min(container_w / frame_w, container_h / frame_h)
-                new_w = int(frame_w * scale)
-                new_h = int(frame_h * scale)
+            frame_h, frame_w = frame.shape[:2]
 
-                # Nur skalieren wenn nötig (Performance!)
-                if new_w != frame_w or new_h != frame_h:
-                    # INTER_AREA für Downscaling (bessere Qualität)
-                    # INTER_LINEAR für Upscaling (schneller)
-                    interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
-                    frame = cv2.resize(frame, (new_w, new_h), interpolation=interp)
+            # Skalierung berechnen
+            scale = min(container_w / frame_w, container_h / frame_h)
+            new_w = max(1, int(frame_w * scale))
+            new_h = max(1, int(frame_h * scale))
 
-                # BGR zu RGB
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # Skalieren
+            if new_w != frame_w or new_h != frame_h:
+                interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
+                frame = cv2.resize(frame, (new_w, new_h), interpolation=interp)
 
-                # PIL Image erstellen
-                pil_image = Image.fromarray(rgb_frame)
+            # BGR -> RGB -> PIL -> CTkImage
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            pil_image = Image.fromarray(rgb_frame)
+            ctk_image = ctk.CTkImage(
+                light_image=pil_image,
+                dark_image=pil_image,
+                size=(new_w, new_h)
+            )
 
-                # CTkImage erstellen und anzeigen
-                ctk_image = ctk.CTkImage(
-                    light_image=pil_image,
-                    dark_image=pil_image,
-                    size=(new_w, new_h)
-                )
-                self.video_label.configure(image=ctk_image)
-                self.video_label.image = ctk_image  # Referenz behalten!
+            self.video_label.configure(image=ctk_image, text="")
+            self.video_label.image = ctk_image
 
         except Exception as e:
-            logger.debug(f"Frame-Fehler (ignoriert): {e}")
-
-        # Nächster Frame mit korrektem Timing
-        elapsed = time.time() - start_time
-        delay_ms = max(1, int((self.frame_delay - elapsed) * 1000))
-
-        if self.is_playing and not self._stop_requested:
-            self.after(delay_ms, self._play_next_frame)
+            logger.debug(f"Frame-Anzeige-Fehler: {e}")
 
     def _skip_video(self):
         """Video überspringen"""
         logger.info("Video übersprungen")
-        self._stop_requested = True
         self._cleanup_and_end()
 
-    def _cleanup_and_end(self):
-        """Räumt auf und beendet das Video"""
+    def _stop_playback(self):
+        """Stoppt die Wiedergabe"""
+        self._stop_event.set()
         self.is_playing = False
 
-        # Video-Capture freigeben
+        # Auf Thread warten
+        if self._video_thread and self._video_thread.is_alive():
+            self._video_thread.join(timeout=0.3)
+        self._video_thread = None
+
+        # Queue leeren
+        while not self._frame_queue.empty():
+            try:
+                self._frame_queue.get_nowait()
+            except:
+                break
+
+        # Video schließen
         if self.cap:
             try:
                 self.cap.release()
@@ -206,49 +309,38 @@ class VideoScreen(ctk.CTkFrame):
                 pass
             self.cap = None
 
-        # Video-Label leeren
+    def _cleanup_and_end(self):
+        """Aufräumen und beenden"""
+        self._stop_playback()
+
         try:
-            self.video_label.configure(image=None)
-            self.video_label.image = None
+            self.video_label.configure(image=None, text="")
         except:
             pass
 
-        # Nur einmal aufrufen
-        self.after(100, self._on_video_end)
+        self.after(50, self._on_video_end)
 
     def _on_video_end(self):
-        """Video ist fertig"""
-        if not hasattr(self, '_end_called'):
-            self._end_called = True
-        else:
-            return  # Schon aufgerufen
+        """Video beendet"""
+        if self._end_called:
+            return
+        self._end_called = True
 
-        logger.info(f"Video fertig, wechsle zu: {self.next_screen}")
+        logger.info(f"Video beendet -> {self.next_screen}")
 
-        # Callback ausführen
         if self.on_complete:
             try:
                 self.on_complete()
             except Exception as e:
-                logger.error(f"on_complete Fehler: {e}")
+                logger.error(f"Callback-Fehler: {e}")
 
-        # Zum nächsten Screen
         self.app.show_screen(self.next_screen)
 
     def on_hide(self):
         """Screen wird verlassen"""
-        self._stop_requested = True
-        self.is_playing = False
-
-        if self.cap:
-            try:
-                self.cap.release()
-            except:
-                pass
-            self.cap = None
+        self._stop_playback()
 
     def on_show(self):
         """Screen wird angezeigt"""
-        # Reset für neues Video
         self._end_called = False
-        self._stop_requested = False
+        self._stop_event.clear()
