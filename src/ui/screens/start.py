@@ -57,22 +57,22 @@ class TemplateCard(ctk.CTkFrame):
         self.bind("<Leave>", self._on_leave)
         self.bind("<Button-1>", self._on_click)
         
-        # Preview-Bereich (kompakter)
+        # Preview-Bereich (größer für bessere Erkennbarkeit)
         preview_frame = ctk.CTkFrame(
             self,
             fg_color=COLORS["bg_medium"],
             corner_radius=SIZES["corner_radius_small"],
-            height=130  # Kompakter für 800px Höhe
+            height=165  # Größer für bessere Vorschau
         )
         preview_frame.pack(fill="x", padx=10, pady=(10, 5))
         preview_frame.pack_propagate(False)
         preview_frame.bind("<Button-1>", self._on_click)
-        
+
         # Preview-Bild oder Icon
         if preview_image:
-            # Template-Vorschau skalieren
+            # Template-Vorschau skalieren (größer)
             preview_copy = preview_image.copy()
-            preview_copy.thumbnail((200, 120), Image.Resampling.LANCZOS)
+            preview_copy.thumbnail((250, 155), Image.Resampling.LANCZOS)
             self.preview_ctk = ctk.CTkImage(
                 light_image=preview_copy,
                 size=(preview_copy.width, preview_copy.height)
@@ -84,7 +84,7 @@ class TemplateCard(ctk.CTkFrame):
             preview_label = ctk.CTkLabel(
                 preview_frame,
                 text=icon,
-                font=("Segoe UI Emoji", 50)
+                font=("Segoe UI Emoji", 60)  # Größeres Icon
             )
         preview_label.pack(expand=True)
         preview_label.bind("<Button-1>", self._on_click)
@@ -138,7 +138,7 @@ class TemplateCard(ctk.CTkFrame):
 
 class StartScreen(ctk.CTkFrame):
     """Start-Screen - optimiert für 1280x800"""
-    
+
     def __init__(self, parent, app: "PhotoboothApp"):
         super().__init__(parent, fg_color=COLORS["bg_dark"])
         self.app = app
@@ -148,11 +148,16 @@ class StartScreen(ctk.CTkFrame):
         self.cards = {}
         self.cards_frame: Optional[ctk.CTkFrame] = None  # Container für Template-Karten
         self._usb_template_path: Optional[str] = None  # USB-Template wenn gefunden
+        self._bg_image: Optional[ctk.CTkImage] = None  # Hintergrundbild
+        self._bg_label: Optional[ctk.CTkLabel] = None
 
         self._setup_ui()
-    
+
     def _setup_ui(self):
         """Erstellt die UI"""
+        # Hintergrundbild laden wenn konfiguriert
+        self._setup_background()
+
         # Zentrierter Container
         center_frame = ctk.CTkFrame(self, fg_color="transparent")
         center_frame.place(relx=0.5, rely=0.5, anchor="center")
@@ -197,12 +202,56 @@ class StartScreen(ctk.CTkFrame):
         )
         self.start_btn.pack(pady=25)
         
-        # QR-Code Container (unten rechts, wird in on_show befüllt)
-        self.qr_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.qr_frame.place(relx=0.95, rely=0.95, anchor="se")
+        # Galerie-Banner (unten, horizontales Banner - wird in on_show befüllt)
+        self.gallery_banner = ctk.CTkFrame(self, fg_color="transparent")
+        self.gallery_banner.pack(side="bottom", fill="x", pady=(0, 10))
         self.qr_label: Optional[ctk.CTkLabel] = None
-        self.qr_text_label: Optional[ctk.CTkLabel] = None
-    
+
+    def _setup_background(self):
+        """Lädt und zeigt optionales Hintergrundbild"""
+        bg_path = self.config.get("startscreen_background", "")
+        if not bg_path or not os.path.exists(bg_path):
+            return
+
+        try:
+            # Bild laden und auf Bildschirmgröße skalieren
+            bg_img = Image.open(bg_path)
+
+            # Zielgröße (1280x800 oder Bildschirmgröße)
+            target_w = 1280
+            target_h = 800
+
+            # Cover-Modus: Bild füllt gesamten Bereich
+            img_ratio = bg_img.width / bg_img.height
+            target_ratio = target_w / target_h
+
+            if img_ratio > target_ratio:
+                new_h = target_h
+                new_w = int(new_h * img_ratio)
+            else:
+                new_w = target_w
+                new_h = int(new_w / img_ratio)
+
+            bg_img = bg_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+            # Zentrieren und beschneiden
+            left = (new_w - target_w) // 2
+            top = (new_h - target_h) // 2
+            bg_img = bg_img.crop((left, top, left + target_w, top + target_h))
+
+            # Als CTkImage speichern
+            self._bg_image = ctk.CTkImage(light_image=bg_img, dark_image=bg_img, size=(target_w, target_h))
+
+            # Hintergrund-Label erstellen (unter allen anderen Elementen)
+            self._bg_label = ctk.CTkLabel(self, image=self._bg_image, text="")
+            self._bg_label.place(relx=0.5, rely=0.5, anchor="center")
+            self._bg_label.lower()  # Unter alle anderen Elemente
+
+            logger.info(f"✅ Hintergrundbild geladen: {bg_path}")
+
+        except Exception as e:
+            logger.warning(f"Hintergrundbild konnte nicht geladen werden: {e}")
+
     def _create_template_cards(self, parent):
         """Erstellt die Template-Karten"""
         has_custom_template = False
@@ -544,156 +593,118 @@ class StartScreen(ctk.CTkFrame):
         self._update_qr_code()
     
     def _update_qr_code(self):
-        """Zeigt oder versteckt den QR-Code für die Galerie mit WLAN-Anleitung"""
-        # Alte QR-Elemente entfernen
+        """Zeigt horizontales Galerie-Banner am unteren Rand"""
+        # Alte Elemente entfernen
         if self.qr_label:
             self.qr_label.destroy()
             self.qr_label = None
-        if self.qr_text_label:
-            self.qr_text_label.destroy()
-            self.qr_text_label = None
-        
-        # Zusätzliche Labels für WLAN-Info entfernen
-        for widget in self.qr_frame.winfo_children():
+
+        for widget in self.gallery_banner.winfo_children():
             widget.destroy()
-        
+
         # Prüfen ob Galerie aktiv
         if not _is_gallery_enabled(self.app):
-            logger.debug("Galerie nicht aktiv - kein QR-Code")
+            logger.debug("Galerie nicht aktiv - kein Banner")
             return
-        
+
         # Prüfen ob gallery_show_qr aktiv (default: True)
         if not self.config.get("gallery_show_qr", True):
             logger.debug("QR-Code Anzeige deaktiviert")
             return
-        
+
         try:
             from src.gallery import get_gallery_url, generate_qr_code
-            
-            # URL holen
+
+            # URL und WLAN-Daten holen
             gallery_config = self.config.get("gallery", {})
             port = gallery_config.get("port", self.config.get("gallery_port", 8080))
             url = get_gallery_url(port)
-            
-            # WLAN-Daten aus Config
             ssid = gallery_config.get("hotspot_ssid", "fexobox-gallery")
             password = gallery_config.get("hotspot_password", "fotobox123")
-            
-            # QR-Code generieren (etwas größer)
-            qr_img = generate_qr_code(url, size=110)
+
+            # QR-Code generieren (größer für bessere Scanbarkeit)
+            qr_img = generate_qr_code(url, size=90)
             if not qr_img:
                 logger.warning("QR-Code konnte nicht generiert werden")
                 return
-            
-            # Äußerer Container mit Akzent-Border
-            outer_container = ctk.CTkFrame(
-                self.qr_frame,
-                fg_color=COLORS["primary"],  # Pink Rahmen
-                corner_radius=15
-            )
-            outer_container.pack(padx=5, pady=5)
-            
-            # Innerer Container
-            info_container = ctk.CTkFrame(
-                outer_container,
-                fg_color=COLORS["bg_medium"],
+
+            # Horizontales Banner mit Pink-Rahmen
+            outer_banner = ctk.CTkFrame(
+                self.gallery_banner,
+                fg_color=COLORS["primary"],
                 corner_radius=12
             )
-            info_container.pack(padx=2, pady=2)
-            
-            # Header mit Icon
-            header_frame = ctk.CTkFrame(info_container, fg_color="transparent")
-            header_frame.pack(fill="x", pady=(12, 8))
-            
-            ctk.CTkLabel(
-                header_frame,
-                text="📸 FOTO-GALERIE",
-                font=("Segoe UI", 13, "bold"),
-                text_color=COLORS["primary"]
-            ).pack()
-            
-            # Trennlinie
-            ctk.CTkFrame(
-                info_container,
-                fg_color=COLORS["border"],
-                height=1
-            ).pack(fill="x", padx=15, pady=(0, 10))
-            
-            # WLAN-Info mit Icons
-            wifi_frame = ctk.CTkFrame(info_container, fg_color="transparent")
-            wifi_frame.pack(fill="x", padx=12)
-            
-            # WLAN Name
-            ssid_frame = ctk.CTkFrame(wifi_frame, fg_color="transparent")
-            ssid_frame.pack(fill="x", pady=2)
-            
-            ctk.CTkLabel(
-                ssid_frame,
-                text="📶",
-                font=("Segoe UI Emoji", 12),
-                text_color=COLORS["text_secondary"]
-            ).pack(side="left")
-            
-            ctk.CTkLabel(
-                ssid_frame,
-                text=f" {ssid}",
-                font=("Segoe UI", 12, "bold"),
-                text_color=COLORS["text_primary"]
-            ).pack(side="left")
-            
-            # Passwort
-            pw_frame = ctk.CTkFrame(wifi_frame, fg_color="transparent")
-            pw_frame.pack(fill="x", pady=2)
-            
-            ctk.CTkLabel(
-                pw_frame,
-                text="🔑",
-                font=("Segoe UI Emoji", 12),
-                text_color=COLORS["text_secondary"]
-            ).pack(side="left")
-            
-            ctk.CTkLabel(
-                pw_frame,
-                text=f" {password}",
-                font=("Segoe UI", 12),
-                text_color=COLORS["text_secondary"]
-            ).pack(side="left")
-            
-            # QR-Code Container mit weißem Hintergrund
-            qr_container = ctk.CTkFrame(
-                info_container,
-                fg_color="#ffffff",
-                corner_radius=8
+            outer_banner.pack(padx=20, pady=5)
+
+            # Innerer Banner-Container
+            banner = ctk.CTkFrame(
+                outer_banner,
+                fg_color=COLORS["bg_medium"],
+                corner_radius=10
             )
-            qr_container.pack(pady=(12, 8), padx=15)
-            
-            # QR als CTkImage
-            self.qr_ctk_image = ctk.CTkImage(light_image=qr_img, size=(110, 110))
-            
-            # QR-Code Label
+            banner.pack(padx=2, pady=2)
+
+            # Horizontales Layout: QR links, Info rechts
+            content = ctk.CTkFrame(banner, fg_color="transparent")
+            content.pack(padx=15, pady=10)
+
+            # QR-Code links (weißer Hintergrund)
+            qr_container = ctk.CTkFrame(content, fg_color="#ffffff", corner_radius=8)
+            qr_container.pack(side="left", padx=(0, 20))
+
+            self.qr_ctk_image = ctk.CTkImage(light_image=qr_img, size=(90, 90))
             self.qr_label = ctk.CTkLabel(
                 qr_container,
                 image=self.qr_ctk_image,
                 text="",
                 fg_color="#ffffff"
             )
-            self.qr_label.pack(padx=8, pady=8)
-            
-            # Anleitung darunter
-            self.qr_text_label = ctk.CTkLabel(
-                info_container,
-                text="Verbinden → Scannen → Fertig!",
-                font=("Segoe UI", 10),
+            self.qr_label.pack(padx=6, pady=6)
+
+            # Info-Bereich rechts
+            info_frame = ctk.CTkFrame(content, fg_color="transparent")
+            info_frame.pack(side="left", fill="y")
+
+            # Titel
+            ctk.CTkLabel(
+                info_frame,
+                text="📸 FOTO-GALERIE",
+                font=("Segoe UI", 16, "bold"),
+                text_color=COLORS["primary"]
+            ).pack(anchor="w")
+
+            # WLAN-Info (größer und lesbarer)
+            wifi_info = ctk.CTkFrame(info_frame, fg_color="transparent")
+            wifi_info.pack(anchor="w", pady=(8, 0))
+
+            ctk.CTkLabel(
+                wifi_info,
+                text=f"📶 WLAN:  {ssid}",
+                font=("Segoe UI", 14, "bold"),
+                text_color=COLORS["text_primary"]
+            ).pack(anchor="w")
+
+            ctk.CTkLabel(
+                wifi_info,
+                text=f"🔑 Passwort:  {password}",
+                font=("Segoe UI", 14),
+                text_color=COLORS["text_secondary"]
+            ).pack(anchor="w", pady=(2, 0))
+
+            # Anleitung
+            ctk.CTkLabel(
+                info_frame,
+                text="1. Mit WLAN verbinden  →  2. QR-Code scannen  →  3. Fotos ansehen!",
+                font=("Segoe UI", 12),
                 text_color=COLORS["text_muted"]
-            )
-            self.qr_text_label.pack(pady=(0, 12))
-            
-            logger.info(f"✅ QR-Code mit WLAN-Info angezeigt: {url}")
-            
+            ).pack(anchor="w", pady=(10, 0))
+
+            logger.info(f"✅ Galerie-Banner angezeigt: {url}")
+
         except ImportError as e:
             logger.warning(f"Galerie-Modul nicht verfügbar: {e}")
         except Exception as e:
-            logger.error(f"QR-Code Anzeige Fehler: {e}")
+            logger.error(f"Galerie-Banner Fehler: {e}")
     
     def _refresh_template_cards(self):
         """Erstellt Template-Karten neu (nach Config-Änderung)"""

@@ -34,7 +34,7 @@ class FinalScreen(ctk.CTkFrame):
         self._setup_ui()
     
     def _setup_ui(self):
-        """Erstellt die UI - kompakt für 800px Höhe"""
+        """Erstellt die UI - kompakt für 800px Höhe (Miix 310)"""
         # Titel (kompakter)
         self.title_label = ctk.CTkLabel(
             self,
@@ -42,22 +42,22 @@ class FinalScreen(ctk.CTkFrame):
             font=FONTS["heading"],
             text_color=COLORS["text_primary"]
         )
-        self.title_label.pack(pady=(10, 2))
-        
-        # Untertitel
+        self.title_label.pack(pady=(5, 0))
+
+        # Untertitel mit Countdown
         self.subtitle_label = ctk.CTkLabel(
             self,
             text="Dein Foto ist bereit",
             font=FONTS["small"],
             text_color=COLORS["text_secondary"]
         )
-        self.subtitle_label.pack(pady=(0, 10))
-        
-        # Hauptbereich (weniger Padding)
+        self.subtitle_label.pack(pady=(0, 5))
+
+        # Hauptbereich (weniger Padding für mehr Platz)
         main_frame = ctk.CTkFrame(self, fg_color="transparent")
-        main_frame.pack(fill="both", expand=True, padx=20)
-        
-        # Bild-Container
+        main_frame.pack(fill="both", expand=True, padx=15, pady=0)
+
+        # Bild-Container (weniger Padding)
         self.image_frame = ctk.CTkFrame(
             main_frame,
             fg_color=COLORS["bg_medium"],
@@ -65,27 +65,36 @@ class FinalScreen(ctk.CTkFrame):
             border_width=3,
             border_color=COLORS["primary"]
         )
-        self.image_frame.pack(expand=True, fill="both", pady=10)
-        
+        self.image_frame.pack(expand=True, fill="both", pady=5)
+
         self.preview_label = ctk.CTkLabel(self.image_frame, text="", fg_color="transparent")
-        self.preview_label.pack(expand=True, padx=20, pady=20)
-        
+        self.preview_label.pack(expand=True, padx=10, pady=10)
+
+        # Druck-Info (ÜBER den Buttons für bessere Sichtbarkeit)
+        self.print_info = ctk.CTkLabel(
+            self,
+            text="",
+            font=FONTS["small"],
+            text_color=COLORS["text_muted"]
+        )
+        self.print_info.pack(pady=(5, 2))
+
         # Progress-Bar für Auto-Return (schmaler)
         self.progress_bar = ctk.CTkProgressBar(
             self,
             width=500,
-            height=6,
+            height=5,
             fg_color=COLORS["bg_light"],
             progress_color=COLORS["primary"],
             corner_radius=3
         )
-        self.progress_bar.pack(pady=(5, 10))
+        self.progress_bar.pack(pady=(0, 5))
         self.progress_bar.set(1.0)
-        
+
         # Button-Leiste (kompakter)
         button_frame = ctk.CTkFrame(self, fg_color="transparent")
-        button_frame.pack(pady=(0, 15))
-        
+        button_frame.pack(pady=(0, 10))
+
         # Nochmal-Button
         self.redo_btn = ctk.CTkButton(
             button_frame,
@@ -99,8 +108,8 @@ class FinalScreen(ctk.CTkFrame):
             command=self._on_redo
         )
         self.redo_btn.pack(side="left", padx=8)
-        
-        # Drucken-Button (etwas kleiner)
+
+        # Drucken-Button
         self.print_btn = ctk.CTkButton(
             button_frame,
             text=f"🖨️ {self.config.get('ui_texts', {}).get('print', 'DRUCKEN')}",
@@ -113,7 +122,7 @@ class FinalScreen(ctk.CTkFrame):
             command=self._on_print
         )
         self.print_btn.pack(side="left", padx=8)
-        
+
         # Fertig-Button (wenn nicht versteckt)
         if not self.config.get("hide_finish_button", False):
             self.finish_btn = ctk.CTkButton(
@@ -128,15 +137,6 @@ class FinalScreen(ctk.CTkFrame):
                 command=self._on_finish
             )
             self.finish_btn.pack(side="left", padx=8)
-        
-        # Druck-Info
-        self.print_info = ctk.CTkLabel(
-            self,
-            text="",
-            font=FONTS["tiny"],
-            text_color=COLORS["text_muted"]
-        )
-        self.print_info.pack(pady=(0, 5))
     
     def _render_final_image(self) -> Image.Image:
         """Rendert das finale Bild"""
@@ -199,7 +199,7 @@ class FinalScreen(ctk.CTkFrame):
         logger.info("Drucke Bild...")
         
         # Button deaktivieren während Druck
-        self.print_btn.configure(state="disabled", text="Druckt...")
+        self.print_btn.configure(state="disabled", text="⏳ Wird gedruckt...")
         
         # Bild speichern und drucken
         if self.final_image:

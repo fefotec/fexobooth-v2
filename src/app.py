@@ -783,11 +783,20 @@ class PhotoboothApp:
         self.current_screen = self.screens[screen_name]
         self.current_screen_name = screen_name
         self.current_screen.pack(fill="both", expand=True)
-        
+
+        # Top-Bar Sichtbarkeit: Nur im Start-Screen oder im DEV Mode
+        is_dev_mode = self.config.get("developer_mode", False)
+        show_topbar = (screen_name == "start") or is_dev_mode
+
+        if show_topbar:
+            self.top_bar.pack(fill="x", before=self.container)
+        else:
+            self.top_bar.pack_forget()
+
         # Screen aktualisieren
         if hasattr(self.current_screen, "on_show"):
             self.current_screen.on_show(**kwargs)
-        
+
         logger.debug(f"Screen gewechselt: {screen_name}")
     
     def show_admin_dialog(self):

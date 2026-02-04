@@ -54,9 +54,9 @@ SIZES = {
     "button_large_width": 200,        # War 280
     "button_large_height": 55,        # War 80
     
-    # Template-Karten
-    "card_width": 240,                # War 320
-    "card_height": 200,               # War 280
+    # Template-Karten (größer für bessere Erkennbarkeit)
+    "card_width": 280,                # Größer für 1280px Breite
+    "card_height": 240,               # Größer für bessere Vorschau
     
     # Abstände
     "corner_radius": 12,              # War 16

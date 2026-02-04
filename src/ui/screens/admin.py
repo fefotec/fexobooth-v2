@@ -465,7 +465,21 @@ class AdminDialog(ctk.CTkToplevel):
             self.config_data.get("logo_path", ""),
             [("Bilder", "*.png *.jpg *.jpeg")]
         )
-    
+
+        # Hintergrundbild für Startscreen
+        ctk.CTkLabel(
+            scroll,
+            text="",
+            font=FONTS["tiny"]
+        ).pack()  # Spacer
+
+        self.startscreen_bg = self._create_file_picker(
+            scroll,
+            "Startscreen Hintergrund (optional):",
+            self.config_data.get("startscreen_background", ""),
+            [("Bilder", "*.png *.jpg *.jpeg")]
+        )
+
     def _create_file_picker(self, parent, label: str, initial_value: str, 
                             filetypes: List[tuple]) -> ctk.CTkEntry:
         """Erstellt ein Eingabefeld mit Datei-Dialog"""
@@ -1374,7 +1388,8 @@ class AdminDialog(ctk.CTkToplevel):
             self.config_data["template_paths"]["template1"] = t1_path
             self.config_data["template_paths"]["template2"] = t2_path
             self.config_data["logo_path"] = self.logo_path.get().strip()
-            
+            self.config_data["startscreen_background"] = self.startscreen_bg.get().strip()
+
             logger.info(f"Template 1: enabled={self.config_data.get('template1_enabled')}, path='{t1_path}'")
             logger.info(f"Template 2: enabled={self.config_data.get('template2_enabled')}, path='{t2_path}'")
         
