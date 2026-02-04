@@ -25,12 +25,12 @@ logger = get_logger(__name__)
 
 class SessionScreen(ctk.CTkFrame):
     """Session-Screen mit Template-basiertem Live-View"""
-    
+
     def __init__(self, parent, app: "PhotoboothApp"):
         super().__init__(parent, fg_color=COLORS["bg_dark"])
         self.app = app
         self.config = app.config
-        
+
         # Status
         self.current_photo_index = 0
         self.total_photos = 1
@@ -43,7 +43,19 @@ class SessionScreen(ctk.CTkFrame):
         # Cache für skaliertes Overlay (Performance)
         self._scaled_overlay = None
         self._preview_scale = 1.0
-        
+
+        # Performance-Einstellungen
+        self._low_perf = self.config.get("low_performance_mode", {})
+        self._frame_counter = 0
+        self._skip_frames = self._low_perf.get("skip_frames", 0)
+
+        # FPS aus Config (default 20 für schwache Hardware)
+        cam_settings = self.config.get("camera_settings", {})
+        self._target_fps = cam_settings.get("live_view_fps", 20)
+        self._frame_delay_ms = max(33, int(1000 / self._target_fps))
+
+        logger.info(f"Session: FPS={self._target_fps}, delay={self._frame_delay_ms}ms, skip={self._skip_frames}")
+
         self._setup_ui()
     
     def _setup_ui(self):
@@ -148,18 +160,24 @@ class SessionScreen(ctk.CTkFrame):
             orig_w = self.config.get("canvas_width", 1800)
             orig_h = self.config.get("canvas_height", 1200)
 
-        # Skalierungsfaktor berechnen (max 900px für Performance)
-        max_preview_size = 900
+        # Preview-Größe aus Config (kleiner = schneller)
+        low_perf = self.config.get("low_performance_mode", {})
+        max_preview_size = low_perf.get("preview_max_size", 900) if low_perf.get("enabled", False) else 900
+
+        # Skalierungsfaktor berechnen
         self._preview_scale = min(max_preview_size / orig_w, max_preview_size / orig_h, 1.0)
+
+        # Resampling-Methode (NEAREST ist schneller, LANCZOS sieht besser aus)
+        resample = Image.Resampling.NEAREST if low_perf.get("disable_antialiasing", False) else Image.Resampling.LANCZOS
 
         # Overlay skalieren und cachen
         if self.app.overlay_image:
             new_w = int(orig_w * self._preview_scale)
             new_h = int(orig_h * self._preview_scale)
             self._scaled_overlay = self.app.overlay_image.resize(
-                (new_w, new_h), Image.Resampling.LANCZOS
+                (new_w, new_h), resample
             )
-            logger.info(f"Overlay skaliert: {orig_w}x{orig_h} -> {new_w}x{new_h} (scale={self._preview_scale:.2f})")
+            logger.info(f"Overlay skaliert: {orig_w}x{orig_h} -> {new_w}x{new_h} (scale={self._preview_scale:.2f}, fast={low_perf.get('disable_antialiasing', False)})")
         else:
             self._scaled_overlay = None
 
@@ -256,18 +274,28 @@ class SessionScreen(ctk.CTkFrame):
         return canvas
     
     def _fit_image_to_box(self, img: Image.Image, box_w: int, box_h: int) -> Image.Image:
-        """Passt ein Bild in eine Box ein (Cover-Modus)"""
+        """Passt ein Bild in eine Box ein (Cover-Modus)
+
+        Performance-optimiert: Nutzt schnellere Interpolation wenn low_performance_mode aktiv.
+        """
         img_w, img_h = img.size
-        
+
+        # Resampling-Methode wählen
+        low_perf = self.config.get("low_performance_mode", {})
+        if low_perf.get("enabled", False) and low_perf.get("disable_antialiasing", False):
+            resample = Image.Resampling.NEAREST  # Schnellste Methode
+        else:
+            resample = Image.Resampling.BILINEAR  # Guter Kompromiss (schneller als LANCZOS)
+
         # Aspect Ratios
         img_ratio = img_w / img_h
         box_ratio = box_w / box_h
-        
+
         if img_ratio > box_ratio:
             # Bild ist breiter -> auf Höhe skalieren
             new_h = box_h
             new_w = int(new_h * img_ratio)
-            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            img = img.resize((new_w, new_h), resample)
             # Horizontal croppen
             left = (new_w - box_w) // 2
             img = img.crop((left, 0, left + box_w, box_h))
@@ -275,25 +303,25 @@ class SessionScreen(ctk.CTkFrame):
             # Bild ist höher -> auf Breite skalieren
             new_w = box_w
             new_h = int(new_w / img_ratio)
-            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            img = img.resize((new_w, new_h), resample)
             # Vertikal croppen
             top = (new_h - box_h) // 2
             img = img.crop((0, top, box_w, top + box_h))
-        
+
         return img.convert("RGBA")
     
     def _update_live_view(self):
-        """Aktualisiert die Live-Vorschau"""
+        """Aktualisiert die Live-Vorschau (Performance-optimiert)"""
         if not self.is_live:
             logger.debug("_update_live_view: is_live=False, stopping")
             return
-        
+
         # Flash-Effekt?
         if self.show_flash:
             self._display_flash()
             self.after(100, self._update_live_view)
             return
-        
+
         # Foto-Anzeige-Phase?
         if self.photo_display_until > 0:
             if time.time() < self.photo_display_until:
@@ -301,7 +329,7 @@ class SessionScreen(ctk.CTkFrame):
                 logger.debug(f"Display-Phase: Zeige Foto {self.current_photo_index}")
                 preview = self._build_template_preview(None)  # Kein Live-Frame
                 self._display_preview(preview)
-                self.after(50, self._update_live_view)
+                self.after(100, self._update_live_view)  # Langsamer während Display
                 return
             else:
                 # Foto-Anzeige vorbei -> weiter
@@ -310,25 +338,33 @@ class SessionScreen(ctk.CTkFrame):
                 self._next_photo_or_finish()
                 # WICHTIG: Update-Loop weiterlaufen lassen!
                 if self.is_live:
-                    self.after(50, self._update_live_view)
+                    self.after(100, self._update_live_view)
                 return
-        
+
+        # Frame-Skipping für schwache Hardware
+        self._frame_counter += 1
+        if self._skip_frames > 0 and (self._frame_counter % (self._skip_frames + 1)) != 0:
+            # Frame überspringen, aber Loop weiterlaufen lassen
+            if self.is_live:
+                self.after(self._frame_delay_ms, self._update_live_view)
+            return
+
         # Normaler Live-View mit Template
         frame = self.app.camera_manager.get_frame()
-        
+
         # Template mit Live-View rendern
         preview = self._build_template_preview(frame)
-        
+
         # Countdown-Overlay hinzufügen wenn aktiv
         if self.is_countdown_active and self.countdown_value > 0:
             preview = self._add_countdown_overlay(preview)
-        
+
         # Auf Bildschirm-Größe skalieren
         self._display_preview(preview)
-        
-        # Nächstes Update
+
+        # Nächstes Update mit konfiguriertem Delay
         if self.is_live:
-            self.after(33, self._update_live_view)
+            self.after(self._frame_delay_ms, self._update_live_view)
     
     def _add_countdown_overlay(self, img: Image.Image) -> Image.Image:
         """Fügt ZENTRIERTEN Countdown zum Bild hinzu"""
@@ -518,17 +554,25 @@ class SessionScreen(ctk.CTkFrame):
         
         # Webcam: Nutze get_frame() / get_high_res_frame()
         if photo is None:
-            frame = self.app.camera_manager.get_frame(use_cache=False)
-            
-            # Optional: High-Res nur wenn Performance-Mode aus
+            cam_settings = self.config.get("camera_settings", {})
+
+            # High-Res Capture nur wenn performance_mode aus ODER capture_width gesetzt
+            capture_w = cam_settings.get("capture_width", 1280)
+            capture_h = cam_settings.get("capture_height", 720)
+
             if not self.config.get("performance_mode", True):
-                cam_settings = self.config.get("camera_settings", {})
-                high_res = self.app.camera_manager.get_high_res_frame(
-                    cam_settings.get("single_photo_width", 1920),
-                    cam_settings.get("single_photo_height", 1080)
-                )
-                if high_res is not None:
-                    frame = high_res
+                # Noch höhere Auflösung wenn Performance-Mode aus
+                capture_w = cam_settings.get("single_photo_width", 1920)
+                capture_h = cam_settings.get("single_photo_height", 1080)
+
+            # Versuche High-Res Frame
+            high_res = self.app.camera_manager.get_high_res_frame(capture_w, capture_h)
+            if high_res is not None:
+                frame = high_res
+                logger.info(f"High-Res Capture: {frame.shape[1]}x{frame.shape[0]}")
+            else:
+                # Fallback: normales Frame
+                frame = self.app.camera_manager.get_frame(use_cache=False)
             
             if frame is not None:
                 # Optional: 180° Rotation (für kopfüber montierte Kameras)

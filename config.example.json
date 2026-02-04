@@ -19,9 +19,19 @@
   "camera_type": "webcam",
   "camera_index": 0,
   "camera_settings": {
+    "live_view_resolution": 480,
+    "live_view_fps": 20,
+    "capture_width": 1280,
+    "capture_height": 720,
     "single_photo_width": 1920,
-    "single_photo_height": 1080,
-    "live_view_resolution": 640
+    "single_photo_height": 1080
+  },
+  "low_performance_mode": {
+    "enabled": false,
+    "preview_max_size": 600,
+    "skip_frames": 1,
+    "jpeg_quality": 85,
+    "disable_antialiasing": true
   },
   "printer_name": "",
   "max_prints_per_session": 1,
@@ -45,5 +55,7 @@
   "canvas_width": 1800,
   "canvas_height": 1200,
   "admin_button_alpha": 0.1,
-  "hide_finish_button": true
+  "hide_finish_button": true,
+  "rotate_180": false,
+  "flash_duration": 300
 }
