@@ -259,12 +259,21 @@ class StartScreen(ctk.CTkFrame):
             # Als CTkImage speichern
             self._bg_image = ctk.CTkImage(light_image=bg_img, dark_image=bg_img, size=(target_w, target_h))
 
-            # Hintergrund-Label erstellen (unter allen anderen Elementen)
-            self._bg_label = ctk.CTkLabel(self, image=self._bg_image, text="")
-            self._bg_label.place(relx=0.5, rely=0.5, anchor="center")
-            self._bg_label.lower()  # Unter alle anderen Elemente
+            # Hintergrund-Label erstellen - füllt gesamten Bereich
+            self._bg_label = ctk.CTkLabel(
+                self,
+                image=self._bg_image,
+                text="",
+                fg_color="transparent"
+            )
+            # Position: oben links, füllt gesamten Parent
+            self._bg_label.place(x=0, y=0, relwidth=1.0, relheight=1.0)
 
-            logger.info(f"✅ Hintergrundbild geladen: {bg_path}")
+            # WICHTIG: Tkinter lower() um unter alle anderen Widgets zu kommen
+            self._bg_label.tkraise()  # Erst nach oben...
+            self._bg_label.lower()    # ...dann ganz nach unten
+
+            logger.info(f"✅ Hintergrundbild geladen und platziert: {bg_path}")
 
         except Exception as e:
             logger.warning(f"Hintergrundbild konnte nicht geladen werden: {e}")
@@ -636,6 +645,10 @@ class StartScreen(ctk.CTkFrame):
         
         # QR-Code für Galerie anzeigen/ausblenden
         self._update_qr_code()
+
+        # Hintergrundbild ganz nach unten (unter alle anderen Widgets)
+        if self._bg_label:
+            self._bg_label.lower()
     
     def _update_qr_code(self):
         """Zeigt horizontales Galerie-Banner am unteren Rand"""
