@@ -4,10 +4,9 @@ Optimiert für Lenovo Miix 310 (1280x800)
 """
 
 import customtkinter as ctk
-import tkinter as tk
 from typing import TYPE_CHECKING, Optional
 from pathlib import Path
-from PIL import Image, ImageTk
+from PIL import Image
 import os
 
 from src.templates.loader import TemplateLoader
@@ -138,11 +137,7 @@ class TemplateCard(ctk.CTkFrame):
 
 
 class StartScreen(ctk.CTkFrame):
-    """Start-Screen - optimiert für 1280x800
-
-    Verwendet ein Tkinter Canvas für das Hintergrundbild,
-    da CustomTkinter's Stacking-Order nicht zuverlässig funktioniert.
-    """
+    """Start-Screen - optimiert für 1280x800"""
 
     def __init__(self, parent, app: "PhotoboothApp"):
         super().__init__(parent, fg_color=COLORS["bg_dark"])
@@ -154,29 +149,36 @@ class StartScreen(ctk.CTkFrame):
         self.cards_frame: Optional[ctk.CTkFrame] = None
         self._usb_template_path: Optional[str] = None
 
-        # Hintergrundbild-Referenzen
-        self._bg_photo: Optional[ImageTk.PhotoImage] = None  # Tkinter PhotoImage
-        self._bg_canvas_id: Optional[int] = None  # Canvas Item ID
-
         self._setup_ui()
 
     def _setup_ui(self):
-        """Erstellt die UI - einfaches Layout ohne Canvas-Widgets"""
+        """Erstellt die UI - einfaches Layout"""
         self.qr_label: Optional[ctk.CTkLabel] = None
 
-        # Canvas NUR für Hintergrundbild (ganz unten, unter allen Widgets)
-        self.bg_canvas = tk.Canvas(
+        # Titel
+        title_text = self.config.get("ui_texts", {}).get("choose_mode", "Wähle dein Layout!")
+        self.title_label = ctk.CTkLabel(
             self,
-            highlightthickness=0,
-            bg=COLORS["bg_dark"]
+            text=title_text,
+            font=("Segoe UI", 32, "bold"),
+            text_color=COLORS["text_primary"]
         )
-        self.bg_canvas.place(x=0, y=0, relwidth=1.0, relheight=1.0)
+        self.title_label.place(relx=0.5, rely=0.12, anchor="center")
 
-        # Karten-Container (normales CTkFrame)
+        # Untertitel
+        self.subtitle_label = ctk.CTkLabel(
+            self,
+            text="Tippe auf eine Option",
+            font=("Segoe UI", 14),
+            text_color=COLORS["text_secondary"]
+        )
+        self.subtitle_label.place(relx=0.5, rely=0.19, anchor="center")
+
+        # Karten-Container
         self.cards_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.cards_frame.place(relx=0.5, rely=0.48, anchor="center")
 
-        # Start-Button (auf self, nicht Canvas)
+        # Start-Button
         self.start_btn = ctk.CTkButton(
             self,
             text=f"▶  {self.config.get('ui_texts', {}).get('start', 'START')}",
@@ -200,66 +202,6 @@ class StartScreen(ctk.CTkFrame):
 
         # Initiale Karten erstellen
         self._create_template_cards()
-
-    def _setup_background(self):
-        """Lädt Hintergrundbild auf Canvas und zeichnet Titel-Text"""
-        # Canvas leeren
-        self.bg_canvas.delete("all")
-        self._bg_photo = None
-
-        # Canvas-Größe
-        self.update_idletasks()
-        canvas_w = self.bg_canvas.winfo_width()
-        canvas_h = self.bg_canvas.winfo_height()
-        if canvas_w < 100:
-            canvas_w = 1280
-        if canvas_h < 100:
-            canvas_h = 800
-
-        bg_path = self.config.get("startscreen_background", "")
-
-        if bg_path and os.path.exists(bg_path):
-            try:
-                # Bild laden und auf Screen-Größe skalieren (Cover-Modus)
-                bg_img = Image.open(bg_path)
-                img_ratio = bg_img.width / bg_img.height
-                target_ratio = canvas_w / canvas_h
-
-                if img_ratio > target_ratio:
-                    new_h = canvas_h
-                    new_w = int(new_h * img_ratio)
-                else:
-                    new_w = canvas_w
-                    new_h = int(new_w / img_ratio)
-
-                bg_img = bg_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                left = (new_w - canvas_w) // 2
-                top = (new_h - canvas_h) // 2
-                bg_img = bg_img.crop((left, top, left + canvas_w, top + canvas_h))
-
-                self._bg_photo = ImageTk.PhotoImage(bg_img)
-                self.bg_canvas.create_image(0, 0, image=self._bg_photo, anchor="nw")
-                logger.info(f"✅ Hintergrundbild: {bg_path}")
-
-            except Exception as e:
-                logger.warning(f"Hintergrundbild-Fehler: {e}")
-
-        # Titel und Untertitel auf Canvas (funktioniert immer, transparent)
-        title_text = self.config.get("ui_texts", {}).get("choose_mode", "Wähle dein Layout!")
-        self.bg_canvas.create_text(
-            canvas_w // 2, int(canvas_h * 0.12),
-            text=title_text,
-            font=("Segoe UI", 32, "bold"),
-            fill=COLORS["text_primary"],
-            anchor="center"
-        )
-        self.bg_canvas.create_text(
-            canvas_w // 2, int(canvas_h * 0.19),
-            text="Tippe auf eine Option",
-            font=("Segoe UI", 14),
-            fill=COLORS["text_secondary"],
-            anchor="center"
-        )
 
     def _create_template_cards(self):
         """Erstellt die Template-Karten im cards_frame"""
@@ -589,9 +531,6 @@ class StartScreen(ctk.CTkFrame):
 
         # QR-Code für Galerie anzeigen/ausblenden
         self._update_qr_code()
-
-        # Hintergrundbild aktualisieren (Canvas-basiert)
-        self._setup_background()
     
     def _update_qr_code(self):
         """Zeigt horizontales Galerie-Banner am unteren Rand"""

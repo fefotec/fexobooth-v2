@@ -32,8 +32,7 @@ DEFAULT_CONFIG = {
     "logo_path": "",
     "logo_scale": 80,
     "background_color": "#1a1a2e",
-    "startscreen_background": "",  # Optionales Hintergrundbild für Startscreen
-    
+
     # Kamera
     "camera_type": "webcam",
     "camera_index": 0,
