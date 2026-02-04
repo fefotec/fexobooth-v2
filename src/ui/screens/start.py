@@ -161,10 +161,10 @@ class StartScreen(ctk.CTkFrame):
         self._setup_ui()
 
     def _setup_ui(self):
-        """Erstellt die UI mit Canvas-basiertem Hintergrundbild"""
+        """Erstellt die UI - Canvas nur für Hintergrundbild, Widgets darüber mit place()"""
         self.qr_label: Optional[ctk.CTkLabel] = None
 
-        # Canvas für Hintergrundbild (füllt gesamten Screen)
+        # Canvas NUR für Hintergrundbild (ganz unten)
         self.bg_canvas = tk.Canvas(
             self,
             highlightthickness=0,
@@ -172,24 +172,36 @@ class StartScreen(ctk.CTkFrame):
         )
         self.bg_canvas.place(x=0, y=0, relwidth=1.0, relheight=1.0)
 
-        # Text-IDs für Canvas (werden in _setup_background erstellt)
-        self._title_id: Optional[int] = None
-        self._subtitle_id: Optional[int] = None
+        # Titel - direkt auf self (CTkFrame), NICHT auf Canvas
+        self.title_label = tk.Label(
+            self,
+            text=self.config.get("ui_texts", {}).get("choose_mode", "Wähle dein Layout!"),
+            font=("Segoe UI", 32, "bold"),
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_dark"]  # Wird bei Hintergrundbild angepasst
+        )
+        self.title_label.place(relx=0.5, rely=0.15, anchor="center")
 
-        # Canvas Window IDs
-        self._cards_window_id: Optional[int] = None
-        self._btn_window_id: Optional[int] = None
-        self._banner_window_id: Optional[int] = None
+        # Untertitel
+        self.subtitle_label = tk.Label(
+            self,
+            text="Tippe auf eine Option",
+            font=("Segoe UI", 14),
+            fg=COLORS["text_secondary"],
+            bg=COLORS["bg_dark"]
+        )
+        self.subtitle_label.place(relx=0.5, rely=0.22, anchor="center")
 
-        # Karten-Container (transparent, wird im Canvas eingebettet)
-        self.cards_frame = ctk.CTkFrame(self.bg_canvas, fg_color="transparent")
+        # Karten-Container
+        self.cards_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.cards_frame.place(relx=0.5, rely=0.50, anchor="center")
 
         # Template-Karten erstellen
         self._create_template_cards(self.cards_frame)
 
-        # Start-Button (im Canvas eingebettet)
+        # Start-Button
         self.start_btn = ctk.CTkButton(
-            self.bg_canvas,
+            self,
             text=f"▶  {self.config.get('ui_texts', {}).get('start', 'START')}",
             font=("Segoe UI", 24, "bold"),
             width=280,
@@ -203,20 +215,19 @@ class StartScreen(ctk.CTkFrame):
             state="disabled",
             command=self._on_start
         )
+        self.start_btn.place(relx=0.5, rely=0.78, anchor="center")
 
-        # Galerie-Banner (im Canvas eingebettet)
-        self.gallery_banner = ctk.CTkFrame(self.bg_canvas, fg_color="transparent")
+        # Galerie-Banner (unten)
+        self.gallery_banner = ctk.CTkFrame(self, fg_color="transparent")
+        self.gallery_banner.place(relx=0.5, rely=0.93, anchor="center")
 
     def _setup_background(self):
-        """Lädt Hintergrundbild und erstellt Canvas-Texte (wirklich transparent)"""
-        # Canvas leeren
-        self.bg_canvas.delete("all")
-        self._bg_canvas_id = None
+        """Lädt Hintergrundbild auf Canvas (nur das Bild, keine Widgets)"""
+        # Nur Hintergrundbild vom Canvas entfernen (Tag "bg")
+        self.bg_canvas.delete("bg")
         self._bg_photo = None
-        self._title_id = None
-        self._subtitle_id = None
 
-        # Aktuelle Canvas-Größe (oder Fallback)
+        # Canvas-Größe ermitteln
         self.update_idletasks()
         canvas_w = self.bg_canvas.winfo_width()
         canvas_h = self.bg_canvas.winfo_height()
@@ -226,23 +237,21 @@ class StartScreen(ctk.CTkFrame):
             canvas_h = 800
 
         bg_path = self.config.get("startscreen_background", "")
+        has_bg_image = False
 
         if bg_path and os.path.exists(bg_path):
             try:
                 # Bild laden
                 bg_img = Image.open(bg_path)
-                logger.debug(f"Hintergrundbild: {bg_img.size}")
 
-                # COVER-Modus: Bild füllt gesamten Bereich, wird ggf. beschnitten
+                # COVER-Modus: Bild füllt gesamten Bereich
                 img_ratio = bg_img.width / bg_img.height
                 target_ratio = canvas_w / canvas_h
 
                 if img_ratio > target_ratio:
-                    # Bild ist breiter - nach Höhe skalieren
                     new_h = canvas_h
                     new_w = int(new_h * img_ratio)
                 else:
-                    # Bild ist höher - nach Breite skalieren
                     new_w = canvas_w
                     new_h = int(new_w / img_ratio)
 
@@ -253,54 +262,63 @@ class StartScreen(ctk.CTkFrame):
                 top = (new_h - canvas_h) // 2
                 bg_img = bg_img.crop((left, top, left + canvas_w, top + canvas_h))
 
-                # PhotoImage erstellen und auf Canvas zeichnen
+                # Auf Canvas zeichnen
                 self._bg_photo = ImageTk.PhotoImage(bg_img)
-                self._bg_canvas_id = self.bg_canvas.create_image(
+                self.bg_canvas.create_image(
                     0, 0,
                     image=self._bg_photo,
-                    anchor="nw"
+                    anchor="nw",
+                    tags="bg"
                 )
+                has_bg_image = True
                 logger.info(f"✅ Hintergrundbild: {bg_path} ({canvas_w}x{canvas_h})")
 
             except Exception as e:
                 logger.warning(f"Hintergrundbild-Fehler: {e}")
 
-        # Titel auf Canvas (wirklich transparent - kein Hintergrund!)
+        # Label-Hintergründe anpassen (transparent wenn Bild vorhanden)
+        if has_bg_image:
+            # Bild aus Canvas als Hintergrund für Labels extrahieren
+            # Da das nicht direkt geht, machen wir die Labels "unsichtbar"
+            # indem wir sie auf dem Canvas als Text zeichnen
+            self._update_title_on_canvas(canvas_w, canvas_h)
+        else:
+            # Kein Bild - normale dunkle Labels
+            self.title_label.configure(bg=COLORS["bg_dark"])
+            self.subtitle_label.configure(bg=COLORS["bg_dark"])
+            self.title_label.place(relx=0.5, rely=0.15, anchor="center")
+            self.subtitle_label.place(relx=0.5, rely=0.22, anchor="center")
+            # Canvas-Texte entfernen falls vorhanden
+            self.bg_canvas.delete("title")
+
+    def _update_title_on_canvas(self, canvas_w: int, canvas_h: int):
+        """Zeichnet Titel/Untertitel direkt auf Canvas (für echte Transparenz)"""
+        # Tkinter Labels verstecken
+        self.title_label.place_forget()
+        self.subtitle_label.place_forget()
+
+        # Alte Canvas-Texte entfernen
+        self.bg_canvas.delete("title")
+
+        # Titel auf Canvas zeichnen
         title_text = self.config.get("ui_texts", {}).get("choose_mode", "Wähle dein Layout!")
-        self._title_id = self.bg_canvas.create_text(
-            canvas_w // 2, int(canvas_h * 0.18),
+        self.bg_canvas.create_text(
+            canvas_w // 2, int(canvas_h * 0.15),
             text=title_text,
             font=("Segoe UI", 32, "bold"),
             fill=COLORS["text_primary"],
-            anchor="center"
+            anchor="center",
+            tags="title"
         )
 
         # Untertitel auf Canvas
-        self._subtitle_id = self.bg_canvas.create_text(
-            canvas_w // 2, int(canvas_h * 0.24),
+        self.bg_canvas.create_text(
+            canvas_w // 2, int(canvas_h * 0.22),
             text="Tippe auf eine Option",
             font=("Segoe UI", 14),
             fill=COLORS["text_secondary"],
-            anchor="center"
-        )
-
-        # Widgets im Canvas positionieren (create_window für CTk-Widgets)
-        self._cards_window_id = self.bg_canvas.create_window(
-            canvas_w // 2, int(canvas_h * 0.50),
-            window=self.cards_frame,
-            anchor="center"
-        )
-
-        self._btn_window_id = self.bg_canvas.create_window(
-            canvas_w // 2, int(canvas_h * 0.75),
-            window=self.start_btn,
-            anchor="center"
-        )
-
-        self._banner_window_id = self.bg_canvas.create_window(
-            canvas_w // 2, int(canvas_h * 0.92),
-            window=self.gallery_banner,
-            anchor="center"
+            anchor="center",
+            tags="title"
         )
 
     def _create_template_cards(self, parent):
