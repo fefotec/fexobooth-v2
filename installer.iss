@@ -26,7 +26,7 @@ DisableProgramGroupPage=yes
 ; Ausgabedatei
 OutputDir=installer_output
 OutputBaseFilename=FexoBooth_Setup_{#MyAppVersion}
-SetupIconFile=assets\icons\camera.png
+SetupIconFile=assets\icons\camera.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
 LZMAUseSeparateProcess=yes
@@ -72,7 +72,7 @@ Name: "{app}\.booking_cache"
 [Icons]
 ; Startmenü-Einträge
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{group}\{#MyAppName} (Entwicklermodus)"; Filename: "{app}\start_dev.bat"; IconFilename: "{app}\assets\icons\camera.png"
+Name: "{group}\{#MyAppName} (Entwicklermodus)"; Filename: "{app}\start_dev.bat"; IconFilename: "{app}\assets\icons\camera.ico"
 Name: "{group}\Von GitHub aktualisieren"; Filename: "{app}\update_from_github.bat"
 Name: "{group}\Hotspot einrichten (Einmalig)"; Filename: "{app}\setup\einmalig_hotspot_einrichten.bat"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
