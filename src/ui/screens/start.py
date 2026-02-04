@@ -150,8 +150,6 @@ class StartScreen(ctk.CTkFrame):
         self._usb_template_path: Optional[str] = None  # USB-Template wenn gefunden
         self._bg_image: Optional[ctk.CTkImage] = None  # Hintergrundbild
         self._bg_label: Optional[ctk.CTkLabel] = None
-        self._pulse_active = False  # Puls-Animation aktiv
-        self._pulse_step = 0  # Animations-Schritt
 
         self._setup_ui()
 
@@ -160,21 +158,22 @@ class StartScreen(ctk.CTkFrame):
         # Hintergrundbild laden wenn konfiguriert
         self._setup_background()
 
-        # Hauptcontainer: Links Karten, Rechts Start-Button
-        main_container = ctk.CTkFrame(self, fg_color="transparent")
-        main_container.place(relx=0.5, rely=0.45, anchor="center")
+        # Galerie-Banner ZUERST (unten) - damit es Platz reserviert
+        self.gallery_banner = ctk.CTkFrame(self, fg_color="transparent")
+        self.gallery_banner.pack(side="bottom", fill="x", pady=(0, 8))
+        self.qr_label: Optional[ctk.CTkLabel] = None
 
-        # Horizontales Layout
-        content_frame = ctk.CTkFrame(main_container, fg_color="transparent")
-        content_frame.pack()
+        # Zentrierter Hauptcontainer (nimmt restlichen Platz)
+        center_frame = ctk.CTkFrame(self, fg_color="transparent")
+        center_frame.pack(expand=True, fill="both")
 
-        # LINKE SEITE: Titel + Template-Karten
-        left_side = ctk.CTkFrame(content_frame, fg_color="transparent")
-        left_side.pack(side="left", padx=(0, 40))
+        # Innerer Container für vertikale Zentrierung
+        inner_frame = ctk.CTkFrame(center_frame, fg_color="transparent")
+        inner_frame.place(relx=0.5, rely=0.5, anchor="center")
 
         # Titel
         title = ctk.CTkLabel(
-            left_side,
+            inner_frame,
             text=self.config.get("ui_texts", {}).get("choose_mode", "Wähle dein Layout!"),
             font=FONTS["title"],
             text_color=COLORS["text_primary"]
@@ -183,7 +182,7 @@ class StartScreen(ctk.CTkFrame):
 
         # Untertitel
         subtitle = ctk.CTkLabel(
-            left_side,
+            inner_frame,
             text="Tippe auf eine Option",
             font=FONTS["body"],
             text_color=COLORS["text_secondary"]
@@ -191,48 +190,29 @@ class StartScreen(ctk.CTkFrame):
         subtitle.pack(pady=(0, 15))
 
         # Karten-Container
-        self.cards_frame = ctk.CTkFrame(left_side, fg_color="transparent")
+        self.cards_frame = ctk.CTkFrame(inner_frame, fg_color="transparent")
         self.cards_frame.pack()
 
         # Template-Karten erstellen
         self._create_template_cards(self.cards_frame)
 
-        # RECHTE SEITE: Großer Start-Button mit Animation
-        right_side = ctk.CTkFrame(content_frame, fg_color="transparent")
-        right_side.pack(side="left", padx=(40, 0), fill="y")
-
-        # Container für Button mit Glow-Effekt
-        self.start_btn_container = ctk.CTkFrame(
-            right_side,
-            fg_color="transparent",
-            corner_radius=20
-        )
-        self.start_btn_container.pack(expand=True)
-
-        # Großer Start-Button
+        # Start-Button (groß und auffällig, unter den Karten)
         self.start_btn = ctk.CTkButton(
-            self.start_btn_container,
-            text=f"▶\n{self.config.get('ui_texts', {}).get('start', 'START')}",
-            font=("Segoe UI", 28, "bold"),
-            width=160,
-            height=160,
+            inner_frame,
+            text=f"▶  {self.config.get('ui_texts', {}).get('start', 'START')}",
+            font=("Segoe UI", 24, "bold"),
+            width=280,
+            height=70,
             fg_color=COLORS["bg_light"],
-            hover_color=COLORS["primary_hover"],
+            hover_color=COLORS["bg_card"],
             text_color=COLORS["text_muted"],
-            corner_radius=80,  # Rund
+            corner_radius=35,
+            border_width=3,
+            border_color=COLORS["border"],
             state="disabled",
             command=self._on_start
         )
-        self.start_btn.pack(padx=10, pady=10)
-
-        # Animation-Variablen
-        self._pulse_active = False
-        self._pulse_step = 0
-
-        # Galerie-Banner (unten, horizontales Banner - wird in on_show befüllt)
-        self.gallery_banner = ctk.CTkFrame(self, fg_color="transparent")
-        self.gallery_banner.pack(side="bottom", fill="x", pady=(0, 10))
-        self.qr_label: Optional[ctk.CTkLabel] = None
+        self.start_btn.pack(pady=(25, 0))
 
     def _setup_background(self):
         """Lädt und zeigt optionales Hintergrundbild"""
@@ -502,76 +482,29 @@ class StartScreen(ctk.CTkFrame):
             self.selected_option = None
 
     def _enable_start_button(self):
-        """Aktiviert den Start-Button mit Animation"""
+        """Aktiviert den Start-Button (grau → farbig)"""
         self.start_btn.configure(
             state="normal",
             fg_color=COLORS["primary"],
             text_color=COLORS["text_primary"],
-            hover_color=COLORS["primary_hover"]
+            hover_color=COLORS["primary_hover"],
+            border_color=COLORS["primary"]
         )
-        # Puls-Animation starten
-        self._start_pulse_animation()
 
     def _disable_start_button(self):
-        """Deaktiviert den Start-Button"""
-        self._stop_pulse_animation()
+        """Deaktiviert den Start-Button (farbig → grau)"""
         self.start_btn.configure(
             state="disabled",
             fg_color=COLORS["bg_light"],
-            text_color=COLORS["text_muted"]
+            text_color=COLORS["text_muted"],
+            hover_color=COLORS["bg_card"],
+            border_color=COLORS["border"]
         )
-
-    def _start_pulse_animation(self):
-        """Startet die Puls-Animation für den Start-Button"""
-        if self._pulse_active:
-            return
-        self._pulse_active = True
-        self._pulse_step = 0
-        self._animate_pulse()
-
-    def _stop_pulse_animation(self):
-        """Stoppt die Puls-Animation"""
-        self._pulse_active = False
-
-    def _animate_pulse(self):
-        """Führt einen Puls-Animations-Schritt aus"""
-        if not self._pulse_active:
-            return
-
-        try:
-            # Sanfte Puls-Animation (Skalierung simuliert durch Farbe)
-            import math
-            self._pulse_step += 1
-
-            # Sinuswelle für sanften Puls (alle 50ms, ~3 Sekunden Zyklus)
-            progress = math.sin(self._pulse_step * 0.1) * 0.5 + 0.5
-
-            # Zwischen Primary und Primary-Hover interpolieren
-            # Primary: #e00675, Primary-Hover: #ff1493
-            base_r, base_g, base_b = 0xe0, 0x06, 0x75
-            hover_r, hover_g, hover_b = 0xff, 0x14, 0x93
-
-            r = int(base_r + (hover_r - base_r) * progress)
-            g = int(base_g + (hover_g - base_g) * progress)
-            b = int(base_b + (hover_b - base_b) * progress)
-
-            color = f"#{r:02x}{g:02x}{b:02x}"
-            self.start_btn.configure(fg_color=color)
-
-            # Nächster Schritt nach 50ms
-            self.after(50, self._animate_pulse)
-
-        except Exception as e:
-            logger.debug(f"Puls-Animation Fehler: {e}")
-            self._pulse_active = False
     
     def _on_start(self):
         """Start gedrückt"""
         if not self.selected_option:
             return
-
-        # Animation stoppen
-        self._stop_pulse_animation()
 
         logger.info(f"Start: {self.selected_option}")
 
@@ -829,5 +762,5 @@ class StartScreen(ctk.CTkFrame):
             logger.error("cards_frame ist None - kann keine Karten erstellen!")
 
     def on_hide(self):
-        """Screen wird verlassen - Animation stoppen"""
-        self._stop_pulse_animation()
+        """Screen wird verlassen"""
+        pass  # Placeholder für eventuelle Cleanup-Aufgaben
