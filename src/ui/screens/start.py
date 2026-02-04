@@ -161,10 +161,10 @@ class StartScreen(ctk.CTkFrame):
         self._setup_ui()
 
     def _setup_ui(self):
-        """Erstellt die UI - Canvas nur für Hintergrundbild, Widgets darüber mit place()"""
+        """Erstellt die UI - einfaches Layout ohne Canvas-Widgets"""
         self.qr_label: Optional[ctk.CTkLabel] = None
 
-        # Canvas NUR für Hintergrundbild (ganz unten)
+        # Canvas NUR für Hintergrundbild (ganz unten, unter allen Widgets)
         self.bg_canvas = tk.Canvas(
             self,
             highlightthickness=0,
@@ -172,31 +172,11 @@ class StartScreen(ctk.CTkFrame):
         )
         self.bg_canvas.place(x=0, y=0, relwidth=1.0, relheight=1.0)
 
-        # Titel - direkt auf self (CTkFrame), NICHT auf Canvas
-        self.title_label = tk.Label(
-            self,
-            text=self.config.get("ui_texts", {}).get("choose_mode", "Wähle dein Layout!"),
-            font=("Segoe UI", 32, "bold"),
-            fg=COLORS["text_primary"],
-            bg=COLORS["bg_dark"]  # Wird bei Hintergrundbild angepasst
-        )
-        self.title_label.place(relx=0.5, rely=0.15, anchor="center")
+        # Karten-Container (normales CTkFrame)
+        self.cards_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.cards_frame.place(relx=0.5, rely=0.48, anchor="center")
 
-        # Untertitel
-        self.subtitle_label = tk.Label(
-            self,
-            text="Tippe auf eine Option",
-            font=("Segoe UI", 14),
-            fg=COLORS["text_secondary"],
-            bg=COLORS["bg_dark"]
-        )
-        self.subtitle_label.place(relx=0.5, rely=0.22, anchor="center")
-
-        # Karten werden direkt auf dem Canvas platziert (keine Container-Frames!)
-        # cards_frame wird nur als Referenz-Objekt behalten für Kompatibilität
-        self.cards_frame = None  # Kein Container mehr!
-
-        # Start-Button wird im Canvas eingebettet
+        # Start-Button (auf self, nicht Canvas)
         self.start_btn = ctk.CTkButton(
             self,
             text=f"▶  {self.config.get('ui_texts', {}).get('start', 'START')}",
@@ -212,17 +192,22 @@ class StartScreen(ctk.CTkFrame):
             state="disabled",
             command=self._on_start
         )
+        self.start_btn.place(relx=0.5, rely=0.78, anchor="center")
 
-        # Galerie-Banner
+        # Galerie-Banner (unten)
         self.gallery_banner = ctk.CTkFrame(self, fg_color="transparent")
+        self.gallery_banner.place(relx=0.5, rely=0.93, anchor="center")
+
+        # Initiale Karten erstellen
+        self._create_template_cards()
 
     def _setup_background(self):
-        """Lädt Hintergrundbild auf Canvas (nur das Bild, keine Widgets)"""
-        # Nur Hintergrundbild vom Canvas entfernen (Tag "bg")
-        self.bg_canvas.delete("bg")
+        """Lädt Hintergrundbild auf Canvas und zeichnet Titel-Text"""
+        # Canvas leeren
+        self.bg_canvas.delete("all")
         self._bg_photo = None
 
-        # Canvas-Größe ermitteln
+        # Canvas-Größe
         self.update_idletasks()
         canvas_w = self.bg_canvas.winfo_width()
         canvas_h = self.bg_canvas.winfo_height()
@@ -232,14 +217,11 @@ class StartScreen(ctk.CTkFrame):
             canvas_h = 800
 
         bg_path = self.config.get("startscreen_background", "")
-        has_bg_image = False
 
         if bg_path and os.path.exists(bg_path):
             try:
-                # Bild laden
+                # Bild laden und auf Screen-Größe skalieren (Cover-Modus)
                 bg_img = Image.open(bg_path)
-
-                # COVER-Modus: Bild füllt gesamten Bereich
                 img_ratio = bg_img.width / bg_img.height
                 target_ratio = canvas_w / canvas_h
 
@@ -251,156 +233,62 @@ class StartScreen(ctk.CTkFrame):
                     new_h = int(new_w / img_ratio)
 
                 bg_img = bg_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-
-                # Zentriert beschneiden
                 left = (new_w - canvas_w) // 2
                 top = (new_h - canvas_h) // 2
                 bg_img = bg_img.crop((left, top, left + canvas_w, top + canvas_h))
 
-                # Auf Canvas zeichnen
                 self._bg_photo = ImageTk.PhotoImage(bg_img)
-                self.bg_canvas.create_image(
-                    0, 0,
-                    image=self._bg_photo,
-                    anchor="nw",
-                    tags="bg"
-                )
-                has_bg_image = True
-                logger.info(f"✅ Hintergrundbild: {bg_path} ({canvas_w}x{canvas_h})")
+                self.bg_canvas.create_image(0, 0, image=self._bg_photo, anchor="nw")
+                logger.info(f"✅ Hintergrundbild: {bg_path}")
 
             except Exception as e:
                 logger.warning(f"Hintergrundbild-Fehler: {e}")
 
-        # Titel anpassen (Canvas-Text wenn Bild, sonst Labels)
-        if has_bg_image:
-            self._update_title_on_canvas(canvas_w, canvas_h)
-        else:
-            # Kein Bild - normale dunkle Labels
-            self.title_label.configure(bg=COLORS["bg_dark"])
-            self.subtitle_label.configure(bg=COLORS["bg_dark"])
-            self.title_label.place(relx=0.5, rely=0.15, anchor="center")
-            self.subtitle_label.place(relx=0.5, rely=0.22, anchor="center")
-            self.bg_canvas.delete("title")
-
-        # Karten und Buttons auf Canvas positionieren
-        self._position_cards_on_canvas(canvas_w, canvas_h)
-
-    def _update_title_on_canvas(self, canvas_w: int, canvas_h: int):
-        """Zeichnet Titel/Untertitel direkt auf Canvas (für echte Transparenz)"""
-        # Tkinter Labels verstecken
-        self.title_label.place_forget()
-        self.subtitle_label.place_forget()
-
-        # Alte Canvas-Texte entfernen
-        self.bg_canvas.delete("title")
-
-        # Titel auf Canvas zeichnen
+        # Titel und Untertitel auf Canvas (funktioniert immer, transparent)
         title_text = self.config.get("ui_texts", {}).get("choose_mode", "Wähle dein Layout!")
         self.bg_canvas.create_text(
-            canvas_w // 2, int(canvas_h * 0.15),
+            canvas_w // 2, int(canvas_h * 0.12),
             text=title_text,
             font=("Segoe UI", 32, "bold"),
             fill=COLORS["text_primary"],
-            anchor="center",
-            tags="title"
+            anchor="center"
         )
-
-        # Untertitel auf Canvas
         self.bg_canvas.create_text(
-            canvas_w // 2, int(canvas_h * 0.22),
+            canvas_w // 2, int(canvas_h * 0.19),
             text="Tippe auf eine Option",
             font=("Segoe UI", 14),
             fill=COLORS["text_secondary"],
-            anchor="center",
-            tags="title"
+            anchor="center"
         )
 
-    def _position_cards_on_canvas(self, canvas_w: int, canvas_h: int):
-        """Positioniert Karten direkt auf dem Canvas (keine Container-Frames)"""
-        # Alte Card-Windows entfernen
-        self.bg_canvas.delete("cards")
-        self.bg_canvas.delete("startbtn")
-        self.bg_canvas.delete("banner")
-
-        # Karten horizontal zentriert positionieren
-        card_list = list(self.cards.values())
-        num_cards = len(card_list)
-
-        if num_cards > 0:
-            card_width = SIZES["card_width"]
-            card_spacing = 20
-            total_width = num_cards * card_width + (num_cards - 1) * card_spacing
-            start_x = (canvas_w - total_width) // 2 + card_width // 2
-
-            for i, card in enumerate(card_list):
-                x = start_x + i * (card_width + card_spacing)
-                y = int(canvas_h * 0.50)
-                self.bg_canvas.create_window(
-                    x, y,
-                    window=card,
-                    anchor="center",
-                    tags="cards"
-                )
-
-        # Start-Button auf Canvas
-        self.bg_canvas.create_window(
-            canvas_w // 2, int(canvas_h * 0.78),
-            window=self.start_btn,
-            anchor="center",
-            tags="startbtn"
-        )
-
-        # Galerie-Banner auf Canvas
-        self.bg_canvas.create_window(
-            canvas_w // 2, int(canvas_h * 0.93),
-            window=self.gallery_banner,
-            anchor="center",
-            tags="banner"
-        )
-
-    def _create_template_cards(self, parent=None):
-        """Erstellt die Template-Karten (direkt auf Canvas, kein Container)
-
-        Der parent-Parameter wird ignoriert - Karten werden auf self.bg_canvas erstellt.
-        """
+    def _create_template_cards(self):
+        """Erstellt die Template-Karten im cards_frame"""
         has_custom_template = False
-
         logger.info("=== Erstelle Template-Karten ===")
 
-        # USB-Template hat höchste Priorität (aus Cache oder USB)
+        # USB-Template hat höchste Priorität
         cached = self.app.cached_usb_template
         if cached or (hasattr(self, '_usb_template_path') and self._usb_template_path):
-            # Preview aus Cache oder vom USB laden
             if cached and cached.get("overlay"):
-                logger.info(f"USB-Template aus Cache: {cached.get('name')}")
                 preview = cached.get("overlay")
             else:
-                logger.info(f"USB-Template vom Stick: {self._usb_template_path}")
                 preview = self._load_template_preview(self._usb_template_path)
 
             card = TemplateCard(
-                self.bg_canvas,  # Direkt auf Canvas!
+                self.cards_frame,
                 title="Druckvorlage",
                 preview_image=preview,
                 on_click=lambda c: self._select_card(c, "usb_template")
             )
-            # KEIN pack() - wird später mit create_window positioniert
+            card.pack(side="left", padx=10)
             self.cards["usb_template"] = card
-
-            # Automatisch vorselektieren!
             self._select_card(card, "usb_template")
-
-            logger.info(f"✅ USB-Template Karte erstellt")
             has_custom_template = True
+            logger.info("✅ USB-Template Karte erstellt")
 
-        # Bei USB-Template: Nur USB + Single anzeigen
         usb_active = self.app.cached_usb_template or (hasattr(self, '_usb_template_path') and self._usb_template_path)
 
-        if not usb_active:
-            logger.debug(f"template1_enabled: {self.config.get('template1_enabled')}")
-            logger.debug(f"template2_enabled: {self.config.get('template2_enabled')}")
-
-        # Template 1 (nur wenn kein USB-Template)
+        # Template 1
         t1_enabled = self.config.get("template1_enabled", False) and not usb_active
         t1_path = self.config.get("template_paths", {}).get("template1", "")
         t1_resolved = self._resolve_template_path(t1_path) if t1_path else None
@@ -408,16 +296,16 @@ class StartScreen(ctk.CTkFrame):
         if t1_enabled and t1_resolved:
             preview = self._load_template_preview(t1_resolved)
             card = TemplateCard(
-                self.bg_canvas,
+                self.cards_frame,
                 title="Template 1",
                 preview_image=preview,
                 on_click=lambda c: self._select_card(c, "template1")
             )
+            card.pack(side="left", padx=10)
             self.cards["template1"] = card
             has_custom_template = True
-            logger.info(f"✅ Template 1 Karte erstellt")
 
-        # Template 2 (nur wenn kein USB-Template)
+        # Template 2
         t2_enabled = self.config.get("template2_enabled", False) and not usb_active
         t2_path = self.config.get("template_paths", {}).get("template2", "")
         t2_resolved = self._resolve_template_path(t2_path) if t2_path else None
@@ -425,50 +313,47 @@ class StartScreen(ctk.CTkFrame):
         if t2_enabled and t2_resolved:
             preview = self._load_template_preview(t2_resolved)
             card = TemplateCard(
-                self.bg_canvas,
+                self.cards_frame,
                 title="Template 2",
                 preview_image=preview,
                 on_click=lambda c: self._select_card(c, "template2")
             )
+            card.pack(side="left", padx=10)
             self.cards["template2"] = card
             has_custom_template = True
-            logger.info(f"✅ Template 2 Karte erstellt")
 
-        # Standard 2x2 Template (wenn keine Custom-Templates aktiv)
+        # Standard 2x2 (wenn keine Custom-Templates)
         if not has_custom_template:
-            logger.info("Keine Custom-Templates aktiv, zeige Standard 2x2")
             default_overlay, _ = create_default_template()
-
             card = TemplateCard(
-                self.bg_canvas,
+                self.cards_frame,
                 title="Standard 2x2",
                 preview_image=default_overlay,
                 on_click=lambda c: self._select_card(c, "default_2x2")
             )
+            card.pack(side="left", padx=10)
             self.cards["default_2x2"] = card
-        
-        # Single-Foto
-        allow_single = self.config.get("allow_single_mode", True)
-        logger.info(f"Single-Foto Modus: {'aktiviert' if allow_single else 'DEAKTIVIERT'}")
 
-        if allow_single:
+        # Single-Foto
+        if self.config.get("allow_single_mode", True):
             card = TemplateCard(
-                self.bg_canvas,
+                self.cards_frame,
                 title="Single-Foto",
                 is_single=True,
                 on_click=lambda c: self._select_card(c, "single")
             )
+            card.pack(side="left", padx=10)
             self.cards["single"] = card
 
-        # Fallback: Wenn keine Karten erstellt wurden
+        # Fallback
         if not self.cards:
-            logger.error("KEINE KARTEN ERSTELLT! Zeige Notfall-Single-Karte")
             card = TemplateCard(
-                self.bg_canvas,
+                self.cards_frame,
                 title="Einzelfoto",
                 is_single=True,
                 on_click=lambda c: self._select_card(c, "single")
             )
+            card.pack(side="left", padx=10)
             self.cards["single"] = card
 
         logger.info(f"Erstellte Karten: {list(self.cards.keys())}")
@@ -832,17 +717,13 @@ class StartScreen(ctk.CTkFrame):
 
         # Alle alten Karten zerstören
         for key, card in self.cards.items():
-            logger.debug(f"Entferne alte Karte: {key}")
             try:
                 card.destroy()
-            except Exception as e:
-                logger.debug(f"Karte {key} bereits zerstört: {e}")
+            except:
+                pass
         self.cards = {}
 
-        # Alte Canvas-Windows für Karten entfernen
-        self.bg_canvas.delete("cards")
-
-        # Neue Karten erstellen (auf Canvas)
+        # Neue Karten erstellen
         self._create_template_cards()
 
     def on_hide(self):
