@@ -21,6 +21,14 @@ Die Software läuft auf schwacher Hardware. **Jede Zeile Code muss ressourcensch
 - Flask-Server ist okay (~20-30 MB RAM)
 - Große Bibliotheken vermeiden wenn möglich
 
+### 🎬 Video-Wiedergabe
+
+Video-Wiedergabe nutzt **Windows Media Foundation (MSMF)** als Backend:
+- Nutzt Windows-eigene H.264 Codecs (kein VLC/FFmpeg nötig)
+- Threading verhindert UI-Freeze auf schwacher Hardware
+- Fallback auf FFMPEG wenn MSMF nicht verfügbar
+- Max. 25 FPS für Performance
+
 ## 📁 Projekt-Struktur
 
 ```
