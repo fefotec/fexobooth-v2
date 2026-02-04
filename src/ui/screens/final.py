@@ -333,13 +333,31 @@ class FinalScreen(ctk.CTkFrame):
                        f"Physisch: {phys_width}x{phys_height}px, "
                        f"Offset: ({offset_x},{offset_y})")
 
-            # EINFACHER ANSATZ: Bild auf druckbaren Bereich skalieren
-            # Das ist der bewährte Weg - der Drucker-Treiber kümmert sich um randlos
-            # Ref: https://gist.github.com/buptxge/2fc61a3f914645cf8ae2c9a258ca06c9
+            # RANDLOSER DRUCK: Physische Papiergröße verwenden und mit negativem Offset starten
+            #
+            # Bei randlosem Druck:
+            # - PHYSICALWIDTH/HEIGHT = echte Papiergröße in Pixel
+            # - PHYSICALOFFSETX/Y = wo der druckbare Bereich beginnt (positiver Wert)
+            # - Um randlos zu drucken: bei (-offset_x, -offset_y) starten und phys_width/height verwenden
+            #
+            # Beispiel: Offset=(50,50), Phys=(1800,1200), Printable=(1700,1100)
+            # → Drucken von (-50,-50) bis (1750, 1150) = gesamte Papierfläche
 
-            # Bild auf Druckgröße skalieren (Cover-Modus = Bild füllt gesamten Bereich)
-            target_width = printable_width
-            target_height = printable_height
+            # Zoom-Einstellung aus Config (100 = normal, >100 = größer/mehr Überlappung)
+            zoom_percent = self.config.get("print_adjustment", {}).get("zoom", 100)
+            zoom_factor = zoom_percent / 100.0
+
+            # Offset-Anpassung aus Config (für Feintuning)
+            config_offset_x = self.config.get("print_adjustment", {}).get("offset_x", 0)
+            config_offset_y = self.config.get("print_adjustment", {}).get("offset_y", 0)
+
+            # Zielgröße = physische Papiergröße (für randlos)
+            # Mit Zoom-Faktor: >100% = Bild größer = mehr Überlappung an Rändern
+            target_width = int(phys_width * zoom_factor)
+            target_height = int(phys_height * zoom_factor)
+
+            logger.info(f"Randlos-Modus: Physisch={phys_width}x{phys_height}, "
+                       f"Zoom={zoom_percent}%, Ziel={target_width}x{target_height}")
 
             img_ratio = img.width / img.height
             target_ratio = target_width / target_height
@@ -359,25 +377,34 @@ class FinalScreen(ctk.CTkFrame):
                 top = (new_h - target_height) // 2
                 img = img.crop((0, top, target_width, top + target_height))
 
-            logger.info(f"Bild skaliert auf: {img.size} für Druckbereich {target_width}x{target_height}")
+            logger.info(f"Bild skaliert auf: {img.size}")
 
-            # Drucken - EINFACH bei (0,0) starten, Bild füllt gesamten druckbaren Bereich
+            # Drucken mit negativem Offset für randlosen Druck
             hDC.StartDoc("Fexobooth Print")
             hDC.StartPage()
 
             dib = ImageWin.Dib(img)
 
-            # Standard-Druck: (0, 0) bis (breite, höhe)
-            # Der Drucker-Treiber (DEVMODE) bestimmt ob randlos oder nicht
-            dib.draw(hDC.GetHandleOutput(), (0, 0, target_width, target_height))
+            # Startposition: negativer physischer Offset + Config-Anpassung
+            # Bei Zoom >100%: Bild ist größer, also noch weiter nach links/oben verschieben
+            extra_offset_x = (target_width - phys_width) // 2
+            extra_offset_y = (target_height - phys_height) // 2
 
-            logger.info(f"Gedruckt: (0, 0) -> ({target_width}, {target_height})")
+            start_x = -offset_x - extra_offset_x + config_offset_x
+            start_y = -offset_y - extra_offset_y + config_offset_y
+            end_x = start_x + target_width
+            end_y = start_y + target_height
+
+            dib.draw(hDC.GetHandleOutput(), (start_x, start_y, end_x, end_y))
+
+            logger.info(f"Randlos gedruckt: ({start_x}, {start_y}) -> ({end_x}, {end_y}), "
+                       f"Offset-Korrektur: phys=({offset_x},{offset_y}), config=({config_offset_x},{config_offset_y})")
 
             hDC.EndPage()
             hDC.EndDoc()
             hDC.DeleteDC()
 
-            logger.info(f"✅ Randlos gedruckt auf: {printer_name}")
+            logger.info(f"✅ Randlos gedruckt auf: {printer_name} (Zoom: {zoom_percent}%)")
 
         except ImportError as e:
             logger.warning(f"Import-Fehler: {e} - Druck nur unter Windows")
