@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(python -m py_compile:*)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(plus = rechts →\"\n- Offset Y: \"↑ minus = hoch)",
+      "Bash(plus = runter ↓\"\n- Zoom: \"103% empfohlen für randlosen Druck\"\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
     ]
   }
 }

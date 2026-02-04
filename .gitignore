@@ -58,3 +58,4 @@ dist/
 .DS_Store
 Thumbs.db
 desktop.ini
+.claude/settings.local.json
