@@ -785,7 +785,16 @@ class AdminDialog(ctk.CTkToplevel):
         )
         self.photo_height.insert(0, str(cam_settings.get("single_photo_height", 1080)))
         self.photo_height.pack(side="left")
-    
+
+        # Info-Hinweis zur Auflösung
+        ctk.CTkLabel(
+            res_frame,
+            text="Live-Preview: 640x480 (Performance)\nFotos: Obige Einstellung (Full HD)",
+            font=FONTS["small"],
+            text_color=COLORS["text_muted"],
+            justify="center"
+        ).pack(pady=(5, 10))
+
     def _get_available_cameras(self) -> List[str]:
         """Ermittelt verfügbare Kameras mit Namen"""
         cameras = []
@@ -814,9 +823,10 @@ class AdminDialog(ctk.CTkToplevel):
                 for i in range(5):
                     cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
                     if cap.isOpened():
+                        # Standard-Auflösung anzeigen (wird für Preview verwendet)
                         w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                        cameras.append(f"[{i}] Webcam {i} ({w}x{h})")
+                        cameras.append(f"[{i}] Webcam {i}")
                         cap.release()
             except Exception as e:
                 logger.warning(f"Webcam-Suche Fehler: {e}")

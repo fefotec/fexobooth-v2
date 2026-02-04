@@ -53,8 +53,22 @@ datas = [
 # Füge customtkinter Daten hinzu
 datas.extend(customtkinter_datas)
 
-# Binärdateien
+# Binärdateien - OpenCV FFmpeg für Video-Playback
+import site
+cv2_path = None
+for p in site.getsitepackages():
+    test_path = os.path.join(p, 'cv2')
+    if os.path.exists(test_path):
+        cv2_path = test_path
+        break
+
 binaries = []
+if cv2_path:
+    # FFmpeg DLL für Video-Wiedergabe (kritisch!)
+    for dll in os.listdir(cv2_path):
+        if 'ffmpeg' in dll.lower() and dll.endswith('.dll'):
+            binaries.append((os.path.join(cv2_path, dll), '.'))
+            print(f"[INFO] Adding OpenCV FFmpeg DLL: {dll}")
 
 a = Analysis(
     ['src/main.py'],
@@ -96,7 +110,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='assets/icons/camera.png',  # App-Icon
+    icon='assets/icons/camera.ico',  # App-Icon
     version_file=None,
 )
 

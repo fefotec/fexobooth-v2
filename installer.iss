@@ -19,9 +19,15 @@ AppUpdatesURL={#MyAppURL}
 
 ; Installationspfad
 DefaultDirName=C:\FexoBooth
+UsePreviousAppDir=yes
 DisableDirPage=no
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
+
+; Update-Verhalten
+CloseApplications=yes
+CloseApplicationsFilter=*.exe
+RestartApplications=yes
 
 ; Ausgabedatei
 OutputDir=installer_output

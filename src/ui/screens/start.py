@@ -1,6 +1,6 @@
 """Start-Screen mit moderner Template-Auswahl
 
-Optimiert für Lenovo Miix 310 (1280x800)
+Responsive Design - passt sich automatisch an Bildschirmgröße an
 """
 
 import customtkinter as ctk
@@ -12,7 +12,7 @@ import os
 from src.templates.loader import TemplateLoader
 from src.templates.default import create_default_template
 from src.config.config import find_usb_template
-from src.ui.theme import COLORS, FONTS, SIZES
+from src.ui.theme import COLORS, FONTS, SIZES, get_sizes, get_fonts, is_small_screen
 from src.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -32,47 +32,58 @@ def _is_gallery_enabled(app: "PhotoboothApp") -> bool:
 
 
 class TemplateCard(ctk.CTkFrame):
-    """Template-Auswahl-Karte - kompakt für 1280x800"""
-    
+    """Template-Auswahl-Karte - responsive Design"""
+
     def __init__(self, parent, title: str, preview_image: Optional[Image.Image] = None,
                  is_single: bool = False, on_click=None):
+        # Responsive Größen laden
+        sizes = get_sizes()
+        fonts = get_fonts()
+        self._is_small = is_small_screen()
+
+        card_width = sizes["card_width"]
+        card_height = sizes["card_height"]
+        corner_radius = sizes["corner_radius"]
+
         super().__init__(
             parent,
-            width=SIZES["card_width"],
-            height=SIZES["card_height"],
+            width=card_width,
+            height=card_height,
             fg_color=COLORS["bg_card"],
-            corner_radius=SIZES["corner_radius"],
-            border_width=3,
+            corner_radius=corner_radius,
+            border_width=2 if self._is_small else 3,
             border_color=COLORS["border"]
         )
         self.grid_propagate(False)
         self.pack_propagate(False)
-        
+
         self.title = title
         self.is_selected = False
         self.on_click = on_click
-        
+
         # Hover-Effekt
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
         self.bind("<Button-1>", self._on_click)
-        
-        # Preview-Bereich (größer für bessere Erkennbarkeit)
+
+        # Preview-Bereich - responsive Höhe
+        preview_height = 125 if self._is_small else 165
         preview_frame = ctk.CTkFrame(
             self,
             fg_color=COLORS["bg_medium"],
-            corner_radius=SIZES["corner_radius_small"],
-            height=165  # Größer für bessere Vorschau
+            corner_radius=sizes["corner_radius_small"],
+            height=preview_height
         )
-        preview_frame.pack(fill="x", padx=10, pady=(10, 5))
+        preview_frame.pack(fill="x", padx=8 if self._is_small else 10, pady=(8 if self._is_small else 10, 5))
         preview_frame.pack_propagate(False)
         preview_frame.bind("<Button-1>", self._on_click)
 
         # Preview-Bild oder Icon
         if preview_image:
-            # Template-Vorschau skalieren (größer)
+            # Template-Vorschau skalieren - responsive
             preview_copy = preview_image.copy()
-            preview_copy.thumbnail((250, 155), Image.Resampling.LANCZOS)
+            thumb_size = (190, 115) if self._is_small else (250, 155)
+            preview_copy.thumbnail(thumb_size, Image.Resampling.LANCZOS)
             self.preview_ctk = ctk.CTkImage(
                 light_image=preview_copy,
                 size=(preview_copy.width, preview_copy.height)
@@ -81,30 +92,33 @@ class TemplateCard(ctk.CTkFrame):
             preview_label.image = self.preview_ctk  # Referenz halten!
         else:
             icon = "📷" if is_single else "🖼️"
+            icon_size = 45 if self._is_small else 60
             preview_label = ctk.CTkLabel(
                 preview_frame,
                 text=icon,
-                font=("Segoe UI Emoji", 60)  # Größeres Icon
+                font=("Segoe UI Emoji", icon_size)
             )
         preview_label.pack(expand=True)
         preview_label.bind("<Button-1>", self._on_click)
-        
-        # Titel
+
+        # Titel - responsive Font
+        title_font = fonts["subheading"] if not self._is_small else fonts["body_bold"]
         title_label = ctk.CTkLabel(
             self,
             text=title,
-            font=FONTS["subheading"],
+            font=title_font,
             text_color=COLORS["text_primary"]
         )
-        title_label.pack(pady=(5, 3))
+        title_label.pack(pady=(4 if self._is_small else 5, 2 if self._is_small else 3))
         title_label.bind("<Button-1>", self._on_click)
-        
-        # Untertitel (kürzer)
+
+        # Untertitel (kürzer) - responsive Font
         subtitle = "Einzelbild" if is_single else "Druck-Vorlage"
+        subtitle_font = fonts["tiny"] if not self._is_small else ("Segoe UI", 9)
         subtitle_label = ctk.CTkLabel(
             self,
             text=subtitle,
-            font=FONTS["tiny"],
+            font=subtitle_font,
             text_color=COLORS["text_muted"]
         )
         subtitle_label.pack()
@@ -113,31 +127,34 @@ class TemplateCard(ctk.CTkFrame):
     def _on_enter(self, event):
         if not self.is_selected:
             self.configure(border_color=COLORS["border_light"])
-    
+
     def _on_leave(self, event):
         if not self.is_selected:
             self.configure(border_color=COLORS["border"])
-    
+
     def _on_click(self, event):
         if self.on_click:
             self.on_click(self)
-    
+
     def set_selected(self, selected: bool):
         self.is_selected = selected
+        border_width = 3 if self._is_small else 4
         if selected:
             self.configure(
                 border_color=COLORS["primary"],
+                border_width=border_width,
                 fg_color=COLORS["bg_light"]
             )
         else:
             self.configure(
                 border_color=COLORS["border"],
+                border_width=border_width - 1,
                 fg_color=COLORS["bg_card"]
             )
 
 
 class StartScreen(ctk.CTkFrame):
-    """Start-Screen - optimiert für 1280x800"""
+    """Start-Screen - responsive Design"""
 
     def __init__(self, parent, app: "PhotoboothApp"):
         super().__init__(parent, fg_color=COLORS["bg_dark"])
@@ -149,15 +166,21 @@ class StartScreen(ctk.CTkFrame):
         self.cards_frame: Optional[ctk.CTkFrame] = None
         self._usb_template_path: Optional[str] = None
 
+        # Responsive Einstellungen
+        self._sizes = get_sizes()
+        self._fonts = get_fonts()
+        self._is_small = is_small_screen()
+
         self._setup_ui()
 
     def _setup_ui(self):
-        """Erstellt die UI mit pack()-Layout (wie ursprüngliche Version)"""
+        """Erstellt die UI mit pack()-Layout - responsive Design"""
         self.qr_label: Optional[ctk.CTkLabel] = None
 
         # Galerie-Banner ZUERST (unten) - damit es Platz reserviert
+        banner_pady = (0, 5) if self._is_small else (0, 8)
         self.gallery_banner = ctk.CTkFrame(self, fg_color="transparent")
-        self.gallery_banner.pack(side="bottom", fill="x", pady=(0, 8))
+        self.gallery_banner.pack(side="bottom", fill="x", pady=banner_pady)
 
         # Zentrierter Hauptcontainer (nimmt restlichen Platz)
         center_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -167,46 +190,51 @@ class StartScreen(ctk.CTkFrame):
         inner_frame = ctk.CTkFrame(center_frame, fg_color="transparent")
         inner_frame.place(relx=0.5, rely=0.5, anchor="center")
 
-        # Titel
+        # Titel - responsive Font
         title_text = self.config.get("ui_texts", {}).get("choose_mode", "Wähle dein Layout!")
+        title_font = self._fonts["title"] if not self._is_small else self._fonts["heading"]
         self.title_label = ctk.CTkLabel(
             inner_frame,
             text=title_text,
-            font=FONTS["title"],
+            font=title_font,
             text_color=COLORS["text_primary"]
         )
-        self.title_label.pack(pady=(0, 5))
+        self.title_label.pack(pady=(0, 3 if self._is_small else 5))
 
-        # Untertitel
+        # Untertitel - responsive Font
         self.subtitle_label = ctk.CTkLabel(
             inner_frame,
             text="Tippe auf eine Option",
-            font=FONTS["body"],
+            font=self._fonts["body"] if not self._is_small else self._fonts["small"],
             text_color=COLORS["text_secondary"]
         )
-        self.subtitle_label.pack(pady=(0, 15))
+        self.subtitle_label.pack(pady=(0, 10 if self._is_small else 15))
 
         # Karten-Container
         self.cards_frame = ctk.CTkFrame(inner_frame, fg_color="transparent")
         self.cards_frame.pack()
 
-        # Start-Button (groß und auffällig, unter den Karten)
+        # Start-Button (groß und auffällig, unter den Karten) - responsive
+        btn_font_size = 18 if self._is_small else 24
+        btn_width = 220 if self._is_small else 280
+        btn_height = 55 if self._is_small else 70
+        btn_corner = 28 if self._is_small else 35
         self.start_btn = ctk.CTkButton(
             inner_frame,
             text=f"▶  {self.config.get('ui_texts', {}).get('start', 'START')}",
-            font=("Segoe UI", 24, "bold"),
-            width=280,
-            height=70,
+            font=("Segoe UI", btn_font_size, "bold"),
+            width=btn_width,
+            height=btn_height,
             fg_color=COLORS["bg_light"],
             hover_color=COLORS["bg_card"],
             text_color=COLORS["text_muted"],
-            corner_radius=35,
-            border_width=3,
+            corner_radius=btn_corner,
+            border_width=2 if self._is_small else 3,
             border_color=COLORS["border"],
             state="disabled",
             command=self._on_start
         )
-        self.start_btn.pack(pady=(25, 0))
+        self.start_btn.pack(pady=(15 if self._is_small else 25, 0))
 
         # Initiale Karten erstellen
         self._create_template_cards()
@@ -215,6 +243,9 @@ class StartScreen(ctk.CTkFrame):
         """Erstellt die Template-Karten im cards_frame"""
         has_custom_template = False
         logger.info("=== Erstelle Template-Karten ===")
+
+        # Responsive Abstand zwischen Karten
+        card_padx = 6 if self._is_small else 10
 
         # USB-Template hat höchste Priorität
         cached = self.app.cached_usb_template
@@ -230,7 +261,7 @@ class StartScreen(ctk.CTkFrame):
                 preview_image=preview,
                 on_click=lambda c: self._select_card(c, "usb_template")
             )
-            card.pack(side="left", padx=10)
+            card.pack(side="left", padx=card_padx)
             self.cards["usb_template"] = card
             self._select_card(card, "usb_template")
             has_custom_template = True
@@ -251,7 +282,7 @@ class StartScreen(ctk.CTkFrame):
                 preview_image=preview,
                 on_click=lambda c: self._select_card(c, "template1")
             )
-            card.pack(side="left", padx=10)
+            card.pack(side="left", padx=card_padx)
             self.cards["template1"] = card
             has_custom_template = True
 
@@ -268,7 +299,7 @@ class StartScreen(ctk.CTkFrame):
                 preview_image=preview,
                 on_click=lambda c: self._select_card(c, "template2")
             )
-            card.pack(side="left", padx=10)
+            card.pack(side="left", padx=card_padx)
             self.cards["template2"] = card
             has_custom_template = True
 
@@ -281,7 +312,7 @@ class StartScreen(ctk.CTkFrame):
                 preview_image=default_overlay,
                 on_click=lambda c: self._select_card(c, "default_2x2")
             )
-            card.pack(side="left", padx=10)
+            card.pack(side="left", padx=card_padx)
             self.cards["default_2x2"] = card
 
         # Single-Foto
@@ -292,7 +323,7 @@ class StartScreen(ctk.CTkFrame):
                 is_single=True,
                 on_click=lambda c: self._select_card(c, "single")
             )
-            card.pack(side="left", padx=10)
+            card.pack(side="left", padx=card_padx)
             self.cards["single"] = card
 
         # Fallback
@@ -303,7 +334,7 @@ class StartScreen(ctk.CTkFrame):
                 is_single=True,
                 on_click=lambda c: self._select_card(c, "single")
             )
-            card.pack(side="left", padx=10)
+            card.pack(side="left", padx=card_padx)
             self.cards["single"] = card
 
         logger.info(f"Erstellte Karten: {list(self.cards.keys())}")
@@ -552,12 +583,15 @@ class StartScreen(ctk.CTkFrame):
 
         # Prüfen ob Galerie aktiv
         if not _is_gallery_enabled(self.app):
-            logger.debug("Galerie nicht aktiv - kein Banner")
+            logger.debug("Galerie nicht aktiv - Banner verstecken")
+            # WICHTIG: Banner komplett verstecken wenn nicht aktiv!
+            self.gallery_banner.pack_forget()
             return
 
         # Prüfen ob gallery_show_qr aktiv (default: True)
         if not self.config.get("gallery_show_qr", True):
-            logger.debug("QR-Code Anzeige deaktiviert")
+            logger.debug("QR-Code Anzeige deaktiviert - Banner verstecken")
+            self.gallery_banner.pack_forget()
             return
 
         try:
@@ -574,7 +608,12 @@ class StartScreen(ctk.CTkFrame):
             qr_img = generate_qr_code(url, size=90)
             if not qr_img:
                 logger.warning("QR-Code konnte nicht generiert werden")
+                self.gallery_banner.pack_forget()
                 return
+
+            # Banner wieder anzeigen falls es versteckt war
+            banner_pady = (0, 5) if self._is_small else (0, 8)
+            self.gallery_banner.pack(side="bottom", fill="x", pady=banner_pady)
 
             # Horizontales Banner mit Pink-Rahmen
             outer_banner = ctk.CTkFrame(

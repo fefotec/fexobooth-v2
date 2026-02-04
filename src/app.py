@@ -476,11 +476,12 @@ class PhotoboothApp:
                     self.booking_manager.load_from_usb(usb_root)
                     self._update_booking_display()
 
-        # USB wurde gerade eingesteckt und es gibt pending files -> Dialog zeigen
-        if is_available and pending_count > 0 and not self._sync_dialog_open:
+        # USB wurde gerade eingesteckt -> ALLE fehlenden Bilder automatisch synchronisieren
+        if is_available and not self._sync_dialog_open:
             if not hasattr(self, '_was_usb_available') or not self._was_usb_available:
                 self._was_usb_available = True
-                self._show_usb_sync_dialog(pending_count)
+                # Vollständige Synchronisation aller fehlenden Bilder
+                self._auto_sync_all_missing()
         elif not is_available:
             self._was_usb_available = False
 
@@ -719,7 +720,39 @@ class PhotoboothApp:
                 text_color=COLORS["success"],
                 fg_color=COLORS["bg_light"]
             )
-    
+
+    def _auto_sync_all_missing(self):
+        """Synchronisiert automatisch ALLE fehlenden Bilder auf USB.
+
+        Wird aufgerufen wenn USB-Stick (wieder) eingesteckt wird.
+        Kopiert nur Bilder die noch nicht auf dem USB-Stick vorhanden sind.
+        """
+        from src.storage.local import LocalStorage
+        import threading
+
+        local_path = LocalStorage.get_images_path()
+        if not local_path.exists():
+            logger.debug("Lokaler Bilder-Ordner existiert nicht - kein Sync nötig")
+            return
+
+        logger.info("=== Auto-Sync: Prüfe fehlende Bilder ===")
+
+        # Sync im Hintergrund ausführen um UI nicht zu blockieren
+        def do_sync():
+            result = self.usb_manager.sync_all_missing(local_path)
+            copied = result.get("copied", 0)
+
+            # UI-Update im Hauptthread
+            if copied > 0:
+                self.root.after(0, lambda: self._show_sync_notification(copied))
+            elif result.get("errors", 0) > 0:
+                logger.warning(f"Auto-Sync: {result['errors']} Fehler")
+            else:
+                logger.debug("Auto-Sync: Alle Bilder bereits synchronisiert")
+
+        thread = threading.Thread(target=do_sync, daemon=True)
+        thread.start()
+
     def _check_printer_status(self):
         """Prüft Drucker-Status"""
         try:

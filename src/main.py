@@ -21,6 +21,8 @@ Usage:
 
 import sys
 import os
+import threading
+import traceback
 
 # Pfad für relative Imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -28,6 +30,43 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config.config import load_config
 from src.utils.logging import setup_logging, get_logger
 from src.app import PhotoboothApp
+
+
+def _setup_global_exception_handlers():
+    """Installiert globale Exception-Handler für Crashes"""
+    logger = get_logger("crash")
+
+    def handle_exception(exc_type, exc_value, exc_traceback):
+        """Handler für unbehandelte Exceptions im Hauptthread"""
+        if issubclass(exc_type, KeyboardInterrupt):
+            # Ctrl+C normal behandeln
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+
+        # Vollständigen Stacktrace loggen
+        logger.critical("=" * 60)
+        logger.critical("UNBEHANDELTE EXCEPTION (Hauptthread)")
+        logger.critical("=" * 60)
+        tb_lines = traceback.format_exception(exc_type, exc_value, exc_traceback)
+        for line in tb_lines:
+            for subline in line.rstrip().split('\n'):
+                logger.critical(subline)
+        logger.critical("=" * 60)
+
+    def handle_thread_exception(args):
+        """Handler für unbehandelte Exceptions in Threads"""
+        logger.critical("=" * 60)
+        logger.critical(f"UNBEHANDELTE EXCEPTION (Thread: {args.thread.name})")
+        logger.critical("=" * 60)
+        tb_lines = traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback)
+        for line in tb_lines:
+            for subline in line.rstrip().split('\n'):
+                logger.critical(subline)
+        logger.critical("=" * 60)
+
+    # Handler installieren
+    sys.excepthook = handle_exception
+    threading.excepthook = handle_thread_exception
 
 
 def main():
@@ -45,6 +84,10 @@ def main():
     
     # Logging initialisieren MIT Developer Mode Info
     logger = setup_logging(developer_mode=developer_mode)
+
+    # Globale Exception-Handler für Crash-Logging
+    _setup_global_exception_handlers()
+
     logger.info("=" * 50)
     logger.info("FEXOBOOTH STARTET")
     if developer_mode:

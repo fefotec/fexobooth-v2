@@ -569,19 +569,26 @@ class SessionScreen(ctk.CTkFrame):
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 photo = Image.fromarray(rgb)
         
-        # Webcam: Nutze get_frame() / get_high_res_frame()
+        # Webcam: Nutze get_high_res_frame() für volle Auflösung (1920x1080)
+        # WICHTIG: Fotos werden IMMER in High-Res aufgenommen, unabhängig vom Performance-Mode!
+        # Der Performance-Mode beeinflusst nur die Live-Preview (640x480).
         if photo is None:
-            frame = self.app.camera_manager.get_frame(use_cache=False)
-            
-            # Optional: High-Res nur wenn Performance-Mode aus
-            if not self.config.get("performance_mode", True):
-                cam_settings = self.config.get("camera_settings", {})
-                high_res = self.app.camera_manager.get_high_res_frame(
-                    cam_settings.get("single_photo_width", 1920),
-                    cam_settings.get("single_photo_height", 1080)
-                )
-                if high_res is not None:
-                    frame = high_res
+            cam_settings = self.config.get("camera_settings", {})
+            capture_width = cam_settings.get("single_photo_width", 1920)
+            capture_height = cam_settings.get("single_photo_height", 1080)
+
+            logger.info(f"Webcam Foto-Capture: {capture_width}x{capture_height}")
+
+            # Versuche High-Res Frame
+            if hasattr(self.app.camera_manager, 'get_high_res_frame'):
+                frame = self.app.camera_manager.get_high_res_frame(capture_width, capture_height)
+                if frame is not None:
+                    logger.info(f"High-Res Frame erhalten: {frame.shape[1]}x{frame.shape[0]}")
+                else:
+                    logger.warning("High-Res Frame fehlgeschlagen, Fallback auf normales Frame")
+                    frame = self.app.camera_manager.get_frame(use_cache=False)
+            else:
+                frame = self.app.camera_manager.get_frame(use_cache=False)
             
             if frame is not None:
                 # Optional: 180° Rotation (für kopfüber montierte Kameras)
