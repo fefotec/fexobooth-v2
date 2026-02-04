@@ -152,35 +152,47 @@ class StartScreen(ctk.CTkFrame):
         self._setup_ui()
 
     def _setup_ui(self):
-        """Erstellt die UI - einfaches Layout"""
+        """Erstellt die UI mit pack()-Layout (wie ursprüngliche Version)"""
         self.qr_label: Optional[ctk.CTkLabel] = None
+
+        # Galerie-Banner ZUERST (unten) - damit es Platz reserviert
+        self.gallery_banner = ctk.CTkFrame(self, fg_color="transparent")
+        self.gallery_banner.pack(side="bottom", fill="x", pady=(0, 8))
+
+        # Zentrierter Hauptcontainer (nimmt restlichen Platz)
+        center_frame = ctk.CTkFrame(self, fg_color="transparent")
+        center_frame.pack(expand=True, fill="both")
+
+        # Innerer Container für vertikale Zentrierung
+        inner_frame = ctk.CTkFrame(center_frame, fg_color="transparent")
+        inner_frame.place(relx=0.5, rely=0.5, anchor="center")
 
         # Titel
         title_text = self.config.get("ui_texts", {}).get("choose_mode", "Wähle dein Layout!")
         self.title_label = ctk.CTkLabel(
-            self,
+            inner_frame,
             text=title_text,
-            font=("Segoe UI", 32, "bold"),
+            font=FONTS["title"],
             text_color=COLORS["text_primary"]
         )
-        self.title_label.place(relx=0.5, rely=0.12, anchor="center")
+        self.title_label.pack(pady=(0, 5))
 
         # Untertitel
         self.subtitle_label = ctk.CTkLabel(
-            self,
+            inner_frame,
             text="Tippe auf eine Option",
-            font=("Segoe UI", 14),
+            font=FONTS["body"],
             text_color=COLORS["text_secondary"]
         )
-        self.subtitle_label.place(relx=0.5, rely=0.19, anchor="center")
+        self.subtitle_label.pack(pady=(0, 15))
 
         # Karten-Container
-        self.cards_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.cards_frame.place(relx=0.5, rely=0.48, anchor="center")
+        self.cards_frame = ctk.CTkFrame(inner_frame, fg_color="transparent")
+        self.cards_frame.pack()
 
-        # Start-Button
+        # Start-Button (groß und auffällig, unter den Karten)
         self.start_btn = ctk.CTkButton(
-            self,
+            inner_frame,
             text=f"▶  {self.config.get('ui_texts', {}).get('start', 'START')}",
             font=("Segoe UI", 24, "bold"),
             width=280,
@@ -194,11 +206,7 @@ class StartScreen(ctk.CTkFrame):
             state="disabled",
             command=self._on_start
         )
-        self.start_btn.place(relx=0.5, rely=0.78, anchor="center")
-
-        # Galerie-Banner (unten)
-        self.gallery_banner = ctk.CTkFrame(self, fg_color="transparent")
-        self.gallery_banner.place(relx=0.5, rely=0.93, anchor="center")
+        self.start_btn.pack(pady=(25, 0))
 
         # Initiale Karten erstellen
         self._create_template_cards()
