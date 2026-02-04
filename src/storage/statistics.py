@@ -86,42 +86,53 @@ class StatisticsManager:
     
     def start_event(self, booking_id: str = "", save_path: Optional[Path] = None):
         """Startet oder setzt ein Event fort
-        
+
         Logik:
-        - Gleiche Buchung + gleicher Tag → Event fortsetzen (Werte addieren)
-        - Gleiche Buchung + anderer Tag → Neues Event
+        - Gleiche Buchung + letzte Aktivität < 120 Min → Event fortsetzen
+        - Gleiche Buchung + letzte Aktivität > 120 Min → Neues Event
         - Andere Buchung → Neues Event
-        
+
         Args:
             booking_id: Buchungsnummer (aus settings.json)
             save_path: IGNORIERT - Statistik wird IMMER lokal gespeichert!
         """
         # Speicherpfad: IMMER im Software-Ordner (nicht auf USB - geht Kunden nichts an!)
         self._stats_file_path = Path(__file__).parent.parent.parent / STATS_FILENAME
-        
+
         # Existierende Statistiken laden
         self._load_existing_stats()
-        
-        # Heutiges Datum
-        today = datetime.now().strftime("%Y-%m-%d")
-        
-        # Prüfen ob es ein Event mit gleicher Buchung UND gleichem Tag gibt
+
+        # Pause-Schwelle: 120 Minuten
+        MAX_PAUSE_MINUTES = 120
+        now = datetime.now()
+
+        # Prüfen ob es ein Event mit gleicher Buchung gibt, das kürzlich aktiv war
         existing_event = None
         existing_index = -1
-        
+
         for i, event in enumerate(self._all_stats):
             event_booking = event.get("booking_id", "")
-            event_start = event.get("start_time", "")
-            
-            # Datum aus start_time extrahieren (Format: 2026-02-03T19:15:00)
-            event_date = event_start[:10] if event_start else ""
-            
-            if event_booking == booking_id and event_date == today:
-                existing_event = event
-                existing_index = i
-                logger.info(f"📊 Bestehendes Event gefunden: {booking_id} vom {event_date}")
-                break
-        
+            event_end = event.get("end_time", "")
+
+            if event_booking != booking_id:
+                continue
+
+            # Prüfen wie lange die Pause war
+            if event_end:
+                try:
+                    last_activity = datetime.fromisoformat(event_end)
+                    pause_minutes = (now - last_activity).total_seconds() / 60
+
+                    if pause_minutes <= MAX_PAUSE_MINUTES:
+                        existing_event = event
+                        existing_index = i
+                        logger.info(f"📊 Bestehendes Event gefunden: {booking_id} (Pause: {pause_minutes:.0f} Min)")
+                        break
+                    else:
+                        logger.debug(f"📊 Event {booking_id} zu alt (Pause: {pause_minutes:.0f} Min > {MAX_PAUSE_MINUTES} Min)")
+                except Exception as e:
+                    logger.debug(f"📊 Fehler beim Parsen von end_time: {e}")
+
         if existing_event:
             # Event fortsetzen - Werte übernehmen
             self._current_stats = EventStats.from_dict(existing_event)
