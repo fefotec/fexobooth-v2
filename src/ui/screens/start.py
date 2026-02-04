@@ -172,36 +172,24 @@ class StartScreen(ctk.CTkFrame):
         )
         self.bg_canvas.place(x=0, y=0, relwidth=1.0, relheight=1.0)
 
-        # Titel (direkt auf dem Frame, über dem Canvas)
-        self.title_label = ctk.CTkLabel(
-            self,
-            text=self.config.get("ui_texts", {}).get("choose_mode", "Wähle dein Layout!"),
-            font=FONTS["title"],
-            text_color=COLORS["text_primary"],
-            fg_color="transparent"
-        )
-        self.title_label.place(relx=0.5, rely=0.18, anchor="center")
+        # Text-IDs für Canvas (werden in _setup_background erstellt)
+        self._title_id: Optional[int] = None
+        self._subtitle_id: Optional[int] = None
 
-        # Untertitel
-        self.subtitle_label = ctk.CTkLabel(
-            self,
-            text="Tippe auf eine Option",
-            font=FONTS["body"],
-            text_color=COLORS["text_secondary"],
-            fg_color="transparent"
-        )
-        self.subtitle_label.place(relx=0.5, rely=0.24, anchor="center")
+        # Canvas Window IDs
+        self._cards_window_id: Optional[int] = None
+        self._btn_window_id: Optional[int] = None
+        self._banner_window_id: Optional[int] = None
 
-        # Karten-Container (transparent)
-        self.cards_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.cards_frame.place(relx=0.5, rely=0.50, anchor="center")
+        # Karten-Container (transparent, wird im Canvas eingebettet)
+        self.cards_frame = ctk.CTkFrame(self.bg_canvas, fg_color="transparent")
 
         # Template-Karten erstellen
         self._create_template_cards(self.cards_frame)
 
-        # Start-Button
+        # Start-Button (im Canvas eingebettet)
         self.start_btn = ctk.CTkButton(
-            self,
+            self.bg_canvas,
             text=f"▶  {self.config.get('ui_texts', {}).get('start', 'START')}",
             font=("Segoe UI", 24, "bold"),
             width=280,
@@ -215,69 +203,105 @@ class StartScreen(ctk.CTkFrame):
             state="disabled",
             command=self._on_start
         )
-        self.start_btn.place(relx=0.5, rely=0.75, anchor="center")
 
-        # Galerie-Banner (unten)
-        self.gallery_banner = ctk.CTkFrame(self, fg_color="transparent")
-        self.gallery_banner.place(relx=0.5, rely=0.92, anchor="center")
+        # Galerie-Banner (im Canvas eingebettet)
+        self.gallery_banner = ctk.CTkFrame(self.bg_canvas, fg_color="transparent")
 
     def _setup_background(self):
-        """Lädt und zeigt optionales Hintergrundbild auf dem Canvas"""
-        # Altes Bild vom Canvas entfernen
-        if self._bg_canvas_id is not None:
-            self.bg_canvas.delete(self._bg_canvas_id)
-            self._bg_canvas_id = None
+        """Lädt Hintergrundbild und erstellt Canvas-Texte (wirklich transparent)"""
+        # Canvas leeren
+        self.bg_canvas.delete("all")
+        self._bg_canvas_id = None
         self._bg_photo = None
+        self._title_id = None
+        self._subtitle_id = None
+
+        # Aktuelle Canvas-Größe (oder Fallback)
+        self.update_idletasks()
+        canvas_w = self.bg_canvas.winfo_width()
+        canvas_h = self.bg_canvas.winfo_height()
+        if canvas_w < 100:
+            canvas_w = 1280
+        if canvas_h < 100:
+            canvas_h = 800
 
         bg_path = self.config.get("startscreen_background", "")
-        if not bg_path or not os.path.exists(bg_path):
-            logger.debug("Kein Hintergrundbild konfiguriert")
-            self.bg_canvas.configure(bg=COLORS["bg_dark"])
-            return
 
-        try:
-            # Bild laden
-            bg_img = Image.open(bg_path)
-            logger.debug(f"Hintergrundbild geladen: {bg_img.size} ({bg_img.mode})")
+        if bg_path and os.path.exists(bg_path):
+            try:
+                # Bild laden
+                bg_img = Image.open(bg_path)
+                logger.debug(f"Hintergrundbild: {bg_img.size}")
 
-            # Zielgröße
-            target_w = 1280
-            target_h = 800
+                # COVER-Modus: Bild füllt gesamten Bereich, wird ggf. beschnitten
+                img_ratio = bg_img.width / bg_img.height
+                target_ratio = canvas_w / canvas_h
 
-            # Cover-Modus: Bild füllt gesamten Bereich
-            img_ratio = bg_img.width / bg_img.height
-            target_ratio = target_w / target_h
+                if img_ratio > target_ratio:
+                    # Bild ist breiter - nach Höhe skalieren
+                    new_h = canvas_h
+                    new_w = int(new_h * img_ratio)
+                else:
+                    # Bild ist höher - nach Breite skalieren
+                    new_w = canvas_w
+                    new_h = int(new_w / img_ratio)
 
-            if img_ratio > target_ratio:
-                new_h = target_h
-                new_w = int(new_h * img_ratio)
-            else:
-                new_w = target_w
-                new_h = int(new_w / img_ratio)
+                bg_img = bg_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
-            bg_img = bg_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                # Zentriert beschneiden
+                left = (new_w - canvas_w) // 2
+                top = (new_h - canvas_h) // 2
+                bg_img = bg_img.crop((left, top, left + canvas_w, top + canvas_h))
 
-            # Zentrieren und beschneiden
-            left = (new_w - target_w) // 2
-            top = (new_h - target_h) // 2
-            bg_img = bg_img.crop((left, top, left + target_w, top + target_h))
+                # PhotoImage erstellen und auf Canvas zeichnen
+                self._bg_photo = ImageTk.PhotoImage(bg_img)
+                self._bg_canvas_id = self.bg_canvas.create_image(
+                    0, 0,
+                    image=self._bg_photo,
+                    anchor="nw"
+                )
+                logger.info(f"✅ Hintergrundbild: {bg_path} ({canvas_w}x{canvas_h})")
 
-            # Als Tkinter PhotoImage (NICHT CTkImage!)
-            self._bg_photo = ImageTk.PhotoImage(bg_img)
+            except Exception as e:
+                logger.warning(f"Hintergrundbild-Fehler: {e}")
 
-            # Auf Canvas zeichnen (Position: Mitte des Canvas)
-            self._bg_canvas_id = self.bg_canvas.create_image(
-                target_w // 2, target_h // 2,
-                image=self._bg_photo,
-                anchor="center"
-            )
+        # Titel auf Canvas (wirklich transparent - kein Hintergrund!)
+        title_text = self.config.get("ui_texts", {}).get("choose_mode", "Wähle dein Layout!")
+        self._title_id = self.bg_canvas.create_text(
+            canvas_w // 2, int(canvas_h * 0.18),
+            text=title_text,
+            font=("Segoe UI", 32, "bold"),
+            fill=COLORS["text_primary"],
+            anchor="center"
+        )
 
-            logger.info(f"✅ Hintergrundbild auf Canvas: {bg_path}")
+        # Untertitel auf Canvas
+        self._subtitle_id = self.bg_canvas.create_text(
+            canvas_w // 2, int(canvas_h * 0.24),
+            text="Tippe auf eine Option",
+            font=("Segoe UI", 14),
+            fill=COLORS["text_secondary"],
+            anchor="center"
+        )
 
-        except Exception as e:
-            logger.warning(f"Hintergrundbild konnte nicht geladen werden: {e}")
-            import traceback
-            logger.debug(traceback.format_exc())
+        # Widgets im Canvas positionieren (create_window für CTk-Widgets)
+        self._cards_window_id = self.bg_canvas.create_window(
+            canvas_w // 2, int(canvas_h * 0.50),
+            window=self.cards_frame,
+            anchor="center"
+        )
+
+        self._btn_window_id = self.bg_canvas.create_window(
+            canvas_w // 2, int(canvas_h * 0.75),
+            window=self.start_btn,
+            anchor="center"
+        )
+
+        self._banner_window_id = self.bg_canvas.create_window(
+            canvas_w // 2, int(canvas_h * 0.92),
+            window=self.gallery_banner,
+            anchor="center"
+        )
 
     def _create_template_cards(self, parent):
         """Erstellt die Template-Karten"""
