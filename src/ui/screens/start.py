@@ -215,9 +215,19 @@ class StartScreen(ctk.CTkFrame):
         self.start_btn.pack(pady=(25, 0))
 
     def _setup_background(self):
-        """Lädt und zeigt optionales Hintergrundbild"""
+        """Lädt und zeigt optionales Hintergrundbild (oder entfernt es)"""
+        # Altes Hintergrundbild entfernen falls vorhanden
+        if self._bg_label:
+            try:
+                self._bg_label.destroy()
+            except:
+                pass
+            self._bg_label = None
+            self._bg_image = None
+
         bg_path = self.config.get("startscreen_background", "")
         if not bg_path or not os.path.exists(bg_path):
+            logger.debug("Kein Hintergrundbild konfiguriert")
             return
 
         try:
@@ -571,6 +581,9 @@ class StartScreen(ctk.CTkFrame):
 
         # Config könnte sich geändert haben (Admin-Dialog)
         self.config = self.app.config
+
+        # Hintergrundbild aktualisieren (falls im Admin geändert)
+        self._setup_background()
 
         # USB-Template prüfen mit Caching-Logik
         current_usb_template = find_usb_template()
