@@ -63,7 +63,7 @@ else:
 
 EDSDK_PATH = None
 for candidate in [
-    os.path.join(os.path.dirname(os.path.abspath(SPECPATH)), "EDSDK", "EDSDKv132010W", "EDSDKv132010W", "Windows", "EDSDK_64", "Dll"),
+    os.path.join(SPECPATH, "EDSDK", "EDSDKv132010W", "EDSDKv132010W", "Windows", "EDSDK_64", "Dll"),
     r"C:\fexobooth\EDSDK_64\Dll",
 ]:
     if os.path.isfile(os.path.join(candidate, "EDSDK.dll")):

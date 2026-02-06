@@ -11,8 +11,11 @@ REM   - Python 3.10+ installiert
 REM   - pip install -r requirements.txt
 REM   - VLC Media Player installiert
 REM
-REM Ergebnis: dist\fexobooth\fexobooth.exe
+REM Ergebnis: installer_output\fexobooth.zip
 REM ============================================
+
+REM Ins Verzeichnis des Scripts wechseln (wichtig bei Admin-Start)
+cd /d "%~dp0"
 
 echo.
 echo ===================================================
@@ -39,16 +42,17 @@ REM Schritt 2: PyInstaller pruefen
 REM ─────────────────────────────────────────────
 
 pyinstaller --version >nul 2>&1
+if %errorlevel% equ 0 goto :pyinstaller_ok
+
+echo PyInstaller nicht gefunden, installiere...
+pip install "pyinstaller>=6.0.0"
 if %errorlevel% neq 0 (
-    echo PyInstaller nicht gefunden, installiere...
-    pip install pyinstaller>=6.0.0
-    if %errorlevel% neq 0 (
-        echo FEHLER: PyInstaller konnte nicht installiert werden!
-        pause
-        exit /b 1
-    )
+    echo FEHLER: PyInstaller konnte nicht installiert werden!
+    pause
+    exit /b 1
 )
 
+:pyinstaller_ok
 echo [OK] PyInstaller gefunden
 
 REM ─────────────────────────────────────────────
@@ -107,8 +111,8 @@ echo Raeume alte Builds auf...
 if exist "build\fexobooth" (
     rmdir /s /q "build\fexobooth"
 )
-if exist "dist\fexobooth" (
-    rmdir /s /q "dist\fexobooth"
+if exist "installer_output" (
+    rmdir /s /q "installer_output"
 )
 
 echo [OK] Aufgeraeumt
@@ -123,7 +127,7 @@ echo  PyInstaller Build starten...
 echo ===================================================
 echo.
 
-pyinstaller fexobooth.spec --noconfirm
+pyinstaller fexobooth.spec --noconfirm --distpath installer_output
 
 if %errorlevel% neq 0 (
     echo.
@@ -141,17 +145,17 @@ REM Schritt 6: Videos-Ordner erstellen
 REM ─────────────────────────────────────────────
 
 echo Erstelle Videos-Ordner...
-if not exist "dist\fexobooth\assets\videos" (
-    mkdir "dist\fexobooth\assets\videos"
+if not exist "installer_output\fexobooth\assets\videos" (
+    mkdir "installer_output\fexobooth\assets\videos"
 )
 
 REM Falls lokale Videos vorhanden, kopieren
 if exist "assets\videos\start.mp4" (
-    copy "assets\videos\start.mp4" "dist\fexobooth\assets\videos\" >nul
+    copy "assets\videos\start.mp4" "installer_output\fexobooth\assets\videos\" >nul
     echo [OK] start.mp4 kopiert
 )
 if exist "assets\videos\end.mp4" (
-    copy "assets\videos\end.mp4" "dist\fexobooth\assets\videos\" >nul
+    copy "assets\videos\end.mp4" "installer_output\fexobooth\assets\videos\" >nul
     echo [OK] end.mp4 kopiert
 )
 
@@ -165,9 +169,25 @@ echo Erstelle Start-Script...
 echo @echo off
 echo cd /d "%%~dp0"
 echo start "" fexobooth.exe
-) > "dist\fexobooth\START.bat"
+) > "installer_output\fexobooth\START.bat"
 
 echo [OK] START.bat erstellt
+
+REM ─────────────────────────────────────────────
+REM Schritt 8: ZIP erstellen
+REM ─────────────────────────────────────────────
+
+echo.
+echo Erstelle ZIP-Archiv...
+
+powershell -Command "Compress-Archive -Path 'installer_output\fexobooth\*' -DestinationPath 'installer_output\fexobooth.zip' -Force"
+
+if %errorlevel% neq 0 (
+    echo WARNUNG: ZIP konnte nicht erstellt werden.
+    echo Der Ordner installer_output\fexobooth\ ist trotzdem nutzbar.
+) else (
+    echo [OK] ZIP erstellt: installer_output\fexobooth.zip
+)
 
 REM ─────────────────────────────────────────────
 REM Ergebnis
@@ -178,12 +198,12 @@ echo ===================================================
 echo  BUILD ERFOLGREICH!
 echo ===================================================
 echo.
-echo  Ausgabe: dist\fexobooth\
-echo  Starten: dist\fexobooth\fexobooth.exe
+echo  Ordner: installer_output\fexobooth\
+echo  ZIP:    installer_output\fexobooth.zip
 echo.
 
 REM Ordnergroesse anzeigen
-for /f "tokens=3" %%a in ('dir "dist\fexobooth" /s /-c ^| findstr "Datei(en)"') do (
+for /f "tokens=3" %%a in ('dir "installer_output\fexobooth" /s /-c ^| findstr "Datei(en)"') do (
     set SIZE=%%a
 )
 echo  Groesse: ca. %SIZE% Bytes
@@ -197,8 +217,8 @@ if %VLC_FOUND%==1 (
 
 echo.
 echo Naechste Schritte:
-echo   1. dist\fexobooth\ auf USB-Stick kopieren
-echo   2. Auf Tablet nach C:\fexobooth\ kopieren
+echo   1. installer_output\fexobooth.zip auf USB-Stick kopieren
+echo   2. Auf Tablet nach C:\fexobooth\ entpacken
 echo   3. fexobooth.exe starten oder START.bat nutzen
 echo.
 pause

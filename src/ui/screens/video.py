@@ -118,19 +118,6 @@ class VideoScreen(ctk.CTkFrame):
         )
         self.video_label.pack(expand=True, fill="both")
 
-        # Skip-Button (unten rechts)
-        self.skip_btn = ctk.CTkButton(
-            self,
-            text="Überspringen →",
-            font=FONTS["small"],
-            width=140,
-            height=40,
-            fg_color=COLORS["bg_medium"],
-            hover_color=COLORS["bg_light"],
-            corner_radius=8,
-            command=self._skip_video
-        )
-        self.skip_btn.place(relx=0.95, rely=0.95, anchor="se")
 
     # ─────────────────────────────────────────────
     # Öffentliche API
@@ -157,8 +144,8 @@ class VideoScreen(ctk.CTkFrame):
 
         logger.info(f"Starte Video: {video_path}")
 
-        # Status anzeigen
-        self.video_label.configure(text="Video wird geladen...", image=None)
+        # Label leeren (schwarzer Screen während Video lädt)
+        self.video_label.configure(text="", image=None)
         self.update_idletasks()
 
         # VLC bevorzugen, OpenCV als Fallback
@@ -301,23 +288,34 @@ class VideoScreen(ctk.CTkFrame):
                 pass
             self._vlc_check_id = None
 
-        if self._vlc_player is not None:
-            try:
-                self._vlc_player.stop()
-            except:
-                pass
-            try:
-                self._vlc_player.release()
-            except:
-                pass
-            self._vlc_player = None
+        # VLC-Cleanup in Thread - stop()/release() können blockieren
+        player = self._vlc_player
+        instance = self._vlc_instance
+        self._vlc_player = None
+        self._vlc_instance = None
 
-        if self._vlc_instance is not None:
-            try:
-                self._vlc_instance.release()
-            except:
-                pass
-            self._vlc_instance = None
+        if player or instance:
+            def _release():
+                if player is not None:
+                    try:
+                        # Nur stoppen wenn noch am Spielen
+                        state = player.get_state()
+                        if state in (_vlc.State.Playing, _vlc.State.Paused, _vlc.State.Opening):
+                            player.stop()
+                    except:
+                        pass
+                    try:
+                        player.release()
+                    except:
+                        pass
+                if instance is not None:
+                    try:
+                        instance.release()
+                    except:
+                        pass
+                logger.debug("VLC-Ressourcen freigegeben")
+
+            threading.Thread(target=_release, daemon=True).start()
 
     # ─────────────────────────────────────────────
     # OpenCV-Fallback
@@ -484,11 +482,6 @@ class VideoScreen(ctk.CTkFrame):
     # Gemeinsame Methoden
     # ─────────────────────────────────────────────
 
-    def _skip_video(self):
-        """Video überspringen"""
-        logger.info("Video übersprungen")
-        self._cleanup_and_end()
-
     def _stop_playback(self):
         """Stoppt die Wiedergabe (VLC oder OpenCV)"""
         self._stop_event.set()
@@ -517,6 +510,9 @@ class VideoScreen(ctk.CTkFrame):
 
     def _cleanup_and_end(self):
         """Aufräumen und beenden"""
+        if self._end_called:
+            return
+
         self._stop_playback()
 
         try:
@@ -524,7 +520,8 @@ class VideoScreen(ctk.CTkFrame):
         except:
             pass
 
-        self.after(50, self._on_video_end)
+        # Direkt aufrufen statt self.after() - vermeidet Probleme mit zerstörten Widgets
+        self._on_video_end()
 
     def _on_video_end(self):
         """Video beendet"""
