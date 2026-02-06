@@ -478,12 +478,6 @@ class SessionScreen(ctk.CTkFrame):
             return
 
         if self.countdown_value > 0:
-            try:
-                import winsound
-                winsound.Beep(800, 100)
-            except:
-                pass
-
             self.countdown_value -= 1
             self.after(1000, self._countdown_tick)
         else:
@@ -495,12 +489,6 @@ class SessionScreen(ctk.CTkFrame):
         logger.info(f"Foto {self.app.current_photo_index + 1} aufnehmen")
 
         self.show_flash = True
-
-        try:
-            import winsound
-            winsound.Beep(1200, 200)
-        except:
-            pass
 
         flash_duration = self.config.get("flash_duration", 300)
         self.after(flash_duration, self._capture_photo)

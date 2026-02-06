@@ -28,6 +28,7 @@ FILTER_EMOJIS = {
     "bright": "☀️",
     "contrast": "🎭",
     "soft": "🌸",
+    "instagram": "📸",
 }
 
 

@@ -120,6 +120,24 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 | **Lösung** | `_template_cache` Dictionary mit (Pfad, mtime) als Key |
 | **Merke** | Teure I/O-Operationen (ZIP, Bilddateien) immer cachen |
 
+### Service-Menü: Separater PIN statt eigener Screen
+
+| | |
+|---|---|
+| **Problem** | Internes Wartungsmenü soll über anderen PIN aufrufbar sein |
+| **Ursache** | Admin-PIN-Dialog ist bereits vorhanden und zentral angebunden |
+| **Lösung** | Bestehenden PIN-Dialog erweitert: Service-PIN wird VOR dem Admin-PIN geprüft, öffnet eigenen Dialog |
+| **Merke** | Bestehende Infrastruktur erweitern statt duplizieren. App-Referenz am Root-Widget für Dialog-übergreifenden Zugriff |
+
+### CTkImage: dark_image Parameter nötig im Dark Mode
+
+| | |
+|---|---|
+| **Problem** | Logo wird in der Top-Bar nicht angezeigt, obwohl Pfad korrekt und Datei existiert |
+| **Ursache** | `CTkImage(light_image=...)` zeigt nichts im Dark Mode - CustomTkinter nutzt `dark_image` wenn Appearance Mode dark ist |
+| **Lösung** | `CTkImage(light_image=img, dark_image=img, size=...)` - beide Parameter setzen |
+| **Merke** | CustomTkinter CTkImage braucht IMMER beide Image-Parameter, sonst wird je nach Mode nichts angezeigt |
+
 ---
 
 ## Performance-Erkenntnisse

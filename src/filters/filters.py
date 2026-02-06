@@ -19,7 +19,8 @@ AVAILABLE_FILTERS = {
     "cool": "Cool Breeze",
     "vivid": "Vivid Pop",
     "film": "Filmisch",
-    "soft_glow": "Soft Glow"
+    "soft_glow": "Soft Glow",
+    "instagram": "Insta Glow",
 }
 
 
@@ -37,6 +38,7 @@ class FilterManager:
             "vivid": self._filter_vivid,
             "film": self._filter_film,
             "soft_glow": self._filter_soft_glow,
+            "instagram": self._filter_instagram,
         }
         self._cache: Dict[str, Image.Image] = {}
     
@@ -149,3 +151,31 @@ class FilterManager:
         glow = ImageEnhance.Brightness(glow).enhance(1.08)
         glow = ImageEnhance.Color(glow).enhance(1.1)
         return glow.convert("RGBA")
+
+    def _filter_instagram(self, img: Image.Image) -> Image.Image:
+        """Instagram-Style: Warmer Glow, leichte Entsättigung, angehobene Schatten"""
+        rgb = img.convert("RGB")
+
+        # Schatten anheben: Dunkle Pixel aufhellen (Fade-Effekt)
+        r, g, b = rgb.split()
+        # Schatten-Lift: min 25 statt 0 für matten Look
+        r = r.point(lambda i: max(i, 25) if i < 40 else i)
+        g = g.point(lambda i: max(i, 20) if i < 40 else i)
+        b = b.point(lambda i: max(i, 30) if i < 40 else i)
+
+        # Warmer Farbton: Rot/Orange leicht anheben
+        r = r.point(lambda i: min(255, i + 12))
+        g = g.point(lambda i: min(255, i + 5))
+
+        merged = Image.merge("RGB", (r, g, b))
+
+        # Leicht entsättigen für matten Look, dann Kontrast
+        merged = ImageEnhance.Color(merged).enhance(0.88)
+        merged = ImageEnhance.Contrast(merged).enhance(1.08)
+        merged = ImageEnhance.Brightness(merged).enhance(1.06)
+
+        # Sanfter Glow (dezenter als soft_glow)
+        blur = merged.filter(ImageFilter.GaussianBlur(radius=3))
+        result = Image.blend(merged, blur, 0.15)
+
+        return result.convert("RGBA")

@@ -37,6 +37,9 @@ class PhotoboothApp:
         self.root = ctk.CTk()
         self.root.title("Fexobooth")
         self.root.configure(fg_color=COLORS["bg_dark"])
+
+        # App-Referenz am Root speichern (für Service-Menü Zugriff)
+        self.root._photobooth_app = self
         
         # Bildschirmgröße ermitteln
         screen_width = self.root.winfo_screenwidth()
@@ -357,7 +360,11 @@ class PhotoboothApp:
                 new_width = int(new_height * ratio)
                 logo_img = logo_img.resize((new_width, new_height), Image.Resampling.LANCZOS)
                 
-                self.logo_ctk = ctk.CTkImage(light_image=logo_img, size=(new_width, new_height))
+                self.logo_ctk = ctk.CTkImage(
+                    light_image=logo_img,
+                    dark_image=logo_img,
+                    size=(new_width, new_height)
+                )
                 logo_label = ctk.CTkLabel(logo_frame, image=self.logo_ctk, text="")
                 logo_label.pack()
             except Exception as e:

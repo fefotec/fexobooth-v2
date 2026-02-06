@@ -6,6 +6,21 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-02-06
 
+### Diverse Fixes & Verbesserungen
+- **Bug Fix:** Logo wird jetzt angezeigt (CTkImage braucht `dark_image` Parameter im Dark Mode)
+- **Neuer Filter:** "Insta Glow" - Instagram-artiger Filter (warmer Glow, matte Schatten, leichte Entsättigung)
+- **Entfernt:** Countdown-Beep und Foto-Beep komplett entfernt (`winsound.Beep` Aufrufe in session.py)
+
+### Service-Menü (internes Wartungsmenü)
+- **Neues Feature:** Service-Menü über separaten PIN (6588) erreichbar
+- Menüpunkt "Bilder sichern": Kopiert alle Bilder (Singles + Prints) auf USB-Stick in Ordner mit Event-ID
+- Menüpunkt "Alle Bilder löschen": Löscht alle lokalen Bilder (Datenschutz) mit Bestätigungsdialog
+- Überschreiben-Abfrage wenn Event-ID Ordner bereits auf USB existiert
+- Fortschrittsanzeige und Erfolgs-/Fehlermeldungen bei beiden Aktionen
+- Neue Datei: `src/ui/screens/service.py`
+- PIN-Dialog erweitert: Erkennt Service-PIN und öffnet Service-Menü statt Admin-Einstellungen
+- App-Referenz am Root-Fenster gespeichert (`_photobooth_app`) für Service-Menü Zugriff
+
 ### Performance-Optimierung (VLC-Übergang)
 - **Bug Fix:** Doppelter Screen-Wechsel nach Zwischen-Videos behoben (video.py)
 - **Bug Fix:** VLC-Cleanup: Synchron bei Zwischen-Videos (Kamera braucht DXVA2), async bei Start/End-Videos

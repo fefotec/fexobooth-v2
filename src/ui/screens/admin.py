@@ -205,10 +205,18 @@ class AdminDialog(ctk.CTkToplevel):
                 self.after(100, self._check_pin)
     
     def _check_pin(self):
-        """Prüft die PIN"""
+        """Prüft die PIN (Admin oder Service)"""
         entered = self.pin_entry.get()
         correct = self.config_data.get("admin_pin", "3198")
-        
+
+        # Service-PIN: Öffnet Service-Menü statt Admin
+        from src.ui.screens.service import SERVICE_PIN
+        if entered == SERVICE_PIN:
+            self.is_authenticated = True
+            self.pin_frame.destroy()
+            self._open_service_menu()
+            return
+
         if entered == correct:
             self.is_authenticated = True
             self.pin_frame.destroy()
@@ -247,6 +255,28 @@ class AdminDialog(ctk.CTkToplevel):
                 border_color=COLORS["border_light"]
             ))
     
+    def _open_service_menu(self):
+        """Öffnet das Service-Menü und schließt den Admin-Dialog"""
+        # Admin-Dialog schließen
+        self.destroy()
+
+        # Service-Menü öffnen (braucht Zugriff auf app)
+        # parent_window ist das CTk Root-Fenster
+        try:
+            from src.ui.screens.service import ServiceDialog
+            # App-Referenz über das Root-Fenster finden
+            # Das Root-Fenster hat eine .app Referenz wenn wir sie setzen,
+            # ansonsten über den Aufruf-Stack
+            app = getattr(self.parent_window, '_photobooth_app', None)
+            if app is None:
+                # Fallback: Über den show_admin_dialog Caller
+                logger.warning("Service-Menü: App-Referenz nicht gefunden, versuche Workaround")
+                return
+
+            ServiceDialog(self.parent_window, app)
+        except Exception as e:
+            logger.error(f"Service-Menü Fehler: {e}")
+
     def _show_settings(self):
         """Zeigt Einstellungen - mit Lazy Loading für schnelleren Start"""
         # Hauptcontainer

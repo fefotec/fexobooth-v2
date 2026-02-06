@@ -27,6 +27,10 @@ _Aktuell keine niedrig priorisierten Aufgaben_
 ## Erledigt ✅
 
 ### 2026-02-06
+- [x] Bug Fix: Logo-Anzeige (CTkImage dark_image für Dark Mode)
+- [x] Neuer Filter: "Insta Glow" (Instagram-Style)
+- [x] Countdown-Ton und Foto-Beep komplett entfernt
+- [x] Service-Menü: Internes Wartungsmenü über PIN 6588 (Bilder sichern, Bilder löschen)
 - [x] PIN-Dialog: Responsive Größe, Zentrierung, Schließen-Button, eigene Farbe
 - [x] Performance-Optimierung: Doppelter Screen-Wechsel, VLC-Cleanup, Template-Cache, Overlay-Cache
 
