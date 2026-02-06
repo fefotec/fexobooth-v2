@@ -51,6 +51,7 @@ _temp_*/
 
 # PyInstaller
 *.spec
+!fexobooth.spec
 build/
 dist/
 

@@ -1,13 +1,13 @@
 """Video-Screen für Start/End Videos
 
 Spielt ein Video ab und wechselt dann zum nächsten Screen.
-Nutzt Windows Media Foundation (MSMF) als primäres Backend für beste Kompatibilität.
-Threading verhindert UI-Einfrieren auf schwacher Hardware.
+Primär: VLC für Hardware-beschleunigtes Decoding (funktioniert auf schwacher Hardware wie Miix 310).
+Fallback: OpenCV wenn VLC nicht verfügbar.
 """
 
 import customtkinter as ctk
-import cv2
 import os
+import sys
 import threading
 import time
 import queue
@@ -22,12 +22,53 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# VLC Plugin-Pfad setzen (für gebündelten Modus mit PyInstaller)
+def _setup_vlc_path():
+    """Setzt VLC_PLUGIN_PATH für gebündeltes VLC"""
+    if os.environ.get("VLC_PLUGIN_PATH"):
+        return  # Bereits gesetzt
+
+    # PyInstaller: _MEIPASS ist das Temp-Verzeichnis bei --onefile
+    # oder das exe-Verzeichnis bei --onedir
+    base_path = getattr(sys, '_MEIPASS', None)
+    if base_path is None:
+        # Nicht gebündelt - normaler Python-Modus
+        base_path = os.path.dirname(os.path.abspath(sys.argv[0]))
+
+    # VLC Plugins im gleichen Verzeichnis wie die .exe suchen
+    for candidate in [
+        os.path.join(base_path, "vlc", "plugins"),
+        os.path.join(base_path, "plugins"),
+        os.path.join(os.path.dirname(base_path), "vlc", "plugins"),
+    ]:
+        if os.path.isdir(candidate):
+            os.environ["VLC_PLUGIN_PATH"] = candidate
+            logger.info(f"VLC Plugin-Pfad gesetzt: {candidate}")
+
+            # Auch libvlc.dll Pfad zum PATH hinzufügen
+            vlc_dir = os.path.dirname(candidate)
+            if vlc_dir not in os.environ.get("PATH", ""):
+                os.environ["PATH"] = vlc_dir + os.pathsep + os.environ.get("PATH", "")
+            return
+
+_setup_vlc_path()
+
+# VLC-Verfügbarkeit prüfen
+_vlc_available = False
+try:
+    import vlc as _vlc
+    _vlc_available = True
+    logger.info("VLC-Bibliothek verfügbar - Hardware-beschleunigtes Video aktiv")
+except ImportError:
+    logger.warning("python-vlc nicht installiert - Fallback auf OpenCV")
+except Exception as e:
+    logger.warning(f"VLC konnte nicht geladen werden: {e} - Fallback auf OpenCV")
+
 
 class VideoScreen(ctk.CTkFrame):
     """Spielt ein Video ab und wechselt dann zum Ziel-Screen
 
-    Nutzt Windows Media Foundation für Hardware-beschleunigtes Decoding.
-    Fallback auf andere Backends wenn MSMF nicht funktioniert.
+    Primär VLC (Hardware-Decoding), Fallback OpenCV.
     """
 
     def __init__(self, parent, app: "PhotoboothApp"):
@@ -39,16 +80,19 @@ class VideoScreen(ctk.CTkFrame):
         self.on_complete: Optional[Callable] = None
 
         # Video-Zustand
-        self.cap: Optional[cv2.VideoCapture] = None
         self.is_playing = False
-        self._stop_event = threading.Event()
-        self._video_thread: Optional[threading.Thread] = None
         self._end_called = False
+        self._stop_event = threading.Event()
 
-        # Frame-Queue für Thread-sichere Kommunikation
+        # VLC-spezifisch
+        self._vlc_instance = None
+        self._vlc_player = None
+        self._vlc_check_id = None
+
+        # OpenCV-Fallback
+        self.cap = None
+        self._video_thread: Optional[threading.Thread] = None
         self._frame_queue: queue.Queue = queue.Queue(maxsize=3)
-
-        # FPS-Steuerung
         self.target_fps = 25
         self.frame_delay_ms = 40
 
@@ -64,7 +108,7 @@ class VideoScreen(ctk.CTkFrame):
         )
         self.video_frame.pack(fill="both", expand=True)
 
-        # Video-Label für Frames
+        # Video-Label für Frames (OpenCV-Modus) / Hintergrund (VLC-Modus)
         self.video_label = ctk.CTkLabel(
             self.video_frame,
             text="",
@@ -88,43 +132,9 @@ class VideoScreen(ctk.CTkFrame):
         )
         self.skip_btn.place(relx=0.95, rely=0.95, anchor="se")
 
-    def _try_open_video(self, video_path: str) -> Optional[cv2.VideoCapture]:
-        """Versucht das Video mit verschiedenen Backends zu öffnen
-
-        Reihenfolge:
-        1. MSMF (Windows Media Foundation) - beste Kompatibilität auf Windows
-        2. FFMPEG - falls vorhanden
-        3. Default - OpenCV Standard
-        """
-        backends = [
-            (cv2.CAP_MSMF, "MSMF"),
-            (cv2.CAP_FFMPEG, "FFMPEG"),
-            (cv2.CAP_ANY, "Default"),
-        ]
-
-        for backend_id, backend_name in backends:
-            try:
-                logger.info(f"Versuche {backend_name} Backend...")
-                cap = cv2.VideoCapture(video_path, backend_id)
-
-                if cap.isOpened():
-                    # Test: Ersten Frame lesen
-                    ret, frame = cap.read()
-                    if ret and frame is not None and frame.size > 0:
-                        # Zurückspulen
-                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                        logger.info(f"Video geöffnet mit {backend_name}")
-                        return cap
-                    else:
-                        logger.warning(f"{backend_name}: Frame-Test fehlgeschlagen")
-                        cap.release()
-                else:
-                    logger.debug(f"{backend_name}: Nicht verfügbar")
-
-            except Exception as e:
-                logger.debug(f"{backend_name} Fehler: {e}")
-
-        return None
+    # ─────────────────────────────────────────────
+    # Öffentliche API
+    # ─────────────────────────────────────────────
 
     def play(self, video_path: str, next_screen: str = "start", on_complete: Optional[Callable] = None):
         """Spielt ein Video ab"""
@@ -151,18 +161,183 @@ class VideoScreen(ctk.CTkFrame):
         self.video_label.configure(text="Video wird geladen...", image=None)
         self.update_idletasks()
 
-        # Video öffnen (im Main-Thread, aber schnell)
+        # VLC bevorzugen, OpenCV als Fallback
+        if _vlc_available and sys.platform == "win32":
+            success = self._play_vlc(video_path)
+            if success:
+                return
+            logger.warning("VLC-Wiedergabe fehlgeschlagen, Fallback auf OpenCV")
+
+        self._play_opencv(video_path)
+
+    def on_hide(self):
+        """Screen wird verlassen"""
+        self._stop_playback()
+
+    def on_show(self):
+        """Screen wird angezeigt"""
+        self._end_called = False
+        self._stop_event.clear()
+
+    # ─────────────────────────────────────────────
+    # VLC-Wiedergabe (Hardware-beschleunigt)
+    # ─────────────────────────────────────────────
+
+    def _play_vlc(self, video_path: str) -> bool:
+        """Spielt Video mit VLC ab (Hardware-Decoding)
+
+        Returns:
+            True wenn erfolgreich gestartet, False bei Fehler
+        """
+        try:
+            # Absoluten Pfad sicherstellen
+            abs_path = os.path.abspath(video_path)
+            logger.info(f"VLC: Öffne {abs_path}")
+
+            # VLC-Instanz mit Hardware-Decoding
+            args = [
+                "--no-xlib",
+                "--quiet",
+                "--no-video-title-show",
+                "--no-snapshot-preview",
+                "--avcodec-hw=dxva2",  # DirectX Video Acceleration
+            ]
+            self._vlc_instance = _vlc.Instance(args)
+            self._vlc_player = self._vlc_instance.media_player_new()
+
+            # Media erstellen
+            media = self._vlc_instance.media_new(abs_path)
+            media.add_option("no-video-title-show")
+            self._vlc_player.set_media(media)
+
+            # Warten bis das Fenster sichtbar und bereit ist
+            self.update_idletasks()
+            self.after(50, lambda: self._vlc_embed_and_play(abs_path))
+
+            return True
+
+        except Exception as e:
+            logger.error(f"VLC-Initialisierung fehlgeschlagen: {e}")
+            self._cleanup_vlc()
+            return False
+
+    def _vlc_embed_and_play(self, video_path: str):
+        """Bettet VLC in das Tkinter-Fenster ein und startet Wiedergabe"""
+        try:
+            if self._vlc_player is None:
+                return
+
+            # Window-Handle des video_frame holen
+            hwnd = self.video_label.winfo_id()
+            if not hwnd:
+                logger.error("VLC: Kein Window-Handle verfügbar")
+                self._cleanup_vlc()
+                self._play_opencv(video_path)
+                return
+
+            logger.info(f"VLC: Einbetten in HWND {hwnd}")
+            self._vlc_player.set_hwnd(hwnd)
+
+            # Text ausblenden
+            self.video_label.configure(text="")
+
+            # Wiedergabe starten
+            result = self._vlc_player.play()
+            if result == -1:
+                logger.error("VLC: play() fehlgeschlagen")
+                self._cleanup_vlc()
+                self._play_opencv(video_path)
+                return
+
+            self.is_playing = True
+            logger.info("VLC: Wiedergabe gestartet")
+
+            # Regelmäßig prüfen ob Video zu Ende
+            self._vlc_check_id = self.after(200, self._vlc_check_status)
+
+        except Exception as e:
+            logger.error(f"VLC-Embed fehlgeschlagen: {e}")
+            self._cleanup_vlc()
+            self._play_opencv(video_path)
+
+    def _vlc_check_status(self):
+        """Prüft ob VLC-Wiedergabe noch läuft"""
+        if not self.is_playing or self._stop_event.is_set():
+            return
+
+        if self._vlc_player is None:
+            self._cleanup_and_end()
+            return
+
+        try:
+            state = self._vlc_player.get_state()
+
+            if state == _vlc.State.Ended:
+                logger.info("VLC: Video zu Ende")
+                self._cleanup_and_end()
+                return
+            elif state == _vlc.State.Error:
+                logger.error("VLC: Wiedergabe-Fehler")
+                self._cleanup_and_end()
+                return
+            elif state == _vlc.State.Stopped:
+                logger.info("VLC: Wiedergabe gestoppt")
+                self._cleanup_and_end()
+                return
+
+            # Weiter prüfen
+            self._vlc_check_id = self.after(200, self._vlc_check_status)
+
+        except Exception as e:
+            logger.error(f"VLC Status-Check Fehler: {e}")
+            self._cleanup_and_end()
+
+    def _cleanup_vlc(self):
+        """VLC-Ressourcen aufräumen"""
+        if self._vlc_check_id is not None:
+            try:
+                self.after_cancel(self._vlc_check_id)
+            except:
+                pass
+            self._vlc_check_id = None
+
+        if self._vlc_player is not None:
+            try:
+                self._vlc_player.stop()
+            except:
+                pass
+            try:
+                self._vlc_player.release()
+            except:
+                pass
+            self._vlc_player = None
+
+        if self._vlc_instance is not None:
+            try:
+                self._vlc_instance.release()
+            except:
+                pass
+            self._vlc_instance = None
+
+    # ─────────────────────────────────────────────
+    # OpenCV-Fallback
+    # ─────────────────────────────────────────────
+
+    def _play_opencv(self, video_path: str):
+        """Spielt Video mit OpenCV ab (Software-Decoding, Fallback)"""
+        import cv2
+
         self.cap = self._try_open_video(video_path)
 
         if self.cap is None:
-            logger.error(f"Konnte Video nicht öffnen: {video_path}")
+            logger.error(f"OpenCV: Konnte Video nicht öffnen: {video_path}")
             self.video_label.configure(text="Video konnte nicht geladen werden")
             self.after(2000, self._on_video_end)
             return
 
         # FPS aus Video lesen
         video_fps = self.cap.get(cv2.CAP_PROP_FPS)
-        if video_fps > 0 and video_fps < 120:
+        if 0 < video_fps < 120:
             self.target_fps = min(video_fps, 30)
         else:
             self.target_fps = 25
@@ -171,7 +346,7 @@ class VideoScreen(ctk.CTkFrame):
 
         total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         duration = total_frames / self.target_fps if self.target_fps > 0 else 0
-        logger.info(f"Video: {self.target_fps:.0f} FPS, {total_frames} Frames, {duration:.1f}s")
+        logger.info(f"OpenCV: {self.target_fps:.0f} FPS, {total_frames} Frames, {duration:.1f}s")
 
         self.is_playing = True
 
@@ -182,8 +357,41 @@ class VideoScreen(ctk.CTkFrame):
         # Frame-Display im Main-Thread starten
         self.after(10, self._display_next_frame)
 
+    def _try_open_video(self, video_path: str):
+        """Versucht das Video mit verschiedenen Backends zu öffnen"""
+        import cv2
+
+        backends = [
+            (cv2.CAP_MSMF, "MSMF"),
+            (cv2.CAP_FFMPEG, "FFMPEG"),
+            (cv2.CAP_ANY, "Default"),
+        ]
+
+        for backend_id, backend_name in backends:
+            try:
+                logger.info(f"OpenCV: Versuche {backend_name} Backend...")
+                cap = cv2.VideoCapture(video_path, backend_id)
+
+                if cap.isOpened():
+                    ret, frame = cap.read()
+                    if ret and frame is not None and frame.size > 0:
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        logger.info(f"OpenCV: Video geöffnet mit {backend_name}")
+                        return cap
+                    else:
+                        logger.warning(f"OpenCV: {backend_name} Frame-Test fehlgeschlagen")
+                        cap.release()
+                else:
+                    logger.debug(f"OpenCV: {backend_name} nicht verfügbar")
+
+            except Exception as e:
+                logger.debug(f"OpenCV: {backend_name} Fehler: {e}")
+
+        return None
+
     def _video_reader_thread(self):
-        """Liest Frames in separatem Thread"""
+        """Liest Frames in separatem Thread (OpenCV)"""
+        import cv2
         frame_time = 1.0 / self.target_fps
         frames_read = 0
 
@@ -194,27 +402,24 @@ class VideoScreen(ctk.CTkFrame):
                 ret, frame = self.cap.read()
 
                 if not ret or frame is None:
-                    logger.info(f"Video Ende nach {frames_read} Frames")
+                    logger.info(f"OpenCV: Video Ende nach {frames_read} Frames")
                     break
 
                 frames_read += 1
 
-                # Frame in Queue (non-blocking)
                 try:
                     self._frame_queue.put_nowait(frame)
                 except queue.Full:
-                    pass  # Queue voll, Frame überspringen
+                    pass
 
-                # Timing
                 elapsed = time.time() - start_time
                 sleep_time = max(0.001, frame_time - elapsed)
                 time.sleep(sleep_time)
 
             except Exception as e:
-                logger.error(f"Reader-Fehler: {e}")
+                logger.error(f"OpenCV: Reader-Fehler: {e}")
                 break
 
-        # Ende-Signal senden
         if not self._stop_event.is_set():
             try:
                 self._frame_queue.put(None, timeout=0.5)
@@ -222,7 +427,7 @@ class VideoScreen(ctk.CTkFrame):
                 pass
 
     def _display_next_frame(self):
-        """Zeigt den nächsten Frame an (Main-Thread)"""
+        """Zeigt den nächsten Frame an (Main-Thread, OpenCV)"""
         if not self.is_playing or self._stop_event.is_set():
             return
 
@@ -230,21 +435,20 @@ class VideoScreen(ctk.CTkFrame):
             frame = self._frame_queue.get_nowait()
 
             if frame is None:
-                # Video zu Ende
                 self._cleanup_and_end()
                 return
 
             self._show_frame(frame)
 
         except queue.Empty:
-            pass  # Kein Frame, später erneut versuchen
+            pass
 
-        # Nächsten Frame planen
         if self.is_playing and not self._stop_event.is_set():
             self.after(self.frame_delay_ms, self._display_next_frame)
 
     def _show_frame(self, frame):
-        """Zeigt einen Frame an"""
+        """Zeigt einen Frame an (OpenCV)"""
+        import cv2
         try:
             container_w = self.video_frame.winfo_width()
             container_h = self.video_frame.winfo_height()
@@ -254,17 +458,14 @@ class VideoScreen(ctk.CTkFrame):
 
             frame_h, frame_w = frame.shape[:2]
 
-            # Skalierung berechnen
             scale = min(container_w / frame_w, container_h / frame_h)
             new_w = max(1, int(frame_w * scale))
             new_h = max(1, int(frame_h * scale))
 
-            # Skalieren
             if new_w != frame_w or new_h != frame_h:
                 interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
                 frame = cv2.resize(frame, (new_w, new_h), interpolation=interp)
 
-            # BGR -> RGB -> PIL -> CTkImage
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             pil_image = Image.fromarray(rgb_frame)
             ctk_image = ctk.CTkImage(
@@ -277,7 +478,11 @@ class VideoScreen(ctk.CTkFrame):
             self.video_label.image = ctk_image
 
         except Exception as e:
-            logger.debug(f"Frame-Anzeige-Fehler: {e}")
+            logger.debug(f"OpenCV: Frame-Anzeige-Fehler: {e}")
+
+    # ─────────────────────────────────────────────
+    # Gemeinsame Methoden
+    # ─────────────────────────────────────────────
 
     def _skip_video(self):
         """Video überspringen"""
@@ -285,23 +490,24 @@ class VideoScreen(ctk.CTkFrame):
         self._cleanup_and_end()
 
     def _stop_playback(self):
-        """Stoppt die Wiedergabe"""
+        """Stoppt die Wiedergabe (VLC oder OpenCV)"""
         self._stop_event.set()
         self.is_playing = False
 
-        # Auf Thread warten
+        # VLC aufräumen
+        self._cleanup_vlc()
+
+        # OpenCV aufräumen
         if self._video_thread and self._video_thread.is_alive():
             self._video_thread.join(timeout=0.3)
         self._video_thread = None
 
-        # Queue leeren
         while not self._frame_queue.empty():
             try:
                 self._frame_queue.get_nowait()
             except:
                 break
 
-        # Video schließen
         if self.cap:
             try:
                 self.cap.release()
@@ -335,12 +541,3 @@ class VideoScreen(ctk.CTkFrame):
                 logger.error(f"Callback-Fehler: {e}")
 
         self.app.show_screen(self.next_screen)
-
-    def on_hide(self):
-        """Screen wird verlassen"""
-        self._stop_playback()
-
-    def on_show(self):
-        """Screen wird angezeigt"""
-        self._end_called = False
-        self._stop_event.clear()
