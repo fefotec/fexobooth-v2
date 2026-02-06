@@ -315,7 +315,16 @@ class VideoScreen(ctk.CTkFrame):
                         pass
                 logger.debug("VLC-Ressourcen freigegeben")
 
-            threading.Thread(target=_release, daemon=True).start()
+            cleanup_thread = threading.Thread(target=_release, daemon=True)
+            cleanup_thread.start()
+
+            # Nur synchron warten wenn Callback existiert (= Zwischen-Video)
+            # Dann muss VLC DXVA2 freigeben bevor Kamera startet
+            # Bei Start/End-Videos (kein Callback) ist fire-and-forget OK
+            if self.on_complete:
+                cleanup_thread.join(timeout=1.0)
+                if cleanup_thread.is_alive():
+                    logger.warning("VLC-Cleanup dauert >1s - fahre fort")
 
     # ─────────────────────────────────────────────
     # OpenCV-Fallback
@@ -532,9 +541,13 @@ class VideoScreen(ctk.CTkFrame):
         logger.info(f"Video beendet -> {self.next_screen}")
 
         if self.on_complete:
+            # Callback übernimmt Navigation (z.B. _continue_after_video -> show_screen)
             try:
                 self.on_complete()
             except Exception as e:
                 logger.error(f"Callback-Fehler: {e}")
-
-        self.app.show_screen(self.next_screen)
+                # Fallback bei Fehler: normaler Screen-Wechsel
+                self.app.show_screen(self.next_screen)
+        else:
+            # Kein Callback -> normaler Screen-Wechsel (z.B. video_start -> session)
+            self.app.show_screen(self.next_screen)

@@ -6,14 +6,14 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
-### Video-Wiedergabe: MSMF statt VLC/FFmpeg
+### Video-Wiedergabe: VLC mit DXVA2 Hardware-Beschleunigung
 
 | | |
 |---|---|
 | **Kontext** | Video-Wiedergabe auf schwacher Hardware (Atom CPU) |
-| **Entscheidung** | Windows Media Foundation (MSMF) als primäres Backend |
-| **Alternativen** | VLC (zu schwer), FFmpeg (zusätzliche Dependency), Default OpenCV (kann H.264 nicht) |
-| **Begründung** | MSMF nutzt Windows-eigene Codecs, keine zusätzlichen Bibliotheken nötig |
+| **Entscheidung** | VLC (python-vlc) mit DXVA2 Hardware-Beschleunigung |
+| **Alternativen** | MSMF/OpenCV (UI-Freeze, eingeschränkte Codec-Unterstützung), FFmpeg (zusätzliche Dependency) |
+| **Begründung** | VLC nutzt GPU-Beschleunigung (DXVA2), kein UI-Freeze, breite Codec-Unterstützung |
 
 ### GUI-Framework: CustomTkinter
 
@@ -93,9 +93,40 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ---
 
+### Doppelter Screen-Wechsel bei Video-Callbacks
+
+| | |
+|---|---|
+| **Problem** | Session-Screen wird 2x erstellt/zerstört nach jedem Zwischen-Video |
+| **Ursache** | `_on_video_end()` ruft sowohl `on_complete()` (Callback navigiert) als auch `show_screen()` auf |
+| **Lösung** | `show_screen()` nur aufrufen wenn KEIN Callback vorhanden, sonst übernimmt Callback |
+| **Merke** | Bei Callback-Pattern: Callback ODER eigene Navigation, nie beides |
+
+### VLC-Cleanup blockiert Kamera-Initialisierung
+
+| | |
+|---|---|
+| **Problem** | ~400ms Verzögerung nach Video weil VLC und Kamera gleichzeitig DXVA2 nutzen |
+| **Ursache** | VLC-Cleanup lief asynchron (fire-and-forget Thread) |
+| **Lösung** | `thread.join(timeout=1.0)` - VLC muss DXVA2 freigeben bevor Kamera startet |
+| **Merke** | Hardware-Ressourcen immer synchron freigeben bevor nächster Consumer startet |
+
+### Template-ZIP Caching
+
+| | |
+|---|---|
+| **Problem** | Gleiche ZIP-Datei wurde 3x entpackt beim App-Start |
+| **Ursache** | Kein Modul-Level-Cache in TemplateLoader |
+| **Lösung** | `_template_cache` Dictionary mit (Pfad, mtime) als Key |
+| **Merke** | Teure I/O-Operationen (ZIP, Bilddateien) immer cachen |
+
+---
+
 ## Performance-Erkenntnisse
 
 - **Max. 25 FPS für Video** - Mehr schafft die Hardware nicht flüssig
 - **Keine 60fps GUI-Updates** - after() mit mindestens 50ms Intervall
 - **Bilder nicht im RAM halten** - Sofort auf Disk schreiben, nur bei Bedarf laden
 - **Flask ist OK** - Verbraucht nur ~20-30 MB RAM im Idle
+- **LANCZOS-Resize cachen** - Overlay-Resize auf App-Level statt Screen-Level, überlebt Screen-Wechsel
+- **Kamera nicht freigeben bei Zwischen-Videos** - Kamera bleibt warm, spart ~1.5s Reopening

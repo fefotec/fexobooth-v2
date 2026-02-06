@@ -25,7 +25,7 @@ class AdminDialog(ctk.CTkToplevel):
         super().__init__(parent)
 
         self.title("⚙️ Admin-Einstellungen")
-        self.configure(fg_color=COLORS["bg_dark"])
+        self.configure(fg_color="#0a0a10")
 
         self.config_data = config.copy()
         self.result: Optional[Dict[str, Any]] = None
@@ -36,96 +36,124 @@ class AdminDialog(ctk.CTkToplevel):
         self.transient(parent)
         self.grab_set()
 
-        # Kein Fensterrand für PIN-Dialog (Touch-freundlich)
+        # Vollbild-Overlay für PIN-Dialog (garantiert zentriert)
         self.overrideredirect(True)
-        
-        # PIN-Dialog Größe (größer für Numpad)
-        pin_width = 400
-        pin_height = 500  # Etwas kleiner für bessere Zentrierung
-        
-        # Zentrieren auf dem Bildschirm
+
         self.update_idletasks()
         screen_w = self.winfo_screenwidth()
         screen_h = self.winfo_screenheight()
-        
-        # Exakt zentrieren (mit kleinem Offset nach unten für Taskbar)
-        x = (screen_w - pin_width) // 2
-        y = (screen_h - pin_height) // 2 + 20  # Leicht nach unten
-        
-        # Sicherstellen dass y nicht negativ wird
-        if y < 0:
-            y = 10
-        
-        self.geometry(f"{pin_width}x{pin_height}+{x}+{y}")
+
+        # Ganzen Bildschirm überdecken - Inhalt wird darin zentriert
+        self.geometry(f"{screen_w}x{screen_h}+0+0")
         
         # Dialog in den Vordergrund bringen
         self.lift()
         self.focus_force()
 
+        # Escape zum Schließen
+        self.bind("<Escape>", lambda e: self.destroy())
+
         # PIN-Abfrage zuerst
         self._show_pin_dialog()
     
     def _show_pin_dialog(self):
-        """Zeigt PIN-Eingabe"""
-        self.pin_frame = ctk.CTkFrame(self, fg_color="transparent")
+        """Zeigt PIN-Eingabe als zentriertes Overlay"""
+        # Dunkler Fullscreen-Hintergrund (Overlay-Effekt)
+        self.pin_frame = ctk.CTkFrame(self, fg_color="#0a0a10", corner_radius=0)
         self.pin_frame.pack(fill="both", expand=True)
-        
-        # Zentrierter Container
-        center = ctk.CTkFrame(self.pin_frame, fg_color="transparent")
-        center.place(relx=0.5, rely=0.5, anchor="center")
-        
+
+        # Klick auf Hintergrund schließt Dialog
+        self.pin_frame.bind("<Button-1>", lambda e: self.destroy())
+
+        # Responsive Werte
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        btn_size = min(70, max(50, int(screen_h * 0.08)))
+        btn_font_size = max(16, int(btn_size * 0.34))
+        btn_pad = max(3, int(btn_size * 0.06))
+
+        # Zentrierte Karte mit eigener Farbe
+        card_w = min(380, int(screen_w * 0.75))
+        card = ctk.CTkFrame(
+            self.pin_frame,
+            fg_color=COLORS["bg_medium"],
+            border_color=COLORS["border"],
+            border_width=1,
+            corner_radius=16
+        )
+        card.place(relx=0.5, rely=0.5, anchor="center")
+        # Klick auf Karte soll NICHT schließen
+        card.bind("<Button-1>", lambda e: "break")
+
+        # Schließen-Button oben rechts in der Karte
+        close_btn = ctk.CTkButton(
+            card,
+            text="✕",
+            width=32,
+            height=32,
+            font=("Segoe UI", 16, "bold"),
+            fg_color="transparent",
+            hover_color=COLORS["error"],
+            text_color=COLORS["text_muted"],
+            corner_radius=16,
+            command=self.destroy
+        )
+        close_btn.pack(anchor="e", padx=(0, 8), pady=(8, 0))
+
         # Icon
+        icon_size = max(28, min(44, int(screen_h * 0.05)))
         ctk.CTkLabel(
-            center,
+            card,
             text="🔐",
-            font=("Segoe UI Emoji", 50)
-        ).pack(pady=(0, 15))
-        
+            font=("Segoe UI Emoji", icon_size)
+        ).pack(pady=(0, 4))
+
         # Titel
         ctk.CTkLabel(
-            center,
+            card,
             text="Admin-Zugang",
             font=FONTS["heading"],
             text_color=COLORS["text_primary"]
-        ).pack(pady=(0, 20))
-        
-        # PIN-Eingabe (Auto-Submit bei 4 Zeichen)
+        ).pack(pady=(0, 10))
+
+        # PIN-Eingabe
+        entry_h = max(38, min(48, int(screen_h * 0.055)))
         self.pin_entry = ctk.CTkEntry(
-            center,
+            card,
             show="●",
-            width=220,
-            height=50,
-            font=("Segoe UI", 28),
+            width=min(220, int(card_w * 0.6)),
+            height=entry_h,
+            font=("Segoe UI", max(18, int(entry_h * 0.5))),
             justify="center",
-            fg_color=COLORS["bg_medium"],
-            border_color=COLORS["border"],
+            fg_color=COLORS["bg_dark"],
+            border_color=COLORS["border_light"],
             corner_radius=SIZES["corner_radius"]
         )
-        self.pin_entry.pack(pady=10)
+        self.pin_entry.pack(pady=(5, 3))
         self.pin_entry.bind("<Return>", lambda e: self._check_pin())
         self.pin_entry.bind("<KeyRelease>", self._on_pin_key)
         self.pin_entry.focus()
-        
+
         # Fehler-Label
         self.pin_error = ctk.CTkLabel(
-            center,
+            card,
             text="",
             font=FONTS["small"],
             text_color=COLORS["error"]
         )
-        self.pin_error.pack(pady=5)
-        
+        self.pin_error.pack(pady=2)
+
         # Numpad für Touch
-        numpad_frame = ctk.CTkFrame(center, fg_color="transparent")
-        numpad_frame.pack(pady=15)
-        
+        numpad_frame = ctk.CTkFrame(card, fg_color="transparent")
+        numpad_frame.pack(pady=6)
+
         buttons = [
             ["1", "2", "3"],
             ["4", "5", "6"],
             ["7", "8", "9"],
             ["⌫", "0", "✓"]
         ]
-        
+
         for row in buttons:
             row_frame = ctk.CTkFrame(numpad_frame, fg_color="transparent")
             row_frame.pack()
@@ -134,28 +162,28 @@ class AdminDialog(ctk.CTkToplevel):
                 btn = ctk.CTkButton(
                     row_frame,
                     text=num,
-                    width=75,
-                    height=75,
-                    font=("Segoe UI", 26),
+                    width=btn_size,
+                    height=btn_size,
+                    font=("Segoe UI", btn_font_size),
                     fg_color=COLORS["bg_light"] if num.isdigit() else COLORS["bg_card"],
-                    hover_color=COLORS["bg_card"],
+                    hover_color=COLORS["bg_card"] if num.isdigit() else COLORS["primary_dark"],
                     corner_radius=SIZES["corner_radius_small"],
                     command=lambda n=num: self._numpad_press(n)
                 )
-                btn.pack(side="left", padx=5, pady=5)
-        
-        # Abbrechen
+                btn.pack(side="left", padx=btn_pad, pady=btn_pad)
+
+        # Abbrechen-Button
         ctk.CTkButton(
-            center,
+            card,
             text="Abbrechen",
             font=FONTS["small"],
             width=120,
-            height=35,
+            height=30,
             fg_color="transparent",
             hover_color=COLORS["bg_light"],
             text_color=COLORS["text_muted"],
             command=self.destroy
-        ).pack(pady=(15, 0))
+        ).pack(pady=(6, 12))
     
     def _on_pin_key(self, event):
         """Auto-Check bei 4 Zeichen"""
@@ -212,13 +240,12 @@ class AdminDialog(ctk.CTkToplevel):
         else:
             self.pin_entry.delete(0, "end")
             self.pin_error.configure(text="❌ Falsche PIN!")
-            
-            # Shake-Effekt
-            x = self.winfo_x()
-            for dx in [10, -20, 20, -10, 0]:
-                self.geometry(f"+{x + dx}+{self.winfo_y()}")
-                self.update()
-                self.after(50)
+
+            # Visueller Fehler-Effekt: Eingabefeld rot blinken
+            self.pin_entry.configure(border_color=COLORS["error"])
+            self.after(600, lambda: self.pin_entry.configure(
+                border_color=COLORS["border_light"]
+            ))
     
     def _show_settings(self):
         """Zeigt Einstellungen - mit Lazy Loading für schnelleren Start"""

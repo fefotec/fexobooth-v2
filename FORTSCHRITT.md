@@ -4,6 +4,25 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-02-06
+
+### Performance-Optimierung (VLC-Übergang)
+- **Bug Fix:** Doppelter Screen-Wechsel nach Zwischen-Videos behoben (video.py)
+- **Bug Fix:** VLC-Cleanup: Synchron bei Zwischen-Videos (Kamera braucht DXVA2), async bei Start/End-Videos
+- Template-ZIP Cache: Gleiche Datei wird nur 1x entpackt statt 3x
+- App-Level Overlay-Cache: LANCZOS-Resize nur 1x pro Session statt bei jedem Resume
+- Resume-Delay nach Video: 500ms → 200ms (Kamera bleibt offen)
+
+### PIN-Dialog verbessert
+- Responsive Größe (passt sich an Bildschirmgröße an statt feste 400x500)
+- Exakte Zentrierung (kein Offset mehr nach unten)
+- Schließen-Button (X) oben rechts + Escape-Taste
+- Eigene Hintergrundfarbe (bg_medium statt transparent)
+- Numpad-Buttons skalieren mit Bildschirmgröße
+- Kein Abschneiden mehr auf kleinen Screens
+
+---
+
 ## 2026-02-05
 
 ### Arbeitsumgebung erstellt

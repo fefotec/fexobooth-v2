@@ -18,17 +18,21 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Modul-Level Cache: {(abs_path, mtime): (overlay_image, boxes)}
+_template_cache: Dict[tuple, Tuple[Optional[Image.Image], List[Dict]]] = {}
+
 
 class TemplateLoader:
     """Lädt ZIP-Templates im DSLR-Booth Format"""
-    
+
     @staticmethod
-    def load(path: str) -> Tuple[Optional[Image.Image], List[Dict]]:
+    def load(path: str, use_cache: bool = True) -> Tuple[Optional[Image.Image], List[Dict]]:
         """Lädt ein Template aus einer ZIP-Datei
-        
+
         Args:
             path: Pfad zur ZIP-Datei
-            
+            use_cache: Cache nutzen (gleiche Datei wird nur 1x geladen)
+
         Returns:
             Tuple aus (Overlay-Bild, Liste von Photo-Boxen)
             Photo-Box: {"box": (x1, y1, x2, y2), "angle": float, "number": int}
@@ -36,16 +40,47 @@ class TemplateLoader:
         if not os.path.exists(path):
             logger.error(f"Template nicht gefunden: {path}")
             return None, []
-        
+
+        abs_path = os.path.abspath(path)
+
+        # Cache prüfen
+        if use_cache:
+            try:
+                mtime = os.path.getmtime(abs_path)
+                cache_key = (abs_path, mtime)
+                if cache_key in _template_cache:
+                    overlay, boxes = _template_cache[cache_key]
+                    logger.info(f"Template aus Cache: {os.path.basename(abs_path)}")
+                    return overlay, boxes
+            except OSError:
+                pass
+
         lower_path = path.lower()
-        
+
         if lower_path.endswith(".zip"):
-            return TemplateLoader._load_zip(path)
+            result = TemplateLoader._load_zip(path)
         elif lower_path.endswith(".png"):
-            return TemplateLoader._load_png(path)
+            result = TemplateLoader._load_png(path)
         else:
             logger.error(f"Nicht unterstütztes Template-Format: {path}")
             return None, []
+
+        # Ergebnis cachen
+        if use_cache and result[0] is not None:
+            try:
+                mtime = os.path.getmtime(abs_path)
+                cache_key = (abs_path, mtime)
+                _template_cache[cache_key] = result
+            except OSError:
+                pass
+
+        return result
+
+    @staticmethod
+    def clear_cache():
+        """Template-Cache leeren"""
+        _template_cache.clear()
+        logger.info("Template-Cache geleert")
     
     @staticmethod
     def _load_zip(zip_path: str) -> Tuple[Optional[Image.Image], List[Dict]]:

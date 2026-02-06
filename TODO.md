@@ -26,6 +26,10 @@ _Aktuell keine niedrig priorisierten Aufgaben_
 
 ## Erledigt ✅
 
+### 2026-02-06
+- [x] PIN-Dialog: Responsive Größe, Zentrierung, Schließen-Button, eigene Farbe
+- [x] Performance-Optimierung: Doppelter Screen-Wechsel, VLC-Cleanup, Template-Cache, Overlay-Cache
+
 ### 2026-02-05
 - [x] Arbeitsumgebung erstellen (CLAUDE.md, ARBEITSWEISE.md, etc.)
 

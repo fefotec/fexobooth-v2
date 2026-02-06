@@ -78,6 +78,11 @@ class PhotoboothApp:
         self.overlay_image: Optional[Image.Image] = None
         self.prints_in_session: int = 0
 
+        # Skaliertes Overlay-Cache (überlebt Screen-Wechsel, vermeidet wiederholtes LANCZOS-Resize)
+        self._cached_scaled_overlay: Optional[Image.Image] = None
+        self._cached_overlay_scale: float = 0.0
+        self._cached_overlay_source_size: Optional[tuple] = None
+
         # USB-Template Cache (bleibt erhalten wenn USB abgezogen wird)
         self.cached_usb_template: Optional[Dict] = None  # {path, name, overlay, boxes}
 
@@ -980,6 +985,10 @@ class PhotoboothApp:
             self.template_path = resolved_path
             self.template_boxes = boxes
             self.overlay_image = overlay
+            # Overlay-Cache invalidieren (neues Template = neues Overlay)
+            self._cached_scaled_overlay = None
+            self._cached_overlay_scale = 0.0
+            self._cached_overlay_source_size = None
             logger.info(f"✅ Template geladen: {len(boxes)} Foto-Slots, Overlay {overlay.size}")
             for i, box in enumerate(boxes):
                 logger.debug(f"  Slot {i+1}: {box}")
@@ -997,6 +1006,10 @@ class PhotoboothApp:
         self.template_boxes = []
         self.overlay_image = None
         self.prints_in_session = 0
+        # Overlay-Cache invalidieren
+        self._cached_scaled_overlay = None
+        self._cached_overlay_scale = 0.0
+        self._cached_overlay_source_size = None
         self.camera_manager.release()
         self.filter_manager.clear_cache()
         logger.info("Session zurückgesetzt")

@@ -123,7 +123,8 @@ class SessionScreen(ctk.CTkFrame):
             self._update_progress()
             self.is_live = True
             self._update_live_view()
-            self.after(500, self._start_countdown)
+            # Kamera ist bereits warm - kürzerer Delay
+            self.after(200, self._start_countdown)
             return
 
         logger.info("Session gestartet (neu)")
@@ -164,11 +165,9 @@ class SessionScreen(ctk.CTkFrame):
         """Screen wird verlassen"""
         self.is_live = False
         self.is_countdown_active = False
-        # Cache leeren
-        self._scaled_overlay = None
 
     def _prepare_preview_overlay(self):
-        """Bereitet das skalierte Overlay für die LiveView-Vorschau vor (einmalig)"""
+        """Bereitet das skalierte Overlay für die LiveView-Vorschau vor (mit App-Level-Cache)"""
         if self.app.overlay_image:
             orig_w, orig_h = self.app.overlay_image.size
         else:
@@ -185,19 +184,31 @@ class SessionScreen(ctk.CTkFrame):
         # Skalierungsfaktor berechnen
         self._preview_scale = min(max_preview_size / orig_w, max_preview_size / orig_h, 1.0)
 
+        # App-Level Cache prüfen (überlebt Screen-Wechsel bei Zwischen-Videos)
+        if (self.app._cached_scaled_overlay is not None
+                and self.app._cached_overlay_scale == self._preview_scale
+                and self.app._cached_overlay_source_size == (orig_w, orig_h)):
+            self._scaled_overlay = self.app._cached_scaled_overlay
+            logger.info(f"Overlay aus Cache: {self._scaled_overlay.size[0]}x{self._scaled_overlay.size[1]}")
+            return
+
         # Resampling-Methode (NEAREST ist schneller, LANCZOS sieht besser aus)
         if low_perf.get("enabled", False) and low_perf.get("disable_antialiasing", False):
             resample = Image.Resampling.NEAREST
         else:
             resample = Image.Resampling.LANCZOS
 
-        # Overlay skalieren und cachen
+        # Overlay skalieren und in App-Level-Cache speichern
         if self.app.overlay_image:
             new_w = int(orig_w * self._preview_scale)
             new_h = int(orig_h * self._preview_scale)
             self._scaled_overlay = self.app.overlay_image.resize(
                 (new_w, new_h), resample
             )
+            # In App-Cache speichern
+            self.app._cached_scaled_overlay = self._scaled_overlay
+            self.app._cached_overlay_scale = self._preview_scale
+            self.app._cached_overlay_source_size = (orig_w, orig_h)
             logger.info(f"Overlay skaliert: {orig_w}x{orig_h} -> {new_w}x{new_h} (scale={self._preview_scale:.2f})")
         else:
             self._scaled_overlay = None
@@ -587,7 +598,6 @@ class SessionScreen(ctk.CTkFrame):
 
     def _continue_after_video(self):
         """Wird nach Zwischen-Video aufgerufen"""
-        self._resuming_after_video = True
         self.app.show_screen("session")
 
     def _on_cancel(self):
