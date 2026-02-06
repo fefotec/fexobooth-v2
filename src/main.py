@@ -21,6 +21,8 @@ Usage:
 
 import sys
 import os
+import threading
+import traceback
 
 # Pfad für relative Imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -30,17 +32,69 @@ from src.utils.logging import setup_logging, get_logger
 from src.app import PhotoboothApp
 
 
+def _setup_global_exception_handlers():
+    """Installiert globale Exception-Handler für Crashes"""
+    logger = get_logger("crash")
+
+    def handle_exception(exc_type, exc_value, exc_traceback):
+        """Handler für unbehandelte Exceptions im Hauptthread"""
+        if issubclass(exc_type, KeyboardInterrupt):
+            # Ctrl+C normal behandeln
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+
+        # Vollständigen Stacktrace loggen
+        logger.critical("=" * 60)
+        logger.critical("UNBEHANDELTE EXCEPTION (Hauptthread)")
+        logger.critical("=" * 60)
+        tb_lines = traceback.format_exception(exc_type, exc_value, exc_traceback)
+        for line in tb_lines:
+            for subline in line.rstrip().split('\n'):
+                logger.critical(subline)
+        logger.critical("=" * 60)
+
+    def handle_thread_exception(args):
+        """Handler für unbehandelte Exceptions in Threads"""
+        logger.critical("=" * 60)
+        logger.critical(f"UNBEHANDELTE EXCEPTION (Thread: {args.thread.name})")
+        logger.critical("=" * 60)
+        tb_lines = traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback)
+        for line in tb_lines:
+            for subline in line.rstrip().split('\n'):
+                logger.critical(subline)
+        logger.critical("=" * 60)
+
+    # Handler installieren
+    sys.excepthook = handle_exception
+    threading.excepthook = handle_thread_exception
+
+
 def main():
     """Haupteinstiegspunkt"""
-    # Logging initialisieren
-    logger = setup_logging()
+    # Developer Mode NUR via Kommandozeile (--dev oder -d)
+    # Config-Wert wird IGNORIERT - nur CLI zählt!
+    developer_mode = "--dev" in sys.argv or "-d" in sys.argv
+    
+    # Config laden
+    config = load_config()
+    
+    # Developer Mode in Config setzen (für App-Komponenten)
+    # WICHTIG: Explizit auf False setzen wenn kein --dev!
+    config["developer_mode"] = developer_mode
+    
+    # Logging initialisieren MIT Developer Mode Info
+    logger = setup_logging(developer_mode=developer_mode)
+
+    # Globale Exception-Handler für Crash-Logging
+    _setup_global_exception_handlers()
+
     logger.info("=" * 50)
     logger.info("FEXOBOOTH STARTET")
+    if developer_mode:
+        logger.info("🛠️  DEVELOPER MODE AKTIV")
     logger.info("=" * 50)
     
     try:
-        # Config laden
-        config = load_config()
         logger.info(f"Config geladen")
         logger.info(f"  - Kamera: {config.get('camera_index', 0)}")
         logger.info(f"  - Countdown: {config.get('countdown_time', 5)}s")

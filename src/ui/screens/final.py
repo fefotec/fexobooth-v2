@@ -34,7 +34,7 @@ class FinalScreen(ctk.CTkFrame):
         self._setup_ui()
     
     def _setup_ui(self):
-        """Erstellt die UI - kompakt für 800px Höhe"""
+        """Erstellt die UI - kompakt für 800px Höhe (Miix 310)"""
         # Titel (kompakter)
         self.title_label = ctk.CTkLabel(
             self,
@@ -42,22 +42,22 @@ class FinalScreen(ctk.CTkFrame):
             font=FONTS["heading"],
             text_color=COLORS["text_primary"]
         )
-        self.title_label.pack(pady=(10, 2))
-        
-        # Untertitel
+        self.title_label.pack(pady=(5, 0))
+
+        # Untertitel mit Countdown
         self.subtitle_label = ctk.CTkLabel(
             self,
             text="Dein Foto ist bereit",
             font=FONTS["small"],
             text_color=COLORS["text_secondary"]
         )
-        self.subtitle_label.pack(pady=(0, 10))
-        
-        # Hauptbereich (weniger Padding)
+        self.subtitle_label.pack(pady=(0, 5))
+
+        # Hauptbereich (weniger Padding für mehr Platz)
         main_frame = ctk.CTkFrame(self, fg_color="transparent")
-        main_frame.pack(fill="both", expand=True, padx=20)
-        
-        # Bild-Container
+        main_frame.pack(fill="both", expand=True, padx=15, pady=0)
+
+        # Bild-Container (weniger Padding)
         self.image_frame = ctk.CTkFrame(
             main_frame,
             fg_color=COLORS["bg_medium"],
@@ -65,27 +65,36 @@ class FinalScreen(ctk.CTkFrame):
             border_width=3,
             border_color=COLORS["primary"]
         )
-        self.image_frame.pack(expand=True, fill="both", pady=10)
-        
+        self.image_frame.pack(expand=True, fill="both", pady=5)
+
         self.preview_label = ctk.CTkLabel(self.image_frame, text="", fg_color="transparent")
-        self.preview_label.pack(expand=True, padx=20, pady=20)
-        
+        self.preview_label.pack(expand=True, padx=10, pady=10)
+
+        # Druck-Info (ÜBER den Buttons für bessere Sichtbarkeit)
+        self.print_info = ctk.CTkLabel(
+            self,
+            text="",
+            font=FONTS["small"],
+            text_color=COLORS["text_muted"]
+        )
+        self.print_info.pack(pady=(5, 2))
+
         # Progress-Bar für Auto-Return (schmaler)
         self.progress_bar = ctk.CTkProgressBar(
             self,
             width=500,
-            height=6,
+            height=5,
             fg_color=COLORS["bg_light"],
             progress_color=COLORS["primary"],
             corner_radius=3
         )
-        self.progress_bar.pack(pady=(5, 10))
+        self.progress_bar.pack(pady=(0, 5))
         self.progress_bar.set(1.0)
-        
+
         # Button-Leiste (kompakter)
         button_frame = ctk.CTkFrame(self, fg_color="transparent")
-        button_frame.pack(pady=(0, 15))
-        
+        button_frame.pack(pady=(0, 10))
+
         # Nochmal-Button
         self.redo_btn = ctk.CTkButton(
             button_frame,
@@ -99,8 +108,8 @@ class FinalScreen(ctk.CTkFrame):
             command=self._on_redo
         )
         self.redo_btn.pack(side="left", padx=8)
-        
-        # Drucken-Button (etwas kleiner)
+
+        # Drucken-Button
         self.print_btn = ctk.CTkButton(
             button_frame,
             text=f"🖨️ {self.config.get('ui_texts', {}).get('print', 'DRUCKEN')}",
@@ -113,7 +122,7 @@ class FinalScreen(ctk.CTkFrame):
             command=self._on_print
         )
         self.print_btn.pack(side="left", padx=8)
-        
+
         # Fertig-Button (wenn nicht versteckt)
         if not self.config.get("hide_finish_button", False):
             self.finish_btn = ctk.CTkButton(
@@ -128,15 +137,6 @@ class FinalScreen(ctk.CTkFrame):
                 command=self._on_finish
             )
             self.finish_btn.pack(side="left", padx=8)
-        
-        # Druck-Info
-        self.print_info = ctk.CTkLabel(
-            self,
-            text="",
-            font=FONTS["tiny"],
-            text_color=COLORS["text_muted"]
-        )
-        self.print_info.pack(pady=(0, 5))
     
     def _render_final_image(self) -> Image.Image:
         """Rendert das finale Bild"""
@@ -199,7 +199,7 @@ class FinalScreen(ctk.CTkFrame):
         logger.info("Drucke Bild...")
         
         # Button deaktivieren während Druck
-        self.print_btn.configure(state="disabled", text="Druckt...")
+        self.print_btn.configure(state="disabled", text="⏳ Wird gedruckt...")
         
         # Bild speichern und drucken
         if self.final_image:
@@ -248,9 +248,9 @@ class FinalScreen(ctk.CTkFrame):
         self.auto_return_time = time.time() + self.config.get("final_time", 30)
     
     def _print_image(self, image_path: Path):
-        """Druckt ein Bild RANDLOS über GDI mit Drucker-DEVMODE
+        """Druckt ein Bild über GDI - einfache Methode wie in alter Version
 
-        Nutzt die Windows-Treibereinstellungen (DEVMODE) für randlosen Druck.
+        Verwendet feste Pixelwerte die zum 10x15cm Fotodrucker passen.
         Kein Dialog - vollautomatisch im Hintergrund.
         """
         try:
@@ -279,105 +279,61 @@ class FinalScreen(ctk.CTkFrame):
             logger.info(f"Drucke auf: {printer_name}")
             logger.info(f"Bild: {image_path}")
 
+            # Einstellungen aus Config
+            adjustment = self.config.get("print_adjustment", {})
+            offset_x = adjustment.get("offset_x", 0)
+            offset_y = adjustment.get("offset_y", 0)
+            zoom = adjustment.get("zoom", 100) / 100
+
             # Bild laden
             img = Image.open(image_path)
-            logger.info(f"Bild-Größe: {img.size}")
+            logger.info(f"Original-Bild: {img.size}")
 
-            # DEVMODE und Print Processor vom Drucker holen
-            # Siehe: https://github.com/mhammond/pywin32/blob/main/win32/Demos/print_desktop.py
-            import win32gui
-            import pywintypes
+            # Feste Basisgröße für 10x15cm Fotodrucker (wie in alter Version)
+            # 1772 x 1181 Pixel = 10x15cm bei 300dpi
+            base_width = int(1772 * zoom)
+            base_height = int(1181 * zoom)
 
-            devmode = None
-            print_processor = None
-            hPrinter = win32print.OpenPrinter(printer_name)
-            try:
-                printer_info = win32print.GetPrinter(hPrinter, 2)
-                devmode = printer_info.get("pDevMode")
-                print_processor = printer_info.get("pPrintProcessor", "WinPrint")
-
-                if devmode:
-                    logger.info(f"DEVMODE: PaperSize={devmode.PaperSize}, "
-                               f"Orientation={devmode.Orientation}, "
-                               f"PrintQuality={devmode.PrintQuality}")
-                    logger.info(f"Print Processor: {print_processor}")
-                else:
-                    logger.warning("Kein DEVMODE vom Drucker - verwende Standardeinstellungen")
-            finally:
-                win32print.ClosePrinter(hPrinter)
-
-            # DC erstellen MIT DEVMODE für randlosen Druck!
-            # win32gui.CreateDC(print_processor, printer_name, devmode) - 3 Argumente!
-            if devmode and print_processor:
-                # CreateDC mit DEVMODE für Treibereinstellungen (randlos etc.)
-                hdc_handle = win32gui.CreateDC(print_processor, printer_name, devmode)
-                hDC = win32ui.CreateDCFromHandle(hdc_handle)
-                logger.info("DC mit DEVMODE erstellt (randlose Einstellungen aktiv)")
-            else:
-                hDC = win32ui.CreateDC()
-                hDC.CreatePrinterDC(printer_name)
-                logger.warning("DC ohne DEVMODE erstellt (Standard-Einstellungen)")
-
-            # Druckbereich abfragen
-            # HORZRES/VERTRES = druckbarer Bereich (das was der Drucker tatsächlich druckt)
-            printable_width = hDC.GetDeviceCaps(8)   # HORZRES
-            printable_height = hDC.GetDeviceCaps(10) # VERTRES
-
-            # Debug-Info
-            phys_width = hDC.GetDeviceCaps(110)   # PHYSICALWIDTH
-            phys_height = hDC.GetDeviceCaps(111)  # PHYSICALHEIGHT
-            offset_x = hDC.GetDeviceCaps(112)     # PHYSICALOFFSETX
-            offset_y = hDC.GetDeviceCaps(113)     # PHYSICALOFFSETY
-
-            logger.info(f"Druckbar: {printable_width}x{printable_height}px, "
-                       f"Physisch: {phys_width}x{phys_height}px, "
-                       f"Offset: ({offset_x},{offset_y})")
-
-            # EINFACHER ANSATZ: Bild auf druckbaren Bereich skalieren
-            # Das ist der bewährte Weg - der Drucker-Treiber kümmert sich um randlos
-            # Ref: https://gist.github.com/buptxge/2fc61a3f914645cf8ae2c9a258ca06c9
-
-            # Bild auf Druckgröße skalieren (Cover-Modus = Bild füllt gesamten Bereich)
-            target_width = printable_width
-            target_height = printable_height
-
+            # Bild auf Zielgröße skalieren (mit Cover-Modus)
             img_ratio = img.width / img.height
-            target_ratio = target_width / target_height
+            target_ratio = base_width / base_height
 
             if img_ratio > target_ratio:
                 # Bild ist breiter - nach Höhe skalieren, dann horizontal beschneiden
-                new_h = target_height
+                new_h = base_height
                 new_w = int(new_h * img_ratio)
                 img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                left = (new_w - target_width) // 2
-                img = img.crop((left, 0, left + target_width, target_height))
+                left = (new_w - base_width) // 2
+                img = img.crop((left, 0, left + base_width, base_height))
             else:
                 # Bild ist höher - nach Breite skalieren, dann vertikal beschneiden
-                new_w = target_width
+                new_w = base_width
                 new_h = int(new_w / img_ratio)
                 img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                top = (new_h - target_height) // 2
-                img = img.crop((0, top, target_width, top + target_height))
+                top = (new_h - base_height) // 2
+                img = img.crop((0, top, base_width, top + base_height))
 
-            logger.info(f"Bild skaliert auf: {img.size} für Druckbereich {target_width}x{target_height}")
+            logger.info(f"Bild skaliert auf: {img.size} (Zoom: {int(zoom*100)}%)")
 
-            # Drucken - EINFACH bei (0,0) starten, Bild füllt gesamten druckbaren Bereich
+            # Einfacher Drucker-DC (wie alte Version - funktioniert!)
+            hDC = win32ui.CreateDC()
+            hDC.CreatePrinterDC(printer_name)
+
             hDC.StartDoc("Fexobooth Print")
             hDC.StartPage()
 
             dib = ImageWin.Dib(img)
-
-            # Standard-Druck: (0, 0) bis (breite, höhe)
-            # Der Drucker-Treiber (DEVMODE) bestimmt ob randlos oder nicht
-            dib.draw(hDC.GetHandleOutput(), (0, 0, target_width, target_height))
-
-            logger.info(f"Gedruckt: (0, 0) -> ({target_width}, {target_height})")
+            dib.draw(
+                hDC.GetHandleOutput(),
+                (offset_x, offset_y, offset_x + base_width, offset_y + base_height)
+            )
 
             hDC.EndPage()
             hDC.EndDoc()
             hDC.DeleteDC()
 
-            logger.info(f"✅ Randlos gedruckt auf: {printer_name}")
+            logger.info(f"✅ Gedruckt auf: {printer_name} "
+                       f"(Größe: {base_width}x{base_height}, Offset: {offset_x},{offset_y})")
 
         except ImportError as e:
             logger.warning(f"Import-Fehler: {e} - Druck nur unter Windows")
@@ -406,6 +362,33 @@ class FinalScreen(ctk.CTkFrame):
                 text_color=COLORS["error"]
             )
     
+    def _save_final_image(self):
+        """Speichert das finale Bild IMMER (nicht nur bei Druck)
+        
+        Wird bei on_show() aufgerufen, damit jedes erstellte Bild
+        gespeichert wird, unabhängig ob gedruckt wird oder nicht.
+        """
+        if self.final_image is None:
+            logger.warning("Kein finales Bild zum Speichern")
+            return
+        
+        try:
+            # In Prints-Ordner speichern
+            saved_path = self.app.local_storage.save_print(
+                self.final_image,
+                suffix="final"
+            )
+            
+            if saved_path:
+                logger.info(f"✅ Finales Bild gespeichert: {saved_path}")
+                # Auch auf USB kopieren wenn verfügbar
+                self.app.usb_manager.copy_to_usb(saved_path, "Prints")
+            else:
+                logger.warning("Finales Bild konnte nicht gespeichert werden")
+                
+        except Exception as e:
+            logger.error(f"Fehler beim Speichern des finalen Bildes: {e}")
+
     def _on_finish(self):
         """Fertig gedrückt"""
         logger.info("Session beendet")
@@ -426,6 +409,9 @@ class FinalScreen(ctk.CTkFrame):
         
         # Finales Bild rendern
         self.final_image = self._render_final_image()
+        
+        # IMMER speichern (nicht nur bei Druck!)
+        self._save_final_image()
         
         # Vorschau anzeigen (angepasst für 800px Bildschirmhöhe)
         preview = self.final_image.copy()

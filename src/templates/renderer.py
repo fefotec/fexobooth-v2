@@ -54,16 +54,27 @@ class TemplateRenderer:
             box = box_info["box"]
             angle = box_info.get("angle", 0.0)
 
+            x1, y1, x2, y2 = box
+            box_width = x2 - x1 + 1
+            box_height = y2 - y1 + 1
+
+            # Box-Mittelpunkt berechnen (Rotationszentrum)
+            box_center_x = x1 + box_width // 2
+            box_center_y = y1 + box_height // 2
+
             # Foto in Box einpassen
             fitted = self._fit_photo_to_box(photo, box)
 
             # Rotation anwenden
             if angle != 0:
+                # Rotation um Bildmitte, expand=True vergrößert das Bild
                 fitted = fitted.rotate(-angle, expand=True, resample=Image.Resampling.BICUBIC)
 
-            # An Position einfügen
-            x1, y1 = box[0], box[1]
-            canvas.paste(fitted, (x1, y1), fitted if fitted.mode == "RGBA" else None)
+            # Position: Rotiertes Bild am Box-Mittelpunkt zentrieren
+            paste_x = box_center_x - fitted.width // 2
+            paste_y = box_center_y - fitted.height // 2
+
+            canvas.paste(fitted, (paste_x, paste_y), fitted if fitted.mode == "RGBA" else None)
 
         # Overlay anwenden - KEINE Skalierung, Canvas hat bereits Overlay-Größe!
         if overlay:

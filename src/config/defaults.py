@@ -8,6 +8,7 @@ DEFAULT_CONFIG = {
     "countdown_time": 5,
     "single_display_time": 2,
     "final_time": 10,
+    "flash_duration": 300,  # Auslöse-Bild Dauer in Millisekunden
     
     # Modi
     "allow_single_mode": True,
@@ -31,7 +32,7 @@ DEFAULT_CONFIG = {
     "logo_path": "",
     "logo_scale": 80,
     "background_color": "#1a1a2e",
-    
+
     # Kamera
     "camera_type": "webcam",
     "camera_index": 0,
@@ -74,5 +75,8 @@ DEFAULT_CONFIG = {
     
     # Sonstiges
     "admin_button_alpha": 0.1,
-    "hide_finish_button": True
+    "hide_finish_button": True,
+    
+    # Developer Mode
+    "developer_mode": False,  # Aktiviert: Logging, CPU/RAM Anzeige
 }

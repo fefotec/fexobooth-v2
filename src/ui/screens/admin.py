@@ -25,7 +25,6 @@ class AdminDialog(ctk.CTkToplevel):
         super().__init__(parent)
 
         self.title("⚙️ Admin-Einstellungen")
-        self.geometry("750x550")
         self.configure(fg_color=COLORS["bg_dark"])
 
         self.config_data = config.copy()
@@ -37,14 +36,31 @@ class AdminDialog(ctk.CTkToplevel):
         self.transient(parent)
         self.grab_set()
 
-        # Zentrieren
-        self.update_idletasks()
-        x = (self.winfo_screenwidth() - 750) // 2
-        y = (self.winfo_screenheight() - 550) // 2
-        self.geometry(f"+{x}+{y}")
-
         # Kein Fensterrand für PIN-Dialog (Touch-freundlich)
         self.overrideredirect(True)
+        
+        # PIN-Dialog Größe (größer für Numpad)
+        pin_width = 400
+        pin_height = 500  # Etwas kleiner für bessere Zentrierung
+        
+        # Zentrieren auf dem Bildschirm
+        self.update_idletasks()
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        
+        # Exakt zentrieren (mit kleinem Offset nach unten für Taskbar)
+        x = (screen_w - pin_width) // 2
+        y = (screen_h - pin_height) // 2 + 20  # Leicht nach unten
+        
+        # Sicherstellen dass y nicht negativ wird
+        if y < 0:
+            y = 10
+        
+        self.geometry(f"{pin_width}x{pin_height}+{x}+{y}")
+        
+        # Dialog in den Vordergrund bringen
+        self.lift()
+        self.focus_force()
 
         # PIN-Abfrage zuerst
         self._show_pin_dialog()
@@ -172,6 +188,15 @@ class AdminDialog(ctk.CTkToplevel):
             # Fensterrand für Admin-Einstellungen wiederherstellen
             self.overrideredirect(False)
             self.title("⚙️ Admin-Einstellungen")
+            
+            # Admin-Dialog vergrößern und zentrieren
+            admin_width = 750
+            admin_height = 550
+            screen_w = self.winfo_screenwidth()
+            screen_h = self.winfo_screenheight()
+            x = (screen_w - admin_width) // 2
+            y = (screen_h - admin_height) // 2
+            self.geometry(f"{admin_width}x{admin_height}+{x}+{y}")
 
             # *** WICHTIG: Fullscreen deaktivieren für Admin ***
             try:
@@ -196,29 +221,41 @@ class AdminDialog(ctk.CTkToplevel):
                 self.after(50)
     
     def _show_settings(self):
-        """Zeigt Einstellungen"""
+        """Zeigt Einstellungen - mit Lazy Loading für schnelleren Start"""
         # Hauptcontainer
         main = ctk.CTkFrame(self, fg_color="transparent")
         main.pack(fill="both", expand=True, padx=15, pady=15)
         
         # Tabview
-        tabview = ctk.CTkTabview(
+        self.tabview = ctk.CTkTabview(
             main,
             fg_color=COLORS["bg_medium"],
             segmented_button_fg_color=COLORS["bg_light"],
             segmented_button_selected_color=COLORS["primary"],
             segmented_button_unselected_color=COLORS["bg_card"],
-            height=420
+            height=420,
+            command=self._on_tab_changed  # Lazy Loading
         )
-        tabview.pack(fill="both", expand=True)
+        self.tabview.pack(fill="both", expand=True)
         
-        # Tabs
-        self._create_general_tab(tabview.add("Allgemein"))
-        self._create_templates_tab(tabview.add("Templates"))
-        self._create_print_tab(tabview.add("Druck"))
-        self._create_camera_tab(tabview.add("Kamera"))
-        self._create_gallery_tab(tabview.add("Galerie"))
-        self._create_statistics_tab(tabview.add("Statistik"))
+        # Tab-Namen und ihre Erstellungsfunktionen
+        self._tab_creators = {
+            "Allgemein": self._create_general_tab,
+            "Templates": self._create_templates_tab,
+            "Druck": self._create_print_tab,
+            "Kamera": self._create_camera_tab,
+            "Galerie": self._create_gallery_tab,
+            "Videos": self._create_videos_tab,
+            "Statistik": self._create_statistics_tab,
+        }
+        self._tabs_created = set()
+        
+        # Alle Tabs hinzufügen (leer)
+        for tab_name in self._tab_creators.keys():
+            self.tabview.add(tab_name)
+        
+        # Nur ersten Tab sofort erstellen
+        self._create_tab_content("Allgemein")
         
         # Button-Leiste
         btn_frame = ctk.CTkFrame(main, fg_color="transparent")
@@ -248,6 +285,23 @@ class AdminDialog(ctk.CTkToplevel):
             command=self._save
         ).pack(side="right")
     
+    def _on_tab_changed(self):
+        """Callback wenn Tab gewechselt wird - Lazy Loading"""
+        current_tab = self.tabview.get()
+        self._create_tab_content(current_tab)
+    
+    def _create_tab_content(self, tab_name: str):
+        """Erstellt Tab-Inhalt nur wenn noch nicht erstellt"""
+        if tab_name in self._tabs_created:
+            return  # Schon erstellt
+        
+        if tab_name in self._tab_creators:
+            creator = self._tab_creators[tab_name]
+            tab_frame = self.tabview.tab(tab_name)
+            creator(tab_frame)
+            self._tabs_created.add(tab_name)
+            logger.debug(f"Tab '{tab_name}' erstellt (lazy)")
+    
     def _create_slider_with_value(self, parent, label: str, key: str, 
                                    min_val: int, max_val: int, suffix: str = "") -> ctk.CTkSlider:
         """Erstellt einen Slider MIT Wertanzeige"""
@@ -265,14 +319,14 @@ class AdminDialog(ctk.CTkToplevel):
             text_color=COLORS["text_secondary"]
         ).pack(side="left")
         
-        # Wert-Anzeige
+        # Wert-Anzeige (mit Padding rechts damit nicht am Rand klebt)
         value_label = ctk.CTkLabel(
             label_frame,
             text=f"{self.config_data.get(key, min_val)}{suffix}",
             font=FONTS["body_bold"],
             text_color=COLORS["primary"]
         )
-        value_label.pack(side="right")
+        value_label.pack(side="right", padx=(0, 15))
         
         # Slider
         slider = ctk.CTkSlider(
@@ -302,6 +356,28 @@ class AdminDialog(ctk.CTkToplevel):
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=10, pady=10)
         
+        # Flash-Bild (beim Foto-Auslösen)
+        ctk.CTkLabel(
+            scroll,
+            text="📸 Bild beim Foto-Auslösen:",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"]
+        ).pack(anchor="w", pady=(5, 2))
+        
+        self.flash_image_path = self._create_file_picker(
+            scroll,
+            "",
+            self.config_data.get("flash_image", ""),
+            [("Bilder", "*.png *.jpg *.jpeg *.gif")]
+        )
+        
+        ctk.CTkLabel(
+            scroll,
+            text="Leer = Standard-Smiley 😊",
+            font=FONTS["tiny"],
+            text_color=COLORS["text_muted"]
+        ).pack(anchor="w", pady=(0, 10))
+        
         # Countdown
         self.countdown_slider = self._create_slider_with_value(
             scroll, "Countdown:", "countdown_time", 1, 15, " Sek"
@@ -315,6 +391,11 @@ class AdminDialog(ctk.CTkToplevel):
         # Auto-Return
         self.final_slider = self._create_slider_with_value(
             scroll, "Auto-Return:", "final_time", 10, 60, " Sek"
+        )
+        
+        # Auslöse-Bild (Flash) Dauer
+        self.flash_slider = self._create_slider_with_value(
+            scroll, "Auslöse-Bild:", "flash_duration", 100, 1000, " ms"
         )
         
         # Max Drucke
@@ -384,7 +465,7 @@ class AdminDialog(ctk.CTkToplevel):
             self.config_data.get("logo_path", ""),
             [("Bilder", "*.png *.jpg *.jpeg")]
         )
-    
+
     def _create_file_picker(self, parent, label: str, initial_value: str, 
                             filetypes: List[tuple]) -> ctk.CTkEntry:
         """Erstellt ein Eingabefeld mit Datei-Dialog"""
@@ -475,25 +556,43 @@ class AdminDialog(ctk.CTkToplevel):
             text_color=COLORS["text_primary"]
         ).pack(pady=(10, 5))
         
-        # Offset-Werte mit Anzeige
+        # Offset-Werte mit Anzeige und Hinweisen
         adjustment = self.config_data.get("print_adjustment", {})
-        
+
         # Offset X
         self.offset_x_slider = self._create_print_slider(
             preview_frame, "Offset X:", adjustment.get("offset_x", 0), -100, 100, " px"
         )
-        
+        ctk.CTkLabel(
+            preview_frame,
+            text="← minus = links  |  plus = rechts →",
+            font=FONTS["tiny"],
+            text_color=COLORS["text_muted"]
+        ).pack(padx=15, anchor="w")
+
         # Offset Y
         self.offset_y_slider = self._create_print_slider(
             preview_frame, "Offset Y:", adjustment.get("offset_y", 0), -100, 100, " px"
         )
-        
+        ctk.CTkLabel(
+            preview_frame,
+            text="↑ minus = hoch  |  plus = runter ↓",
+            font=FONTS["tiny"],
+            text_color=COLORS["text_muted"]
+        ).pack(padx=15, anchor="w")
+
         # Zoom
         self.zoom_slider = self._create_print_slider(
             preview_frame, "Zoom:", adjustment.get("zoom", 100), 50, 150, " %"
         )
-        
-        ctk.CTkLabel(preview_frame, text="").pack(pady=5)  # Spacer
+        ctk.CTkLabel(
+            preview_frame,
+            text="103% empfohlen für randlosen Druck",
+            font=FONTS["tiny"],
+            text_color=COLORS["text_muted"]
+        ).pack(padx=15, anchor="w")
+
+        ctk.CTkLabel(preview_frame, text="").pack(pady=3)  # Spacer
     
     def _create_print_slider(self, parent, label: str, value: int, 
                               min_val: int, max_val: int, suffix: str) -> ctk.CTkSlider:
@@ -686,7 +785,16 @@ class AdminDialog(ctk.CTkToplevel):
         )
         self.photo_height.insert(0, str(cam_settings.get("single_photo_height", 1080)))
         self.photo_height.pack(side="left")
-    
+
+        # Info-Hinweis zur Auflösung
+        ctk.CTkLabel(
+            res_frame,
+            text="Live-Preview: 640x480 (Performance)\nFotos: Obige Einstellung (Full HD)",
+            font=FONTS["small"],
+            text_color=COLORS["text_muted"],
+            justify="center"
+        ).pack(pady=(5, 10))
+
     def _get_available_cameras(self) -> List[str]:
         """Ermittelt verfügbare Kameras mit Namen"""
         cameras = []
@@ -715,9 +823,10 @@ class AdminDialog(ctk.CTkToplevel):
                 for i in range(5):
                     cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
                     if cap.isOpened():
+                        # Standard-Auflösung anzeigen (wird für Preview verwendet)
                         w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                        cameras.append(f"[{i}] Webcam {i} ({w}x{h})")
+                        cameras.append(f"[{i}] Webcam {i}")
                         cap.release()
             except Exception as e:
                 logger.warning(f"Webcam-Suche Fehler: {e}")
@@ -862,6 +971,108 @@ class AdminDialog(ctk.CTkToplevel):
             text_color=COLORS["warning"]
         ).pack(pady=(10, 0))
     
+    def _create_videos_tab(self, parent):
+        """Video-Einstellungen für Session-Videos"""
+        scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Info
+        info_frame = ctk.CTkFrame(scroll, fg_color=COLORS["bg_card"], corner_radius=10)
+        info_frame.pack(fill="x", pady=(0, 15))
+        
+        ctk.CTkLabel(
+            info_frame,
+            text="🎬 Session-Videos",
+            font=FONTS["body_bold"],
+            text_color=COLORS["text_primary"]
+        ).pack(pady=(10, 5))
+        
+        ctk.CTkLabel(
+            info_frame,
+            text="Videos werden zwischen den Fotos abgespielt.\nLeer lassen = Video wird übersprungen.",
+            font=FONTS["small"],
+            text_color=COLORS["text_muted"],
+            justify="center"
+        ).pack(pady=(0, 10))
+        
+        # Start-Video
+        ctk.CTkLabel(
+            scroll,
+            text="▶️ Start-Video (vor Session):",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"]
+        ).pack(anchor="w", pady=(10, 2))
+        
+        self.video_start_path = self._create_file_picker(
+            scroll, "",
+            self.config_data.get("video_start", ""),
+            [("Videos", "*.mp4 *.avi *.mkv *.mov")]
+        )
+        
+        # Video nach Foto 1
+        ctk.CTkLabel(
+            scroll,
+            text="📷 Video nach Foto 1:",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"]
+        ).pack(anchor="w", pady=(15, 2))
+        
+        self.video_after_1_path = self._create_file_picker(
+            scroll, "",
+            self.config_data.get("video_after_1", ""),
+            [("Videos", "*.mp4 *.avi *.mkv *.mov")]
+        )
+        
+        # Video nach Foto 2
+        ctk.CTkLabel(
+            scroll,
+            text="📷 Video nach Foto 2:",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"]
+        ).pack(anchor="w", pady=(15, 2))
+        
+        self.video_after_2_path = self._create_file_picker(
+            scroll, "",
+            self.config_data.get("video_after_2", ""),
+            [("Videos", "*.mp4 *.avi *.mkv *.mov")]
+        )
+        
+        # Video nach Foto 3
+        ctk.CTkLabel(
+            scroll,
+            text="📷 Video nach Foto 3:",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"]
+        ).pack(anchor="w", pady=(15, 2))
+        
+        self.video_after_3_path = self._create_file_picker(
+            scroll, "",
+            self.config_data.get("video_after_3", ""),
+            [("Videos", "*.mp4 *.avi *.mkv *.mov")]
+        )
+        
+        # End-Video
+        ctk.CTkLabel(
+            scroll,
+            text="🏁 End-Video (nach Session):",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"]
+        ).pack(anchor="w", pady=(15, 2))
+        
+        self.video_end_path = self._create_file_picker(
+            scroll, "",
+            self.config_data.get("video_end", ""),
+            [("Videos", "*.mp4 *.avi *.mkv *.mov")]
+        )
+        
+        # Hinweis
+        ctk.CTkLabel(
+            scroll,
+            text="💡 Tipp: Kurze Videos (3-5 Sek) in MP4/H.264 für beste Performance",
+            font=FONTS["tiny"],
+            text_color=COLORS["text_muted"]
+        ).pack(pady=(15, 0))
+    
     def _create_statistics_tab(self, parent):
         """Statistik-Anzeige und Export"""
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
@@ -889,10 +1100,23 @@ class AdminDialog(ctk.CTkToplevel):
         ).pack(pady=(10, 5))
         
         if current:
+            # Zeitraum formatieren
+            time_info = ""
+            if current.start_time:
+                try:
+                    from datetime import datetime
+                    start_dt = datetime.fromisoformat(current.start_time)
+                    time_info = f"\n📅 {start_dt.strftime('%d.%m.%Y')} ab {start_dt.strftime('%H:%M')}"
+                    if current.end_time:
+                        end_dt = datetime.fromisoformat(current.end_time)
+                        time_info = f"\n📅 {start_dt.strftime('%d.%m.%Y')} {start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')}"
+                except:
+                    pass
+            
             stats_text = (
                 f"Buchung: {current.booking_id or 'Keine'}\n"
                 f"Fotos: {current.photos_taken}  |  Prints: {current.prints_completed}\n"
-                f"Sessions: {current.sessions_count}"
+                f"Sessions: {current.sessions_count}{time_info}"
             )
         else:
             stats_text = "Keine aktive Session"
@@ -918,13 +1142,35 @@ class AdminDialog(ctk.CTkToplevel):
         ).pack(pady=(10, 5))
         
         if all_stats:
-            # Letzte 5 anzeigen
+            # Letzte 5 anzeigen (mit Datum/Uhrzeit)
             history_text = ""
             for stat in all_stats[-5:]:
                 booking = stat.get("booking_id", "?")
                 photos = stat.get("photos_taken", 0)
                 prints = stat.get("prints_completed", 0)
-                history_text += f"• {booking}: {photos} Fotos, {prints} Prints\n"
+                
+                # Datum und Zeitraum formatieren
+                start_time = stat.get("start_time", "")
+                end_time = stat.get("end_time", "")
+                time_str = ""
+                
+                if start_time:
+                    try:
+                        from datetime import datetime
+                        start_dt = datetime.fromisoformat(start_time)
+                        date_str = start_dt.strftime("%d.%m.")
+                        start_str = start_dt.strftime("%H:%M")
+                        
+                        if end_time:
+                            end_dt = datetime.fromisoformat(end_time)
+                            end_str = end_dt.strftime("%H:%M")
+                            time_str = f" ({date_str} {start_str}-{end_str})"
+                        else:
+                            time_str = f" ({date_str} {start_str})"
+                    except:
+                        pass
+                
+                history_text += f"• {booking}: {photos} Fotos, {prints} Prints{time_str}\n"
             
             ctk.CTkLabel(
                 history_frame,
@@ -966,18 +1212,6 @@ class AdminDialog(ctk.CTkToplevel):
             hover_color=COLORS["bg_card"],
             command=self._refresh_statistics
         ).pack(side="left")
-        
-        # Reset-Button
-        ctk.CTkButton(
-            scroll,
-            text="🗑️ Statistik zurücksetzen",
-            font=FONTS["small"],
-            width=180,
-            height=35,
-            fg_color=COLORS["error"],
-            hover_color="#ff5252",
-            command=self._reset_statistics
-        ).pack(pady=(10, 0))
     
     def _export_stats_csv(self):
         """Exportiert Statistiken als CSV"""
@@ -1136,10 +1370,14 @@ class AdminDialog(ctk.CTkToplevel):
         """Speichert die Einstellungen"""
         logger.info("=== Admin-Einstellungen speichern ===")
         
+        # Flash-Bild
+        self.config_data["flash_image"] = self.flash_image_path.get().strip()
+        
         # Slider-Werte
         self.config_data["countdown_time"] = int(self.countdown_slider.get())
         self.config_data["single_display_time"] = int(self.single_slider.get())
         self.config_data["final_time"] = int(self.final_slider.get())
+        self.config_data["flash_duration"] = int(self.flash_slider.get())
         self.config_data["max_prints_per_session"] = int(self.prints_slider.get())
         
         # Checkboxen - alle auslesen und speichern
@@ -1153,67 +1391,85 @@ class AdminDialog(ctk.CTkToplevel):
                 self.config_data[key] = value
                 logger.info(f"  {key} = {value}")
         
-        # Template-Pfade - sicherstellen dass Dict existiert
-        if "template_paths" not in self.config_data:
-            self.config_data["template_paths"] = {}
+        # Template-Pfade - nur wenn Tab erstellt wurde (Lazy Loading)
+        if hasattr(self, 't1_path'):
+            if "template_paths" not in self.config_data:
+                self.config_data["template_paths"] = {}
+            
+            t1_path = self.t1_path.get().strip()
+            t2_path = self.t2_path.get().strip()
+            
+            self.config_data["template_paths"]["template1"] = t1_path
+            self.config_data["template_paths"]["template2"] = t2_path
+            self.config_data["logo_path"] = self.logo_path.get().strip()
+
+            logger.info(f"Template 1: enabled={self.config_data.get('template1_enabled')}, path='{t1_path}'")
+            logger.info(f"Template 2: enabled={self.config_data.get('template2_enabled')}, path='{t2_path}'")
         
-        t1_path = self.t1_path.get().strip()
-        t2_path = self.t2_path.get().strip()
-        
-        self.config_data["template_paths"]["template1"] = t1_path
-        self.config_data["template_paths"]["template2"] = t2_path
-        self.config_data["logo_path"] = self.logo_path.get().strip()
-        
-        logger.info(f"Template 1: enabled={self.config_data.get('template1_enabled')}, path='{t1_path}'")
-        logger.info(f"Template 2: enabled={self.config_data.get('template2_enabled')}, path='{t2_path}'")
-        
-        # Galerie-Einstellungen
-        if "gallery" not in self.config_data:
-            self.config_data["gallery"] = {}
-        
-        self.config_data["gallery"]["hotspot_ssid"] = self.gallery_ssid.get().strip()
-        self.config_data["gallery"]["hotspot_password"] = self.gallery_password.get().strip()
-        try:
-            self.config_data["gallery"]["port"] = int(self.gallery_port.get())
-        except ValueError:
-            self.config_data["gallery"]["port"] = 8080
-        
-        logger.info(f"Galerie: enabled={self.config_data.get('gallery_enabled')}, "
-                    f"ssid={self.config_data['gallery']['hotspot_ssid']}, "
-                    f"port={self.config_data['gallery']['port']}")
-        
-        # Drucker
-        printer = self.printer_dropdown.get()
-        if printer.startswith("⭐ "):
-            printer = printer[2:].replace(" (Standard)", "")
-        self.config_data["printer_name"] = printer
-        
-        # Druck-Anpassung
-        self.config_data["print_adjustment"] = {
-            "offset_x": int(self.offset_x_slider.get()),
-            "offset_y": int(self.offset_y_slider.get()),
-            "zoom": int(self.zoom_slider.get())
-        }
-        
-        # Kamera-Typ (NEU!)
-        self.config_data["camera_type"] = self.camera_type_dropdown.get()
-        
-        # Kamera-Index
-        cam_selection = self.camera_dropdown.get()
-        # Extrahiere Index aus "[0] Kamera..." oder "[0] 📷 Canon..."
-        if cam_selection.startswith("["):
+        # Galerie-Einstellungen - nur wenn Tab erstellt wurde
+        if hasattr(self, 'gallery_ssid'):
+            if "gallery" not in self.config_data:
+                self.config_data["gallery"] = {}
+            
+            self.config_data["gallery"]["hotspot_ssid"] = self.gallery_ssid.get().strip()
+            self.config_data["gallery"]["hotspot_password"] = self.gallery_password.get().strip()
             try:
-                idx = int(cam_selection[1:cam_selection.index("]")])
-                self.config_data["camera_index"] = idx
-            except:
-                pass
+                self.config_data["gallery"]["port"] = int(self.gallery_port.get())
+            except ValueError:
+                self.config_data["gallery"]["port"] = 8080
+            
+            logger.info(f"Galerie: enabled={self.config_data.get('gallery_enabled')}, "
+                        f"ssid={self.config_data['gallery'].get('hotspot_ssid')}, "
+                        f"port={self.config_data['gallery'].get('port')}")
         
-        # camera_settings sicherstellen dass Dict existiert
-        if "camera_settings" not in self.config_data:
-            self.config_data["camera_settings"] = {}
+        # Video-Pfade - nur wenn Tab erstellt wurde
+        if hasattr(self, 'video_start_path'):
+            self.config_data["video_start"] = self.video_start_path.get().strip()
+            self.config_data["video_after_1"] = self.video_after_1_path.get().strip()
+            self.config_data["video_after_2"] = self.video_after_2_path.get().strip()
+            self.config_data["video_after_3"] = self.video_after_3_path.get().strip()
+            self.config_data["video_end"] = self.video_end_path.get().strip()
+            
+            logger.info(f"Videos: start={bool(self.config_data.get('video_start'))}, "
+                        f"after_1={bool(self.config_data.get('video_after_1'))}, "
+                        f"after_2={bool(self.config_data.get('video_after_2'))}, "
+                        f"after_3={bool(self.config_data.get('video_after_3'))}, "
+                        f"end={bool(self.config_data.get('video_end'))}")
         
-        self.config_data["camera_settings"]["single_photo_width"] = int(self.photo_width.get())
-        self.config_data["camera_settings"]["single_photo_height"] = int(self.photo_height.get())
+        # Drucker - nur wenn Tab erstellt wurde
+        if hasattr(self, 'printer_dropdown'):
+            printer = self.printer_dropdown.get()
+            if printer.startswith("⭐ "):
+                printer = printer[2:].replace(" (Standard)", "")
+            self.config_data["printer_name"] = printer
+            
+            # Druck-Anpassung
+            self.config_data["print_adjustment"] = {
+                "offset_x": int(self.offset_x_slider.get()),
+                "offset_y": int(self.offset_y_slider.get()),
+                "zoom": int(self.zoom_slider.get())
+            }
+        
+        # Kamera - nur wenn Tab erstellt wurde
+        if hasattr(self, 'camera_type_dropdown'):
+            self.config_data["camera_type"] = self.camera_type_dropdown.get()
+            
+            # Kamera-Index
+            cam_selection = self.camera_dropdown.get()
+            # Extrahiere Index aus "[0] Kamera..." oder "[0] 📷 Canon..."
+            if cam_selection.startswith("["):
+                try:
+                    idx = int(cam_selection[1:cam_selection.index("]")])
+                    self.config_data["camera_index"] = idx
+                except:
+                    pass
+            
+            # camera_settings sicherstellen dass Dict existiert
+            if "camera_settings" not in self.config_data:
+                self.config_data["camera_settings"] = {}
+            
+            self.config_data["camera_settings"]["single_photo_width"] = int(self.photo_width.get())
+            self.config_data["camera_settings"]["single_photo_height"] = int(self.photo_height.get())
         
         # Neue PIN
         if self.new_pin.get() and len(self.new_pin.get()) == 4:

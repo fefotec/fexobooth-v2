@@ -21,6 +21,14 @@ Die Software läuft auf schwacher Hardware. **Jede Zeile Code muss ressourcensch
 - Flask-Server ist okay (~20-30 MB RAM)
 - Große Bibliotheken vermeiden wenn möglich
 
+### 🎬 Video-Wiedergabe
+
+Video-Wiedergabe nutzt **Windows Media Foundation (MSMF)** als Backend:
+- Nutzt Windows-eigene H.264 Codecs (kein VLC/FFmpeg nötig)
+- Threading verhindert UI-Freeze auf schwacher Hardware
+- Fallback auf FFMPEG wenn MSMF nicht verfügbar
+- Max. 25 FPS für Performance
+
 ## 📁 Projekt-Struktur
 
 ```
@@ -105,3 +113,31 @@ Siehe [CHANGELOG.md](CHANGELOG.md) für bekannte Probleme und Fixes.
 ---
 
 **Repository:** [github.com/fefotec/fexobooth-v2](https://github.com/fefotec/fexobooth-v2)
+
+## 🔧 Debugging & Logs
+
+### Log-Dateien
+Die Software schreibt detaillierte Logs nach:
+```
+logs/fexobooth_YYYYMMDD.log
+```
+
+**Log-Level:** DEBUG (alle Details)
+
+### Wichtige Log-Einträge
+- `📂 USB gefunden beim Start:` - USB wurde erkannt
+- `✅ Settings vom USB geladen:` - settings.json wurde geladen
+- `📋 Config nach Settings-Load:` - Zeigt aktive Einstellungen
+- `📊 Statistiken geladen:` - Statistik-Datei gefunden
+
+### Statistik-Datei
+```
+fexobooth_statistics.json  (im Projektordner, NICHT auf USB!)
+```
+
+## 🚀 Starten
+
+Doppelklick auf `start_fexobooth.bat` oder:
+```batch
+python src/main.py
+```

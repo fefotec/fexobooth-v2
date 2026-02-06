@@ -85,39 +85,74 @@ class StatisticsManager:
         return self._current_stats
     
     def start_event(self, booking_id: str = "", save_path: Optional[Path] = None):
-        """Startet ein neues Event/Buchung
-        
+        """Startet oder setzt ein Event fort
+
+        Logik:
+        - Gleiche Buchung + letzte Aktivität < 120 Min → Event fortsetzen
+        - Gleiche Buchung + letzte Aktivität > 120 Min → Neues Event
+        - Andere Buchung → Neues Event
+
         Args:
             booking_id: Buchungsnummer (aus settings.json)
-            save_path: Pfad zum Speichern (USB oder lokal)
+            save_path: IGNORIERT - Statistik wird IMMER lokal gespeichert!
         """
-        # Vorheriges Event abschließen falls vorhanden
-        if self._current_stats:
-            self._finalize_current()
-        
-        # Neues Event starten
-        self._current_stats = EventStats(
-            booking_id=booking_id,
-            start_time=datetime.now().isoformat()
-        )
-        
-        # Speicherpfad setzen
-        if save_path:
-            self._stats_file_path = save_path / STATS_FILENAME
-        else:
-            # Fallback: Lokaler Ordner
-            self._stats_file_path = Path(__file__).parent.parent.parent / STATS_FILENAME
-        
+        # Speicherpfad: IMMER im Software-Ordner (nicht auf USB - geht Kunden nichts an!)
+        self._stats_file_path = Path(__file__).parent.parent.parent / STATS_FILENAME
+
         # Existierende Statistiken laden
         self._load_existing_stats()
-        
-        logger.info(f"📊 Event gestartet: {booking_id or 'Ohne Buchungsnummer'}")
+
+        # Pause-Schwelle: 120 Minuten
+        MAX_PAUSE_MINUTES = 120
+        now = datetime.now()
+
+        # Prüfen ob es ein Event mit gleicher Buchung gibt, das kürzlich aktiv war
+        existing_event = None
+        existing_index = -1
+
+        for i, event in enumerate(self._all_stats):
+            event_booking = event.get("booking_id", "")
+            event_end = event.get("end_time", "")
+
+            if event_booking != booking_id:
+                continue
+
+            # Prüfen wie lange die Pause war
+            if event_end:
+                try:
+                    last_activity = datetime.fromisoformat(event_end)
+                    pause_minutes = (now - last_activity).total_seconds() / 60
+
+                    if pause_minutes <= MAX_PAUSE_MINUTES:
+                        existing_event = event
+                        existing_index = i
+                        logger.info(f"📊 Bestehendes Event gefunden: {booking_id} (Pause: {pause_minutes:.0f} Min)")
+                        break
+                    else:
+                        logger.debug(f"📊 Event {booking_id} zu alt (Pause: {pause_minutes:.0f} Min > {MAX_PAUSE_MINUTES} Min)")
+                except Exception as e:
+                    logger.debug(f"📊 Fehler beim Parsen von end_time: {e}")
+
+        if existing_event:
+            # Event fortsetzen - Werte übernehmen
+            self._current_stats = EventStats.from_dict(existing_event)
+            # Aus Liste entfernen (wird beim Speichern wieder hinzugefügt)
+            self._all_stats.pop(existing_index)
+            logger.info(f"📊 Event fortgesetzt: {booking_id} (Fotos: {self._current_stats.photos_taken}, Prints: {self._current_stats.prints_completed})")
+        else:
+            # Neues Event starten
+            self._current_stats = EventStats(
+                booking_id=booking_id,
+                start_time=datetime.now().isoformat()
+            )
+            logger.info(f"📊 Neues Event gestartet: {booking_id or 'Ohne Buchungsnummer'}")
     
     def record_photo(self, count: int = 1):
         """Erfasst geschossene Fotos"""
         if self._current_stats:
             self._current_stats.photos_taken += count
             self._current_stats.end_time = datetime.now().isoformat()
+            self._save_stats()  # Sofort speichern für Live-Update im Admin
             logger.debug(f"📷 Foto erfasst (Total: {self._current_stats.photos_taken})")
     
     def record_session(self):
@@ -125,6 +160,7 @@ class StatisticsManager:
         if self._current_stats:
             self._current_stats.sessions_count += 1
             self._current_stats.end_time = datetime.now().isoformat()
+            self._save_stats()  # Sofort speichern für Live-Update im Admin
             logger.debug(f"📸 Session erfasst (Total: {self._current_stats.sessions_count})")
     
     def record_print_success(self, count: int = 1):
@@ -227,7 +263,14 @@ class StatisticsManager:
         return events
     
     def get_all_stats(self) -> List[Dict[str, Any]]:
-        """Gibt alle Events als rohe Dictionaries zurück"""
+        """Gibt alle Events als rohe Dictionaries zurück
+        
+        Lädt automatisch aus bekannten Speicherorten falls noch nicht geladen.
+        """
+        # Falls noch nichts geladen, versuche aus Standard-Pfaden zu laden
+        if not self._all_stats and not self._current_stats:
+            self._auto_load_stats()
+        
         # Aktuelle Stats auch einbeziehen
         result = self._all_stats.copy()
         if self._current_stats:
@@ -242,6 +285,36 @@ class StatisticsManager:
             if not already_in:
                 result.append(current_dict)
         return result
+    
+    def _auto_load_stats(self):
+        """Versucht Statistiken aus dem Software-Ordner zu laden"""
+        # Mögliche Pfade durchsuchen (NUR lokal, nicht USB!)
+        search_paths = [
+            # Projekt-Root (Hauptspeicherort)
+            Path(__file__).parent.parent.parent / STATS_FILENAME,
+            # Aktuelles Verzeichnis
+            Path.cwd() / STATS_FILENAME,
+            # Windows Standard-Installation
+            Path("C:/fexobooth/fexobooth-v2") / STATS_FILENAME,
+        ]
+        
+        logger.info(f"📊 Suche Statistik-Datei in: {[str(p) for p in search_paths]}")
+        
+        # Erste gefundene Datei laden
+        for path in search_paths:
+            logger.debug(f"   Prüfe: {path} (exists={path.exists()})")
+            if path.exists():
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        self._all_stats = data.get("events", [])
+                        self._stats_file_path = path
+                        logger.info(f"📊 Statistiken geladen: {path} ({len(self._all_stats)} Events)")
+                        return
+                except Exception as e:
+                    logger.warning(f"Statistik-Datei {path} lesen fehlgeschlagen: {e}")
+        
+        logger.info(f"📊 Keine Statistik-Datei gefunden - starte neu")
     
     def get_current_summary(self) -> str:
         """Gibt Zusammenfassung des aktuellen Events zurück"""

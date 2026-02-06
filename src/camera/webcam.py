@@ -88,45 +88,79 @@ class WebcamManager(CameraManager):
         return None
     
     def get_high_res_frame(self, width: int = 1920, height: int = 1080) -> Optional[np.ndarray]:
-        """Holt ein hochauflösendes Frame für Capture
-        
-        Schaltet temporär auf höhere Auflösung um.
-        ACHTUNG: Kann langsam sein! Für schnelle Captures lieber get_frame() nutzen.
+        """Holt ein hochauflösendes Frame für Foto-Capture
+
+        Schaltet temporär auf höhere Auflösung um, holt das Bild,
+        und schaltet dann zurück auf Live-Preview-Auflösung.
+
+        Optimiert für Logitech C920/C922 (native 1080p Support).
+
+        Args:
+            width: Gewünschte Breite (default: 1920 für Full HD)
+            height: Gewünschte Höhe (default: 1080 für Full HD)
+
+        Returns:
+            numpy array mit dem hochauflösenden Frame, oder None bei Fehler
         """
         if not self.cap:
+            logger.warning("get_high_res_frame: Keine Kamera initialisiert")
             return None
-        
+
         # Alte Auflösung merken
         old_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         old_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        
+
+        logger.info(f"High-Res Capture: {old_w}x{old_h} -> {width}x{height}")
+
         # Wenn schon auf High-Res, direkt Frame holen
         if old_w >= width and old_h >= height:
             ret, frame = self.cap.read()
             if ret and frame is not None:
                 logger.info(f"High-Res Frame (bereits aktiv): {frame.shape[1]}x{frame.shape[0]}")
                 return frame
+            logger.warning("High-Res Frame lesen fehlgeschlagen (bereits auf High-Res)")
             return None
-        
-        # Auf hohe Auflösung umschalten
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        
-        # Mehrere Frames lesen um Buffer zu leeren (schneller als sleep)
-        for _ in range(3):
-            self.cap.read()
-        
-        ret, frame = self.cap.read()
-        
-        # Zurück auf alte Auflösung
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, old_w)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, old_h)
-        
-        if ret and frame is not None:
-            logger.info(f"High-Res Frame: {frame.shape[1]}x{frame.shape[0]}")
-            return frame
-        
-        return None
+
+        try:
+            # Auf hohe Auflösung umschalten
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+
+            # Prüfen ob die Kamera die Auflösung akzeptiert hat
+            actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            logger.info(f"Kamera-Auflösung nach Umschaltung: {actual_w}x{actual_h}")
+
+            # Buffer leeren (5 Frames für sicheres Flushen, besonders wichtig bei C920/C922)
+            for i in range(5):
+                self.cap.read()
+
+            # Tatsächliches High-Res Frame holen
+            ret, frame = self.cap.read()
+
+            if ret and frame is not None:
+                captured_h, captured_w = frame.shape[:2]
+                logger.info(f"High-Res Frame erfolgreich: {captured_w}x{captured_h}")
+
+                if captured_w < width or captured_h < height:
+                    logger.warning(f"Kamera liefert weniger als angefordert: {captured_w}x{captured_h} statt {width}x{height}")
+            else:
+                logger.error("High-Res Frame lesen fehlgeschlagen nach Umschaltung")
+                frame = None
+
+        except Exception as e:
+            logger.error(f"High-Res Capture Exception: {e}")
+            frame = None
+        finally:
+            # WICHTIG: Immer zurück auf Preview-Auflösung!
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, old_w)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, old_h)
+            # Buffer leeren für flüssige Preview
+            for _ in range(3):
+                self.cap.read()
+            logger.debug(f"Zurück auf Preview-Auflösung: {old_w}x{old_h}")
+
+        return frame
     
     def release(self):
         """Gibt Kamera-Ressourcen frei"""

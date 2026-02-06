@@ -15,5 +15,8 @@ pywin32>=306; sys_platform == "win32"
 qrcode>=7.4.0
 flask>=3.0.0
 
+# Developer Mode (CPU/RAM Monitoring)
+psutil>=5.9.0
+
 # Build
 pyinstaller>=6.0.0

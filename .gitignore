@@ -54,8 +54,11 @@ _temp_*/
 !fexobooth.spec
 build/
 dist/
+installer_files/
+installer_output/
 
 # OS
 .DS_Store
 Thumbs.db
 desktop.ini
+.claude/settings.local.json

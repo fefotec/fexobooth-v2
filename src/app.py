@@ -71,6 +71,7 @@ class PhotoboothApp:
         
         # Session-Status
         self.photos_taken: List[Image.Image] = []
+        self.current_photo_index: int = 0  # Aktueller Foto-Index (bleibt bei Screen-Wechsel erhalten!)
         self.current_filter: str = "none"
         self.template_path: Optional[str] = None
         self.template_boxes: List[Dict] = []
@@ -86,25 +87,75 @@ class PhotoboothApp:
         # Drucker initialisieren wenn nicht gesetzt
         self._init_default_printer()
 
-        # UI Setup
+        # WICHTIG: Settings ZUERST laden, BEVOR UI erstellt wird!
+        # Sonst zeigt die UI falsche Optionen (z.B. Single-Foto obwohl deaktiviert)
+        self._load_settings_from_usb_immediately()
+        
+        # Settings auf Config anwenden (VOR UI-Setup!)
+        if self.booking_manager.is_loaded:
+            logger.info(f"📂 Buchung aktiv: {self.booking_manager.booking_id}")
+            
+            # Template in Config eintragen
+            if self.booking_manager.apply_cached_template_to_config(self.config):
+                logger.info("📦 Template wird verwendet")
+            
+            # BookingSettings auf Config anwenden (allow_single_mode, gallery_enabled, etc.)
+            self.booking_manager.apply_settings_to_config(self.config)
+        
+        # Log aktuelle Config nach Settings-Anwendung
+        logger.info(f"📋 Config nach Settings-Load:")
+        logger.info(f"   allow_single_mode = {self.config.get('allow_single_mode', True)}")
+        logger.info(f"   gallery_enabled = {self.config.get('gallery_enabled', False)}")
+
+        # UI Setup (NACH Settings, damit korrekte Optionen angezeigt werden!)
         self._setup_ui()
         
-        # Gecachte Buchung anzeigen (falls vorhanden)
+        # Buchungsanzeige aktualisieren
         if self.booking_manager.is_loaded:
             self._update_booking_display()
-            logger.info(f"📂 Letzte Buchung wiederhergestellt: {self.booking_manager.booking_id}")
-            
-            # Gecachtes Template in Config eintragen
-            if self.booking_manager.apply_cached_template_to_config(self.config):
-                logger.info("📦 Gecachtes Template wird verwendet")
         
         # Status-Timer starten
         self._start_status_checks()
         
-        # Galerie-Server starten wenn aktiviert
+        # Galerie-Server starten wenn aktiviert (NACH Settings-Anwendung!)
         self._init_gallery_server()
         
+        # Developer Mode: Performance Overlay
+        self._init_performance_overlay()
+        
+        # Statistik IMMER starten (auch ohne USB/Buchung)
+        if not self.statistics.current:
+            self._start_statistics_event()
+            logger.info("📊 Statistik gestartet (ohne USB)")
+        
         logger.info("PhotoboothApp initialisiert")
+
+    def _load_settings_from_usb_immediately(self):
+        """Lädt Settings vom USB-Stick SOFORT beim App-Start
+        
+        Wichtig: Nicht auf den Timer warten - Settings müssen sofort geladen werden,
+        damit allow_single_mode, gallery_enabled etc. von Anfang an korrekt sind.
+        """
+        from pathlib import Path
+        
+        try:
+            usb_drive = self.usb_manager.find_usb_stick()
+            if not usb_drive:
+                logger.debug("Kein USB beim Start gefunden - verwende Cache")
+                return
+            
+            usb_root = Path(usb_drive)
+            
+            # Settings vom USB laden (sucht alle .json Dateien, nimmt neueste)
+            logger.info(f"📂 USB gefunden beim Start: {usb_drive}")
+            if self.booking_manager.load_from_usb(usb_root, force=True):
+                logger.info(f"✅ Settings vom USB geladen: {self.booking_manager.booking_id}")
+                
+                # Statistik-Event starten
+                self._start_statistics_event(usb_root)
+            
+        except Exception as e:
+            logger.warning(f"USB-Check beim Start fehlgeschlagen: {e}")
 
     def _init_default_printer(self):
         """Setzt den Standard-Drucker falls keiner konfiguriert ist"""
@@ -120,15 +171,21 @@ class PhotoboothApp:
                 logger.debug(f"Drucker-Init übersprungen: {e}")
 
     def _init_gallery_server(self):
-        """Startet den Galerie-Webserver wenn aktiviert"""
+        """Startet den Galerie-Webserver und Hotspot wenn aktiviert"""
         if not self.config.get("gallery_enabled", False):
             logger.debug("Galerie-Server deaktiviert")
+            # Hotspot stoppen wenn Galerie deaktiviert
+            self._stop_hotspot_if_running()
             return
-        
+
         try:
-            from src.gallery import start_server, get_gallery_url
+            from src.gallery import start_server, get_gallery_url, start_hotspot
             from pathlib import Path
-            
+
+            # ERST Hotspot starten (damit Gäste sich verbinden können)
+            logger.info("📶 Starte Hotspot für Galerie...")
+            start_hotspot()
+
             # Galerie-Pfad = USB BILDER Ordner oder lokaler Speicher
             gallery_path = None
             usb_path = self.usb_manager.get_images_path()
@@ -137,53 +194,82 @@ class PhotoboothApp:
             else:
                 # Fallback: Lokaler Bilder-Ordner
                 gallery_path = self.local_storage.get_images_path()
-            
+
             if gallery_path:
                 port = self.config.get("gallery_port", 8080)
                 start_server(gallery_path, port=port)
-                
+
                 # URL für QR-Code speichern
                 self.gallery_url = get_gallery_url(port)
                 logger.info(f"🌐 Galerie verfügbar: {self.gallery_url}")
             else:
                 logger.warning("Kein Bilder-Pfad für Galerie verfügbar")
-                
+
         except ImportError as e:
             logger.warning(f"Galerie-Modul nicht verfügbar: {e}")
         except Exception as e:
             logger.error(f"Galerie-Server Start fehlgeschlagen: {e}")
 
+    def _stop_hotspot_if_running(self):
+        """Stoppt den Hotspot wenn er läuft (Galerie deaktiviert)"""
+        try:
+            from src.gallery import is_hotspot_active, stop_hotspot
+            if is_hotspot_active():
+                logger.info("📶 Stoppe Hotspot (Galerie deaktiviert)...")
+                stop_hotspot()
+        except ImportError:
+            pass  # Galerie-Modul nicht verfügbar
+        except Exception as e:
+            logger.debug(f"Hotspot-Stop übersprungen: {e}")
+
+    def _init_performance_overlay(self):
+        """Initialisiert Performance Overlay im Developer Mode"""
+        if not self.config.get("developer_mode", False):
+            self.performance_overlay = None
+            return
+        
+        try:
+            from src.ui.performance_overlay import PerformanceOverlay
+            self.performance_overlay = PerformanceOverlay(self)
+            logger.info("🛠️ Developer Mode: Performance Overlay aktiviert")
+        except Exception as e:
+            logger.warning(f"Performance Overlay konnte nicht geladen werden: {e}")
+            self.performance_overlay = None
+
     def _start_statistics_event(self, usb_root: Path = None):
         """Startet Statistik-Erfassung für aktuelle Buchung"""
         booking_id = self.booking_manager.booking_id if self.booking_manager.is_loaded else ""
         
-        # Speicherpfad: USB wenn verfügbar, sonst lokal
-        save_path = usb_root if usb_root else self.local_storage.get_base_path()
+        # Speicherpfad: Wird ignoriert - Statistik speichert immer lokal
+        save_path = usb_root  # Parameter wird in start_event() ignoriert
         
         # Event starten (beendet vorheriges automatisch)
         self.statistics.start_event(booking_id=booking_id, save_path=save_path)
 
     def _start_gallery_if_needed(self):
-        """Startet Galerie wenn noch nicht gestartet (für settings.json Aktivierung)"""
+        """Startet Galerie + Hotspot wenn noch nicht gestartet"""
         try:
-            from src.gallery import is_running, start_server, get_gallery_url
-            
+            from src.gallery import is_running, start_server, get_gallery_url, start_hotspot
+
+            # Hotspot starten (auch wenn Galerie schon läuft - Hotspot könnte aus sein)
+            start_hotspot()
+
             if is_running():
                 logger.debug("Galerie läuft bereits")
                 return
-            
+
             # Galerie-Pfad ermitteln
             gallery_path = self.usb_manager.get_images_path()
             if not gallery_path:
                 gallery_path = self.local_storage.get_images_path()
-            
+
             if gallery_path:
                 port = self.config.get("gallery_port", 8080)
                 start_server(gallery_path, port=port)
                 self.gallery_url = get_gallery_url(port)
-                logger.info(f"🌐 Galerie gestartet (via settings.json): {self.gallery_url}")
+                logger.info(f"🌐 Galerie gestartet: {self.gallery_url}")
         except Exception as e:
-            logger.error(f"Galerie-Start via settings.json fehlgeschlagen: {e}")
+            logger.error(f"Galerie-Start fehlgeschlagen: {e}")
 
     def _enter_fullscreen(self):
         """Aktiviert echten Vollbildmodus"""
@@ -289,17 +375,17 @@ class PhotoboothApp:
         status_frame = ctk.CTkFrame(bar, fg_color="transparent")
         status_frame.pack(side="right", padx=20, pady=10)
 
-        # Admin-Button ZUERST (bleibt ganz rechts, wackelt nicht)
-        admin_alpha = self.config.get("admin_button_alpha", 0.1)
+        # Admin-Button - im Normal Mode unsichtbar aber klickbar (für Support)
+        is_dev_mode = self.config.get("developer_mode", False)
         admin_btn = ctk.CTkButton(
             status_frame,
-            text="⚙",
+            text="⚙" if is_dev_mode else "",  # Kein Text im Normal Mode
             width=40,
             height=40,
             font=("Segoe UI", 18),
             fg_color="transparent",
-            hover_color=COLORS["bg_light"],
-            text_color=COLORS["text_muted"],
+            hover_color=COLORS["bg_light"] if is_dev_mode else COLORS["bg_medium"],
+            text_color=COLORS["text_muted"] if is_dev_mode else COLORS["bg_medium"],
             command=self.show_admin_dialog
         )
         admin_btn.pack(side="right", padx=5)
@@ -374,26 +460,28 @@ class PhotoboothApp:
                     # Neue Buchung gefunden -> laden
                     if self.booking_manager.load_from_usb(usb_root, force=True):
                         self._update_booking_display()
-                        # allow_single_mode aus settings übernehmen
-                        if self.booking_manager.settings:
-                            self.config["allow_single_mode"] = self.booking_manager.settings.print_singles
+                        
+                        # Alle BookingSettings auf Config anwenden
+                        self.booking_manager.apply_settings_to_config(self.config)
+                        
+                        # Statistik-Event starten (lokal, nicht auf USB!)
+                        self._start_statistics_event(usb_root)
+                        
+                        # Galerie starten wenn in settings.json aktiviert
+                        if self.config.get("gallery_enabled", False):
+                            self._start_gallery_if_needed()
                             
-                            # Statistik-Event starten mit Buchungsnummer
-                            self._start_statistics_event(usb_root)
-                            
-                            # Galerie starten wenn in settings.json aktiviert
-                            if self.booking_manager.settings.online_gallery:
-                                self._start_gallery_if_needed()
                 elif not self.booking_manager.is_loaded:
                     # Noch keine Buchung geladen -> aus USB oder Cache laden
                     self.booking_manager.load_from_usb(usb_root)
                     self._update_booking_display()
 
-        # USB wurde gerade eingesteckt und es gibt pending files -> Dialog zeigen
-        if is_available and pending_count > 0 and not self._sync_dialog_open:
+        # USB wurde gerade eingesteckt -> ALLE fehlenden Bilder automatisch synchronisieren
+        if is_available and not self._sync_dialog_open:
             if not hasattr(self, '_was_usb_available') or not self._was_usb_available:
                 self._was_usb_available = True
-                self._show_usb_sync_dialog(pending_count)
+                # Vollständige Synchronisation aller fehlenden Bilder
+                self._auto_sync_all_missing()
         elif not is_available:
             self._was_usb_available = False
 
@@ -632,7 +720,39 @@ class PhotoboothApp:
                 text_color=COLORS["success"],
                 fg_color=COLORS["bg_light"]
             )
-    
+
+    def _auto_sync_all_missing(self):
+        """Synchronisiert automatisch ALLE fehlenden Bilder auf USB.
+
+        Wird aufgerufen wenn USB-Stick (wieder) eingesteckt wird.
+        Kopiert nur Bilder die noch nicht auf dem USB-Stick vorhanden sind.
+        """
+        from src.storage.local import LocalStorage
+        import threading
+
+        local_path = LocalStorage.get_images_path()
+        if not local_path.exists():
+            logger.debug("Lokaler Bilder-Ordner existiert nicht - kein Sync nötig")
+            return
+
+        logger.info("=== Auto-Sync: Prüfe fehlende Bilder ===")
+
+        # Sync im Hintergrund ausführen um UI nicht zu blockieren
+        def do_sync():
+            result = self.usb_manager.sync_all_missing(local_path)
+            copied = result.get("copied", 0)
+
+            # UI-Update im Hauptthread
+            if copied > 0:
+                self.root.after(0, lambda: self._show_sync_notification(copied))
+            elif result.get("errors", 0) > 0:
+                logger.warning(f"Auto-Sync: {result['errors']} Fehler")
+            else:
+                logger.debug("Auto-Sync: Alle Bilder bereits synchronisiert")
+
+        thread = threading.Thread(target=do_sync, daemon=True)
+        thread.start()
+
     def _check_printer_status(self):
         """Prüft Drucker-Status"""
         try:
@@ -696,11 +816,20 @@ class PhotoboothApp:
         self.current_screen = self.screens[screen_name]
         self.current_screen_name = screen_name
         self.current_screen.pack(fill="both", expand=True)
-        
+
+        # Top-Bar Sichtbarkeit: Nur im Start-Screen oder im DEV Mode
+        is_dev_mode = self.config.get("developer_mode", False)
+        show_topbar = (screen_name == "start") or is_dev_mode
+
+        if show_topbar:
+            self.top_bar.pack(fill="x", before=self.container)
+        else:
+            self.top_bar.pack_forget()
+
         # Screen aktualisieren
         if hasattr(self.current_screen, "on_show"):
             self.current_screen.on_show(**kwargs)
-        
+
         logger.debug(f"Screen gewechselt: {screen_name}")
     
     def show_admin_dialog(self):
@@ -714,6 +843,13 @@ class PhotoboothApp:
             save_config(self.config)
             logger.info("Admin-Einstellungen gespeichert")
             
+            # Galerie/Hotspot starten oder stoppen je nach Einstellung
+            if self.config.get("gallery_enabled", False):
+                self._start_gallery_if_needed()
+            else:
+                # Galerie deaktiviert -> Hotspot stoppen
+                self._stop_hotspot_if_running()
+
             # StartScreen aktualisieren wenn aktiv
             if self.current_screen_name == "start" and self.current_screen:
                 logger.info("Aktualisiere StartScreen nach Admin-Änderung...")
@@ -732,14 +868,47 @@ class PhotoboothApp:
         """
         video_path = self.config.get(video_key, "")
         
-        if not video_path or not os.path.exists(video_path):
-            logger.debug(f"Video nicht konfiguriert/gefunden: {video_key}")
+        logger.info(f"🎬 play_video aufgerufen: key={video_key}, path='{video_path}'")
+        
+        if not video_path:
+            logger.info(f"🎬 Video '{video_key}' nicht konfiguriert - überspringe")
+            self.show_screen(next_screen)
+            return
+        
+        if not os.path.exists(video_path):
+            logger.warning(f"🎬 Video-Datei nicht gefunden: {video_path}")
             self.show_screen(next_screen)
             return
         
         # Video-Screen anzeigen und abspielen
+        logger.info(f"🎬 Starte Video: {video_path}")
         self.show_screen("video")
         self.current_screen.play(video_path, next_screen)
+    
+    def play_video_and_return(self, video_path: str, callback):
+        """Spielt ein Video ab und ruft dann Callback auf (für Zwischen-Videos)
+        
+        Args:
+            video_path: Direkter Pfad zum Video
+            callback: Funktion die nach Video-Ende aufgerufen wird
+        """
+        logger.info(f"🎬 play_video_and_return aufgerufen: path='{video_path}'")
+        
+        if not video_path:
+            logger.info(f"🎬 Zwischen-Video nicht konfiguriert - überspringe")
+            callback()
+            return
+        
+        if not os.path.exists(video_path):
+            logger.warning(f"🎬 Zwischen-Video nicht gefunden: {video_path}")
+            callback()
+            return
+        
+        # Video-Screen anzeigen
+        logger.info(f"🎬 Starte Zwischen-Video: {video_path}")
+        self.show_screen("video")
+        # Abspielen mit Callback statt Screen-Wechsel
+        self.current_screen.play(video_path, "session", on_complete=callback)
     
     def _resolve_template_path(self, template_path: str) -> str:
         """Löst Template-Pfad auf (relativ oder absolut)"""
@@ -822,6 +991,7 @@ class PhotoboothApp:
     def reset_session(self):
         """Setzt die Session zurück"""
         self.photos_taken = []
+        self.current_photo_index = 0
         self.current_filter = "none"
         self.template_path = None
         self.template_boxes = []

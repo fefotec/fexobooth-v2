@@ -18,6 +18,53 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2026-02-04] - Video-Fix für schwache Hardware & Offline-Hotspot
+
+### Hinzugefügt
+- **Windows Media Foundation (MSMF) Backend für Video-Wiedergabe**
+  - Nutzt Windows-eigene H.264 Codecs
+  - Fallback auf FFMPEG und Default-Backend
+  - Verhindert schwarzen Bildschirm auf schwacher Hardware
+
+- **Threading für Video-Wiedergabe**
+  - Frame-Lesen in separatem Thread
+  - Queue-basierte Kommunikation (Producer-Consumer Pattern)
+  - Verhindert UI-Einfrieren auf schwacher Hardware (z.B. Lenovo Miix 310)
+
+- **Status-Label bei Video-Fehlern**
+  - Zeigt "Video konnte nicht geladen werden" bei Problemen
+  - Automatischer Weitersprung nach 3 Sekunden
+
+- **Offline-Hotspot Setup** (`setup/setup_hotspot.ps1`)
+  - Mehrere Fallback-Methoden für Hotspot ohne Internet
+  - Versucht: Loopback-Profil → Verfügbare Profile → netsh hostednetwork
+  - Erstellt Auto-Start Scheduled Task
+  - Manuelle Anleitung als letzter Fallback
+
+### Geändert
+- Video-FPS auf max. 25 begrenzt (Performance auf schwacher Hardware)
+- Skip-Button erscheint erst wenn Video läuft oder Fehler auftritt
+
+### Behoben
+- **Video zeigt schwarzen Bildschirm auf Miix 310**
+  - Ursache: OpenCV Default-Backend kann H.264/MP4 nicht decodieren
+  - Fix: MSMF-Backend nutzt Windows-eigene Codecs
+
+- **UI friert ein während Video-Wiedergabe**
+  - Ursache: Frame-Lesen blockiert Main-Thread
+  - Fix: Threading mit Frame-Queue
+
+- **Hotspot-Script schlägt fehl ohne Internet**
+  - Ursache: NetworkOperatorTetheringManager braucht Internetverbindung
+  - Fix: Mehrere Fallback-Methoden inkl. netsh hostednetwork
+
+### Technische Details
+- `src/ui/screens/video.py` komplett überarbeitet
+- `setup/setup_hotspot.ps1` komplett überarbeitet
+- Getestet für: Lenovo Miix 310 (Atom CPU, 4GB RAM)
+
+---
+
 ## [2026-02-03] - Admin-Menü & Persistenz
 
 ### Hinzugefügt

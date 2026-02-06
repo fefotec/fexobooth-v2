@@ -1,0 +1,101 @@
+# Erkenntnisse - Fexobooth V2
+
+Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
+
+---
+
+## Technologie-Entscheidungen
+
+### Video-Wiedergabe: MSMF statt VLC/FFmpeg
+
+| | |
+|---|---|
+| **Kontext** | Video-Wiedergabe auf schwacher Hardware (Atom CPU) |
+| **Entscheidung** | Windows Media Foundation (MSMF) als primäres Backend |
+| **Alternativen** | VLC (zu schwer), FFmpeg (zusätzliche Dependency), Default OpenCV (kann H.264 nicht) |
+| **Begründung** | MSMF nutzt Windows-eigene Codecs, keine zusätzlichen Bibliotheken nötig |
+
+### GUI-Framework: CustomTkinter
+
+| | |
+|---|---|
+| **Kontext** | Leichtgewichtiges GUI für schwache Hardware |
+| **Entscheidung** | CustomTkinter |
+| **Alternativen** | PyQt (zu schwer), Kivy (zu schwer), Standard Tkinter (hässlich) |
+| **Begründung** | Modern aussehend, leichtgewichtig, einfache API |
+
+### Galerie-Server: Flask
+
+| | |
+|---|---|
+| **Kontext** | Lokaler Webserver für QR-Code Galerie |
+| **Entscheidung** | Flask |
+| **Alternativen** | FastAPI (overkill), http.server (zu primitiv) |
+| **Begründung** | Leichtgewichtig (~20-30 MB RAM), einfach, bewährt |
+
+### Persistenz: JSON-Cache statt Datenbank
+
+| | |
+|---|---|
+| **Kontext** | Buchungsdaten und Settings speichern |
+| **Entscheidung** | JSON-Dateien in .booking_cache/ |
+| **Alternativen** | SQLite (overkill), Registry (Windows-spezifisch, unflexibel) |
+| **Begründung** | Einfach, lesbar, portabel, keine zusätzliche Dependency |
+
+---
+
+## Lessons Learned
+
+### Video: OpenCV Default-Backend kann H.264 nicht decodieren
+
+| | |
+|---|---|
+| **Problem** | Video zeigt schwarzen Bildschirm auf Miix 310 |
+| **Ursache** | OpenCV Default-Backend kann H.264/MP4 nicht decodieren |
+| **Lösung** | MSMF-Backend explizit setzen: `cv2.VideoCapture(path, cv2.CAP_MSMF)` |
+| **Merke** | Auf schwacher Windows-Hardware immer MSMF für Video nutzen |
+
+### Video: Frame-Lesen blockiert Main-Thread
+
+| | |
+|---|---|
+| **Problem** | UI friert während Video-Wiedergabe ein |
+| **Ursache** | `cap.read()` blockiert den Main-Thread |
+| **Lösung** | Threading mit Frame-Queue (Producer-Consumer Pattern) |
+| **Merke** | Auf schwacher Hardware immer Video-Decoding in separaten Thread |
+
+### Hotspot: NetworkOperatorTetheringManager braucht Internet
+
+| | |
+|---|---|
+| **Problem** | Hotspot-Script schlägt fehl ohne Internetverbindung |
+| **Ursache** | Windows NetworkOperatorTetheringManager braucht aktive Internetverbindung |
+| **Lösung** | Fallback auf netsh hostednetwork |
+| **Merke** | Für Offline-Betrieb mehrere Fallback-Methoden implementieren |
+
+### USB: Singleton-Pattern für shared State
+
+| | |
+|---|---|
+| **Problem** | Pending-Files Counter aktualisiert sich nicht live |
+| **Ursache** | Verschiedene Module hatten eigene USBManager-Instanzen |
+| **Lösung** | `get_shared_usb_manager()` Singleton-Funktion |
+| **Merke** | Bei shared State immer Singleton oder DI nutzen |
+
+### Persistenz: Cache für USB-Daten
+
+| | |
+|---|---|
+| **Problem** | Template und Buchung nach Neustart oder USB-Abzug weg |
+| **Ursache** | Daten wurden nur vom USB gelesen, nicht gecached |
+| **Lösung** | Lokaler Cache in .booking_cache/ |
+| **Merke** | USB-Daten immer lokal cachen für Offline-Betrieb |
+
+---
+
+## Performance-Erkenntnisse
+
+- **Max. 25 FPS für Video** - Mehr schafft die Hardware nicht flüssig
+- **Keine 60fps GUI-Updates** - after() mit mindestens 50ms Intervall
+- **Bilder nicht im RAM halten** - Sofort auf Disk schreiben, nur bei Bedarf laden
+- **Flask ist OK** - Verbraucht nur ~20-30 MB RAM im Idle
