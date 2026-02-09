@@ -283,50 +283,57 @@ class SessionScreen(ctk.CTkFrame):
         self.preview_label.image = ctk_img
 
     def _display_flash(self):
-        """Zeigt Flash-Screen (weißer Blitz mit optionalem Bild)"""
-        container_w = self.preview_container.winfo_width() - 10
-        container_h = self.preview_container.winfo_height() - 10
+        """Zeigt Flash-Screen (weißer Blitz mit optionalem Bild)
 
-        # Fallback wenn Container noch nicht gelayoutet ist
-        if container_w < 100 or container_h < 100:
-            screen_w = self.winfo_screenwidth()
-            screen_h = self.winfo_screenheight()
-            container_w = max(screen_w - 20, 800)
-            container_h = max(screen_h - 80, 500)
-            logger.debug(f"Flash: Container zu klein, Fallback auf {container_w}x{container_h}")
+        Komplett in try/except gewrapped damit die Live-View-Loop
+        bei Fehlern NICHT abstürzt (sonst bleibt schwarzer Screen stehen).
+        """
+        try:
+            container_w = self.preview_container.winfo_width() - 10
+            container_h = self.preview_container.winfo_height() - 10
 
-        if container_w > 100 and container_h > 100:
+            # Fallback wenn Container noch nicht gelayoutet ist
+            if container_w < 100 or container_h < 100:
+                screen_w = self.winfo_screenwidth()
+                screen_h = self.winfo_screenheight()
+                container_w = max(screen_w - 20, 800)
+                container_h = max(screen_h - 80, 500)
+
+            if container_w <= 100 or container_h <= 100:
+                return
+
             flash = Image.new("RGB", (container_w, container_h), (255, 255, 255))
 
             flash_image_path = self.config.get("flash_image", "")
             custom_loaded = False
 
-            if flash_image_path:
-                if os.path.exists(flash_image_path):
-                    try:
-                        custom_img = Image.open(flash_image_path)
-                        logger.debug(f"Flash: Bild geöffnet ({custom_img.size}, Mode: {custom_img.mode})")
+            if flash_image_path and os.path.exists(flash_image_path):
+                try:
+                    custom_img = Image.open(flash_image_path)
+                    # Pixeldaten sofort laden (lazy loading kann später crashen)
+                    custom_img.load()
+                    logger.info(f"Flash: Bild geöffnet: {flash_image_path} ({custom_img.size}, Mode: {custom_img.mode})")
 
-                        max_size = int(min(container_w, container_h) * 0.6)
-                        custom_img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-                        img_x = (container_w - custom_img.width) // 2
-                        img_y = (container_h - custom_img.height) // 2
+                    max_size = int(min(container_w, container_h) * 0.6)
+                    custom_img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+                    img_x = (container_w - custom_img.width) // 2
+                    img_y = (container_h - custom_img.height) // 2
 
-                        # PNG mit Transparenz: Alpha-Maske verwenden
-                        if custom_img.mode == "RGBA":
-                            flash.paste(custom_img, (img_x, img_y), custom_img)
-                        else:
-                            # JPEG/RGB: Direkt pasten ohne Maske
-                            flash.paste(custom_img.convert("RGB"), (img_x, img_y))
+                    # PNG mit Transparenz: Alpha-Maske verwenden
+                    if custom_img.mode == "RGBA":
+                        flash.paste(custom_img, (img_x, img_y), custom_img)
+                    else:
+                        # JPEG/RGB/L/P/CMYK: In RGB konvertieren und direkt pasten
+                        flash.paste(custom_img.convert("RGB"), (img_x, img_y))
 
-                        custom_loaded = True
-                        logger.debug(f"Flash: Custom-Bild geladen ({custom_img.width}x{custom_img.height})")
-                    except Exception as e:
-                        logger.warning(f"Flash-Bild konnte nicht geladen werden: {e}")
-                        import traceback
-                        logger.warning(traceback.format_exc())
-                else:
-                    logger.warning(f"Flash-Bild nicht gefunden: {flash_image_path}")
+                    custom_loaded = True
+                    logger.info(f"Flash: Custom-Bild angezeigt ({custom_img.width}x{custom_img.height})")
+                except Exception as e:
+                    logger.error(f"Flash-Bild Fehler: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+            elif flash_image_path:
+                logger.warning(f"Flash-Bild nicht gefunden: {flash_image_path}")
 
             if not custom_loaded:
                 draw = ImageDraw.Draw(flash)
@@ -369,6 +376,12 @@ class SessionScreen(ctk.CTkFrame):
             ctk_img = ctk.CTkImage(light_image=flash, dark_image=flash, size=(container_w, container_h))
             self.preview_label.configure(image=ctk_img)
             self.preview_label.image = ctk_img
+
+        except Exception as e:
+            # NIEMALS die Live-View-Loop crashen lassen!
+            logger.error(f"Flash-Anzeige komplett fehlgeschlagen: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
 
     def _start_countdown(self):
         """Startet den Countdown"""

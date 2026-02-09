@@ -1,7 +1,7 @@
 """Final-Screen - Fertiges Bild mit Druck-Option
 
-Sauberes Pack-Layout: Bild zentriert mit Rand, Buttons darunter.
-Kein Overlay/place() - vermeidet Transparenz-Probleme in CustomTkinter.
+Bild bildschirmfüllend mit Rand, Buttons als Overlay per place().
+Einzelne Buttons direkt platziert (kein Container-Frame = kein sichtbares Rechteck).
 """
 
 import customtkinter as ctk
@@ -35,22 +35,26 @@ class FinalScreen(ctk.CTkFrame):
         self._setup_ui()
 
     def _setup_ui(self):
-        """Erstellt die UI - Pack-Layout ohne Overlays"""
-        # Countdown/Status-Text oben
+        """Erstellt die UI - Bild mit Rand, Buttons als Overlay"""
+        # Bild-Container (mit Rand für bessere Optik)
+        self.image_frame = ctk.CTkFrame(self, fg_color=COLORS["bg_dark"], corner_radius=0)
+        self.image_frame.pack(fill="both", expand=True, padx=40, pady=(10, 10))
+
+        self.preview_label = ctk.CTkLabel(self.image_frame, text="", fg_color="transparent")
+        self.preview_label.pack(expand=True, fill="both")
+
+        # === Overlay-Elemente per place() direkt auf self ===
+        # Keine Container-Frames → keine sichtbaren Rechtecke
+
+        # Countdown-Text oben
         self.subtitle_label = ctk.CTkLabel(
             self,
             text="",
             font=FONTS["small"],
             text_color=COLORS["text_secondary"],
+            fg_color="transparent"
         )
-        self.subtitle_label.pack(pady=(8, 0))
-
-        # Bild-Container mit großzügigem Rand
-        self.image_frame = ctk.CTkFrame(self, fg_color="transparent", corner_radius=0)
-        self.image_frame.pack(fill="both", expand=True, padx=60, pady=(5, 5))
-
-        self.preview_label = ctk.CTkLabel(self.image_frame, text="", fg_color="transparent")
-        self.preview_label.pack(expand=True)
+        self.subtitle_label.place(relx=0.5, rely=0.03, anchor="n")
 
         # Druck-Info
         self.print_info = ctk.CTkLabel(
@@ -58,57 +62,54 @@ class FinalScreen(ctk.CTkFrame):
             text="",
             font=FONTS["body_bold"] if "body_bold" in FONTS else FONTS["body"],
             text_color=COLORS["text_primary"],
+            fg_color="transparent"
         )
-        self.print_info.pack(pady=(2, 0))
+        self.print_info.place(relx=0.5, rely=0.83, anchor="center")
 
-        # Button-Leiste
-        button_frame = ctk.CTkFrame(self, fg_color="transparent")
-        button_frame.pack(pady=(5, 0))
-
-        # NOCHMAL Button
+        # NOCHMAL Button (Pill-Form, direkt platziert)
         self.redo_btn = ctk.CTkButton(
-            button_frame,
+            self,
             text=self.config.get("ui_texts", {}).get("redo", "NOCHMAL"),
             font=("Segoe UI", 16, "bold"),
             width=160,
             height=55,
             fg_color=COLORS["bg_light"],
             hover_color=COLORS["bg_card"],
-            corner_radius=SIZES["corner_radius"],
+            corner_radius=27,
             command=self._on_redo
         )
-        self.redo_btn.pack(side="left", padx=10)
+        self.redo_btn.place(relx=0.28, rely=0.92, anchor="center")
 
-        # DRUCKEN Button
+        # DRUCKEN Button (groß, prominent, direkt platziert)
         self.print_btn = ctk.CTkButton(
-            button_frame,
-            text=f"DRUCKEN",
+            self,
+            text="DRUCKEN",
             font=("Segoe UI", 20, "bold"),
             width=220,
             height=65,
             fg_color=COLORS["success"],
             hover_color="#00e676",
-            corner_radius=SIZES["corner_radius"],
+            corner_radius=32,
             command=self._on_print
         )
-        self.print_btn.pack(side="left", padx=10)
+        self.print_btn.place(relx=0.5, rely=0.92, anchor="center")
 
-        # FERTIG Button
+        # FERTIG Button (direkt platziert)
         if not self.config.get("hide_finish_button", False):
             self.finish_btn = ctk.CTkButton(
-                button_frame,
+                self,
                 text=self.config.get("ui_texts", {}).get("finish", "FERTIG"),
                 font=("Segoe UI", 16, "bold"),
                 width=160,
                 height=55,
                 fg_color=COLORS["bg_light"],
                 hover_color=COLORS["bg_card"],
-                corner_radius=SIZES["corner_radius"],
+                corner_radius=27,
                 command=self._on_finish
             )
-            self.finish_btn.pack(side="left", padx=10)
+            self.finish_btn.place(relx=0.72, rely=0.92, anchor="center")
 
-        # Progress-Bar
+        # Progress-Bar ganz unten
         self.progress_bar = ctk.CTkProgressBar(
             self,
             width=500,
@@ -117,7 +118,7 @@ class FinalScreen(ctk.CTkFrame):
             progress_color=COLORS["primary"],
             corner_radius=2
         )
-        self.progress_bar.pack(pady=(8, 12))
+        self.progress_bar.place(relx=0.5, rely=0.97, anchor="center")
         self.progress_bar.set(1.0)
 
     def _render_final_image(self) -> Image.Image:
@@ -144,12 +145,10 @@ class FinalScreen(ctk.CTkFrame):
             self._on_finish()
             return
 
-        # Progress-Bar aktualisieren
         total_time = self.config.get("final_time", 30)
         progress = remaining / total_time
         self.progress_bar.set(progress)
 
-        # Untertitel aktualisieren
         self.subtitle_label.configure(
             text=f"Automatisch zurück in {int(remaining)} Sekunden..."
         )
@@ -371,9 +370,9 @@ class FinalScreen(ctk.CTkFrame):
         container_h = self.image_frame.winfo_height()
 
         if container_w < 100:
-            container_w = 900
+            container_w = 1000
         if container_h < 100:
-            container_h = 500
+            container_h = 600
 
         preview = self.final_image.copy()
         preview.thumbnail((container_w, container_h), Image.Resampling.LANCZOS)
