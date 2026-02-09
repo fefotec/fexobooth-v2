@@ -1,6 +1,7 @@
 """Final-Screen - Fertiges Bild mit Druck-Option
 
-Optimiert für Lenovo Miix 310 (1280x800)
+Bild bildschirmfüllend, Buttons als Overlay darüber.
+Foto-Wiederholen Button am rechten Rand.
 """
 
 import customtkinter as ctk
@@ -20,124 +21,124 @@ logger = get_logger(__name__)
 
 class FinalScreen(ctk.CTkFrame):
     """Final-Screen mit fertigem Bild und Aktionen"""
-    
+
     def __init__(self, parent, app: "PhotoboothApp"):
         super().__init__(parent, fg_color=COLORS["bg_dark"])
         self.app = app
         self.config = app.config
-        
+
         self.final_image: Optional[Image.Image] = None
         self.prints_count = 0
         self.auto_return_time = 0
         self.is_active = False
-        
+
         self._setup_ui()
-    
+
     def _setup_ui(self):
-        """Erstellt die UI - kompakt für 800px Höhe (Miix 310)"""
-        # Titel (kompakter)
-        self.title_label = ctk.CTkLabel(
-            self,
-            text="🎉 Fertig!",
-            font=FONTS["heading"],
-            text_color=COLORS["text_primary"]
-        )
-        self.title_label.pack(pady=(5, 0))
-
-        # Untertitel mit Countdown
-        self.subtitle_label = ctk.CTkLabel(
-            self,
-            text="Dein Foto ist bereit",
-            font=FONTS["small"],
-            text_color=COLORS["text_secondary"]
-        )
-        self.subtitle_label.pack(pady=(0, 5))
-
-        # Hauptbereich (weniger Padding für mehr Platz)
-        main_frame = ctk.CTkFrame(self, fg_color="transparent")
-        main_frame.pack(fill="both", expand=True, padx=15, pady=0)
-
-        # Bild-Container (weniger Padding)
-        self.image_frame = ctk.CTkFrame(
-            main_frame,
-            fg_color=COLORS["bg_medium"],
-            corner_radius=SIZES["corner_radius"],
-            border_width=3,
-            border_color=COLORS["primary"]
-        )
-        self.image_frame.pack(expand=True, fill="both", pady=5)
+        """Erstellt die UI - Bild bildschirmfüllend, Buttons als Overlay"""
+        # Bild-Container (mit etwas Rand für bessere Optik)
+        self.image_frame = ctk.CTkFrame(self, fg_color="#000000", corner_radius=0)
+        self.image_frame.pack(fill="both", expand=True, padx=30, pady=(15, 5))
 
         self.preview_label = ctk.CTkLabel(self.image_frame, text="", fg_color="transparent")
-        self.preview_label.pack(expand=True, padx=10, pady=10)
+        self.preview_label.pack(expand=True, fill="both")
 
-        # Druck-Info (ÜBER den Buttons für bessere Sichtbarkeit)
-        self.print_info = ctk.CTkLabel(
+        # === Overlay-Elemente (über dem Bild via place) ===
+
+        # Untertitel mit Countdown (oben)
+        self.subtitle_label = ctk.CTkLabel(
             self,
             text="",
             font=FONTS["small"],
-            text_color=COLORS["text_muted"]
+            text_color=COLORS["text_secondary"],
+            fg_color="transparent"
         )
-        self.print_info.pack(pady=(5, 2))
+        self.subtitle_label.place(relx=0.5, rely=0.04, anchor="n")
 
-        # Progress-Bar für Auto-Return (schmaler)
-        self.progress_bar = ctk.CTkProgressBar(
+        # Druck-Info (über den Buttons)
+        self.print_info = ctk.CTkLabel(
             self,
-            width=500,
-            height=5,
-            fg_color=COLORS["bg_light"],
-            progress_color=COLORS["primary"],
-            corner_radius=3
+            text="",
+            font=FONTS["body_bold"] if "body_bold" in FONTS else FONTS["body"],
+            text_color=COLORS["text_primary"],
+            fg_color="transparent"
         )
-        self.progress_bar.pack(pady=(0, 5))
-        self.progress_bar.set(1.0)
+        self.print_info.place(relx=0.5, rely=0.80, anchor="center")
 
-        # Button-Leiste (kompakter)
+        # Button-Leiste (unten mittig, über dem Bild)
         button_frame = ctk.CTkFrame(self, fg_color="transparent")
-        button_frame.pack(pady=(0, 10))
+        button_frame.place(relx=0.5, rely=0.90, anchor="center")
 
-        # Nochmal-Button
+        # NOCHMAL Button
         self.redo_btn = ctk.CTkButton(
             button_frame,
             text=self.config.get("ui_texts", {}).get("redo", "NOCHMAL"),
-            font=FONTS["small"],
-            width=SIZES["button_width"],
-            height=SIZES["button_height"],
+            font=("Segoe UI", 16, "bold"),
+            width=160,
+            height=55,
             fg_color=COLORS["bg_light"],
             hover_color=COLORS["bg_card"],
             corner_radius=SIZES["corner_radius"],
             command=self._on_redo
         )
-        self.redo_btn.pack(side="left", padx=8)
+        self.redo_btn.pack(side="left", padx=10)
 
-        # Drucken-Button
+        # DRUCKEN Button (groß, prominent)
         self.print_btn = ctk.CTkButton(
             button_frame,
             text=f"🖨️ {self.config.get('ui_texts', {}).get('print', 'DRUCKEN')}",
-            font=FONTS["button"],
-            width=SIZES["button_large_width"],
-            height=SIZES["button_large_height"],
+            font=("Segoe UI", 20, "bold"),
+            width=220,
+            height=65,
             fg_color=COLORS["success"],
             hover_color="#00e676",
             corner_radius=SIZES["corner_radius"],
             command=self._on_print
         )
-        self.print_btn.pack(side="left", padx=8)
+        self.print_btn.pack(side="left", padx=10)
 
-        # Fertig-Button (wenn nicht versteckt)
+        # FERTIG Button
         if not self.config.get("hide_finish_button", False):
             self.finish_btn = ctk.CTkButton(
                 button_frame,
                 text=self.config.get("ui_texts", {}).get("finish", "FERTIG"),
-                font=FONTS["small"],
-                width=SIZES["button_width"],
-                height=SIZES["button_height"],
+                font=("Segoe UI", 16, "bold"),
+                width=160,
+                height=55,
                 fg_color=COLORS["bg_light"],
                 hover_color=COLORS["bg_card"],
                 corner_radius=SIZES["corner_radius"],
                 command=self._on_finish
             )
-            self.finish_btn.pack(side="left", padx=8)
-    
+            self.finish_btn.pack(side="left", padx=10)
+
+        # Progress-Bar (ganz unten)
+        self.progress_bar = ctk.CTkProgressBar(
+            self,
+            width=500,
+            height=4,
+            fg_color=COLORS["bg_light"],
+            progress_color=COLORS["primary"],
+            corner_radius=2
+        )
+        self.progress_bar.place(relx=0.5, rely=0.97, anchor="center")
+        self.progress_bar.set(1.0)
+
+        # Foto-Wiederholen Button (rechter Rand)
+        self.retake_btn = ctk.CTkButton(
+            self,
+            text="↻",
+            font=("Segoe UI", 28),
+            width=50,
+            height=50,
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["primary"],
+            text_color=COLORS["text_primary"],
+            corner_radius=25,
+            command=self._on_retake
+        )
+        self.retake_btn.place(relx=0.97, rely=0.5, anchor="e")
+
     def _render_final_image(self) -> Image.Image:
         """Rendert das finale Bild"""
         # Filter auf alle Fotos anwenden
@@ -145,38 +146,38 @@ class FinalScreen(ctk.CTkFrame):
             self.app.filter_manager.apply(photo, self.app.current_filter)
             for photo in self.app.photos_taken
         ]
-        
+
         # Template rendern
         return self.app.renderer.render(
             filtered_photos,
             self.app.template_boxes,
             self.app.overlay_image
         )
-    
+
     def _update_countdown(self):
         """Aktualisiert den Auto-Return Countdown"""
         if not self.is_active:
             return
-        
+
         remaining = self.auto_return_time - time.time()
-        
+
         if remaining <= 0:
             self._on_finish()
             return
-        
+
         # Progress-Bar aktualisieren
         total_time = self.config.get("final_time", 30)
         progress = remaining / total_time
         self.progress_bar.set(progress)
-        
+
         # Untertitel aktualisieren
         self.subtitle_label.configure(
             text=f"Automatisch zurück in {int(remaining)} Sekunden..."
         )
-        
+
         # Nächstes Update
         self.after(100, self._update_countdown)
-    
+
     def _on_redo(self):
         """Nochmal gedrückt"""
         logger.info("Redo - neue Session")
@@ -184,23 +185,37 @@ class FinalScreen(ctk.CTkFrame):
         self.app.reset_session()
         # Video abspielen wenn konfiguriert
         self.app.play_video("video_end", "start")
-    
+
+    def _on_retake(self):
+        """Foto wiederholen - gleiche Vorlage, neue Fotos"""
+        logger.info("Foto wiederholen - neue Aufnahme mit gleicher Vorlage")
+        self.is_active = False
+        # Fotos zurücksetzen, Template behalten
+        self.app.photos_taken = []
+        self.app.current_photo_index = 0
+        self.app.prints_in_session = 0
+        # Kamera freigeben (wird von SessionScreen.on_show neu initialisiert)
+        self.app.camera_manager.release()
+        self.app.filter_manager.clear_cache()
+        # Direkt zur Session (kein Video, kein Startscreen)
+        self.app.show_screen("session")
+
     def _on_print(self):
         """Drucken gedrückt"""
         max_prints = self.config.get("max_prints_per_session", 1)
-        
+
         if self.prints_count >= max_prints:
             self.print_info.configure(
                 text="⚠️ Maximale Anzahl Drucke erreicht!",
                 text_color=COLORS["warning"]
             )
             return
-        
+
         logger.info("Drucke Bild...")
-        
+
         # Button deaktivieren während Druck
         self.print_btn.configure(state="disabled", text="⏳ Wird gedruckt...")
-        
+
         # Bild speichern und drucken
         if self.final_image:
             # Print speichern
@@ -208,20 +223,20 @@ class FinalScreen(ctk.CTkFrame):
                 self.final_image.convert("RGB"),
                 suffix=f"print_{self.prints_count + 1}"
             )
-            
+
             if saved_path:
                 # Auf USB kopieren
                 self.app.usb_manager.copy_to_usb(saved_path, "Prints")
-                
+
                 # Drucken
                 self._print_image(saved_path)
-                
+
                 self.prints_count += 1
                 self.app.prints_in_session = self.prints_count
-                
+
                 # Statistik: Print erfasst
                 self.app.statistics.record_print_success()
-                
+
                 # Info aktualisieren
                 remaining = max_prints - self.prints_count
                 if remaining > 0:
@@ -236,17 +251,17 @@ class FinalScreen(ctk.CTkFrame):
                 else:
                     self.print_info.configure(
                         text="✓ Gedruckt! Keine weiteren Drucke möglich",
-                        text_color=COLORS["text_muted"]
+                        text_color=COLORS["text_primary"]
                     )
                     self.print_btn.configure(
                         state="disabled",
                         text="Limit erreicht",
                         fg_color=COLORS["bg_light"]
                     )
-        
+
         # Auto-Return Timer zurücksetzen
         self.auto_return_time = time.time() + self.config.get("final_time", 30)
-    
+
     def _print_image(self, image_path: Path):
         """Druckt ein Bild über GDI - einfache Methode wie in alter Version
 
@@ -361,31 +376,31 @@ class FinalScreen(ctk.CTkFrame):
                 text=msg,
                 text_color=COLORS["error"]
             )
-    
+
     def _save_final_image(self):
         """Speichert das finale Bild IMMER (nicht nur bei Druck)
-        
+
         Wird bei on_show() aufgerufen, damit jedes erstellte Bild
         gespeichert wird, unabhängig ob gedruckt wird oder nicht.
         """
         if self.final_image is None:
             logger.warning("Kein finales Bild zum Speichern")
             return
-        
+
         try:
             # In Prints-Ordner speichern
             saved_path = self.app.local_storage.save_print(
                 self.final_image,
                 suffix="final"
             )
-            
+
             if saved_path:
                 logger.info(f"✅ Finales Bild gespeichert: {saved_path}")
                 # Auch auf USB kopieren wenn verfügbar
                 self.app.usb_manager.copy_to_usb(saved_path, "Prints")
             else:
                 logger.warning("Finales Bild konnte nicht gespeichert werden")
-                
+
         except Exception as e:
             logger.error(f"Fehler beim Speichern des finalen Bildes: {e}")
 
@@ -393,39 +408,43 @@ class FinalScreen(ctk.CTkFrame):
         """Fertig gedrückt"""
         logger.info("Session beendet")
         self.is_active = False
-        
+
         # Statistik: Session erfasst
         self.app.statistics.record_session()
-        
+
         self.app.reset_session()
         # Video abspielen wenn konfiguriert
         self.app.play_video("video_end", "start")
-    
+
     def on_show(self):
         """Screen wird angezeigt"""
         logger.info("Final-Screen angezeigt")
         self.is_active = True
         self.prints_count = 0
-        
+
         # Finales Bild rendern
         self.final_image = self._render_final_image()
-        
+
         # IMMER speichern (nicht nur bei Druck!)
         self._save_final_image()
-        
-        # Vorschau anzeigen (angepasst für 800px Bildschirmhöhe)
+
+        # Vorschau bildschirmfüllend anzeigen
+        self.update_idletasks()
+        container_w = self.image_frame.winfo_width()
+        container_h = self.image_frame.winfo_height()
+
+        if container_w < 100:
+            container_w = 1000
+        if container_h < 100:
+            container_h = 600
+
         preview = self.final_image.copy()
-        
-        # Auf Container-Größe skalieren (kleiner für 1280x800)
-        container_width = 700
-        container_height = 400
-        
-        preview.thumbnail((container_width, container_height), Image.Resampling.LANCZOS)
-        
+        preview.thumbnail((container_w, container_h), Image.Resampling.LANCZOS)
+
         ctk_img = ctk.CTkImage(light_image=preview, size=preview.size)
         self.preview_label.configure(image=ctk_img)
         self.preview_label.image = ctk_img
-        
+
         # Druck-Button zurücksetzen
         max_prints = self.config.get("max_prints_per_session", 1)
         self.print_btn.configure(
@@ -435,14 +454,14 @@ class FinalScreen(ctk.CTkFrame):
         )
         self.print_info.configure(
             text=f"{max_prints} Druck(e) verfügbar",
-            text_color=COLORS["text_muted"]
+            text_color=COLORS["text_primary"]
         )
-        
+
         # Auto-Return Timer starten
         self.auto_return_time = time.time() + self.config.get("final_time", 30)
         self.progress_bar.set(1.0)
         self._update_countdown()
-    
+
     def on_hide(self):
         """Screen wird verlassen"""
         self.is_active = False

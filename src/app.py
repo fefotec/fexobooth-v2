@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 from PIL import Image
 import os
+import threading
 
 from src.config.config import load_config, save_config
 from src.camera import get_camera_manager, CANON_AVAILABLE
@@ -37,6 +38,9 @@ class PhotoboothApp:
         self.root = ctk.CTk()
         self.root.title("Fexobooth")
         self.root.configure(fg_color=COLORS["bg_dark"])
+
+        # Fenster-Icon setzen
+        self._set_window_icon()
 
         # App-Referenz am Root speichern (für Service-Menü Zugriff)
         self.root._photobooth_app = self
@@ -117,7 +121,14 @@ class PhotoboothApp:
 
         # UI Setup (NACH Settings, damit korrekte Optionen angezeigt werden!)
         self._setup_ui()
-        
+
+        # VLC vorwärmen (verhindert 57s Freeze beim ersten Video)
+        try:
+            from src.ui.screens.video import warmup_vlc
+            warmup_vlc()
+        except Exception as e:
+            logger.debug(f"VLC-Warmup übersprungen: {e}")
+
         # Buchungsanzeige aktualisieren
         if self.booking_manager.is_loaded:
             self._update_booking_display()
@@ -190,9 +201,14 @@ class PhotoboothApp:
             from src.gallery import start_server, get_gallery_url, start_hotspot
             from pathlib import Path
 
-            # ERST Hotspot starten (damit Gäste sich verbinden können)
-            logger.info("📶 Starte Hotspot für Galerie...")
-            start_hotspot()
+            # Hotspot im Hintergrund starten (blockiert sonst ~6s)
+            def _start_hs():
+                try:
+                    logger.info("📶 Starte Hotspot für Galerie...")
+                    start_hotspot()
+                except Exception as e:
+                    logger.warning(f"Hotspot-Start fehlgeschlagen: {e}")
+            threading.Thread(target=_start_hs, daemon=True, name="Hotspot-Start").start()
 
             # Galerie-Pfad = USB BILDER Ordner oder lokaler Speicher
             gallery_path = None
@@ -219,16 +235,19 @@ class PhotoboothApp:
             logger.error(f"Galerie-Server Start fehlgeschlagen: {e}")
 
     def _stop_hotspot_if_running(self):
-        """Stoppt den Hotspot wenn er läuft (Galerie deaktiviert)"""
-        try:
-            from src.gallery import is_hotspot_active, stop_hotspot
-            if is_hotspot_active():
-                logger.info("📶 Stoppe Hotspot (Galerie deaktiviert)...")
-                stop_hotspot()
-        except ImportError:
-            pass  # Galerie-Modul nicht verfügbar
-        except Exception as e:
-            logger.debug(f"Hotspot-Stop übersprungen: {e}")
+        """Stoppt den Hotspot wenn er läuft (Galerie deaktiviert) - im Hintergrund"""
+        def _do_stop():
+            try:
+                from src.gallery import is_hotspot_active, stop_hotspot
+                if is_hotspot_active():
+                    logger.info("📶 Stoppe Hotspot (Galerie deaktiviert)...")
+                    stop_hotspot()
+            except ImportError:
+                pass
+            except Exception as e:
+                logger.debug(f"Hotspot-Stop übersprungen: {e}")
+
+        threading.Thread(target=_do_stop, daemon=True, name="Hotspot-Stop").start()
 
     def _init_performance_overlay(self):
         """Initialisiert Performance Overlay im Developer Mode"""
@@ -279,38 +298,85 @@ class PhotoboothApp:
         except Exception as e:
             logger.error(f"Galerie-Start fehlgeschlagen: {e}")
 
+    def _set_window_icon(self):
+        """Setzt das Fenster-Icon (Taskbar + Titelleiste)"""
+        try:
+            # ICO für Windows-Taskbar
+            ico_path = Path(__file__).parent.parent / "assets" / "fexobooth.ico"
+            if ico_path.exists():
+                self.root.iconbitmap(str(ico_path))
+            else:
+                # Fallback: Im PyInstaller-Bundle
+                import sys
+                if getattr(sys, 'frozen', False):
+                    ico_path = Path(sys._MEIPASS) / "assets" / "fexobooth.ico"
+                    if ico_path.exists():
+                        self.root.iconbitmap(str(ico_path))
+        except Exception as e:
+            logger.debug(f"Icon konnte nicht gesetzt werden: {e}")
+
     def _enter_fullscreen(self):
-        """Aktiviert echten Vollbildmodus"""
+        """Aktiviert Vollbildmodus mit overrideredirect + WS_EX_APPWINDOW für Taskmanager"""
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
-        
-        # Window-Dekoration entfernen
+
+        # overrideredirect(True) = deckt den gesamten Bildschirm ab (getestet auf Lenovo Miix 310)
         self.root.overrideredirect(True)
-        
-        # Fenster auf volle Bildschirmgröße setzen (Position 0,0)
         self.root.geometry(f"{screen_width}x{screen_height}+0+0")
-        
-        # Immer im Vordergrund
+
+        # Kurz topmost setzen damit Fenster sicher im Vordergrund ist
         self.root.attributes("-topmost", True)
         self.root.after(100, lambda: self.root.attributes("-topmost", False))
-        
-        # Focus setzen
+
+        # Windows API: WS_EX_APPWINDOW setzen damit App als Vordergrund-Prozess im Taskmanager erscheint
+        # (overrideredirect entfernt normalerweise den Taskbar-Eintrag)
+        self._set_appwindow()
+
         self.root.focus_force()
-        
         self._is_fullscreen = True
         logger.info(f"Vollbild aktiviert: {screen_width}x{screen_height}")
     
     def _exit_fullscreen(self):
         """Beendet Vollbildmodus"""
-        # Window-Dekoration wiederherstellen
         self.root.overrideredirect(False)
-        
-        # Normale Fenstergröße
         self.root.geometry("1024x768")
-        
         self._is_fullscreen = False
         logger.info("Vollbild deaktiviert")
     
+    def _set_appwindow(self):
+        """Setzt WS_EX_APPWINDOW via Windows API damit die App im Taskmanager als Vordergrund-Prozess erscheint.
+
+        overrideredirect(True) entfernt den Fensterrahmen UND den Taskbar-Eintrag.
+        Mit WS_EX_APPWINDOW erzwingen wir den Taskbar-Eintrag zurück.
+        """
+        import sys
+        if sys.platform != "win32":
+            return
+
+        try:
+            import ctypes
+            GWL_EXSTYLE = -20
+            WS_EX_APPWINDOW = 0x00040000
+            WS_EX_TOOLWINDOW = 0x00000080
+
+            # HWND des Tkinter-Fensters holen
+            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+
+            # Aktuellen Extended Style lesen
+            style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+
+            # TOOLWINDOW entfernen (versteckt aus Taskbar), APPWINDOW setzen (zeigt in Taskbar)
+            style = (style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
+            ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+
+            # Fenster kurz verstecken und wieder zeigen damit Windows den Style übernimmt
+            self.root.withdraw()
+            self.root.after(10, self.root.deiconify)
+
+            logger.info("WS_EX_APPWINDOW gesetzt - App erscheint als Vordergrund-Prozess")
+        except Exception as e:
+            logger.warning(f"WS_EX_APPWINDOW konnte nicht gesetzt werden: {e}")
+
     def _toggle_fullscreen(self):
         """Toggle Fullscreen"""
         if self._is_fullscreen:

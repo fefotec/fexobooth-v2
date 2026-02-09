@@ -365,32 +365,41 @@ class FilterScreen(ctk.CTkFrame):
         logger.debug(f"Filter ausgewählt: {self.selected_filter}")
 
     def _update_main_preview(self):
-        """Aktualisiert die große Vorschau"""
+        """Aktualisiert die große Vorschau (gecached oder im Hintergrund gerendert)"""
         if not self.app.photos_taken:
             return
 
         cache_key = self.selected_filter
 
-        if cache_key not in self.preview_cache:
-            # Vorschau rendern
-            filtered_photos = [
-                self.app.filter_manager.apply(photo, self.selected_filter)
-                for photo in self.app.photos_taken
-            ]
-
-            # Kleinere Preview für kleine Bildschirme
-            max_preview_size = 400 if self._is_small else 500
-            preview = self.app.renderer.render_preview(
-                filtered_photos,
-                self.app.template_boxes,
-                self.app.overlay_image,
-                max_size=max_preview_size
-            )
-            self.preview_cache[cache_key] = preview
+        if cache_key in self.preview_cache:
+            # Sofort aus Cache anzeigen
+            self._show_main_preview(self.preview_cache[cache_key])
         else:
-            preview = self.preview_cache[cache_key]
+            # Im Hintergrund rendern für flüssigere UI
+            filter_key = self.selected_filter
+            def _render():
+                try:
+                    filtered_photos = [
+                        self.app.filter_manager.apply(photo, filter_key)
+                        for photo in self.app.photos_taken
+                    ]
+                    max_preview_size = 400 if self._is_small else 500
+                    preview = self.app.renderer.render_preview(
+                        filtered_photos,
+                        self.app.template_boxes,
+                        self.app.overlay_image,
+                        max_size=max_preview_size
+                    )
+                    self.preview_cache[filter_key] = preview
+                    # UI-Update im Hauptthread (nur wenn Filter noch aktiv)
+                    if self.selected_filter == filter_key:
+                        self.after(0, lambda: self._show_main_preview(preview))
+                except Exception as e:
+                    logger.warning(f"Preview-Rendering fehlgeschlagen: {e}")
+            threading.Thread(target=_render, daemon=True).start()
 
-        # Anzeigen
+    def _show_main_preview(self, preview: Image.Image):
+        """Zeigt die Main-Preview an"""
         ctk_img = ctk.CTkImage(light_image=preview, size=preview.size)
         self.preview_label.configure(image=ctk_img)
         self.preview_label.image = ctk_img
@@ -400,10 +409,10 @@ class FilterScreen(ctk.CTkFrame):
         if not self.app.photos_taken:
             return
 
-        # Sample-Bild für Previews - kleiner für kleine Bildschirme
+        # Kleines Sample-Bild für schnelle Filter-Previews
         sample = self.app.photos_taken[0].copy()
-        thumb_size = (150, 100) if self._is_small else (200, 150)
-        sample.thumbnail(thumb_size, Image.Resampling.LANCZOS)
+        thumb_size = (120, 80) if self._is_small else (160, 110)
+        sample.thumbnail(thumb_size, Image.Resampling.BILINEAR)  # BILINEAR statt LANCZOS = schneller
 
         for key, card in self.filter_buttons.items():
             try:

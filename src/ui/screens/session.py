@@ -1,9 +1,8 @@
-"""Session-Screen mit Live-View im Template
+"""Session-Screen mit Vollbild-LiveView
 
 Optimiert für Lenovo Miix 310 (1280x800)
-- Live-View erscheint INNERHALB des Templates
+- Live-View IMMER Vollbild (kein Template-Overlay)
 - Countdown zentriert über dem Live-View
-- Zeigt welcher Foto-Slot gerade aktiv ist
 - Performance-optimiert für schwache Hardware
 """
 
@@ -25,7 +24,7 @@ logger = get_logger(__name__)
 
 
 class SessionScreen(ctk.CTkFrame):
-    """Session-Screen mit Template-basiertem Live-View"""
+    """Session-Screen mit Vollbild-LiveView"""
 
     def __init__(self, parent, app: "PhotoboothApp"):
         super().__init__(parent, fg_color=COLORS["bg_dark"])
@@ -40,10 +39,6 @@ class SessionScreen(ctk.CTkFrame):
         self.show_flash = False
         self.photo_display_until = 0
         self._resuming_after_video = False  # Flag: Session nach Video fortsetzen
-
-        # Cache für skaliertes Overlay (Performance)
-        self._scaled_overlay = None
-        self._preview_scale = 1.0
 
         # Performance-Einstellungen
         self._low_perf = self.config.get("low_performance_mode", {})
@@ -91,17 +86,17 @@ class SessionScreen(ctk.CTkFrame):
 
         # Hauptbereich
         main_frame = ctk.CTkFrame(self, fg_color="transparent")
-        main_frame.pack(fill="both", expand=True, padx=15, pady=10)
+        main_frame.pack(fill="both", expand=True, padx=0, pady=0)
 
-        # Preview Container
+        # Preview Container (volle Größe)
         self.preview_container = ctk.CTkFrame(
             main_frame,
-            fg_color=COLORS["bg_medium"],
-            corner_radius=SIZES["corner_radius"]
+            fg_color="#000000",
+            corner_radius=0
         )
         self.preview_container.pack(expand=True, fill="both")
 
-        # Preview Label (für das gerenderte Template mit Live-View)
+        # Preview Label
         self.preview_label = ctk.CTkLabel(
             self.preview_container,
             text="",
@@ -119,7 +114,6 @@ class SessionScreen(ctk.CTkFrame):
             logger.info(f"Session fortgesetzt nach Video: Index={self.app.current_photo_index}, photos_taken={len(self.app.photos_taken)}")
             self.total_photos = len(self.app.template_boxes) if self.app.template_boxes else 1
             self.photo_display_until = 0
-            self._prepare_preview_overlay()
             self._update_progress()
             self.is_live = True
             self._update_live_view()
@@ -148,9 +142,6 @@ class SessionScreen(ctk.CTkFrame):
         self.total_photos = len(self.app.template_boxes) if self.app.template_boxes else 1
         self.photo_display_until = 0
 
-        # Overlay für Preview skalieren und cachen
-        self._prepare_preview_overlay()
-
         logger.info(f"Session: {self.total_photos} Fotos zu machen")
         self._update_progress()
 
@@ -166,160 +157,14 @@ class SessionScreen(ctk.CTkFrame):
         self.is_live = False
         self.is_countdown_active = False
 
-    def _prepare_preview_overlay(self):
-        """Bereitet das skalierte Overlay für die LiveView-Vorschau vor (mit App-Level-Cache)"""
-        if self.app.overlay_image:
-            orig_w, orig_h = self.app.overlay_image.size
-        else:
-            orig_w = self.config.get("canvas_width", 1800)
-            orig_h = self.config.get("canvas_height", 1200)
-
-        # Preview-Größe aus Config (kleiner = schneller)
-        low_perf = self.config.get("low_performance_mode", {})
-        if low_perf.get("enabled", False):
-            max_preview_size = low_perf.get("preview_max_size", 600)
-        else:
-            max_preview_size = 900
-
-        # Skalierungsfaktor berechnen
-        self._preview_scale = min(max_preview_size / orig_w, max_preview_size / orig_h, 1.0)
-
-        # App-Level Cache prüfen (überlebt Screen-Wechsel bei Zwischen-Videos)
-        if (self.app._cached_scaled_overlay is not None
-                and self.app._cached_overlay_scale == self._preview_scale
-                and self.app._cached_overlay_source_size == (orig_w, orig_h)):
-            self._scaled_overlay = self.app._cached_scaled_overlay
-            logger.info(f"Overlay aus Cache: {self._scaled_overlay.size[0]}x{self._scaled_overlay.size[1]}")
-            return
-
-        # Resampling-Methode (NEAREST ist schneller, LANCZOS sieht besser aus)
-        if low_perf.get("enabled", False) and low_perf.get("disable_antialiasing", False):
-            resample = Image.Resampling.NEAREST
-        else:
-            resample = Image.Resampling.LANCZOS
-
-        # Overlay skalieren und in App-Level-Cache speichern
-        if self.app.overlay_image:
-            new_w = int(orig_w * self._preview_scale)
-            new_h = int(orig_h * self._preview_scale)
-            self._scaled_overlay = self.app.overlay_image.resize(
-                (new_w, new_h), resample
-            )
-            # In App-Cache speichern
-            self.app._cached_scaled_overlay = self._scaled_overlay
-            self.app._cached_overlay_scale = self._preview_scale
-            self.app._cached_overlay_source_size = (orig_w, orig_h)
-            logger.info(f"Overlay skaliert: {orig_w}x{orig_h} -> {new_w}x{new_h} (scale={self._preview_scale:.2f})")
-        else:
-            self._scaled_overlay = None
-
     def _update_progress(self):
         """Aktualisiert die Fortschrittsanzeige"""
         self.progress_label.configure(
             text=f"Foto {self.app.current_photo_index + 1} von {self.total_photos}"
         )
 
-    def _build_template_preview(self, live_frame: Optional[np.ndarray] = None) -> Image.Image:
-        """Baut das Template mit Live-View und bereits gemachten Fotos"""
-        scale = self._preview_scale
-
-        if self._scaled_overlay:
-            canvas_w, canvas_h = self._scaled_overlay.size
-        else:
-            orig_w = self.config.get("canvas_width", 1800)
-            orig_h = self.config.get("canvas_height", 1200)
-            canvas_w = int(orig_w * scale)
-            canvas_h = int(orig_h * scale)
-
-        canvas = Image.new("RGBA", (canvas_w, canvas_h), (20, 20, 30, 255))
-
-        if self.app.overlay_image:
-            orig_w, orig_h = self.app.overlay_image.size
-        else:
-            orig_w = self.config.get("canvas_width", 1800)
-            orig_h = self.config.get("canvas_height", 1200)
-        orig_boxes = self.app.template_boxes or [{"box": (0, 0, orig_w-1, orig_h-1), "angle": 0}]
-
-        for i, box_info in enumerate(orig_boxes):
-            ox1, oy1, ox2, oy2 = box_info["box"]
-            x1 = int(ox1 * scale)
-            y1 = int(oy1 * scale)
-            x2 = int(ox2 * scale)
-            y2 = int(oy2 * scale)
-            box_w = x2 - x1 + 1
-            box_h = y2 - y1 + 1
-
-            if i < len(self.app.photos_taken):
-                photo = self.app.photos_taken[i].copy()
-                photo = self._fit_image_to_box(photo, box_w, box_h)
-                canvas.paste(photo, (x1, y1))
-
-            elif i == self.app.current_photo_index and live_frame is not None:
-                frame = live_frame
-                if self.config.get("rotate_180", False):
-                    frame = cv2.rotate(frame, cv2.ROTATE_180)
-                frame = cv2.flip(frame, 1)
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                live_img = Image.fromarray(rgb)
-                live_img = self._fit_image_to_box(live_img, box_w, box_h)
-                canvas.paste(live_img, (x1, y1))
-
-                draw = ImageDraw.Draw(canvas)
-                draw.rectangle([x1, y1, x2, y2], outline=(224, 6, 117, 255), width=4)
-
-            else:
-                draw = ImageDraw.Draw(canvas)
-                draw.rectangle([x1, y1, x2, y2], fill=(40, 40, 50, 255), outline=(60, 60, 70, 255), width=2)
-
-                font_size = max(20, int(60 * scale))
-                try:
-                    font = ImageFont.truetype("C:/Windows/Fonts/segoeui.ttf", font_size)
-                except:
-                    font = ImageFont.load_default()
-
-                text = str(i + 1)
-                bbox = draw.textbbox((0, 0), text, font=font)
-                tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-                tx = x1 + (box_w - tw) // 2
-                ty = y1 + (box_h - th) // 2
-                draw.text((tx, ty), text, fill=(80, 80, 90, 255), font=font)
-
-        if self._scaled_overlay:
-            canvas = Image.alpha_composite(canvas, self._scaled_overlay)
-
-        return canvas
-
-    def _fit_image_to_box(self, img: Image.Image, box_w: int, box_h: int) -> Image.Image:
-        """Passt ein Bild in eine Box ein (Cover-Modus) - Performance-optimiert"""
-        img_w, img_h = img.size
-
-        # Resampling-Methode wählen
-        low_perf = self.config.get("low_performance_mode", {})
-        if low_perf.get("enabled", False) and low_perf.get("disable_antialiasing", False):
-            resample = Image.Resampling.NEAREST
-        else:
-            resample = Image.Resampling.BILINEAR  # Schneller als LANCZOS
-
-        img_ratio = img_w / img_h
-        box_ratio = box_w / box_h
-
-        if img_ratio > box_ratio:
-            new_h = box_h
-            new_w = int(new_h * img_ratio)
-            img = img.resize((new_w, new_h), resample)
-            left = (new_w - box_w) // 2
-            img = img.crop((left, 0, left + box_w, box_h))
-        else:
-            new_w = box_w
-            new_h = int(new_w / img_ratio)
-            img = img.resize((new_w, new_h), resample)
-            top = (new_h - box_h) // 2
-            img = img.crop((0, top, box_w, top + box_h))
-
-        return img.convert("RGBA")
-
     def _update_live_view(self):
-        """Aktualisiert die Live-Vorschau (Performance-optimiert)"""
+        """Aktualisiert die Live-Vorschau (Vollbild, Performance-optimiert)"""
         if not self.is_live:
             return
 
@@ -330,8 +175,9 @@ class SessionScreen(ctk.CTkFrame):
 
         if self.photo_display_until > 0:
             if time.time() < self.photo_display_until:
-                preview = self._build_template_preview(None)
-                self._display_preview(preview)
+                # Zuletzt aufgenommenes Foto anzeigen
+                if self.app.photos_taken:
+                    self._display_preview(self.app.photos_taken[-1])
                 self.after(100, self._update_live_view)
                 return
             else:
@@ -349,12 +195,18 @@ class SessionScreen(ctk.CTkFrame):
             return
 
         frame = self.app.camera_manager.get_frame()
-        preview = self._build_template_preview(frame)
+        if frame is not None:
+            # Kamera-Frame aufbereiten (spiegeln, rotieren)
+            if self.config.get("rotate_180", False):
+                frame = cv2.rotate(frame, cv2.ROTATE_180)
+            frame = cv2.flip(frame, 1)
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            live_img = Image.fromarray(rgb)
 
-        if self.is_countdown_active and self.countdown_value > 0:
-            preview = self._add_countdown_overlay(preview)
+            if self.is_countdown_active and self.countdown_value > 0:
+                live_img = self._add_countdown_overlay(live_img)
 
-        self._display_preview(preview)
+            self._display_preview(live_img)
 
         if self.is_live:
             self.after(self._frame_delay_ms, self._update_live_view)
@@ -391,19 +243,40 @@ class SessionScreen(ctk.CTkFrame):
         return img
 
     def _display_preview(self, img: Image.Image):
-        """Zeigt das Vorschau-Bild an"""
-        if not hasattr(self, '_logged_size'):
-            logger.info(f"Preview-Bild: {img.width}x{img.height}")
-            self._logged_size = True
+        """Zeigt das Vorschau-Bild bildschirmfüllend an"""
+        container_w = self.preview_container.winfo_width()
+        container_h = self.preview_container.winfo_height()
 
-        ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(img.width, img.height))
+        if container_w < 100 or container_h < 100:
+            container_w, container_h = 900, 500
+
+        # Seitenverhältnis beibehalten, Container füllen
+        img_ratio = img.width / img.height
+        container_ratio = container_w / container_h
+
+        if img_ratio > container_ratio:
+            display_w = container_w
+            display_h = int(container_w / img_ratio)
+        else:
+            display_h = container_h
+            display_w = int(container_h * img_ratio)
+
+        ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(display_w, display_h))
         self.preview_label.configure(image=ctk_img)
         self.preview_label.image = ctk_img
 
     def _display_flash(self):
-        """Zeigt Flash-Screen"""
+        """Zeigt Flash-Screen (weißer Blitz mit optionalem Bild)"""
         container_w = self.preview_container.winfo_width() - 10
         container_h = self.preview_container.winfo_height() - 10
+
+        # Fallback wenn Container noch nicht gelayoutet ist
+        if container_w < 100 or container_h < 100:
+            screen_w = self.winfo_screenwidth()
+            screen_h = self.winfo_screenheight()
+            container_w = max(screen_w - 20, 800)
+            container_h = max(screen_h - 80, 500)
+            logger.debug(f"Flash: Container zu klein, Fallback auf {container_w}x{container_h}")
 
         if container_w > 100 and container_h > 100:
             flash = Image.new("RGB", (container_w, container_h), (255, 255, 255))
@@ -411,17 +284,21 @@ class SessionScreen(ctk.CTkFrame):
             flash_image_path = self.config.get("flash_image", "")
             custom_loaded = False
 
-            if flash_image_path and os.path.exists(flash_image_path):
-                try:
-                    custom_img = Image.open(flash_image_path).convert("RGBA")
-                    max_size = int(min(container_w, container_h) * 0.6)
-                    custom_img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-                    img_x = (container_w - custom_img.width) // 2
-                    img_y = (container_h - custom_img.height) // 2
-                    flash.paste(custom_img, (img_x, img_y), custom_img)
-                    custom_loaded = True
-                except Exception as e:
-                    logger.warning(f"Flash-Bild konnte nicht geladen werden: {e}")
+            if flash_image_path:
+                if os.path.exists(flash_image_path):
+                    try:
+                        custom_img = Image.open(flash_image_path).convert("RGBA")
+                        max_size = int(min(container_w, container_h) * 0.6)
+                        custom_img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+                        img_x = (container_w - custom_img.width) // 2
+                        img_y = (container_h - custom_img.height) // 2
+                        flash.paste(custom_img, (img_x, img_y), custom_img)
+                        custom_loaded = True
+                        logger.debug(f"Flash: Custom-Bild geladen ({custom_img.width}x{custom_img.height})")
+                    except Exception as e:
+                        logger.warning(f"Flash-Bild konnte nicht geladen werden: {e}")
+                else:
+                    logger.warning(f"Flash-Bild nicht gefunden: {flash_image_path}")
 
             if not custom_loaded:
                 draw = ImageDraw.Draw(flash)

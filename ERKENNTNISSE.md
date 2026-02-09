@@ -140,6 +140,33 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ---
 
+### VLC: Erste Instance-Erstellung dauert ~57s auf schwacher Hardware
+
+| | |
+|---|---|
+| **Problem** | Erstes Video nach App-Start friert 57 Sekunden ein |
+| **Ursache** | VLC lädt beim ersten `_vlc.Instance()` den gesamten Plugin-Cache (~200 Plugins) |
+| **Lösung** | Warmup im Hintergrund-Thread direkt beim App-Start. Subtile Ladeanimation falls Video vor Warmup-Ende gestartet wird |
+| **Merke** | Teure Initialisierungen immer vorziehen (Warmup-Pattern). 2. VLC-Instance ist sofort (91ms vs 57s) |
+
+### Hotspot-Steuerung blockiert Hauptthread
+
+| | |
+|---|---|
+| **Problem** | App friert ~6.3s ein beim Start weil Hotspot gestartet/gestoppt wird |
+| **Ursache** | PowerShell-Aufruf für Windows Mobile Hotspot API ist synchron und langsam |
+| **Lösung** | Start und Stop in daemon-Threads auslagern |
+| **Merke** | Alle externen Prozessaufrufe (subprocess) in Hintergrund-Threads |
+
+### overrideredirect(True) macht App zum Hintergrund-Prozess
+
+| | |
+|---|---|
+| **Problem** | App erscheint im Windows Taskmanager als "Hintergrund-Prozess" statt "App" |
+| **Ursache** | `overrideredirect(True)` entfernt das Fenster aus der Windows-Shell-Verwaltung (kein Taskbar-Eintrag) |
+| **Lösung** | `overrideredirect(True)` beibehalten (deckt auf Miix 310 korrekt den ganzen Screen ab), PLUS Windows API `SetWindowLongW` mit `WS_EX_APPWINDOW` Flag setzen (erzwingt Taskbar-Eintrag) |
+| **Merke** | `attributes("-fullscreen", True)` deckt auf manchen Tablets NICHT den ganzen Bildschirm ab! `overrideredirect(True)` + `WS_EX_APPWINDOW` via ctypes ist der sichere Weg |
+
 ## Performance-Erkenntnisse
 
 - **Max. 25 FPS für Video** - Mehr schafft die Hardware nicht flüssig
@@ -148,3 +175,7 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 - **Flask ist OK** - Verbraucht nur ~20-30 MB RAM im Idle
 - **LANCZOS-Resize cachen** - Overlay-Resize auf App-Level statt Screen-Level, überlebt Screen-Wechsel
 - **Kamera nicht freigeben bei Zwischen-Videos** - Kamera bleibt warm, spart ~1.5s Reopening
+- **Template-Preview im Session-Screen entfernen** - Vollbild-LiveView statt Template-Overlay spart ~200 Zeilen Code und mehrere PIL-Operationen pro Frame
+- **BILINEAR statt LANCZOS für kleine Previews** - Filter-Mini-Previews brauchen keine High-Quality-Interpolation, BILINEAR reicht und ist spürbar schneller
+- **Container-Größe Fallback** - `winfo_width()` gibt 0/1 zurück wenn Widget noch nicht gelayoutet wurde. Immer Fallback auf Screensize haben
+- **Windows Icon-Cache** - `ie4uinit.exe -show` refresht den Icon-Cache. Nötig nach Installer-Updates wenn sich das App-Icon ändert

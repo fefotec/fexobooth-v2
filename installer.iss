@@ -32,7 +32,7 @@ RestartApplications=yes
 ; Ausgabedatei
 OutputDir=installer_output
 OutputBaseFilename=FexoBooth_Setup_{#MyAppVersion}
-SetupIconFile=assets\icons\camera.ico
+SetupIconFile=assets\fexobooth.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
 LZMAUseSeparateProcess=yes
@@ -54,7 +54,7 @@ Name: "autostart"; Description: "FexoBooth beim Windows-Start automatisch starte
 
 [Files]
 ; Hauptanwendung (PyInstaller Output)
-Source: "dist\FexoBooth\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "installer_output\fexobooth\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; BAT-Dateien für verschiedene Modi
 Source: "installer_files\start_fexobooth.bat"; DestDir: "{app}"; Flags: ignoreversion
@@ -77,19 +77,21 @@ Name: "{app}\.booking_cache"
 
 [Icons]
 ; Startmenü-Einträge
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{group}\{#MyAppName} (Entwicklermodus)"; Filename: "{app}\start_dev.bat"; IconFilename: "{app}\assets\icons\camera.ico"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\assets\fexobooth.ico"
+Name: "{group}\{#MyAppName} (Entwicklermodus)"; Filename: "{app}\start_dev.bat"; IconFilename: "{app}\assets\fexobooth.ico"
 Name: "{group}\Von GitHub aktualisieren"; Filename: "{app}\update_from_github.bat"
 Name: "{group}\Hotspot einrichten (Einmalig)"; Filename: "{app}\setup\einmalig_hotspot_einrichten.bat"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 
-; Desktop-Icon
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+; Desktop-Icon (explizites Icon damit es auch bei Update aktualisiert wird)
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; IconFilename: "{app}\assets\fexobooth.ico"
 
 ; Autostart (für alle Benutzer, da Admin-Installation)
-Name: "{commonstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: autostart
+Name: "{commonstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: autostart; IconFilename: "{app}\assets\fexobooth.ico"
 
 [Run]
+; Windows Icon-Cache aktualisieren (damit neues Icon sofort sichtbar ist)
+Filename: "ie4uinit.exe"; Parameters: "-show"; Flags: runhidden nowait; StatusMsg: "Aktualisiere Icons..."
 ; Nach Installation ausführen
 Filename: "{app}\setup\einmalig_hotspot_einrichten.bat"; Description: "WLAN-Hotspot für Galerie einrichten (empfohlen)"; Flags: postinstall nowait skipifsilent runascurrentuser unchecked
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: postinstall nowait skipifsilent

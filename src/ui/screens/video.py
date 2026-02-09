@@ -65,6 +65,47 @@ except Exception as e:
     logger.warning(f"VLC konnte nicht geladen werden: {e} - Fallback auf OpenCV")
 
 
+# VLC Warmup (verhindert 57s Freeze beim ersten Video auf schwacher Hardware)
+_vlc_warm = not _vlc_available  # Wenn VLC nicht verfügbar, ist "warm" irrelevant
+_vlc_warmup_thread = None
+
+
+def warmup_vlc():
+    """Wärmt VLC vor (lädt Plugin-Cache im Hintergrund).
+
+    Auf schwacher Hardware dauert die erste VLC-Instance-Erstellung ~57s.
+    Durch Vorwärmen beim App-Start ist das erste Video sofort abspielbar.
+    """
+    global _vlc_warm, _vlc_warmup_thread
+
+    if not _vlc_available or _vlc_warm:
+        return
+
+    def _do_warmup():
+        global _vlc_warm
+        try:
+            logger.info("VLC-Warmup: Lade Plugin-Cache...")
+            start = time.time()
+            instance = _vlc.Instance(["--no-xlib", "--quiet"])
+            player = instance.media_player_new()
+            player.release()
+            instance.release()
+            elapsed = time.time() - start
+            logger.info(f"VLC-Warmup: Fertig in {elapsed:.1f}s")
+        except Exception as e:
+            logger.warning(f"VLC-Warmup fehlgeschlagen: {e}")
+        _vlc_warm = True
+
+    _vlc_warmup_thread = threading.Thread(target=_do_warmup, daemon=True, name="VLC-Warmup")
+    _vlc_warmup_thread.start()
+    logger.info("VLC-Warmup: Gestartet im Hintergrund")
+
+
+def is_vlc_warm() -> bool:
+    """Prüft ob VLC-Plugin-Cache geladen ist"""
+    return _vlc_warm
+
+
 class VideoScreen(ctk.CTkFrame):
     """Spielt ein Video ab und wechselt dann zum Ziel-Screen
 
@@ -150,6 +191,10 @@ class VideoScreen(ctk.CTkFrame):
 
         # VLC bevorzugen, OpenCV als Fallback
         if _vlc_available and sys.platform == "win32":
+            if not _vlc_warm:
+                # Warmup noch nicht fertig - warten mit Ladeanimation
+                self._wait_for_vlc_warmup(video_path)
+                return
             success = self._play_vlc(video_path)
             if success:
                 return
@@ -165,6 +210,35 @@ class VideoScreen(ctk.CTkFrame):
         """Screen wird angezeigt"""
         self._end_called = False
         self._stop_event.clear()
+
+    def _wait_for_vlc_warmup(self, video_path: str):
+        """Wartet auf VLC-Warmup mit subtiler Ladeanimation"""
+        self._warmup_counter = 0
+        logger.info("VLC-Warmup noch nicht fertig - warte...")
+
+        def _check():
+            if self._end_called or self._stop_event.is_set():
+                return
+
+            if _vlc_warm:
+                self.video_label.configure(text="")
+                success = self._play_vlc(video_path)
+                if success:
+                    return
+                logger.warning("VLC nach Warmup fehlgeschlagen, Fallback auf OpenCV")
+                self._play_opencv(video_path)
+            else:
+                # Subtile Ladeanimation (pulsierende Punkte)
+                self._warmup_counter += 1
+                dots = "·" * ((self._warmup_counter % 3) + 1)
+                self.video_label.configure(
+                    text=dots,
+                    font=("Segoe UI", 24),
+                    text_color="#303040"
+                )
+                self.after(500, _check)
+
+        _check()
 
     # ─────────────────────────────────────────────
     # VLC-Wiedergabe (Hardware-beschleunigt)

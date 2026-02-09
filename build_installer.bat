@@ -174,19 +174,61 @@ echo start "" fexobooth.exe
 echo [OK] START.bat erstellt
 
 REM ─────────────────────────────────────────────
-REM Schritt 8: ZIP erstellen
+REM Schritt 8: Windows-Installer erstellen
 REM ─────────────────────────────────────────────
 
 echo.
-echo Erstelle ZIP-Archiv...
 
-powershell -Command "Compress-Archive -Path 'installer_output\fexobooth\*' -DestinationPath 'installer_output\fexobooth.zip' -Force"
+set ISCC_PATH=C:\Program Files (x86)\Inno Setup 6\ISCC.exe
+
+if not exist "%ISCC_PATH%" (
+    echo WARNUNG: Inno Setup nicht gefunden!
+    echo Nur ZIP wird erstellt, kein Installer.
+    echo Installiere Inno Setup 6 fuer einen richtigen Windows-Installer.
+    goto :skip_installer
+)
+
+echo ===================================================
+echo  Windows-Installer erstellen...
+echo ===================================================
+echo.
+
+"%ISCC_PATH%" installer.iss
 
 if %errorlevel% neq 0 (
-    echo WARNUNG: ZIP konnte nicht erstellt werden.
-    echo Der Ordner installer_output\fexobooth\ ist trotzdem nutzbar.
+    echo WARNUNG: Installer-Erstellung fehlgeschlagen.
 ) else (
-    echo [OK] ZIP erstellt: installer_output\fexobooth.zip
+    echo [OK] Installer erstellt: installer_output\FexoBooth_Setup_2.0.exe
+)
+
+:skip_installer
+
+REM ─────────────────────────────────────────────
+REM Schritt 9: ZIP nur als Fallback (wenn kein Installer)
+REM ─────────────────────────────────────────────
+
+if not exist "installer_output\FexoBooth_Setup_2.0.exe" (
+    echo.
+    echo Kein Installer vorhanden - erstelle ZIP als Fallback...
+    powershell -Command "Compress-Archive -Path 'installer_output\fexobooth\*' -DestinationPath 'installer_output\fexobooth.zip' -Force"
+    if %errorlevel% neq 0 (
+        echo WARNUNG: ZIP konnte nicht erstellt werden.
+    ) else (
+        echo [OK] ZIP erstellt: installer_output\fexobooth.zip
+    )
+) else (
+    echo [OK] Installer vorhanden - ZIP wird nicht benoetigt
+)
+
+REM ─────────────────────────────────────────────
+REM Schritt 10: Build-Ordner aufraeumen
+REM ─────────────────────────────────────────────
+
+echo.
+echo Raeume Build-Ordner auf...
+if exist "installer_output\fexobooth" (
+    rmdir /s /q "installer_output\fexobooth"
+    echo [OK] Build-Ordner entfernt - nur Installer + ZIP bleiben
 )
 
 REM ─────────────────────────────────────────────
@@ -198,15 +240,14 @@ echo ===================================================
 echo  BUILD ERFOLGREICH!
 echo ===================================================
 echo.
-echo  Ordner: installer_output\fexobooth\
-echo  ZIP:    installer_output\fexobooth.zip
-echo.
 
-REM Ordnergroesse anzeigen
-for /f "tokens=3" %%a in ('dir "installer_output\fexobooth" /s /-c ^| findstr "Datei(en)"') do (
-    set SIZE=%%a
+if exist "installer_output\FexoBooth_Setup_2.0.exe" (
+    echo  Installer: installer_output\FexoBooth_Setup_2.0.exe
 )
-echo  Groesse: ca. %SIZE% Bytes
+if exist "installer_output\fexobooth.zip" (
+    echo  ZIP:       installer_output\fexobooth.zip
+)
+
 echo.
 
 if %VLC_FOUND%==1 (
@@ -217,8 +258,8 @@ if %VLC_FOUND%==1 (
 
 echo.
 echo Naechste Schritte:
-echo   1. installer_output\fexobooth.zip auf USB-Stick kopieren
-echo   2. Auf Tablet nach C:\fexobooth\ entpacken
-echo   3. fexobooth.exe starten oder START.bat nutzen
+echo   1. FexoBooth_Setup_2.0.exe auf USB-Stick kopieren
+echo   2. Auf Tablet ausfuehren - installiert nach C:\FexoBooth\
+echo   3. FexoBooth ueber Desktop-Icon oder Startmenue starten
 echo.
 pause

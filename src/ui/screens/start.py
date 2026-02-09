@@ -14,6 +14,7 @@ from src.templates.default import create_default_template
 from src.config.config import find_usb_template
 from src.ui.theme import COLORS, FONTS, SIZES, get_sizes, get_fonts, is_small_screen
 from src.utils.logging import get_logger
+from src.ui.screens.video import is_vlc_warm, _vlc_available
 
 if TYPE_CHECKING:
     from src.app import PhotoboothApp
@@ -236,6 +237,10 @@ class StartScreen(ctk.CTkFrame):
         )
         self.start_btn.pack(pady=(15 if self._is_small else 25, 0))
 
+        # Loading-Overlay (wird über allem angezeigt während VLC lädt)
+        self._loading_overlay = None
+        self._loading_visible = False
+
         # Initiale Karten erstellen
         self._create_template_cards()
 
@@ -453,6 +458,14 @@ class StartScreen(ctk.CTkFrame):
         if not self.selected_option:
             return
 
+        # VLC-Check: Wenn Video konfiguriert ist und VLC noch nicht warm, blockieren
+        if _vlc_available and not is_vlc_warm():
+            video_start = self.config.get("video_start", "")
+            if video_start and os.path.exists(video_start):
+                logger.warning("Start blockiert - VLC noch nicht bereit")
+                self._show_loading_overlay()
+                return
+
         logger.info(f"Start: {self.selected_option}")
 
         if self.selected_option == "single":
@@ -570,7 +583,90 @@ class StartScreen(ctk.CTkFrame):
 
         # QR-Code für Galerie anzeigen/ausblenden
         self._update_qr_code()
-    
+
+        # Loading-Overlay wenn VLC noch nicht warm ist
+        if _vlc_available and not is_vlc_warm():
+            self._show_loading_overlay()
+        else:
+            self._hide_loading_overlay()
+
+    def _show_loading_overlay(self):
+        """Zeigt Loading-Overlay über dem StartScreen während VLC aufwärmt"""
+        if self._loading_visible:
+            return
+
+        self._loading_visible = True
+
+        # Overlay-Frame über allem
+        self._loading_overlay = ctk.CTkFrame(self, fg_color=COLORS["bg_dark"])
+        self._loading_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+        # Zentrierter Inhalt
+        content = ctk.CTkFrame(self._loading_overlay, fg_color="transparent")
+        content.place(relx=0.5, rely=0.45, anchor="center")
+
+        # Icon
+        ctk.CTkLabel(
+            content,
+            text="FEXOBOOTH",
+            font=("Segoe UI", 28, "bold"),
+            text_color=COLORS["primary"]
+        ).pack(pady=(0, 20))
+
+        # Lade-Text
+        self._loading_label = ctk.CTkLabel(
+            content,
+            text="Software wird geladen...",
+            font=("Segoe UI", 16),
+            text_color=COLORS["text_secondary"]
+        )
+        self._loading_label.pack(pady=(0, 20))
+
+        # Progress-Bar
+        self._loading_progress = ctk.CTkProgressBar(
+            content,
+            width=300,
+            height=6,
+            fg_color=COLORS["bg_light"],
+            progress_color=COLORS["primary"],
+            corner_radius=3,
+            mode="indeterminate"
+        )
+        self._loading_progress.pack(pady=(0, 10))
+        self._loading_progress.start()
+
+        # Start-Button blockieren
+        self.start_btn.configure(state="disabled")
+
+        # Polling: Prüfe alle 500ms ob VLC warm ist
+        self._check_vlc_ready()
+
+    def _check_vlc_ready(self):
+        """Prüft ob VLC warm ist und entfernt Loading-Overlay"""
+        if not self._loading_visible:
+            return
+
+        if is_vlc_warm():
+            logger.info("VLC-Warmup fertig - Ladebildschirm entfernen")
+            self._hide_loading_overlay()
+        else:
+            self.after(500, self._check_vlc_ready)
+
+    def _hide_loading_overlay(self):
+        """Entfernt das Loading-Overlay"""
+        if self._loading_overlay:
+            try:
+                self._loading_overlay.destroy()
+            except Exception:
+                pass
+            self._loading_overlay = None
+        self._loading_visible = False
+
+        # Start-Button wieder freigeben (wenn Option gewählt)
+        if self.selected_option:
+            self._enable_start_button()
+
+
     def _update_qr_code(self):
         """Zeigt horizontales Galerie-Banner am unteren Rand"""
         # Alte Elemente entfernen

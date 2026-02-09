@@ -212,7 +212,7 @@ exe = EXE(
     upx=False,  # UPX kann Probleme mit VLC-DLLs machen
     console=False,  # Kein Konsolenfenster
     disable_windowed_traceback=False,
-    icon="assets/icons/camera.png",
+    icon="assets/fexobooth.ico",
 )
 
 coll = COLLECT(

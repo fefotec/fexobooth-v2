@@ -15,6 +15,7 @@ _Aktuell keine dringenden Aufgaben_
 - [ ] Admin-Menü: "Buchung zurücksetzen" Button
 - [ ] Canon DSLR Live-View optimieren
 - [ ] Print-Queue Anzeige
+- [ ] Final-Screen: Retake-Button Label/Tooltip für bessere Erkennbarkeit
 
 ---
 
@@ -25,6 +26,13 @@ _Aktuell keine niedrig priorisierten Aufgaben_
 ---
 
 ## Erledigt ✅
+
+### 2026-02-09
+- [x] VLC-Warmup beim App-Start (57s Freeze auf Miix 310 behoben)
+- [x] Hotspot Start/Stop in Hintergrund-Threads (6.3s Blockierung behoben)
+- [x] LiveView immer Vollbild (Template-Overlay entfernt)
+- [x] Final-Screen: Buttons größer als Overlay über Bild + Foto-Wiederholen Button rechts
+- [x] App als Vordergrund-Prozess im Taskmanager (fullscreen statt overrideredirect)
 
 ### 2026-02-06
 - [x] Bug Fix: Logo-Anzeige (CTkImage dark_image für Dark Mode)
