@@ -49,7 +49,7 @@ WizardSizePercent=120
 Name: "german"; MessagesFile: "compiler:Languages\German.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 Name: "autostart"; Description: "FexoBooth beim Windows-Start automatisch starten"; GroupDescription: "Autostart:"
 
 [Files]
@@ -83,20 +83,25 @@ Name: "{group}\Von GitHub aktualisieren"; Filename: "{app}\update_from_github.ba
 Name: "{group}\Hotspot einrichten (Einmalig)"; Filename: "{app}\setup\einmalig_hotspot_einrichten.bat"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 
-; Desktop-Icon (explizites Icon damit es auch bei Update aktualisiert wird)
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; IconFilename: "{app}\assets\fexobooth.ico"
+; Desktop-Icon IMMER erstellen/überschreiben bei Installation (nicht nur bei Task-Auswahl)
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\assets\fexobooth.ico"; IconIndex: 0
 
 ; Autostart (für alle Benutzer, da Admin-Installation)
 Name: "{commonstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: autostart; IconFilename: "{app}\assets\fexobooth.ico"
 
 [Run]
-; Windows Icon-Cache aktualisieren (damit neues Icon sofort sichtbar ist)
-Filename: "ie4uinit.exe"; Parameters: "-show"; Flags: runhidden nowait; StatusMsg: "Aktualisiere Icons..."
+; Windows Icon-Cache per PowerShell löschen (erzwingt Rebuild beim nächsten Explorer-Start)
+; ie4uinit.exe existiert nicht auf allen Geräten (z.B. Lenovo Miix 310), daher nur PowerShell
+Filename: "powershell.exe"; Parameters: "-NoProfile -Command ""Remove-Item -Path $env:LOCALAPPDATA\IconCache.db -Force -ErrorAction SilentlyContinue; Remove-Item -Path $env:LOCALAPPDATA\Microsoft\Windows\Explorer\iconcache_*.db -Force -ErrorAction SilentlyContinue"""; Flags: runhidden nowait; StatusMsg: "Aktualisiere Icon-Cache..."
 ; Nach Installation ausführen
 Filename: "{app}\setup\einmalig_hotspot_einrichten.bat"; Description: "WLAN-Hotspot für Galerie einrichten (empfohlen)"; Flags: postinstall nowait skipifsilent runascurrentuser unchecked
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: postinstall nowait skipifsilent
 
 [Code]
+// Shell32 SHChangeNotify - benachrichtigt Explorer über Icon-Änderungen
+procedure SHChangeNotify(wEventId, uFlags: Integer; dwItem1, dwItem2: Integer);
+  external 'SHChangeNotify@shell32.dll stdcall';
+
 // Prüfe ob bereits eine Installation existiert
 function InitializeSetup(): Boolean;
 begin
@@ -110,7 +115,7 @@ begin
   end;
 end;
 
-// Erstelle config.json aus config.example.json falls nicht vorhanden
+// Nach Installation: Config erstellen + Shell über neue Icons benachrichtigen
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ExampleConfig: String;
@@ -125,6 +130,9 @@ begin
     begin
       FileCopy(ExampleConfig, ActualConfig, False);
     end;
+
+    // Shell benachrichtigen: Icon-Cache neu laden (SHCNE_ASSOCCHANGED)
+    SHChangeNotify($8000000, 0, 0, 0);
   end;
 end;
 

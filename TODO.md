@@ -15,7 +15,6 @@ _Aktuell keine dringenden Aufgaben_
 - [ ] Admin-Menü: "Buchung zurücksetzen" Button
 - [ ] Canon DSLR Live-View optimieren
 - [ ] Print-Queue Anzeige
-- [ ] Final-Screen: Retake-Button Label/Tooltip für bessere Erkennbarkeit
 
 ---
 
@@ -28,10 +27,16 @@ _Aktuell keine niedrig priorisierten Aufgaben_
 ## Erledigt ✅
 
 ### 2026-02-09
+- [x] Flash-Bild Fix: CTkImage dark_image im Dark Mode (Auslöse-Bild wurde nicht angezeigt)
+- [x] Redo pro Collage-Foto: "↻ NOCHMAL" Button nach jedem Einzelfoto statt am Ende
+- [x] Template-Persistenz: USB-Template wird lokal gecacht (überlebt USB-Abzug + Neustart)
+- [x] Final-Screen: Schwarze Container-Hintergründe entfernt (transparente Overlays)
+- [x] App-Icon: Multi-Size ICO (16-256px) statt nur 16x16 (war verpixelt)
+- [x] Installer: ie4uinit.exe Fehler behoben + PowerShell-Fallback + Desktop-Icon immer überschrieben
 - [x] VLC-Warmup beim App-Start (57s Freeze auf Miix 310 behoben)
 - [x] Hotspot Start/Stop in Hintergrund-Threads (6.3s Blockierung behoben)
 - [x] LiveView immer Vollbild (Template-Overlay entfernt)
-- [x] Final-Screen: Buttons größer als Overlay über Bild + Foto-Wiederholen Button rechts
+- [x] Final-Screen: Buttons größer als Overlay über Bild
 - [x] App als Vordergrund-Prozess im Taskmanager (fullscreen statt overrideredirect)
 
 ### 2026-02-06

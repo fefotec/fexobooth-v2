@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Optional
 from pathlib import Path
 from PIL import Image
 import os
+import shutil
 
 from src.templates.loader import TemplateLoader
 from src.templates.default import create_default_template
@@ -561,6 +562,9 @@ class StartScreen(ctk.CTkFrame):
                             "boxes": boxes
                         }
                         logger.info(f"USB-Template gecached: {template_name} ({len(boxes)} Slots)")
+
+                        # Lokal auf Disk kopieren (überlebt USB-Abzug und Neustart)
+                        self._persist_template_to_disk(current_usb_template)
                 except Exception as e:
                     logger.error(f"USB-Template laden fehlgeschlagen: {e}")
         else:
@@ -789,6 +793,18 @@ class StartScreen(ctk.CTkFrame):
         except Exception as e:
             logger.error(f"Galerie-Banner Fehler: {e}")
     
+    def _persist_template_to_disk(self, usb_template_path: str):
+        """Kopiert USB-Template lokal nach .booking_cache/ damit es auch ohne USB verfügbar bleibt"""
+        try:
+            cache_dir = Path(__file__).parent.parent.parent.parent / ".booking_cache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_path = cache_dir / "cached_template.zip"
+
+            shutil.copy2(usb_template_path, cache_path)
+            logger.info(f"Template lokal gespeichert: {cache_path}")
+        except Exception as e:
+            logger.warning(f"Template konnte nicht lokal gecached werden: {e}")
+
     def _refresh_template_cards(self):
         """Erstellt Template-Karten neu (nach Config-Änderung)"""
         logger.info("=== Refresh Template-Karten ===")

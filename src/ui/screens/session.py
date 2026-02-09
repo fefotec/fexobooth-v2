@@ -39,6 +39,7 @@ class SessionScreen(ctk.CTkFrame):
         self.show_flash = False
         self.photo_display_until = 0
         self._resuming_after_video = False  # Flag: Session nach Video fortsetzen
+        self._redo_visible = False  # Redo-Button sichtbar?
 
         # Performance-Einstellungen
         self._low_perf = self.config.get("low_performance_mode", {})
@@ -104,6 +105,21 @@ class SessionScreen(ctk.CTkFrame):
         )
         self.preview_label.pack(expand=True, fill="both")
 
+        # Redo-Button (Overlay, nur bei Collagen sichtbar nach jedem Foto)
+        self._redo_btn = ctk.CTkButton(
+            self.preview_container,
+            text="↻ NOCHMAL",
+            font=("Segoe UI", 16, "bold"),
+            width=160,
+            height=50,
+            fg_color=COLORS["primary"],
+            hover_color=COLORS["primary_hover"],
+            text_color=COLORS["text_primary"],
+            corner_radius=25,
+            command=self._on_redo_photo
+        )
+        # Versteckt - wird per place() eingeblendet
+
     def on_show(self):
         """Screen wird angezeigt"""
 
@@ -156,6 +172,7 @@ class SessionScreen(ctk.CTkFrame):
         """Screen wird verlassen"""
         self.is_live = False
         self.is_countdown_active = False
+        self._hide_redo_button()
 
     def _update_progress(self):
         """Aktualisiert die Fortschrittsanzeige"""
@@ -287,16 +304,27 @@ class SessionScreen(ctk.CTkFrame):
             if flash_image_path:
                 if os.path.exists(flash_image_path):
                     try:
-                        custom_img = Image.open(flash_image_path).convert("RGBA")
+                        custom_img = Image.open(flash_image_path)
+                        logger.debug(f"Flash: Bild geöffnet ({custom_img.size}, Mode: {custom_img.mode})")
+
                         max_size = int(min(container_w, container_h) * 0.6)
                         custom_img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
                         img_x = (container_w - custom_img.width) // 2
                         img_y = (container_h - custom_img.height) // 2
-                        flash.paste(custom_img, (img_x, img_y), custom_img)
+
+                        # PNG mit Transparenz: Alpha-Maske verwenden
+                        if custom_img.mode == "RGBA":
+                            flash.paste(custom_img, (img_x, img_y), custom_img)
+                        else:
+                            # JPEG/RGB: Direkt pasten ohne Maske
+                            flash.paste(custom_img.convert("RGB"), (img_x, img_y))
+
                         custom_loaded = True
                         logger.debug(f"Flash: Custom-Bild geladen ({custom_img.width}x{custom_img.height})")
                     except Exception as e:
                         logger.warning(f"Flash-Bild konnte nicht geladen werden: {e}")
+                        import traceback
+                        logger.warning(traceback.format_exc())
                 else:
                     logger.warning(f"Flash-Bild nicht gefunden: {flash_image_path}")
 
@@ -338,7 +366,7 @@ class SessionScreen(ctk.CTkFrame):
                     width=max(4, size // 20)
                 )
 
-            ctk_img = ctk.CTkImage(light_image=flash, size=(container_w, container_h))
+            ctk_img = ctk.CTkImage(light_image=flash, dark_image=flash, size=(container_w, container_h))
             self.preview_label.configure(image=ctk_img)
             self.preview_label.image = ctk_img
 
@@ -428,9 +456,15 @@ class SessionScreen(ctk.CTkFrame):
             self.after(10, lambda: self._save_photo_async(photo, self.app.current_photo_index + 1))
 
             display_time = self.config.get("single_display_time", 2)
-            self.photo_display_until = time.time() + display_time
             self.app.current_photo_index += 1
             self._update_progress()
+
+            # Bei Collagen (>1 Foto): Redo-Button zeigen, längere Anzeigezeit
+            if self.total_photos > 1 and self.app.current_photo_index < self.total_photos:
+                display_time = self.config.get("redo_display_time", 4)
+                self._show_redo_button()
+
+            self.photo_display_until = time.time() + display_time
         else:
             logger.error("Foto-Aufnahme fehlgeschlagen")
             self._next_photo_or_finish()
@@ -442,8 +476,39 @@ class SessionScreen(ctk.CTkFrame):
         except Exception as e:
             logger.error(f"Fehler beim Speichern: {e}")
 
+    def _show_redo_button(self):
+        """Zeigt den Redo-Button als Overlay über dem Foto"""
+        self._redo_visible = True
+        self._redo_btn.place(relx=0.5, rely=0.85, anchor="center")
+        logger.debug("Redo-Button eingeblendet")
+
+    def _hide_redo_button(self):
+        """Versteckt den Redo-Button"""
+        if self._redo_visible:
+            self._redo_visible = False
+            self._redo_btn.place_forget()
+
+    def _on_redo_photo(self):
+        """Einzelnes Collage-Foto wiederholen"""
+        if not self._redo_visible:
+            return
+
+        self._hide_redo_button()
+        self.photo_display_until = 0  # Display-Timer stoppen
+
+        # Letztes Foto entfernen und Index zurücksetzen
+        if self.app.photos_taken:
+            self.app.photos_taken.pop()
+            self.app.current_photo_index -= 1
+            self._update_progress()
+            logger.info(f"Foto {self.app.current_photo_index + 1} wird wiederholt")
+
+        # Countdown für das gleiche Foto neu starten
+        self.after(300, self._start_countdown)
+
     def _next_photo_or_finish(self):
         """Nächstes Foto oder zum Filter-Screen"""
+        self._hide_redo_button()
         logger.info(f"Next: {self.app.current_photo_index}/{self.total_photos}")
 
         if self.app.current_photo_index < self.total_photos:
