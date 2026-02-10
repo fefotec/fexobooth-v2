@@ -1182,7 +1182,7 @@ class AdminDialog(ctk.CTkToplevel):
             current_frame,
             text=stats_text,
             font=FONTS["small"],
-            text_color=COLORS["text_secondary"],
+            text_color=COLORS["text_primary"],
             justify="center"
         )
         self.current_stats_label.pack(pady=(0, 10))
@@ -1233,7 +1233,7 @@ class AdminDialog(ctk.CTkToplevel):
                 history_frame,
                 text=history_text.strip(),
                 font=FONTS["tiny"],
-                text_color=COLORS["text_muted"],
+                text_color=COLORS["text_primary"],
                 justify="left"
             ).pack(padx=15, pady=(0, 10), anchor="w")
         else:
@@ -1241,7 +1241,7 @@ class AdminDialog(ctk.CTkToplevel):
                 history_frame,
                 text="Noch keine Events aufgezeichnet",
                 font=FONTS["small"],
-                text_color=COLORS["text_muted"]
+                text_color=COLORS["text_primary"]
             ).pack(pady=(0, 10))
         
         # Export-Buttons
@@ -1410,17 +1410,7 @@ class AdminDialog(ctk.CTkToplevel):
         msg.after(2000, msg.destroy)
     
     def _cancel(self):
-        """Abbrechen - Fullscreen wiederherstellen wenn nötig"""
-        if self.config_data.get("start_fullscreen", True):
-            try:
-                screen_width = self.parent_window.winfo_screenwidth()
-                screen_height = self.parent_window.winfo_screenheight()
-                self.parent_window.overrideredirect(True)
-                self.parent_window.geometry(f"{screen_width}x{screen_height}+0+0")
-                self.parent_window.focus_force()
-                logger.info("Fullscreen wiederhergestellt")
-            except Exception as e:
-                logger.debug(f"Fullscreen-Restore Fehler: {e}")
+        """Abbrechen - Fullscreen wird von show_admin_dialog() wiederhergestellt"""
         self.destroy()
     
     def _save(self):
@@ -1535,16 +1525,5 @@ class AdminDialog(ctk.CTkToplevel):
         self.result = self.config_data
         logger.info("Admin-Einstellungen gespeichert")
         
-        # Fullscreen wiederherstellen wenn gewünscht
-        if self.config_data.get("start_fullscreen", True):
-            try:
-                screen_width = self.parent_window.winfo_screenwidth()
-                screen_height = self.parent_window.winfo_screenheight()
-                self.parent_window.overrideredirect(True)
-                self.parent_window.geometry(f"{screen_width}x{screen_height}+0+0")
-                self.parent_window.focus_force()
-                logger.info("Fullscreen wiederhergestellt")
-            except Exception as e:
-                logger.debug(f"Fullscreen-Restore Fehler: {e}")
-        
+        # Fullscreen wird von show_admin_dialog() wiederhergestellt
         self.destroy()

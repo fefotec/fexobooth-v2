@@ -56,6 +56,10 @@ Name: "autostart"; Description: "FexoBooth beim Windows-Start automatisch starte
 ; Hauptanwendung (PyInstaller Output)
 Source: "installer_output\fexobooth\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+; Icon separat kopieren (PyInstaller legt Assets in _internal/assets/ ab,
+; aber Desktop-Shortcut braucht {app}\assets\fexobooth.ico)
+Source: "assets\fexobooth.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
+
 ; BAT-Dateien für verschiedene Modi
 Source: "installer_files\start_fexobooth.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "installer_files\start_dev.bat"; DestDir: "{app}"; Flags: ignoreversion

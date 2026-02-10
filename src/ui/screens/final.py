@@ -38,7 +38,7 @@ class FinalScreen(ctk.CTkFrame):
         """Erstellt die UI - Bild mit Rand, Buttons als Overlay"""
         # Bild-Container (mit Rand für bessere Optik)
         self.image_frame = ctk.CTkFrame(self, fg_color=COLORS["bg_dark"], corner_radius=0)
-        self.image_frame.pack(fill="both", expand=True, padx=40, pady=(10, 10))
+        self.image_frame.pack(fill="both", expand=True, padx=10, pady=(5, 5))
 
         self.preview_label = ctk.CTkLabel(self.image_frame, text="", fg_color="transparent")
         self.preview_label.pack(expand=True, fill="both")

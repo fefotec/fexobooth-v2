@@ -167,6 +167,24 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 | **Lösung** | `overrideredirect(True)` beibehalten (deckt auf Miix 310 korrekt den ganzen Screen ab), PLUS Windows API `SetWindowLongW` mit `WS_EX_APPWINDOW` Flag setzen (erzwingt Taskbar-Eintrag) |
 | **Merke** | `attributes("-fullscreen", True)` deckt auf manchen Tablets NICHT den ganzen Bildschirm ab! `overrideredirect(True)` + `WS_EX_APPWINDOW` via ctypes ist der sichere Weg |
 
+### Foto-Zähler Off-by-One bei letztem Foto
+
+| | |
+|---|---|
+| **Problem** | "Foto 5 von 4" wird beim letzten Foto einer 4er Collage angezeigt |
+| **Ursache** | `_capture_photo` erhöht `current_photo_index` NACH dem Foto und ruft dann `_update_progress` auf. Beim 4. Foto: Index 3→4, Anzeige 4+1=5 |
+| **Lösung** | `min(current_photo_index + 1, total_photos)` in `_update_progress` |
+| **Merke** | Bei Zähler-Anzeigen immer auf Off-by-One achten, besonders wenn Index nach dem letzten Element hochgezählt wird |
+
+### Flash-Bild intermittierend nicht sichtbar
+
+| | |
+|---|---|
+| **Problem** | Auslösebild fehlt sporadisch beim 2. Foto einer Collage |
+| **Ursache** | Flash wird nur per Flag (`show_flash=True`) gesetzt und erst beim nächsten `_update_live_view`-Tick (bis zu 50ms später) angezeigt. Auf langsamer Hardware kann der Tick verpasst werden |
+| **Lösung** | `_display_flash()` direkt in `_take_photo()` aufrufen (sofortige Anzeige), zusätzlich zum Flag für die Loop |
+| **Merke** | Zeitkritische visuelle Feedback-Elemente sofort anzeigen, nicht auf den nächsten Timer-Tick warten |
+
 ## Performance-Erkenntnisse
 
 - **Max. 25 FPS für Video** - Mehr schafft die Hardware nicht flüssig
@@ -183,3 +201,10 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 - **CTkImage dark_image** - CustomTkinter CTkImage braucht IMMER `dark_image` Parameter gesetzt, auch wenn identisch mit `light_image`. Ohne wird im Dark Mode NICHTS angezeigt. Betrifft ALLE Stellen wo CTkImage erzeugt wird (Flash, Preview, Final)
 - **PIL paste() mit RGBA-Maske** - `Image.paste(img, pos, img)` mit RGBA-Maske funktioniert nur zuverlässig für Bilder die tatsächlich Transparenz haben (PNG). Für JPEG→RGBA-Konvertierung (Alpha=255 überall) kann die Maske Probleme machen. Besser: Bildmodus prüfen und nur für echte RGBA-Bilder die Maske verwenden, für RGB direkt ohne Maske pasten
 - **CustomTkinter Overlays** - `place()` Widgets mit `fg_color="transparent"` zeigen die Hintergrundfarbe des Parent-Widgets, NICHT das darunter liegende Widget (kein echtes Alpha in tkinter). Für saubere UI: `pack()`-Layout verwenden, damit Elemente nicht überlappen. Overlays über Bildern erzeugen immer sichtbare Rechtecke
+- **Booking-Settings vs. Config-Persistenz** - Booking-Settings aus settings.json werden via `apply_settings_to_config()` in die App-Config übernommen. Feature-Checks (z.B. Galerie aktiv?) müssen NUR die Config prüfen, nicht zusätzlich die Booking-Settings direkt. Sonst können Admin-Änderungen nicht greifen, weil die Booking-Settings die Config-Änderung "umgehen"
+- **Gallery-Server Pfad ≠ Lokaler Bilder-Pfad** - Der Gallery-Server kann auf den USB-BILDER-Ordner zeigen, nicht auf den lokalen. Beim Löschen von Bildern muss auch der Gallery-Pfad berücksichtigt werden, sonst bleiben Bilder im Live-Server sichtbar
+- **PyInstaller 6.x _internal-Ordner** - Neuere PyInstaller-Versionen legen Daten-Assets in `_internal/` ab, nicht im Root des Dist-Ordners. Desktop-Shortcuts und andere externe Referenzen auf Assets müssen den korrekten Pfad verwenden. Im Installer die ICO-Datei separat kopieren
+- **Windows Mobile Hotspot braucht Internet** - `NetworkOperatorTetheringManager.GetInternetConnectionProfile()` gibt null zurück ohne Internetverbindung. Stattdessen `GetConnectionProfiles()` nutzen und ALLE Profile durchprobieren. Als Offline-Fallback: `netsh wlan hostednetwork` (braucht kein Internet, nutzt WiFi-Adapter direkt als SoftAP). Wichtig: WiFi-Adapter muss AKTIV bleiben, nur keine Verbindung zu einem Netzwerk haben
+- **Flash-Bild muss gecacht werden** - `_display_flash()` lädt bei jedem Foto das JPEG neu (~120ms auf Atom CPU). Zusammen mit dem blockierenden `get_high_res_frame()` bleibt kaum Zeit für die GUI den Flash tatsächlich zu malen. Lösung: Flash-PIL-Image einmalig beim Session-Start cachen, und `update_idletasks()` nach dem Setzen aufrufen um den Redraw zu erzwingen
+- **subprocess text=True Encoding** - `subprocess.run(..., text=True)` nutzt `locale.getpreferredencoding()` (cp1252 auf dt. Windows). PowerShell-Output mit Sonderzeichen (Umlaute, Unicode) kann `UnicodeDecodeError` auslösen. Fix: `text=True` weglassen und stattdessen `result.stdout.decode("utf-8", errors="replace")` verwenden
+- **overrideredirect(True) nach Dialog** - Auf Windows wird `overrideredirect(True)` nicht immer sofort übernommen. Die App muss `withdraw()` + `deiconify()` aufrufen (in `_set_appwindow()`). Admin-Dialog darf Fullscreen-Restore NICHT selbst machen, sondern die App übernimmt das nach `wait_window()` mit `_enter_fullscreen()`

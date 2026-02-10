@@ -202,10 +202,13 @@ class PhotoboothApp:
             from pathlib import Path
 
             # Hotspot im Hintergrund starten (blockiert sonst ~6s)
+            gallery_config = self.config.get("gallery", {})
+            hs_ssid = gallery_config.get("hotspot_ssid", "")
+            hs_password = gallery_config.get("hotspot_password", "")
             def _start_hs():
                 try:
                     logger.info("📶 Starte Hotspot für Galerie...")
-                    start_hotspot()
+                    start_hotspot(ssid=hs_ssid, password=hs_password)
                 except Exception as e:
                     logger.warning(f"Hotspot-Start fehlgeschlagen: {e}")
             threading.Thread(target=_start_hs, daemon=True, name="Hotspot-Start").start()
@@ -279,7 +282,11 @@ class PhotoboothApp:
             from src.gallery import is_running, start_server, get_gallery_url, start_hotspot
 
             # Hotspot starten (auch wenn Galerie schon läuft - Hotspot könnte aus sein)
-            start_hotspot()
+            gallery_config = self.config.get("gallery", {})
+            start_hotspot(
+                ssid=gallery_config.get("hotspot_ssid", ""),
+                password=gallery_config.get("hotspot_password", "")
+            )
 
             if is_running():
                 logger.debug("Galerie läuft bereits")
@@ -516,6 +523,7 @@ class PhotoboothApp:
         """Startet periodische Status-Checks"""
         self._check_usb_status()
         self._check_printer_status()
+        self._check_fullscreen_restore()
     
     def _check_usb_status(self):
         """Prüft USB-Status - BLINKEND wenn nicht vorhanden, Dialog bei Pending-Files"""
@@ -597,6 +605,25 @@ class PhotoboothApp:
 
         # Schnellerer Check für Blink-Effekt
         self.root.after(1000, self._check_usb_status)
+
+    def _check_fullscreen_restore(self):
+        """Stellt Fullscreen automatisch wieder her wenn es deaktiviert wurde.
+
+        Prüft alle 10 Sekunden ob start_fullscreen=True aber _is_fullscreen=False.
+        z.B. nach Admin-Menü wenn der User das Fenster nur maximiert statt Fullscreen.
+        """
+        if self.config.get("start_fullscreen", True) and not self._is_fullscreen:
+            # Prüfen ob ein Admin-Dialog offen ist (dann NICHT wiederherstellen)
+            admin_open = False
+            for child in self.root.winfo_children():
+                if child.winfo_class() == "Toplevel":
+                    admin_open = True
+                    break
+            if not admin_open:
+                logger.info("Auto-Fullscreen: Stelle Vollbild wieder her")
+                self._enter_fullscreen()
+
+        self.root.after(10000, self._check_fullscreen_restore)
 
     def _update_booking_display(self):
         """Aktualisiert die Buchungsanzeige in der Top-Bar"""
@@ -913,9 +940,14 @@ class PhotoboothApp:
     def show_admin_dialog(self):
         """Zeigt den Admin-Dialog"""
         from src.ui.screens.admin import AdminDialog
+        self._is_fullscreen = False
         dialog = AdminDialog(self.root, self.config)
         self.root.wait_window(dialog)
-        
+
+        # Fullscreen korrekt wiederherstellen (mit _set_appwindow + withdraw/deiconify)
+        if self.config.get("start_fullscreen", True):
+            self._enter_fullscreen()
+
         if dialog.result:
             self.config = dialog.result
             save_config(self.config)

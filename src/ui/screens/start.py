@@ -24,12 +24,7 @@ logger = get_logger(__name__)
 
 
 def _is_gallery_enabled(app: "PhotoboothApp") -> bool:
-    """Prüft ob Galerie aktiviert ist (Config oder settings.json)"""
-    # Erst settings.json prüfen (hat Priorität)
-    if app.booking_manager and app.booking_manager.is_loaded:
-        if app.booking_manager.settings.online_gallery:
-            return True
-    # Dann Config prüfen
+    """Prüft ob Galerie aktiviert ist (nur Config - Booking-Settings fließen via apply_settings_to_config ein)"""
     return app.config.get("gallery_enabled", False)
 
 
@@ -37,14 +32,14 @@ class TemplateCard(ctk.CTkFrame):
     """Template-Auswahl-Karte - responsive Design"""
 
     def __init__(self, parent, title: str, preview_image: Optional[Image.Image] = None,
-                 is_single: bool = False, on_click=None):
+                 is_single: bool = False, on_click=None, card_width=None, card_height=None):
         # Responsive Größen laden
         sizes = get_sizes()
         fonts = get_fonts()
         self._is_small = is_small_screen()
 
-        card_width = sizes["card_width"]
-        card_height = sizes["card_height"]
+        card_width = card_width or sizes["card_width"]
+        card_height = card_height or sizes["card_height"]
         corner_radius = sizes["corner_radius"]
 
         super().__init__(
@@ -68,24 +63,25 @@ class TemplateCard(ctk.CTkFrame):
         self.bind("<Leave>", self._on_leave)
         self.bind("<Button-1>", self._on_click)
 
-        # Preview-Bereich - responsive Höhe
-        preview_height = 125 if self._is_small else 165
+        # Preview-Bereich - proportional zur Kartenhöhe
+        preview_height = int(card_height * 0.65)
+        pad = max(6, min(12, int(card_width * 0.035)))
         preview_frame = ctk.CTkFrame(
             self,
             fg_color=COLORS["bg_medium"],
             corner_radius=sizes["corner_radius_small"],
             height=preview_height
         )
-        preview_frame.pack(fill="x", padx=8 if self._is_small else 10, pady=(8 if self._is_small else 10, 5))
+        preview_frame.pack(fill="x", padx=pad, pady=(pad, 4))
         preview_frame.pack_propagate(False)
         preview_frame.bind("<Button-1>", self._on_click)
 
         # Preview-Bild oder Icon
         if preview_image:
-            # Template-Vorschau skalieren - responsive
             preview_copy = preview_image.copy()
-            thumb_size = (190, 115) if self._is_small else (250, 155)
-            preview_copy.thumbnail(thumb_size, Image.Resampling.LANCZOS)
+            thumb_w = card_width - 2 * pad - 20
+            thumb_h = preview_height - 10
+            preview_copy.thumbnail((thumb_w, thumb_h), Image.Resampling.LANCZOS)
             self.preview_ctk = ctk.CTkImage(
                 light_image=preview_copy,
                 size=(preview_copy.width, preview_copy.height)
@@ -94,7 +90,7 @@ class TemplateCard(ctk.CTkFrame):
             preview_label.image = self.preview_ctk  # Referenz halten!
         else:
             icon = "📷" if is_single else "🖼️"
-            icon_size = 45 if self._is_small else 60
+            icon_size = max(30, int(card_height * 0.22))
             preview_label = ctk.CTkLabel(
                 preview_frame,
                 text=icon,
@@ -103,20 +99,25 @@ class TemplateCard(ctk.CTkFrame):
         preview_label.pack(expand=True)
         preview_label.bind("<Button-1>", self._on_click)
 
-        # Titel - responsive Font
-        title_font = fonts["subheading"] if not self._is_small else fonts["body_bold"]
+        # Titel - responsive Font basierend auf Kartengröße
+        if card_width >= 320:
+            title_font = fonts["heading"]
+        elif card_width >= 250:
+            title_font = fonts["subheading"]
+        else:
+            title_font = fonts["body_bold"]
         title_label = ctk.CTkLabel(
             self,
             text=title,
             font=title_font,
             text_color=COLORS["text_primary"]
         )
-        title_label.pack(pady=(4 if self._is_small else 5, 2 if self._is_small else 3))
+        title_label.pack(pady=(4, 2))
         title_label.bind("<Button-1>", self._on_click)
 
-        # Untertitel (kürzer) - responsive Font
+        # Untertitel - responsive Font
         subtitle = "Einzelbild" if is_single else "Druck-Vorlage"
-        subtitle_font = fonts["tiny"] if not self._is_small else ("Segoe UI", 9)
+        subtitle_font = fonts["small"] if card_width >= 250 else fonts["tiny"]
         subtitle_label = ctk.CTkLabel(
             self,
             text=subtitle,
@@ -245,10 +246,49 @@ class StartScreen(ctk.CTkFrame):
         # Initiale Karten erstellen
         self._create_template_cards()
 
+    def _count_expected_cards(self):
+        """Zählt die erwartete Anzahl Template-Karten für responsive Größenanpassung"""
+        count = 0
+        has_custom = False
+
+        cached = self.app.cached_usb_template
+        usb_active = cached or (hasattr(self, '_usb_template_path') and self._usb_template_path)
+        if usb_active:
+            count += 1
+            has_custom = True
+
+        if not usb_active:
+            for key in ["template1", "template2"]:
+                if self.config.get(f"{key}_enabled", False):
+                    path = self.config.get("template_paths", {}).get(key, "")
+                    if path:
+                        count += 1
+                        has_custom = True
+
+        if not has_custom:
+            count += 1  # default_2x2
+
+        if self.config.get("allow_single_mode", True):
+            count += 1
+
+        return max(count, 1)
+
     def _create_template_cards(self):
         """Erstellt die Template-Karten im cards_frame"""
         has_custom_template = False
         logger.info("=== Erstelle Template-Karten ===")
+
+        # Responsive Kartengrößen basierend auf Anzahl
+        card_count = self._count_expected_cards()
+        if card_count == 1:
+            card_w = 360 if self._is_small else 420
+            card_h = 280 if self._is_small else 330
+        elif card_count == 2:
+            card_w = 270 if self._is_small else 320
+            card_h = 230 if self._is_small else 270
+        else:
+            card_w = self._sizes["card_width"]
+            card_h = self._sizes["card_height"]
 
         # Responsive Abstand zwischen Karten
         card_padx = 6 if self._is_small else 10
@@ -265,7 +305,8 @@ class StartScreen(ctk.CTkFrame):
                 self.cards_frame,
                 title="Druckvorlage",
                 preview_image=preview,
-                on_click=lambda c: self._select_card(c, "usb_template")
+                on_click=lambda c: self._select_card(c, "usb_template"),
+                card_width=card_w, card_height=card_h
             )
             card.pack(side="left", padx=card_padx)
             self.cards["usb_template"] = card
@@ -286,7 +327,8 @@ class StartScreen(ctk.CTkFrame):
                 self.cards_frame,
                 title="Template 1",
                 preview_image=preview,
-                on_click=lambda c: self._select_card(c, "template1")
+                on_click=lambda c: self._select_card(c, "template1"),
+                card_width=card_w, card_height=card_h
             )
             card.pack(side="left", padx=card_padx)
             self.cards["template1"] = card
@@ -303,7 +345,8 @@ class StartScreen(ctk.CTkFrame):
                 self.cards_frame,
                 title="Template 2",
                 preview_image=preview,
-                on_click=lambda c: self._select_card(c, "template2")
+                on_click=lambda c: self._select_card(c, "template2"),
+                card_width=card_w, card_height=card_h
             )
             card.pack(side="left", padx=card_padx)
             self.cards["template2"] = card
@@ -316,7 +359,8 @@ class StartScreen(ctk.CTkFrame):
                 self.cards_frame,
                 title="Standard 2x2",
                 preview_image=default_overlay,
-                on_click=lambda c: self._select_card(c, "default_2x2")
+                on_click=lambda c: self._select_card(c, "default_2x2"),
+                card_width=card_w, card_height=card_h
             )
             card.pack(side="left", padx=card_padx)
             self.cards["default_2x2"] = card
@@ -327,7 +371,8 @@ class StartScreen(ctk.CTkFrame):
                 self.cards_frame,
                 title="Single-Foto",
                 is_single=True,
-                on_click=lambda c: self._select_card(c, "single")
+                on_click=lambda c: self._select_card(c, "single"),
+                card_width=card_w, card_height=card_h
             )
             card.pack(side="left", padx=card_padx)
             self.cards["single"] = card
@@ -338,7 +383,8 @@ class StartScreen(ctk.CTkFrame):
                 self.cards_frame,
                 title="Einzelfoto",
                 is_single=True,
-                on_click=lambda c: self._select_card(c, "single")
+                on_click=lambda c: self._select_card(c, "single"),
+                card_width=card_w, card_height=card_h
             )
             card.pack(side="left", padx=card_padx)
             self.cards["single"] = card
@@ -617,14 +663,57 @@ class StartScreen(ctk.CTkFrame):
             text_color=COLORS["primary"]
         ).pack(pady=(0, 20))
 
-        # Lade-Text
-        self._loading_label = ctk.CTkLabel(
-            content,
-            text="Software wird geladen...",
-            font=("Segoe UI", 16),
-            text_color=COLORS["text_secondary"]
-        )
-        self._loading_label.pack(pady=(0, 20))
+        # Persönliche Willkommensnachricht wenn Kundenname vorhanden
+        first_name = ""
+        if self.app.booking_manager and self.app.booking_manager.is_loaded:
+            first_name = self.app.booking_manager.settings.shipping_first_name
+
+        if first_name:
+            ctk.CTkLabel(
+                content,
+                text=f"Hallo {first_name},",
+                font=("Segoe UI", 22, "bold"),
+                text_color=COLORS["text_primary"]
+            ).pack(pady=(0, 5))
+
+            ctk.CTkLabel(
+                content,
+                text="vielen Dank für deine Buchung bei fexobox!",
+                font=("Segoe UI", 15),
+                text_color=COLORS["text_secondary"]
+            ).pack(pady=(0, 15))
+
+            ctk.CTkLabel(
+                content,
+                text="Deine fexobox wärmt sich gerade auf\nund dann kann die Party losgehen!",
+                font=("Segoe UI", 14),
+                text_color=COLORS["text_muted"],
+                justify="center"
+            ).pack(pady=(0, 10))
+
+            ctk.CTkLabel(
+                content,
+                text="Das kann bis zu 2 Minuten dauern.",
+                font=("Segoe UI", 12),
+                text_color=COLORS["text_muted"],
+                justify="center"
+            ).pack(pady=(0, 25))
+        else:
+            # Lade-Text (ohne Kundenname)
+            self._loading_label = ctk.CTkLabel(
+                content,
+                text="Software wird geladen...",
+                font=("Segoe UI", 16),
+                text_color=COLORS["text_secondary"]
+            )
+            self._loading_label.pack(pady=(0, 5))
+
+            ctk.CTkLabel(
+                content,
+                text="Das kann bis zu 2 Minuten dauern.",
+                font=("Segoe UI", 12),
+                text_color=COLORS["text_muted"]
+            ).pack(pady=(0, 20))
 
         # Progress-Bar
         self._loading_progress = ctk.CTkProgressBar(

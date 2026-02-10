@@ -51,6 +51,10 @@ class SessionScreen(ctk.CTkFrame):
         self._target_fps = cam_settings.get("live_view_fps", 20)
         self._frame_delay_ms = max(33, int(1000 / self._target_fps))
 
+        # Gecachtes Flash-Bild (wird in on_show erstellt, nicht bei jedem Foto neu)
+        self._cached_flash_ctk = None
+        self._cached_flash_size = (0, 0)
+
         logger.info(f"Session: FPS={self._target_fps}, delay={self._frame_delay_ms}ms, skip={self._skip_frames}")
 
         self._setup_ui()
@@ -133,6 +137,9 @@ class SessionScreen(ctk.CTkFrame):
             self._update_progress()
             self.is_live = True
             self._update_live_view()
+            # Flash-Cache erstellen falls noch nicht vorhanden
+            if self._cached_flash_ctk is None:
+                self.after(100, self._build_flash_cache)
             # Kamera ist bereits warm - kürzerer Delay
             self.after(200, self._start_countdown)
             return
@@ -165,6 +172,9 @@ class SessionScreen(ctk.CTkFrame):
         self.is_live = True
         self._update_live_view()
 
+        # Flash-Bild im Voraus erstellen (nicht bei jedem Foto neu laden!)
+        self.after(300, self._build_flash_cache)
+
         # Countdown nach kurzer Verzögerung starten
         self.after(500, self._start_countdown)
 
@@ -176,8 +186,9 @@ class SessionScreen(ctk.CTkFrame):
 
     def _update_progress(self):
         """Aktualisiert die Fortschrittsanzeige"""
+        current = min(self.app.current_photo_index + 1, self.total_photos)
         self.progress_label.configure(
-            text=f"Foto {self.app.current_photo_index + 1} von {self.total_photos}"
+            text=f"Foto {current} von {self.total_photos}"
         )
 
     def _update_live_view(self):
@@ -282,17 +293,12 @@ class SessionScreen(ctk.CTkFrame):
         self.preview_label.configure(image=ctk_img)
         self.preview_label.image = ctk_img
 
-    def _display_flash(self):
-        """Zeigt Flash-Screen (weißer Blitz mit optionalem Bild)
-
-        Komplett in try/except gewrapped damit die Live-View-Loop
-        bei Fehlern NICHT abstürzt (sonst bleibt schwarzer Screen stehen).
-        """
+    def _build_flash_cache(self):
+        """Erstellt und cached das Flash-Bild einmalig (statt bei jedem Foto neu)"""
         try:
             container_w = self.preview_container.winfo_width() - 10
             container_h = self.preview_container.winfo_height() - 10
 
-            # Fallback wenn Container noch nicht gelayoutet ist
             if container_w < 100 or container_h < 100:
                 screen_w = self.winfo_screenwidth()
                 screen_h = self.winfo_screenheight()
@@ -310,28 +316,23 @@ class SessionScreen(ctk.CTkFrame):
             if flash_image_path and os.path.exists(flash_image_path):
                 try:
                     custom_img = Image.open(flash_image_path)
-                    # Pixeldaten sofort laden (lazy loading kann später crashen)
                     custom_img.load()
-                    logger.info(f"Flash: Bild geöffnet: {flash_image_path} ({custom_img.size}, Mode: {custom_img.mode})")
+                    logger.info(f"Flash-Cache: Bild geladen: {flash_image_path} ({custom_img.size})")
 
-                    max_size = int(min(container_w, container_h) * 0.6)
+                    # Bild auf 80% der Container-Größe skalieren (gut sichtbar)
+                    max_size = int(min(container_w, container_h) * 0.8)
                     custom_img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
                     img_x = (container_w - custom_img.width) // 2
                     img_y = (container_h - custom_img.height) // 2
 
-                    # PNG mit Transparenz: Alpha-Maske verwenden
                     if custom_img.mode == "RGBA":
                         flash.paste(custom_img, (img_x, img_y), custom_img)
                     else:
-                        # JPEG/RGB/L/P/CMYK: In RGB konvertieren und direkt pasten
                         flash.paste(custom_img.convert("RGB"), (img_x, img_y))
 
                     custom_loaded = True
-                    logger.info(f"Flash: Custom-Bild angezeigt ({custom_img.width}x{custom_img.height})")
                 except Exception as e:
                     logger.error(f"Flash-Bild Fehler: {e}")
-                    import traceback
-                    logger.error(traceback.format_exc())
             elif flash_image_path:
                 logger.warning(f"Flash-Bild nicht gefunden: {flash_image_path}")
 
@@ -340,48 +341,44 @@ class SessionScreen(ctk.CTkFrame):
                 size = int(min(container_w, container_h) * 0.5)
                 cx, cy = container_w // 2, container_h // 2
                 radius = size // 2
-
                 draw.ellipse(
                     [cx - radius, cy - radius, cx + radius, cy + radius],
-                    fill=(255, 220, 50),
-                    outline=(200, 170, 30),
+                    fill=(255, 220, 50), outline=(200, 170, 30),
                     width=max(3, size // 30)
                 )
-
                 eye_radius = size // 10
                 eye_y = cy - size // 6
                 eye_offset = size // 4
-                draw.ellipse(
-                    [cx - eye_offset - eye_radius, eye_y - eye_radius,
-                     cx - eye_offset + eye_radius, eye_y + eye_radius],
-                    fill=(50, 50, 50)
-                )
-                draw.ellipse(
-                    [cx + eye_offset - eye_radius, eye_y - eye_radius,
-                     cx + eye_offset + eye_radius, eye_y + eye_radius],
-                    fill=(50, 50, 50)
-                )
-
+                draw.ellipse([cx - eye_offset - eye_radius, eye_y - eye_radius,
+                              cx - eye_offset + eye_radius, eye_y + eye_radius], fill=(50, 50, 50))
+                draw.ellipse([cx + eye_offset - eye_radius, eye_y - eye_radius,
+                              cx + eye_offset + eye_radius, eye_y + eye_radius], fill=(50, 50, 50))
                 mouth_width = size // 2
                 mouth_height = size // 4
                 mouth_y = cy + size // 10
-                draw.arc(
-                    [cx - mouth_width // 2, mouth_y - mouth_height // 2,
-                     cx + mouth_width // 2, mouth_y + mouth_height],
-                    start=0, end=180,
-                    fill=(50, 50, 50),
-                    width=max(4, size // 20)
-                )
+                draw.arc([cx - mouth_width // 2, mouth_y - mouth_height // 2,
+                          cx + mouth_width // 2, mouth_y + mouth_height],
+                         start=0, end=180, fill=(50, 50, 50), width=max(4, size // 20))
 
-            ctk_img = ctk.CTkImage(light_image=flash, dark_image=flash, size=(container_w, container_h))
-            self.preview_label.configure(image=ctk_img)
-            self.preview_label.image = ctk_img
+            self._cached_flash_ctk = ctk.CTkImage(light_image=flash, dark_image=flash, size=(container_w, container_h))
+            self._cached_flash_size = (container_w, container_h)
+            logger.info(f"Flash-Cache erstellt: {container_w}x{container_h}")
 
         except Exception as e:
-            # NIEMALS die Live-View-Loop crashen lassen!
-            logger.error(f"Flash-Anzeige komplett fehlgeschlagen: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"Flash-Cache Erstellung fehlgeschlagen: {e}")
+
+    def _display_flash(self):
+        """Zeigt das gecachte Flash-Bild (sofort, ohne Neuberechnung)"""
+        try:
+            # Cache erstellen falls noch nicht vorhanden
+            if self._cached_flash_ctk is None:
+                self._build_flash_cache()
+
+            if self._cached_flash_ctk is not None:
+                self.preview_label.configure(image=self._cached_flash_ctk)
+                self.preview_label.image = self._cached_flash_ctk
+        except Exception as e:
+            logger.error(f"Flash-Anzeige fehlgeschlagen: {e}")
 
     def _start_countdown(self):
         """Startet den Countdown"""
@@ -407,6 +404,10 @@ class SessionScreen(ctk.CTkFrame):
         logger.info(f"Foto {self.app.current_photo_index + 1} aufnehmen")
 
         self.show_flash = True
+        self._display_flash()  # Sofort anzeigen, nicht auf nächsten Loop-Tick warten
+        # GUI-Redraw erzwingen damit Flash SICHER auf dem Bildschirm gemalt wird
+        # bevor die blocking Kamera-Aufnahme startet
+        self.update_idletasks()
 
         flash_duration = self.config.get("flash_duration", 300)
         self.after(flash_duration, self._capture_photo)
@@ -434,14 +435,9 @@ class SessionScreen(ctk.CTkFrame):
         if photo is None:
             cam_settings = self.config.get("camera_settings", {})
 
-            # Capture-Auflösung aus Config
-            capture_w = cam_settings.get("capture_width", 1280)
-            capture_h = cam_settings.get("capture_height", 720)
-
-            # Noch höher wenn Performance-Mode aus
-            if not self.config.get("performance_mode", True):
-                capture_w = cam_settings.get("single_photo_width", 1920)
-                capture_h = cam_settings.get("single_photo_height", 1080)
+            # Immer maximale Auflösung für Fotos (Live-View bleibt low-res)
+            capture_w = cam_settings.get("single_photo_width", 1920)
+            capture_h = cam_settings.get("single_photo_height", 1080)
 
             logger.info(f"Webcam Capture: {capture_w}x{capture_h}")
 

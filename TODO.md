@@ -26,6 +26,23 @@ _Aktuell keine niedrig priorisierten Aufgaben_
 
 ## Erledigt ✅
 
+### 2026-02-10
+- [x] Flash-Bild gecacht + update_idletasks() für zuverlässige Anzeige
+- [x] Loading-Screen: "Das kann bis zu 2 Minuten dauern" Hinweis
+- [x] Statistik-Texte weiß (text_primary statt text_muted)
+- [x] Auto-Fullscreen nach 10s wenn nicht im Vollbild (nach Admin-Menü)
+- [x] Hotspot Encoding-Fix (UnicodeDecodeError cp1252)
+- [x] Desktop-Icon Fix: ICO separat in Installer kopiert (PyInstaller _internal-Pfad)
+- [x] Offline-Hotspot: hotspot.py mit Multi-Methoden-Ansatz (Tethering + netsh hostednetwork)
+- [x] Galerie-Deaktivierung Fix (Booking-Settings überschrieben Config)
+- [x] Willkommensnachricht im VLC-Ladescreen (shipping_first_name)
+- [x] `live_gallery` statt `online_gallery` als Booking-Meta-Feld
+- [x] Bilder löschen: Auch Gallery-Server-Pfad leeren
+- [x] Foto-Zähler "5 von 4" beim letzten Foto gefixt
+- [x] Flash-Bild zuverlässiger (sofortige Anzeige statt Loop-Tick)
+- [x] Template-Karten responsiv (1 Karte=groß, 2=mittel, 3+=klein)
+- [x] Print-Vorschau vollständig sichtbar (padx 40→10)
+
 ### 2026-02-09
 - [x] Flash-Bild Fix: CTkImage dark_image im Dark Mode (Auslöse-Bild wurde nicht angezeigt)
 - [x] Redo pro Collage-Foto: "↻ NOCHMAL" Button nach jedem Einzelfoto statt am Ende

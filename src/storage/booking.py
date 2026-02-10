@@ -38,11 +38,12 @@ class BookingSettings:
     
     # Feature-Flags
     print_singles: bool = True  # Einzelbilder drucken erlaubt
-    online_gallery: bool = False  # Galerie-Feature aktiv
+    live_gallery: bool = False  # Live-Galerie-Feature aktiv
     dslr_camera: bool = False  # DSLR statt Webcam
-    
+
     # Kundeninfo
     customer_name: str = ""
+    shipping_first_name: str = ""  # Vorname für persönliche Begrüßung
     event_date: str = ""
     
     # Metadaten
@@ -67,9 +68,10 @@ class BookingSettings:
             template_text=template.get("text", ""),
             template_date=template.get("date", ""),
             print_singles=features.get("print_singles", True),
-            online_gallery=features.get("online_gallery", False),
+            live_gallery=features.get("live_gallery", False),
             dslr_camera=features.get("dslr_camera", False),
             customer_name=customer.get("name", ""),
+            shipping_first_name=data.get("shipping_first_name", "") or customer.get("first_name", ""),
             event_date=customer.get("event_date", ""),
             version=data.get("_version", ""),
             generated_at=data.get("_generated_at", ""),
@@ -93,9 +95,10 @@ class BookingSettings:
             },
             "features": {
                 "print_singles": self.print_singles,
-                "online_gallery": self.online_gallery,
+                "live_gallery": self.live_gallery,
                 "dslr_camera": self.dslr_camera,
             },
+            "shipping_first_name": self.shipping_first_name,
             "customer": {
                 "name": self.customer_name,
                 "event_date": self.event_date,
@@ -394,7 +397,7 @@ class BookingManager:
         
         Mapping:
         - print_singles → allow_single_mode
-        - online_gallery → gallery_enabled
+        - live_gallery → gallery_enabled
         - dslr_camera → camera_type
         
         Args:
@@ -411,8 +414,8 @@ class BookingManager:
         logger.info(f"   📋 allow_single_mode = {self._settings.print_singles}")
         
         # Galerie (Fallback: False wenn nicht gesetzt)
-        config["gallery_enabled"] = self._settings.online_gallery
-        logger.info(f"   📋 gallery_enabled = {self._settings.online_gallery}")
+        config["gallery_enabled"] = self._settings.live_gallery
+        logger.info(f"   📋 gallery_enabled = {self._settings.live_gallery}")
         
         # Kamera-Typ
         if self._settings.dslr_camera:
