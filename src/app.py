@@ -570,6 +570,7 @@ class PhotoboothApp:
         # Prüfen ob USB wieder verfügbar und Dateien pending sind
         is_available = self.usb_manager.is_available()
         pending_count = self.usb_manager.get_pending_count()
+        new_booking = None
 
         # USB verfügbar -> prüfen ob NEUE Buchung
         if is_available:
@@ -603,12 +604,13 @@ class PhotoboothApp:
                     self._pending_fexosafe_drive = fexosafe_drive
                     logger.info("FEXOSAFE pending (warte auf StartScreen)")
 
-        # USB wurde gerade eingesteckt -> ALLE fehlenden Bilder automatisch synchronisieren
+        # USB wurde gerade (wieder) eingesteckt -> Sync anbieten wenn gleiches Event
         if is_available and not self._sync_dialog_open:
             if not hasattr(self, '_was_usb_available') or not self._was_usb_available:
                 self._was_usb_available = True
-                # Vollständige Synchronisation aller fehlenden Bilder
-                self._auto_sync_all_missing()
+                # Nur bei gleichem Event synchronisieren (kein neues Event erkannt)
+                if not new_booking:
+                    self._offer_sync_dialog()
         elif not is_available:
             self._was_usb_available = False
 
@@ -683,221 +685,179 @@ class PhotoboothApp:
                 fg_color=COLORS["bg_light"]
             )
 
-    def _show_usb_sync_dialog(self, pending_count: int):
-        """Zeigt Dialog: Bilder auf USB kopieren? Ja/Nein"""
-        if self._sync_dialog_open:
-            return
-
-        self._sync_dialog_open = True
-        logger.info(f"USB-Sync Dialog: {pending_count} Dateien warten")
-
-        # Dialog erstellen
-        dialog = ctk.CTkToplevel(self.root)
-        dialog.title("USB-Stick erkannt")
-
-        # Ohne Fensterrahmen für konsistentes Aussehen
-        dialog.overrideredirect(True)
-
-        # Dialog-Größe und Position (zentriert)
-        dialog_width = 400
-        dialog_height = 200
-        screen_w = self.root.winfo_screenwidth()
-        screen_h = self.root.winfo_screenheight()
-        x = (screen_w - dialog_width) // 2
-        y = (screen_h - dialog_height) // 2
-        dialog.geometry(f"{dialog_width}x{dialog_height}+{x}+{y}")
-
-        # Styling
-        dialog.configure(fg_color=COLORS["bg_medium"])
-
-        # Immer im Vordergrund
-        dialog.attributes("-topmost", True)
-        dialog.grab_set()
-
-        # Content Frame mit Rahmen
-        content = ctk.CTkFrame(
-            dialog,
-            fg_color=COLORS["bg_dark"],
-            corner_radius=15,
-            border_width=2,
-            border_color=COLORS["primary"]
-        )
-        content.pack(fill="both", expand=True, padx=3, pady=3)
-
-        # Icon und Titel
-        title_label = ctk.CTkLabel(
-            content,
-            text="💾 USB-Stick erkannt",
-            font=FONTS["heading"],
-            text_color=COLORS["primary"]
-        )
-        title_label.pack(pady=(20, 10))
-
-        # Frage
-        question_label = ctk.CTkLabel(
-            content,
-            text=f"{pending_count} Bild(er) warten auf Kopie.\nJetzt auf USB-Stick kopieren?",
-            font=FONTS["body"],
-            text_color=COLORS["text_primary"]
-        )
-        question_label.pack(pady=(0, 20))
-
-        # Button-Container
-        btn_frame = ctk.CTkFrame(content, fg_color="transparent")
-        btn_frame.pack(pady=(0, 20))
-
-        def on_yes():
-            logger.info("USB-Sync: Benutzer hat JA geklickt")
-            dialog.destroy()
-            self._sync_dialog_open = False
-            # Sync durchführen
-            synced = self.usb_manager.sync_pending()
-            if synced > 0:
-                self._show_sync_notification(synced)
-
-        def on_no():
-            logger.info("USB-Sync: Benutzer hat NEIN geklickt")
-            dialog.destroy()
-            self._sync_dialog_open = False
-
-        # JA Button (grün, größer)
-        yes_btn = ctk.CTkButton(
-            btn_frame,
-            text="JA",
-            font=FONTS["button"],
-            width=120,
-            height=50,
-            fg_color=COLORS["success"],
-            hover_color="#00e676",
-            corner_radius=SIZES["corner_radius"],
-            command=on_yes
-        )
-        yes_btn.pack(side="left", padx=15)
-
-        # NEIN Button (grau)
-        no_btn = ctk.CTkButton(
-            btn_frame,
-            text="NEIN",
-            font=FONTS["button"],
-            width=120,
-            height=50,
-            fg_color=COLORS["bg_light"],
-            hover_color=COLORS["bg_card"],
-            text_color=COLORS["text_primary"],
-            corner_radius=SIZES["corner_radius"],
-            command=on_no
-        )
-        no_btn.pack(side="left", padx=15)
-
-        # Dialog-Close Handler (falls irgendwie geschlossen)
-        def on_close():
-            self._sync_dialog_open = False
-            dialog.destroy()
-
-        dialog.protocol("WM_DELETE_WINDOW", on_close)
-
-    def _show_sync_notification(self, count: int):
-        """Zeigt Erfolgs-Dialog wenn Dateien synchronisiert wurden"""
-        logger.info(f"USB-Sync erfolgreich: {count} Dateien kopiert")
-
-        # Erfolgs-Dialog erstellen
-        dialog = ctk.CTkToplevel(self.root)
-        dialog.overrideredirect(True)
-
-        # Größe und Position
-        dialog_width = 350
-        dialog_height = 150
-        screen_w = self.root.winfo_screenwidth()
-        screen_h = self.root.winfo_screenheight()
-        x = (screen_w - dialog_width) // 2
-        y = (screen_h - dialog_height) // 2
-        dialog.geometry(f"{dialog_width}x{dialog_height}+{x}+{y}")
-
-        dialog.configure(fg_color=COLORS["bg_medium"])
-        dialog.attributes("-topmost", True)
-
-        # Content
-        content = ctk.CTkFrame(
-            dialog,
-            fg_color=COLORS["success"],
-            corner_radius=15
-        )
-        content.pack(fill="both", expand=True, padx=3, pady=3)
-
-        # Erfolgs-Icon und Text
-        ctk.CTkLabel(
-            content,
-            text="✅",
-            font=("Segoe UI Emoji", 40),
-            text_color="#ffffff"
-        ).pack(pady=(20, 5))
-
-        ctk.CTkLabel(
-            content,
-            text=f"{count} Bild(er) auf USB kopiert!",
-            font=FONTS["body_bold"],
-            text_color="#ffffff"
-        ).pack(pady=(0, 20))
-
-        # Dialog nach 2 Sekunden automatisch schließen
-        def close_dialog():
-            try:
-                dialog.destroy()
-            except:
-                pass
-
-        dialog.after(2000, close_dialog)
-
-        # USB-Status auch aktualisieren
-        self.usb_status.configure(
-            text=f"✅ {count} sync!",
-            text_color="#ffffff",
-            fg_color="#00d26a"
-        )
-        # Nach 3 Sekunden wieder normalen Status anzeigen
-        self.root.after(3000, self._reset_usb_status_after_sync)
-
-    def _reset_usb_status_after_sync(self):
-        """Setzt USB-Status nach Sync-Benachrichtigung zurück"""
-        text, status = self.usb_manager.get_status_text()
-        if status == "success":
-            self.usb_status.configure(
-                text=text,
-                text_color=COLORS["success"],
-                fg_color=COLORS["bg_light"]
-            )
-
-    def _auto_sync_all_missing(self):
-        """Synchronisiert automatisch ALLE fehlenden Bilder auf USB.
-
-        Wird aufgerufen wenn USB-Stick (wieder) eingesteckt wird.
-        Kopiert nur Bilder die noch nicht auf dem USB-Stick vorhanden sind.
-        """
+    def _offer_sync_dialog(self):
+        """Prüft fehlende Bilder und bietet Sync-Dialog an (gleiches Event)."""
         from src.storage.local import LocalStorage
         import threading
 
         local_path = LocalStorage.get_images_path()
         if not local_path.exists():
-            logger.debug("Lokaler Bilder-Ordner existiert nicht - kein Sync nötig")
             return
 
-        logger.info("=== Auto-Sync: Prüfe fehlende Bilder ===")
-
-        # Sync im Hintergrund ausführen um UI nicht zu blockieren
-        def do_sync():
-            result = self.usb_manager.sync_all_missing(local_path)
-            copied = result.get("copied", 0)
-
-            # UI-Update im Hauptthread
-            if copied > 0:
-                self.root.after(0, lambda: self._show_sync_notification(copied))
-            elif result.get("errors", 0) > 0:
-                logger.warning(f"Auto-Sync: {result['errors']} Fehler")
+        # Fehlende Bilder im Hintergrund zählen
+        def check_missing():
+            missing = self.usb_manager.count_missing(local_path)
+            if missing > 0:
+                self.root.after(0, lambda: self._show_sync_dialog(missing, local_path))
             else:
-                logger.debug("Auto-Sync: Alle Bilder bereits synchronisiert")
+                logger.debug("USB-Sync: Alle Bilder bereits auf USB")
 
-        thread = threading.Thread(target=do_sync, daemon=True)
-        thread.start()
+        threading.Thread(target=check_missing, daemon=True).start()
+
+    def _show_sync_dialog(self, missing_count: int, local_path):
+        """Zeigt Dialog: X Bilder auf USB kopieren? Mit Fortschritt und Abbrechen."""
+        import threading
+
+        if self._sync_dialog_open:
+            return
+
+        self._sync_dialog_open = True
+        logger.info(f"USB-Sync Dialog: {missing_count} fehlende Bilder")
+
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.overrideredirect(True)
+        dialog.configure(fg_color=COLORS["bg_dark"])
+
+        dialog_w, dialog_h = 420, 250
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        x = (screen_w - dialog_w) // 2
+        y = (screen_h - dialog_h) // 2
+        dialog.geometry(f"{dialog_w}x{dialog_h}+{x}+{y}")
+        dialog.attributes("-topmost", True)
+        dialog.grab_set()
+
+        content = ctk.CTkFrame(
+            dialog, fg_color=COLORS["bg_medium"],
+            border_color=COLORS["primary"], border_width=2, corner_radius=16
+        )
+        content.pack(fill="both", expand=True, padx=2, pady=2)
+
+        # Titel
+        ctk.CTkLabel(
+            content, text="USB-Stick erkannt",
+            font=("Segoe UI", 20, "bold"), text_color=COLORS["primary"]
+        ).pack(pady=(20, 5))
+
+        # Info-Text (wird später zu Status-Text)
+        status_label = ctk.CTkLabel(
+            content,
+            text=f"{missing_count} Bild(er) fehlen auf dem USB-Stick.\nJetzt kopieren?",
+            font=FONTS["body"], text_color=COLORS["text_primary"], justify="center"
+        )
+        status_label.pack(pady=(5, 15))
+
+        # Fortschrittsbalken (zunächst versteckt)
+        progress_bar = ctk.CTkProgressBar(
+            content, width=340, height=14,
+            fg_color=COLORS["bg_dark"], progress_color=COLORS["primary"], corner_radius=7
+        )
+
+        # Button-Container
+        btn_frame = ctk.CTkFrame(content, fg_color="transparent")
+        btn_frame.pack(pady=(0, 20))
+
+        cancel_event = threading.Event()
+
+        def close_dialog():
+            self._sync_dialog_open = False
+            try:
+                dialog.destroy()
+            except Exception:
+                pass
+
+        def on_cancel():
+            cancel_event.set()
+            logger.info("USB-Sync: Abgebrochen")
+            close_dialog()
+
+        def on_copy():
+            # Buttons durch Abbrechen-Button ersetzen
+            for widget in btn_frame.winfo_children():
+                widget.destroy()
+
+            cancel_btn = ctk.CTkButton(
+                btn_frame, text="Abbrechen",
+                font=FONTS["button"], width=160, height=45,
+                fg_color=COLORS["bg_light"], hover_color=COLORS["bg_card"],
+                text_color=COLORS["text_primary"],
+                corner_radius=SIZES["corner_radius"], command=on_cancel
+            )
+            cancel_btn.pack()
+
+            # Fortschrittsbalken anzeigen
+            progress_bar.set(0)
+            progress_bar.pack(pady=(0, 10))
+
+            status_label.configure(text="Kopiere...")
+
+            def progress_callback(copied, total, filename):
+                def update():
+                    try:
+                        progress_bar.set(copied / total)
+                        status_label.configure(text=f"Kopiere... {copied}/{total}")
+                    except Exception:
+                        pass
+                dialog.after(0, update)
+
+            def do_sync():
+                result = self.usb_manager.sync_all_missing(
+                    local_path, progress_callback=progress_callback, cancel_event=cancel_event
+                )
+                copied = result.get("copied", 0)
+                cancelled = result.get("cancelled", False)
+
+                def show_result():
+                    if cancelled:
+                        status_label.configure(
+                            text=f"Abgebrochen. {copied} Bild(er) kopiert.",
+                            text_color=COLORS["warning"]
+                        )
+                    elif result.get("errors", 0) > 0:
+                        status_label.configure(
+                            text=f"{copied} kopiert, {result['errors']} Fehler.",
+                            text_color=COLORS["warning"]
+                        )
+                    else:
+                        status_label.configure(
+                            text=f"{copied} Bild(er) auf USB kopiert!",
+                            text_color=COLORS["success"]
+                        )
+                        progress_bar.set(1.0)
+                        progress_bar.configure(progress_color=COLORS["success"])
+
+                    # Abbrechen-Button durch OK ersetzen
+                    for widget in btn_frame.winfo_children():
+                        widget.destroy()
+                    ctk.CTkButton(
+                        btn_frame, text="OK",
+                        font=FONTS["button"], width=120, height=45,
+                        fg_color=COLORS["primary"], hover_color=COLORS["primary_hover"],
+                        corner_radius=SIZES["corner_radius"], command=close_dialog
+                    ).pack()
+
+                dialog.after(0, show_result)
+
+            threading.Thread(target=do_sync, daemon=True).start()
+
+        # Kopieren-Button
+        ctk.CTkButton(
+            btn_frame, text="Kopieren",
+            font=FONTS["button"], width=140, height=50,
+            fg_color=COLORS["success"], hover_color="#00e676",
+            corner_radius=SIZES["corner_radius"], command=on_copy
+        ).pack(side="left", padx=10)
+
+        # Abbrechen-Button
+        ctk.CTkButton(
+            btn_frame, text="Abbrechen",
+            font=FONTS["button"], width=140, height=50,
+            fg_color=COLORS["bg_light"], hover_color=COLORS["bg_card"],
+            text_color=COLORS["text_primary"],
+            corner_radius=SIZES["corner_radius"], command=close_dialog
+        ).pack(side="left", padx=10)
+
+        dialog.protocol("WM_DELETE_WINDOW", close_dialog)
 
     def _check_printer_status(self):
         """Prüft Drucker-Status - BLINKEND wenn Drucker nicht bereit
@@ -1426,7 +1386,10 @@ class PhotoboothApp:
 
         # 3. Galerie: Bilder sind gelöscht, Server zeigt auto leere Galerie
 
-        # 4. Alle Caches leeren
+        # 4. Session zurücksetzen (VOR Template-Laden, sonst werden Boxes gelöscht)
+        self.reset_session()
+
+        # 5. Alle Caches leeren
         TemplateLoader.clear_cache()
         self.filter_manager.clear_cache()
         self._cached_scaled_overlay = None
@@ -1434,10 +1397,10 @@ class PhotoboothApp:
         self._cached_overlay_source_size = None
         self.cached_usb_template = None
 
-        # 5. Template in Config eintragen
+        # 6. Template in Config eintragen
         self.booking_manager.apply_cached_template_to_config(self.config)
 
-        # 6. USB-Template laden (für Systemtest)
+        # 7. USB-Template laden (für Systemtest)
         from src.config.config import find_usb_template
         usb_template = find_usb_template(include_cache=False)
         if usb_template:
@@ -1453,17 +1416,14 @@ class PhotoboothApp:
                 self.overlay_image = overlay
                 logger.info(f"Template geladen: {usb_template} ({len(boxes)} Slots)")
 
-        # 7. Neues Statistik-Event
+        # 8. Neues Statistik-Event
         self._start_statistics_event(usb_root)
 
-        # 8. Galerie starten/stoppen je nach Settings
+        # 9. Galerie starten/stoppen je nach Settings
         if self.config.get("gallery_enabled", False):
             self._start_gallery_if_needed()
         else:
             self._stop_hotspot_if_running()
-
-        # 9. Session zurücksetzen
-        self.reset_session()
 
         # 10. Config speichern
         save_config(self.config)

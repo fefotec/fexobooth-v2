@@ -331,19 +331,38 @@ class USBManager:
         """Gibt die Anzahl der ausstehenden Dateien zurück"""
         return len(self._pending_files)
 
-    def sync_all_missing(self, local_base_path: Path) -> Dict[str, int]:
-        """Synchronisiert ALLE fehlenden lokalen Bilder auf den USB-Stick.
+    def count_missing(self, local_base_path: Path) -> int:
+        """Zählt fehlende Bilder auf dem USB-Stick (schneller Check ohne Kopieren)."""
+        if not self.is_available():
+            return 0
 
-        Diese Methode vergleicht alle lokalen Bilder mit dem USB-Stick
-        und kopiert nur die, die noch nicht auf dem USB existieren.
+        usb_path = self.get_images_path()
+        if not usb_path:
+            return 0
+
+        count = 0
+        for subfolder in ["Single", "Prints"]:
+            local_folder = local_base_path / subfolder
+            usb_folder = usb_path / subfolder
+            if not local_folder.exists():
+                continue
+            local_files = set(f.name for f in local_folder.glob("*.jpg"))
+            usb_files = set(f.name for f in usb_folder.glob("*.jpg")) if usb_folder.exists() else set()
+            count += len(local_files - usb_files)
+        return count
+
+    def sync_all_missing(self, local_base_path: Path, progress_callback=None, cancel_event=None) -> Dict[str, int]:
+        """Synchronisiert ALLE fehlenden lokalen Bilder auf den USB-Stick.
 
         Args:
             local_base_path: Basis-Pfad für lokale Bilder (z.B. BILDER/)
+            progress_callback: Optional callback(copied, total, filename) für Fortschritt
+            cancel_event: Optional threading.Event - wenn gesetzt, wird abgebrochen
 
         Returns:
-            Dict mit {"copied": n, "skipped": n, "errors": n}
+            Dict mit {"copied": n, "skipped": n, "errors": n, "cancelled": bool}
         """
-        result = {"copied": 0, "skipped": 0, "errors": 0}
+        result = {"copied": 0, "skipped": 0, "errors": 0, "cancelled": False}
 
         if not self.is_available():
             logger.warning("sync_all_missing: USB nicht verfügbar")
@@ -357,7 +376,8 @@ class USBManager:
         logger.info(f"Lokal: {local_base_path}")
         logger.info(f"USB:   {usb_path}")
 
-        # Beide Unterordner synchronisieren
+        # Erst alle fehlenden Dateien sammeln
+        missing_files = []  # (source, dest) Tupel
         for subfolder in ["Single", "Prints"]:
             local_folder = local_base_path / subfolder
             usb_folder = usb_path / subfolder
@@ -365,37 +385,39 @@ class USBManager:
             if not local_folder.exists():
                 continue
 
-            # USB-Ordner erstellen falls nötig
             usb_folder.mkdir(exist_ok=True)
-
-            # Alle lokalen JPGs finden
             local_files = set(f.name for f in local_folder.glob("*.jpg"))
-
-            # Alle USB JPGs finden
             usb_files = set(f.name for f in usb_folder.glob("*.jpg"))
-
-            # Fehlende Dateien ermitteln
             missing = local_files - usb_files
-
-            if missing:
-                logger.info(f"{subfolder}: {len(missing)} fehlende Dateien von {len(local_files)} lokal")
-
-            for filename in missing:
-                source = local_folder / filename
-                dest = usb_folder / filename
-
-                try:
-                    shutil.copy2(source, dest)
-                    result["copied"] += 1
-                    logger.debug(f"Kopiert: {filename}")
-                except Exception as e:
-                    logger.warning(f"Kopie fehlgeschlagen: {filename} - {e}")
-                    result["errors"] += 1
-
             result["skipped"] += len(local_files) - len(missing)
 
-        # Pending-Liste leeren da jetzt alles synchronisiert ist
-        if result["copied"] > 0 or result["errors"] == 0:
+            for filename in missing:
+                missing_files.append((local_folder / filename, usb_folder / filename))
+
+        total = len(missing_files)
+        if total > 0:
+            logger.info(f"{total} fehlende Dateien gefunden")
+
+        for i, (source, dest) in enumerate(missing_files):
+            # Abbruch prüfen
+            if cancel_event and cancel_event.is_set():
+                result["cancelled"] = True
+                logger.info(f"USB-Sync abgebrochen nach {result['copied']}/{total}")
+                break
+
+            try:
+                shutil.copy2(source, dest)
+                result["copied"] += 1
+            except Exception as e:
+                logger.warning(f"Kopie fehlgeschlagen: {source.name} - {e}")
+                result["errors"] += 1
+
+            # Fortschritt melden
+            if progress_callback:
+                progress_callback(result["copied"], total, source.name)
+
+        # Pending-Liste leeren wenn alles synchronisiert (nicht bei Abbruch)
+        if not result["cancelled"] and (result["copied"] > 0 or result["errors"] == 0):
             self._pending_files = []
             self._save_pending_files()
 

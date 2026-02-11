@@ -28,6 +28,11 @@ _Aktuell keine niedrig priorisierten Aufgaben_
 ## Erledigt ✅
 
 ### 2026-02-11
+- [x] System-Test "Keine Template-Boxen geladen" Fix (reset_session Reihenfolge)
+- [x] USB-Sync: Bestätigungsdialog statt Auto-Kopie (Fortschritt + Abbrechen)
+- [x] Service-PIN 6588 Freeze behoben (Dialog-Erstellung nach wait_window)
+- [x] Beenden-Button in Admin-Dialog verschoben (nicht mehr im Hauptfenster)
+- [x] Galerie zeigt nur lokale Bilder (nicht USB) + No-Cache Headers
 - [x] Event-Wechsel-Dialog bei neuem USB-Template (Annehmen/Ablehnen)
 - [x] Automatischer System-Test nach Event-Wechsel (Kamera → Template → Druck)
 - [x] FEXOSAFE Backup-Stick Erkennung und Bilder-Sicherung

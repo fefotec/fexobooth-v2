@@ -6,6 +6,15 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### USB-Sync: Niemals automatisch, immer fragen
+
+| | |
+|---|---|
+| **Kontext** | Bilder werden bei jedem Foto auf USB kopiert. Wenn der Kunde den Stick kurz abzieht und wieder einsteckt, fehlen evtl. Bilder auf USB |
+| **Entscheidung** | Kein Auto-Sync. Bestätigungsdialog mit Fortschritt und Abbrechen-Button. Bei neuem Event (anderer Stick) wird NICHT kopiert |
+| **Alternativen** | Auto-Sync bei jedem Einstecken (kopiert ungefragt, auch bei neuem Event), kein Sync (Bilder fehlen auf USB) |
+| **Begründung** | User muss Kontrolle haben. Bei neuem Event dürfen alte Bilder nicht auf den neuen Stick. Nur bei gleichem Event ist Sync sinnvoll. Abbrechen-Option wichtig weil Kopieren auf schwacher Hardware lange dauern kann |
+
 ### Galerie-Server: Immer lokaler Pfad, nie USB
 
 | | |
@@ -137,6 +146,15 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 | **Merke** | USB-Daten immer lokal cachen für Offline-Betrieb |
 
 ---
+
+### Event-Wechsel: reset_session() löscht gerade geladenes Template
+
+| | |
+|---|---|
+| **Problem** | System-Test meldet "Keine Template-Boxen geladen", obwohl Template auf USB funktioniert |
+| **Ursache** | `_execute_event_change()` lud Template in Schritt 6 (`self.template_boxes = boxes`), aber `reset_session()` in Schritt 9 setzte `self.template_boxes = []` zurück. System-Test in Schritt 12 fand leere Boxes |
+| **Lösung** | `reset_session()` VOR Template-Laden verschieben (Schritt 4 statt 9) |
+| **Merke** | Bei mehrstufigen Initialisierungen: Daten die im späteren Schritt gebraucht werden NICHT in einem Zwischenschritt überschreiben. Reihenfolge: Erst aufräumen, dann neu befüllen |
 
 ### Doppelter Screen-Wechsel bei Video-Callbacks
 
