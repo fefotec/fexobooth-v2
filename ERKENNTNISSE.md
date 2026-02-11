@@ -6,6 +6,51 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### Galerie-Server: Immer lokaler Pfad, nie USB
+
+| | |
+|---|---|
+| **Kontext** | Bilder existieren an zwei Orten: Lokal (C:\FexoBooth\BILDER) und USB (F:\BILDER). USB ist Backup und darf nicht gelöscht werden |
+| **Entscheidung** | Galerie liest immer vom lokalen Pfad. Löschen betrifft nur lokale Festplatte. No-cache Headers auf allen Gallery-Responses |
+| **Alternativen** | USB-Pfad bevorzugen (Löschen wirkt nicht in Galerie), USB auch löschen (zerstört Backup) |
+| **Begründung** | Lokaler Pfad = "Arbeitskopie", USB = "Backup". Galerie zeigt die Arbeitskopie. Wenn die gelöscht wird, ist die Galerie sofort leer. USB-Bilder bleiben sicher erhalten |
+
+### Event-Wechsel: Pending-Dialog-Queue statt sofortigem Laden
+
+| | |
+|---|---|
+| **Kontext** | Neuer USB-Stick kann jederzeit eingesteckt werden - auch während aktiver Foto-Session |
+| **Entscheidung** | Pending-Dialog-Queue: Dialoge werden in `_pending_event_change` / `_pending_fexosafe_drive` gespeichert und erst beim Rückkehr zum StartScreen angezeigt |
+| **Alternativen** | Sofort Dialog zeigen (unterbricht User-Session), Komplett im Hintergrund wechseln (User merkt nichts) |
+| **Begründung** | Session nicht unterbrechen, User soll bewusst entscheiden. Event-Wechsel hat Priorität über FEXOSAFE-Dialog |
+
+### Dual-USB-System: fexobox + FEXOSAFE
+
+| | |
+|---|---|
+| **Kontext** | Bilder vom alten Event dürfen nicht auf den neuen Event-Stick, aber müssen gesichert werden |
+| **Entscheidung** | Separater Sicherungs-Stick mit Volume-Label "FEXOSAFE" |
+| **Alternativen** | Gleicher Stick mit Template-Erkennung (fragil), Netzwerk-Backup (offline nicht möglich) |
+| **Begründung** | Klare Trennung: "fexobox" = Event-Stick, "FEXOSAFE" = Sicherungs-Stick. Erkennung über Volume-Label ist eindeutig und robust |
+
+### Tkinter Toplevel-Dialoge: Niemals innerhalb destroy()-Callback erstellen
+
+| | |
+|---|---|
+| **Kontext** | Service-PIN (6588) Eingabe im AdminDialog führte zum App-Freeze |
+| **Entscheidung** | Dialog setzt nur ein Flag (`_open_service = True`) und zerstört sich via `self.destroy()`. Der aufrufende Code (nach `wait_window()`) prüft das Flag und erstellt den neuen Dialog |
+| **Alternativen** | ServiceDialog direkt in `_open_service_menu()` erstellen (verursacht Freeze), `withdraw()` statt `destroy()` (Zombie-Window) |
+| **Begründung** | Wenn Toplevel A sich `destroy()`t und Toplevel B innerhalb desselben Callbacks erstellt, kann B hinter dem Hauptfenster landen. Mit `grab_set()` wird dann das Hauptfenster blockiert → Freeze. Neuen Dialog immer NACH `wait_window()` im aufrufenden Code erstellen |
+
+### Canon SELPHY Fehlererkennung: EnumWindows statt Spooler-API
+
+| | |
+|---|---|
+| **Kontext** | Canon SELPHY CP1000 meldet Papier-/Kassettenfehler NICHT über win32print PRINTER_STATUS Flags |
+| **Entscheidung** | Fehlererkennung über `EnumWindows` API: Canon-Treiber zeigt eigene Dialog-Fenster (Titel "Canon SELPHY CP1000 ..."), deren Child-Controls (Static Labels) den Fehlertext enthalten |
+| **Alternativen** | win32print Spooler-Flags (Canon setzt diese nicht), EnumJobs pStatus (Canon befüllt das Feld nicht zuverlässig) |
+| **Begründung** | Der Canon-Treiber nutzt seinen eigenen Dialog statt des Windows-Spooler-Mechanismus. EnumWindows + EnumChildWindows ist die einzige zuverlässige Methode, den Fehlertext abzugreifen |
+
 ### Video-Wiedergabe: VLC mit DXVA2 Hardware-Beschleunigung
 
 | | |

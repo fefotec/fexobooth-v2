@@ -183,7 +183,7 @@ class ServiceDialog(ctk.CTkToplevel):
         # Nicht packen - wird bei Bedarf angezeigt
 
     def _count_images(self) -> tuple:
-        """Zählt Bilder in beiden Ordnern"""
+        """Zählt Bilder in lokalen Ordnern"""
         single_count = 0
         print_count = 0
 
@@ -293,32 +293,18 @@ class ServiceDialog(ctk.CTkToplevel):
         ).pack(side="left", padx=10)
 
     def _execute_delete(self):
-        """Führt das Löschen aller Bilder aus (lokal + Gallery-Server Pfad)"""
+        """Führt das Löschen aller lokalen Bilder aus (USB bleibt unangetastet)"""
         self._show_progress("Lösche Bilder...", 0.0)
 
         def do_delete():
             deleted = 0
             errors = 0
 
-            # Alle JPGs in lokalen Ordnern sammeln
+            # Nur lokale JPGs sammeln
             all_files = []
             for folder in [SINGLES_PATH, PRINTS_PATH]:
                 if folder.exists():
                     all_files.extend(list(folder.glob("*.jpg")))
-
-            # Auch Gallery-Server Pfad prüfen (kann auf USB zeigen)
-            try:
-                from src.gallery.server import _gallery_path
-                if _gallery_path and _gallery_path.exists() and _gallery_path != IMAGES_PATH:
-                    logger.info(f"Gallery-Pfad unterscheidet sich: {_gallery_path}")
-                    for subfolder in ['Prints', 'Single', '']:
-                        gal_folder = _gallery_path / subfolder if subfolder else _gallery_path
-                        if gal_folder.exists():
-                            for f in gal_folder.glob("*.jpg"):
-                                if f not in all_files:
-                                    all_files.append(f)
-            except Exception as e:
-                logger.debug(f"Gallery-Pfad Prüfung: {e}")
 
             total = len(all_files)
             if total == 0:

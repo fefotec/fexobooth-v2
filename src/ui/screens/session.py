@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw, ImageFont
 from typing import TYPE_CHECKING, Optional
 import time
 import os
+import random
 
 from src.ui.theme import COLORS, FONTS, SIZES
 from src.utils.logging import get_logger
@@ -113,9 +114,9 @@ class SessionScreen(ctk.CTkFrame):
         self._redo_btn = ctk.CTkButton(
             self.preview_container,
             text="↻ NOCHMAL",
-            font=("Segoe UI", 16, "bold"),
-            width=160,
-            height=50,
+            font=("Segoe UI", 20, "bold"),
+            width=180,
+            height=55,
             fg_color=COLORS["primary"],
             hover_color=COLORS["primary_hover"],
             text_color=COLORS["text_primary"],
@@ -491,6 +492,12 @@ class SessionScreen(ctk.CTkFrame):
         self._redo_btn.place(relx=0.5, rely=0.85, anchor="center")
         logger.debug("Redo-Button eingeblendet")
 
+        # Stress-Test: 15% Chance das aktuelle Foto zu wiederholen
+        if self.app.stress_test_active and random.random() < 0.15:
+            delay = random.randint(500, 1500)
+            logger.info("Stress-Test: Redo einzelnes Foto")
+            self.after(delay, self._on_redo_photo)
+
     def _hide_redo_button(self):
         """Versteckt den Redo-Button"""
         if self._redo_visible:
@@ -541,6 +548,7 @@ class SessionScreen(ctk.CTkFrame):
 
     def _on_cancel(self):
         """Abbrechen"""
+        logger.info(f"Session abgebrochen bei Foto {self.app.current_photo_index}/{self.total_photos}")
         self.is_live = False
         self.is_countdown_active = False
         self.app.reset_session()

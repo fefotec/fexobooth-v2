@@ -30,6 +30,7 @@ class AdminDialog(ctk.CTkToplevel):
         self.config_data = config.copy()
         self.result: Optional[Dict[str, Any]] = None
         self.is_authenticated = False
+        self._open_service = False
         self.parent_window = parent
 
         # Modal machen
@@ -256,26 +257,13 @@ class AdminDialog(ctk.CTkToplevel):
             ))
     
     def _open_service_menu(self):
-        """Öffnet das Service-Menü und schließt den Admin-Dialog"""
-        # Admin-Dialog schließen
+        """Markiert Service-Menü zum Öffnen und schließt den Admin-Dialog.
+
+        Das Service-Menü wird NACH wait_window() in show_admin_dialog() geöffnet,
+        damit kein Toplevel innerhalb eines zerstörten Dialogs erstellt wird.
+        """
+        self._open_service = True
         self.destroy()
-
-        # Service-Menü öffnen (braucht Zugriff auf app)
-        # parent_window ist das CTk Root-Fenster
-        try:
-            from src.ui.screens.service import ServiceDialog
-            # App-Referenz über das Root-Fenster finden
-            # Das Root-Fenster hat eine .app Referenz wenn wir sie setzen,
-            # ansonsten über den Aufruf-Stack
-            app = getattr(self.parent_window, '_photobooth_app', None)
-            if app is None:
-                # Fallback: Über den show_admin_dialog Caller
-                logger.warning("Service-Menü: App-Referenz nicht gefunden, versuche Workaround")
-                return
-
-            ServiceDialog(self.parent_window, app)
-        except Exception as e:
-            logger.error(f"Service-Menü Fehler: {e}")
 
     def _show_settings(self):
         """Zeigt Einstellungen - mit Lazy Loading für schnelleren Start"""
@@ -329,7 +317,21 @@ class AdminDialog(ctk.CTkToplevel):
             corner_radius=SIZES["corner_radius"],
             command=self._cancel
         ).pack(side="left")
-        
+
+        # Beenden-Button (App komplett schließen)
+        ctk.CTkButton(
+            btn_frame,
+            text="App beenden",
+            font=FONTS["small"],
+            width=120,
+            height=40,
+            fg_color="#cc0000",
+            hover_color="#990000",
+            text_color="#ffffff",
+            corner_radius=SIZES["corner_radius"],
+            command=self._quit_app
+        ).pack(side="left", padx=(15, 0))
+
         ctk.CTkButton(
             btn_frame,
             text="💾 Speichern",
@@ -1409,6 +1411,14 @@ class AdminDialog(ctk.CTkToplevel):
         ctk.CTkLabel(msg, text=text, font=FONTS["body"]).pack(expand=True)
         msg.after(2000, msg.destroy)
     
+    def _quit_app(self):
+        """Beendet die gesamte Anwendung"""
+        logger.info("App wird beendet (Admin-Dialog)")
+        try:
+            self.parent_window.destroy()
+        except Exception:
+            pass
+
     def _cancel(self):
         """Abbrechen - Fullscreen wird von show_admin_dialog() wiederhergestellt"""
         self.destroy()

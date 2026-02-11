@@ -8,7 +8,9 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 from PIL import Image
 import os
+import time
 import threading
+import random
 
 from src.config.config import load_config, save_config
 from src.camera import get_camera_manager, CANON_AVAILABLE
@@ -95,6 +97,17 @@ class PhotoboothApp:
 
         # USB-Sync Dialog State
         self._sync_dialog_open: bool = False  # Verhindert mehrfache Dialoge
+
+        # Event-Wechsel & FEXOSAFE Dialog State
+        self._pending_event_change: Optional[str] = None   # Neue booking_id
+        self._pending_fexosafe_drive: Optional[str] = None  # Laufwerksbuchstabe
+        self._event_change_dialog_open: bool = False
+        self._fexosafe_dialog_open: bool = False
+        self._last_fexosafe_trigger: float = 0  # Cooldown nach Backup
+
+        # Stress-Test Status (nur im Developer Mode)
+        self.stress_test_active: bool = False
+        self.stress_test_count: int = 0
 
         # Drucker initialisieren wenn nicht gesetzt
         self._init_default_printer()
@@ -213,14 +226,8 @@ class PhotoboothApp:
                     logger.warning(f"Hotspot-Start fehlgeschlagen: {e}")
             threading.Thread(target=_start_hs, daemon=True, name="Hotspot-Start").start()
 
-            # Galerie-Pfad = USB BILDER Ordner oder lokaler Speicher
-            gallery_path = None
-            usb_path = self.usb_manager.get_images_path()
-            if usb_path:
-                gallery_path = usb_path
-            else:
-                # Fallback: Lokaler Bilder-Ordner
-                gallery_path = self.local_storage.get_images_path()
+            # Galerie-Pfad = immer lokaler Speicher (damit Löschen sofort wirkt)
+            gallery_path = self.local_storage.get_images_path()
 
             if gallery_path:
                 port = self.config.get("gallery_port", 8080)
@@ -292,10 +299,8 @@ class PhotoboothApp:
                 logger.debug("Galerie läuft bereits")
                 return
 
-            # Galerie-Pfad ermitteln
-            gallery_path = self.usb_manager.get_images_path()
-            if not gallery_path:
-                gallery_path = self.local_storage.get_images_path()
+            # Galerie-Pfad = immer lokal (damit Löschen sofort wirkt)
+            gallery_path = self.local_storage.get_images_path()
 
             if gallery_path:
                 port = self.config.get("gallery_port", 8080)
@@ -342,7 +347,7 @@ class PhotoboothApp:
         self.root.focus_force()
         self._is_fullscreen = True
         logger.info(f"Vollbild aktiviert: {screen_width}x{screen_height}")
-    
+
     def _exit_fullscreen(self):
         """Beendet Vollbildmodus"""
         self.root.overrideredirect(False)
@@ -390,7 +395,7 @@ class PhotoboothApp:
             self._exit_fullscreen()
         else:
             self._enter_fullscreen()
-    
+
     def _setup_ui(self):
         """Erstellt die UI-Struktur"""
         # Top-Bar
@@ -455,7 +460,23 @@ class PhotoboothApp:
                 font=FONTS["heading"],
                 text_color=COLORS["primary"]
             ).pack()
-        
+
+        # Stress-Test Button (nur im Developer Mode)
+        if self.config.get("developer_mode", False):
+            self.stress_test_btn = ctk.CTkButton(
+                bar,
+                text="STRESS TEST",
+                width=150,
+                height=35,
+                font=("Segoe UI", 12, "bold"),
+                fg_color=COLORS["bg_light"],
+                hover_color=COLORS["warning"],
+                text_color=COLORS["text_primary"],
+                corner_radius=8,
+                command=self._toggle_stress_test
+            )
+            self.stress_test_btn.pack(side="left", padx=10, pady=10)
+
         # Status-Bereich rechts
         status_frame = ctk.CTkFrame(bar, fg_color="transparent")
         status_frame.pack(side="right", padx=20, pady=10)
@@ -483,11 +504,11 @@ class PhotoboothApp:
             text_color=COLORS["primary"],
             fg_color=COLORS["bg_light"],
             corner_radius=8,
-            width=180,
-            padx=12,
+            width=160,
+            padx=10,
             pady=5
         )
-        self.booking_label.pack(side="right", padx=10)
+        self.booking_label.pack(side="right", padx=8)
 
         # USB-Status (feste Breite damit Position stabil bleibt)
         self.usb_status = ctk.CTkLabel(
@@ -497,13 +518,13 @@ class PhotoboothApp:
             text_color=COLORS["warning"],
             fg_color=COLORS["bg_light"],
             corner_radius=8,
-            width=160,  # Feste Breite für stabiles Layout
-            padx=10,
+            width=145,  # Feste Breite für stabiles Layout
+            padx=8,
             pady=5
         )
-        self.usb_status.pack(side="right", padx=5)
+        self.usb_status.pack(side="right", padx=4)
 
-        # Drucker-Status
+        # Drucker-Status (feste Breite wie USB-Status)
         self.printer_status = ctk.CTkLabel(
             status_frame,
             text="",
@@ -511,18 +532,35 @@ class PhotoboothApp:
             text_color=COLORS["error"],
             fg_color=COLORS["bg_light"],
             corner_radius=8,
-            padx=10,
+            width=155,  # Feste Breite für stabiles Layout
+            padx=8,
             pady=5
         )
         self.printer_status.pack(side="right", padx=5)
         self.printer_status.pack_forget()  # Verstecken wenn OK
-        
+        self._printer_blink_state = False
+
+        # Strom-Status (kompakt, immer sichtbar)
+        self.power_status = ctk.CTkLabel(
+            status_frame,
+            text="⚡",
+            font=FONTS["small"],
+            text_color=COLORS["success"],
+            fg_color=COLORS["bg_light"],
+            corner_radius=8,
+            width=55,
+            padx=4,
+            pady=5
+        )
+        self.power_status.pack(side="right", padx=3)
+
         return bar
     
     def _start_status_checks(self):
         """Startet periodische Status-Checks"""
         self._check_usb_status()
         self._check_printer_status()
+        self._check_power_status()
         self._check_fullscreen_restore()
     
     def _check_usb_status(self):
@@ -538,29 +576,32 @@ class PhotoboothApp:
             usb_drive = self.usb_manager.find_usb_stick()
             if usb_drive:
                 usb_root = Path(usb_drive)
-                
+
                 # Prüfen ob es eine neue Buchung ist
                 new_booking = self.booking_manager.check_usb_for_new_booking(usb_root)
-                
-                if new_booking:
-                    # Neue Buchung gefunden -> laden
-                    if self.booking_manager.load_from_usb(usb_root, force=True):
-                        self._update_booking_display()
-                        
-                        # Alle BookingSettings auf Config anwenden
-                        self.booking_manager.apply_settings_to_config(self.config)
-                        
-                        # Statistik-Event starten (lokal, nicht auf USB!)
-                        self._start_statistics_event(usb_root)
-                        
-                        # Galerie starten wenn in settings.json aktiviert
-                        if self.config.get("gallery_enabled", False):
-                            self._start_gallery_if_needed()
-                            
+
+                if new_booking and not self._event_change_dialog_open:
+                    # Neue Buchung erkannt -> Event-Wechsel-Dialog
+                    if self.current_screen_name == "start":
+                        self._show_event_change_dialog(new_booking)
+                    elif not self._pending_event_change:
+                        self._pending_event_change = new_booking
+                        logger.info(f"Event-Wechsel pending: {new_booking} (warte auf StartScreen)")
+
                 elif not self.booking_manager.is_loaded:
                     # Noch keine Buchung geladen -> aus USB oder Cache laden
                     self.booking_manager.load_from_usb(usb_root)
                     self._update_booking_display()
+
+        # FEXOSAFE Sicherungs-Stick prüfen
+        fexosafe_drive = self.usb_manager.find_fexosafe_stick()
+        if fexosafe_drive and not self._fexosafe_dialog_open:
+            if time.time() - self._last_fexosafe_trigger > 30:
+                if self.current_screen_name == "start":
+                    self._show_fexosafe_dialog(fexosafe_drive)
+                elif not self._pending_fexosafe_drive:
+                    self._pending_fexosafe_drive = fexosafe_drive
+                    logger.info("FEXOSAFE pending (warte auf StartScreen)")
 
         # USB wurde gerade eingesteckt -> ALLE fehlenden Bilder automatisch synchronisieren
         if is_available and not self._sync_dialog_open:
@@ -859,32 +900,368 @@ class PhotoboothApp:
         thread.start()
 
     def _check_printer_status(self):
-        """Prüft Drucker-Status"""
+        """Prüft Drucker-Status - BLINKEND wenn Drucker nicht bereit
+
+        Prüft 3 Ebenen:
+        1. Drucker-Spooler-Status (offline, error, paper_out, paper_jam)
+        2. Druckjob-Queue (fehlgeschlagene Jobs = Kassette/Papier leer)
+        3. Canon Status-Monitor Fenster in Vordergrund bringen
+        """
+        problem_text = None
+
         try:
             import win32print
             printer_name = self.config.get("printer_name") or win32print.GetDefaultPrinter()
-            
-            hPrinter = win32print.OpenPrinter(printer_name)
-            info = win32print.GetPrinter(hPrinter, 2)
-            win32print.ClosePrinter(hPrinter)
-            
-            status = info.get("Status", 0)
-            
-            if status & 0x8:  # Papier leer
-                self.printer_status.configure(text="⚠️ Papier leer!")
-                self.printer_status.pack(side="right", padx=5)
-            elif status & 0x80:  # Offline
-                self.printer_status.configure(text="⚠️ Drucker offline")
-                self.printer_status.pack(side="right", padx=5)
+
+            if not printer_name:
+                problem_text = "KEIN DRUCKER!"
             else:
-                self.printer_status.pack_forget()
-                
+                hPrinter = win32print.OpenPrinter(printer_name)
+                try:
+                    info = win32print.GetPrinter(hPrinter, 2)
+
+                    status = info.get("Status", 0)
+                    attributes = info.get("Attributes", 0)
+
+                    # 1. Spooler-Status-Flags prüfen
+                    is_offline = bool(status & 0x80)          # PRINTER_STATUS_OFFLINE
+                    is_work_offline = bool(attributes & 0x400) # PRINTER_ATTRIBUTE_WORK_OFFLINE
+                    is_error = bool(status & 0x2)              # PRINTER_STATUS_ERROR
+                    is_paper_jam = bool(status & 0x8)          # PRINTER_STATUS_PAPER_JAM
+                    is_paper_out = bool(status & 0x10)         # PRINTER_STATUS_PAPER_OUT
+                    is_not_available = bool(status & 0x1000)   # PRINTER_STATUS_NOT_AVAILABLE
+                    is_door_open = bool(status & 0x400000)     # PRINTER_STATUS_DOOR_OPEN
+                    is_no_toner = bool(status & 0x40000)       # PRINTER_STATUS_TONER_OUT
+                    is_user_intervention = bool(status & 0x100000)  # PRINTER_STATUS_USER_INTERVENTION
+
+                    if is_offline or is_work_offline or is_not_available:
+                        problem_text = "DRUCKER AUS!"
+                    elif is_paper_out:
+                        problem_text = "PAPIER LEER!"
+                    elif is_no_toner:
+                        problem_text = "KASSETTE LEER!"
+                    elif is_paper_jam:
+                        problem_text = "PAPIERSTAU!"
+                    elif is_door_open:
+                        problem_text = "KLAPPE OFFEN!"
+                    elif is_user_intervention:
+                        problem_text = "DRUCKER PRÜFEN!"
+                    elif is_error:
+                        problem_text = "DRUCKER FEHLER!"
+
+                    # 2. Druckjob-Queue prüfen (Canon meldet Fehler oft nur hier)
+                    if not problem_text:
+                        problem_text = self._check_print_jobs(hPrinter)
+
+                finally:
+                    win32print.ClosePrinter(hPrinter)
+
         except Exception:
-            pass  # Unter macOS/Linux ignorieren
-        
-        # Nächster Check in 5 Sekunden
-        self.root.after(5000, self._check_printer_status)
-    
+            problem_text = "DRUCKER FEHLT!"
+
+        # 3. Canon-Treiber-Fehlerfenster erkennen (zuverlässigste Methode!)
+        if not problem_text:
+            canon_error = self._detect_canon_error_window()
+            if canon_error:
+                problem_text = canon_error
+
+        if problem_text:
+            # Canon Status-Fenster in Vordergrund bringen
+            self._bring_printer_dialog_to_front()
+
+            # Blinkend anzeigen (wie USB-Warnung)
+            self._printer_blink_state = not self._printer_blink_state
+
+            if self._printer_blink_state:
+                self.printer_status.configure(
+                    text=f"⚠️ {problem_text}",
+                    text_color="#ffffff",
+                    fg_color="#ff0000"  # Knallrot
+                )
+            else:
+                self.printer_status.configure(
+                    text=f"⚠️ {problem_text}",
+                    text_color="#000000",
+                    fg_color="#ffcc00"  # Gelb
+                )
+            self.printer_status.pack(side="right", padx=5)
+            # Bei Problem: schneller blinken (1s)
+            self.root.after(1000, self._check_printer_status)
+        else:
+            # Alles OK -> Warnung verstecken
+            self._printer_blink_state = False
+            self.printer_status.pack_forget()
+            # Kein Problem: seltener prüfen (5s)
+            self.root.after(5000, self._check_printer_status)
+
+    def _check_print_jobs(self, hPrinter) -> str:
+        """Prüft Druckjobs auf Fehler (Canon meldet Kassette/Papier hier)
+
+        Nutzt JOB_INFO Level 2 für das pStatus-Textfeld, das Canon-Treiber
+        möglicherweise mit spezifischen Fehlertexten befüllen.
+
+        Returns:
+            Fehlertext oder None wenn alles OK
+        """
+        try:
+            import win32print
+
+            # Level 2 für pStatus-Textfeld (Level 1 hat kein pStatus!)
+            jobs = win32print.EnumJobs(hPrinter, 0, 10, 2)
+            if not jobs:
+                return None
+
+            for job in jobs:
+                job_status = job.get("Status", 0)
+
+                # Job-Status-Flags (aus winspool.h)
+                JOB_STATUS_ERROR = 0x2
+                JOB_STATUS_OFFLINE = 0x20
+                JOB_STATUS_PAPEROUT = 0x40
+                JOB_STATUS_BLOCKED = 0x200
+                JOB_STATUS_USER_INTERVENTION = 0x400
+
+                # pStatus: Freitext vom Drucker-Treiber (Canon-spezifisch)
+                status_text = (job.get("pStatus") or "").strip()
+
+                # Zuerst Freitext prüfen (spezifischer als Flags)
+                if status_text:
+                    lower = status_text.lower()
+                    logger.info(f"Druckjob pStatus: '{status_text}' (flags=0x{job_status:X})")
+
+                    # Canon Selphy Fehlertexte erkennen
+                    if any(w in lower for w in ["ink", "tinte", "kassette", "cartridge", "cassette"]):
+                        return "KASSETTE LEER!"
+                    elif any(w in lower for w in ["paper", "papier"]):
+                        return "PAPIER LEER!"
+                    elif any(w in lower for w in ["mismatch", "incorrect", "stimmt nicht"]):
+                        return "KASSETTE FALSCH!"
+                    elif any(w in lower for w in ["jam", "stau"]):
+                        return "PAPIERSTAU!"
+                    elif any(w in lower for w in ["cover", "door", "klappe", "deckel"]):
+                        return "KLAPPE OFFEN!"
+                    else:
+                        # Unbekannter Text -> trotzdem anzeigen (gekürzt)
+                        short = status_text[:20]
+                        return f"FEHLER: {short}"
+
+                # Dann Flags prüfen
+                if job_status & JOB_STATUS_PAPEROUT:
+                    return "PAPIER/KASSETTE LEER!"
+                elif job_status & JOB_STATUS_USER_INTERVENTION:
+                    return "DRUCKER PRÜFEN!"
+                elif job_status & JOB_STATUS_BLOCKED:
+                    return "DRUCK BLOCKIERT!"
+                elif job_status & JOB_STATUS_OFFLINE:
+                    return "DRUCKER OFFLINE!"
+                elif job_status & JOB_STATUS_ERROR:
+                    return "DRUCK-FEHLER!"
+
+        except Exception as e:
+            logger.debug(f"Job-Check Fehler: {e}")
+
+        return None
+
+    def _detect_canon_error_window(self) -> str:
+        """Erkennt Canon-Treiber-Fehlerfenster via Windows EnumWindows API
+
+        Canon SELPHY zeigt bei Papier-/Kassettenfehlern ein eigenes
+        Dialog-Fenster. Titel z.B.: 'Canon SELPHY CP1000 (Kopie 1)(USB002)'
+        Inhalt z.B.: 'Kein Papier / Kassette falsch eingesetzt!'
+
+        Returns: Kurztext für Status-Leiste oder None
+        """
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = ctypes.windll.user32
+
+            WNDENUMPROC = ctypes.WINFUNCTYPE(
+                wintypes.BOOL, wintypes.HWND, wintypes.LPARAM
+            )
+
+            found_text = [None]
+
+            def _read_child_text(hwnd, lParam):
+                """Liest Text aus Static-Label Child-Controls"""
+                class_buf = ctypes.create_unicode_buffer(64)
+                user32.GetClassNameW(hwnd, class_buf, 64)
+
+                if class_buf.value.lower() == "static":
+                    length = user32.GetWindowTextLengthW(hwnd)
+                    if length > 5:
+                        text_buf = ctypes.create_unicode_buffer(length + 1)
+                        user32.GetWindowTextW(hwnd, text_buf, length + 1)
+                        text = text_buf.value.strip()
+                        if text and len(text) > 5:
+                            found_text[0] = text
+                            return False  # Gefunden, Stop
+                return True
+
+            # Callback-Referenzen halten (ctypes GC-Schutz)
+            child_proc = WNDENUMPROC(_read_child_text)
+
+            def _find_canon_window(hwnd, lParam):
+                if not user32.IsWindowVisible(hwnd):
+                    return True
+
+                title_buf = ctypes.create_unicode_buffer(256)
+                user32.GetWindowTextW(hwnd, title_buf, 256)
+                title = title_buf.value.lower()
+
+                if "canon selphy" in title:
+                    # Child-Controls nach Fehlertext durchsuchen
+                    user32.EnumChildWindows(hwnd, child_proc, 0)
+                    if not found_text[0]:
+                        found_text[0] = "DRUCKER PRÜFEN!"
+                    return False  # Gefunden, Stop
+                return True
+
+            enum_proc = WNDENUMPROC(_find_canon_window)
+            user32.EnumWindows(enum_proc, 0)
+
+            if found_text[0]:
+                error = found_text[0]
+                error_lower = error.lower()
+                logger.info(f"Canon-Fehlerfenster erkannt: '{error}'")
+                # Bekannte Canon SELPHY Fehlermeldungen → Kurztext
+                # WICHTIG: "tintenkassette" VOR "kassette" prüfen!
+                if "tintenkassette" in error_lower or "druckerpatrone" in error_lower:
+                    return "KEINE TINTENKASSETTE!"
+                elif "kein papier" in error_lower:
+                    return "KEIN PAPIER / KASSETTE!"
+                elif "kassette" in error_lower:
+                    return "KASSETTE PRÜFEN!"
+                elif "tinte" in error_lower or "ink" in error_lower:
+                    return "TINTE LEER!"
+                elif error == "DRUCKER PRÜFEN!":
+                    return error
+                else:
+                    # Unbekannter Fehler - kürzen für Leiste
+                    upper = error.upper()
+                    return upper[:25] + "..." if len(upper) > 25 else upper
+
+        except Exception as e:
+            logger.debug(f"Canon-Fenster-Erkennung: {e}")
+
+        return None
+
+    def _bring_printer_dialog_to_front(self):
+        """Bringt Canon/Windows Drucker-Dialoge in den Vordergrund
+
+        Sucht nach bekannten Drucker-Status-Fenstern und holt sie
+        vor die Fullscreen-App (die durch overrideredirect oben liegt).
+        """
+        if not hasattr(self, '_last_printer_dialog_check'):
+            self._last_printer_dialog_check = 0
+
+        # Nur alle 5s prüfen (FindWindow ist günstig, aber nicht spammen)
+        if time.time() - self._last_printer_dialog_check < 5:
+            return
+        self._last_printer_dialog_check = time.time()
+
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = ctypes.windll.user32
+            EnumWindows = user32.EnumWindows
+            GetWindowTextW = user32.GetWindowTextW
+            IsWindowVisible = user32.IsWindowVisible
+            SetForegroundWindow = user32.SetForegroundWindow
+            ShowWindow = user32.ShowWindow
+            SetWindowPos = user32.SetWindowPos
+
+            SW_SHOW = 5
+            HWND_TOPMOST = -1
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+            SWP_SHOWWINDOW = 0x0040
+
+            # Bekannte Fenster-Titel von Drucker-Dialogen
+            printer_keywords = [
+                "canon", "selphy", "drucker", "printer",
+                "druckerstatus", "printer status",
+                "ink", "tinte", "papier", "paper",
+                "kassette", "cartridge",
+            ]
+
+            WNDENUMPROC = ctypes.WINFUNCTYPE(
+                wintypes.BOOL, wintypes.HWND, wintypes.LPARAM
+            )
+
+            def enum_callback(hwnd, lParam):
+                if not IsWindowVisible(hwnd):
+                    return True
+
+                title = ctypes.create_unicode_buffer(256)
+                GetWindowTextW(hwnd, title, 256)
+                window_title = title.value.lower()
+
+                if not window_title:
+                    return True
+
+                for keyword in printer_keywords:
+                    if keyword in window_title:
+                        # Fenster in Vordergrund bringen
+                        ShowWindow(hwnd, SW_SHOW)
+                        SetWindowPos(
+                            hwnd, HWND_TOPMOST,
+                            0, 0, 0, 0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
+                        )
+                        logger.info(f"Drucker-Dialog in Vordergrund: '{title.value}'")
+                        return True
+
+                return True
+
+            EnumWindows(WNDENUMPROC(enum_callback), 0)
+
+        except Exception as e:
+            logger.debug(f"Drucker-Dialog Vordergrund fehlgeschlagen: {e}")
+
+    def _check_power_status(self):
+        """Prüft Stromversorgung - Grün=Netzbetrieb, Orange=Akku"""
+        try:
+            import ctypes
+
+            class SYSTEM_POWER_STATUS(ctypes.Structure):
+                _fields_ = [
+                    ('ACLineStatus', ctypes.c_byte),
+                    ('BatteryFlag', ctypes.c_byte),
+                    ('BatteryLifePercent', ctypes.c_byte),
+                    ('SystemStatusFlag', ctypes.c_byte),
+                    ('BatteryLifeTime', ctypes.c_ulong),
+                    ('BatteryFullLifeTime', ctypes.c_ulong),
+                ]
+
+            status = SYSTEM_POWER_STATUS()
+            ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(status))
+
+            percent = status.BatteryLifePercent
+            on_ac = status.ACLineStatus == 1
+
+            if on_ac:
+                self.power_status.configure(
+                    text="⚡",
+                    text_color=COLORS["success"],
+                    fg_color=COLORS["bg_light"]
+                )
+            else:
+                # Akku-Modus: Prozent anzeigen
+                pct_text = f" {percent}%" if 0 <= percent <= 100 else ""
+                self.power_status.configure(
+                    text=f"⚡{pct_text}",
+                    text_color="#ff8c00",  # Orange
+                    fg_color=COLORS["bg_light"]
+                )
+        except Exception:
+            pass  # Kein Akku-Info verfügbar (Desktop-PC etc.)
+
+        # Alle 10 Sekunden prüfen (Stromstatus ändert sich selten)
+        self.root.after(10000, self._check_power_status)
+
     def show_screen(self, screen_name: str, **kwargs):
         """Wechselt zu einem Screen"""
         from src.ui.screens.start import StartScreen
@@ -935,18 +1312,29 @@ class PhotoboothApp:
         if hasattr(self.current_screen, "on_show"):
             self.current_screen.on_show(**kwargs)
 
-        logger.debug(f"Screen gewechselt: {screen_name}")
-    
+        logger.info(f"Screen gewechselt: {screen_name}")
+
+        # Pending-Dialoge prüfen wenn StartScreen angezeigt wird
+        if screen_name == "start":
+            self.root.after(500, self._check_pending_dialogs)
+
+        # Stress-Test: Automatisch weitermachen
+        if self.stress_test_active:
+            self._stress_test_auto_proceed(screen_name)
+
     def show_admin_dialog(self):
         """Zeigt den Admin-Dialog"""
         from src.ui.screens.admin import AdminDialog
-        self._is_fullscreen = False
+        self._exit_fullscreen()
         dialog = AdminDialog(self.root, self.config)
         self.root.wait_window(dialog)
 
-        # Fullscreen korrekt wiederherstellen (mit _set_appwindow + withdraw/deiconify)
-        if self.config.get("start_fullscreen", True):
-            self._enter_fullscreen()
+        # Service-Menü öffnen wenn über Service-PIN angefordert
+        if getattr(dialog, '_open_service', False):
+            from src.ui.screens.service import ServiceDialog
+            service = ServiceDialog(self.root, self)
+            self.root.wait_window(service)
+            return
 
         if dialog.result:
             self.config = dialog.result
@@ -969,13 +1357,168 @@ class PhotoboothApp:
                 if hasattr(self.current_screen, "on_show"):
                     self.current_screen.on_show()
     
+    # ========================================
+    # Event-Wechsel & FEXOSAFE
+    # ========================================
+
+    def _check_pending_dialogs(self):
+        """Prüft und zeigt anstehende Dialoge auf dem StartScreen"""
+        if self.current_screen_name != "start":
+            return
+
+        # Event-Wechsel hat Priorität
+        if self._pending_event_change and not self._event_change_dialog_open:
+            new_booking = self._pending_event_change
+            self._pending_event_change = None
+            self._show_event_change_dialog(new_booking)
+            return  # Nur ein Dialog gleichzeitig
+
+        # FEXOSAFE Backup
+        if self._pending_fexosafe_drive and not self._fexosafe_dialog_open:
+            drive = self._pending_fexosafe_drive
+            self._pending_fexosafe_drive = None
+            self._show_fexosafe_dialog(drive)
+
+    def _show_event_change_dialog(self, new_booking_id: str):
+        """Zeigt den Event-Wechsel Dialog"""
+        if self._event_change_dialog_open:
+            return
+
+        self._event_change_dialog_open = True
+        logger.info(f"Event-Wechsel Dialog: {new_booking_id}")
+
+        from src.ui.dialogs.event_change import EventChangeDialog
+
+        def on_accept():
+            self._event_change_dialog_open = False
+            self._execute_event_change(new_booking_id)
+
+        def on_reject():
+            self._event_change_dialog_open = False
+            logger.info(f"Event-Wechsel abgelehnt: {new_booking_id}")
+
+        EventChangeDialog(
+            self.root, new_booking_id,
+            on_accept=on_accept,
+            on_reject=on_reject
+        )
+
+    def _execute_event_change(self, new_booking_id: str):
+        """Führt den Event-Wechsel durch"""
+        logger.info(f"=== EVENT-WECHSEL: {new_booking_id} ===")
+
+        usb_drive = self.usb_manager.find_usb_stick()
+        if not usb_drive:
+            logger.error("USB-Stick nicht mehr verfügbar für Event-Wechsel!")
+            return
+
+        usb_root = Path(usb_drive)
+
+        # 1. Neue Buchung + Template vom USB laden
+        if self.booking_manager.load_from_usb(usb_root, force=True):
+            self._update_booking_display()
+            self.booking_manager.apply_settings_to_config(self.config)
+            logger.info(f"Neue Buchung geladen: {new_booking_id}")
+
+        # 2. Alle Bilder auf Tablet löschen
+        deleted = self.local_storage.delete_all_images()
+        logger.info(f"Event-Wechsel: {deleted} Bilder gelöscht")
+
+        # 3. Galerie: Bilder sind gelöscht, Server zeigt auto leere Galerie
+
+        # 4. Alle Caches leeren
+        TemplateLoader.clear_cache()
+        self.filter_manager.clear_cache()
+        self._cached_scaled_overlay = None
+        self._cached_overlay_scale = 0.0
+        self._cached_overlay_source_size = None
+        self.cached_usb_template = None
+
+        # 5. Template in Config eintragen
+        self.booking_manager.apply_cached_template_to_config(self.config)
+
+        # 6. USB-Template laden (für Systemtest)
+        from src.config.config import find_usb_template
+        usb_template = find_usb_template(include_cache=False)
+        if usb_template:
+            overlay, boxes = TemplateLoader.load(usb_template, use_cache=False)
+            if overlay and boxes:
+                self.cached_usb_template = {
+                    "path": usb_template,
+                    "name": os.path.basename(usb_template),
+                    "overlay": overlay,
+                    "boxes": boxes
+                }
+                self.template_boxes = boxes
+                self.overlay_image = overlay
+                logger.info(f"Template geladen: {usb_template} ({len(boxes)} Slots)")
+
+        # 7. Neues Statistik-Event
+        self._start_statistics_event(usb_root)
+
+        # 8. Galerie starten/stoppen je nach Settings
+        if self.config.get("gallery_enabled", False):
+            self._start_gallery_if_needed()
+        else:
+            self._stop_hotspot_if_running()
+
+        # 9. Session zurücksetzen
+        self.reset_session()
+
+        # 10. Config speichern
+        save_config(self.config)
+
+        # 11. StartScreen aktualisieren
+        if self.current_screen_name == "start" and self.current_screen:
+            self.current_screen.config = self.config
+            if hasattr(self.current_screen, "on_show"):
+                self.current_screen.on_show()
+
+        # 12. System-Test starten
+        self._run_system_test()
+
+    def _run_system_test(self):
+        """Startet den automatischen System-Test nach Event-Wechsel"""
+        from src.ui.dialogs.system_test import SystemTestDialog
+
+        def on_complete(success: bool, errors: list):
+            logger.info(f"System-Test abgeschlossen: success={success}, errors={errors}")
+            # StartScreen refreshen nach Test
+            if self.current_screen_name == "start" and self.current_screen:
+                if hasattr(self.current_screen, "on_show"):
+                    self.current_screen.on_show()
+
+        SystemTestDialog(self.root, self, on_complete=on_complete)
+
+    def _show_fexosafe_dialog(self, drive: str):
+        """Zeigt den FEXOSAFE Backup Dialog"""
+        if self._fexosafe_dialog_open:
+            return
+
+        self._fexosafe_dialog_open = True
+        logger.info(f"FEXOSAFE Dialog: {drive}")
+
+        from src.ui.dialogs.backup import FexosafeBackupDialog
+
+        def on_complete():
+            self._fexosafe_dialog_open = False
+            self._last_fexosafe_trigger = time.time()
+            logger.info("FEXOSAFE Backup abgeschlossen")
+
+        FexosafeBackupDialog(self.root, self, drive, on_complete=on_complete)
+
     def play_video(self, video_key: str, next_screen: str):
         """Spielt ein Video ab und wechselt dann zum nächsten Screen
-        
+
         Args:
             video_key: Config-Key für Video (z.B. "video_start", "video_end")
             next_screen: Screen nach Video-Ende
         """
+        # Stress-Test: Videos überspringen für schnellere Zyklen
+        if self.stress_test_active:
+            self.show_screen(next_screen)
+            return
+
         video_path = self.config.get(video_key, "")
         
         logger.info(f"🎬 play_video aufgerufen: key={video_key}, path='{video_path}'")
@@ -997,11 +1540,16 @@ class PhotoboothApp:
     
     def play_video_and_return(self, video_path: str, callback):
         """Spielt ein Video ab und ruft dann Callback auf (für Zwischen-Videos)
-        
+
         Args:
             video_path: Direkter Pfad zum Video
             callback: Funktion die nach Video-Ende aufgerufen wird
         """
+        # Stress-Test: Videos überspringen, Callback verzögert aufrufen
+        if self.stress_test_active:
+            self.root.after(50, callback)
+            return
+
         logger.info(f"🎬 play_video_and_return aufgerufen: path='{video_path}'")
         
         if not video_path:
@@ -1119,6 +1667,169 @@ class PhotoboothApp:
         self.filter_manager.clear_cache()
         logger.info("Session zurückgesetzt")
     
+    # ========================================
+    # Stress-Test (Developer Mode)
+    # ========================================
+
+    def _toggle_stress_test(self):
+        """Belastungstest ein-/ausschalten"""
+        if self.stress_test_active:
+            self._stop_stress_test()
+        else:
+            self._start_stress_test()
+
+    def _start_stress_test(self):
+        """Startet den Belastungstest - simuliert realistisches Nutzerverhalten"""
+        self.stress_test_active = True
+        self.stress_test_count = 0
+        self.stress_test_redos = 0
+        self.stress_test_btn.configure(
+            text="STOP (0)",
+            fg_color=COLORS["error"],
+            hover_color="#ff4444"
+        )
+        logger.info("=" * 60)
+        logger.info("BELASTUNGSTEST GESTARTET - Realistische Simulation")
+        logger.info("=" * 60)
+
+        # Wenn auf dem Start-Screen, sofort loslegen
+        if self.current_screen_name == "start":
+            delay = random.randint(500, 1500)
+            self.root.after(delay, self._stress_test_auto_start)
+
+    def _stop_stress_test(self):
+        """Stoppt den Belastungstest"""
+        self.stress_test_active = False
+        self.stress_test_btn.configure(
+            text=f"STRESS TEST ({self.stress_test_count})",
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["warning"]
+        )
+        logger.info("=" * 60)
+        logger.info(f"BELASTUNGSTEST GESTOPPT: {self.stress_test_count} Sessions, "
+                     f"{self.stress_test_redos} Redos")
+        logger.info("=" * 60)
+
+    def _stress_test_auto_proceed(self, screen_name: str):
+        """Stress-Test: Automatisch zum nächsten Schritt mit zufälligem Delay"""
+        if not self.stress_test_active:
+            return
+
+        if screen_name == "start":
+            delay = random.randint(800, 2000)
+            self.root.after(delay, self._stress_test_auto_start)
+        elif screen_name == "filter":
+            # User schaut sich Filter an, klickt durch
+            delay = random.randint(500, 1500)
+            self.root.after(delay, self._stress_test_auto_filter)
+        elif screen_name == "final":
+            # User betrachtet Ergebnis
+            delay = random.randint(1500, 4000)
+            self.root.after(delay, self._stress_test_auto_finish)
+
+    def _stress_test_auto_start(self):
+        """Stress-Test: Template auswählen und starten (kein Single-Modus)"""
+        if not self.stress_test_active:
+            return
+
+        start_screen = self.screens.get("start")
+        if not start_screen or not start_screen.cards:
+            return
+
+        # Template-Karten bevorzugen (kein "single" - Stresstest soll Template feuern)
+        template_cards = [(k, c) for k, c in start_screen.cards.items() if k != "single"]
+        if template_cards:
+            key, card = random.choice(template_cards)
+        else:
+            # Fallback: Nur Single verfügbar
+            key, card = list(start_screen.cards.items())[0]
+        start_screen._select_card(card, key)
+        logger.info(f"Stress-Test: Template '{key}' gewählt")
+
+        if start_screen.selected_option:
+            # Kurze Pause wie ein echter User der auf Start tippt
+            delay = random.randint(300, 800)
+            self.root.after(delay, lambda: (
+                start_screen._on_start() if self.stress_test_active else None
+            ))
+
+    def _stress_test_auto_filter(self):
+        """Stress-Test: Zufälligen Filter auswählen, evtl. mehrere durchprobieren"""
+        if not self.stress_test_active:
+            return
+
+        screen = self.current_screen
+        if not hasattr(screen, 'filter_buttons') or not screen.filter_buttons:
+            # Fallback: einfach weiter
+            if hasattr(screen, '_on_continue'):
+                screen._on_continue()
+            return
+
+        buttons = list(screen.filter_buttons.values())
+
+        # 40% Chance: User probiert mehrere Filter durch bevor er sich entscheidet
+        if random.random() < 0.4:
+            self._stress_test_browse_filters(buttons, browse_count=random.randint(2, 4))
+        else:
+            # Direkt einen zufälligen Filter wählen
+            btn = random.choice(buttons)
+            screen._select_filter(btn)
+            logger.info(f"Stress-Test: Filter '{btn.filter_key}' gewählt")
+            delay = random.randint(400, 1200)
+            self.root.after(delay, self._stress_test_click_continue)
+
+    def _stress_test_browse_filters(self, buttons, browse_count, current=0):
+        """Stress-Test: Durch mehrere Filter klicken (realistisches Stöbern)"""
+        if not self.stress_test_active or current >= browse_count:
+            # Fertig mit Stöbern -> Weiter
+            delay = random.randint(300, 800)
+            self.root.after(delay, self._stress_test_click_continue)
+            return
+
+        screen = self.current_screen
+        if not hasattr(screen, '_select_filter'):
+            return
+
+        btn = random.choice(buttons)
+        screen._select_filter(btn)
+        logger.info(f"Stress-Test: Filter durchstöbern ({current+1}/{browse_count}): "
+                     f"'{btn.filter_key}'")
+
+        # Nächsten Filter nach kurzem Delay
+        delay = random.randint(400, 1000)
+        self.root.after(delay, lambda: self._stress_test_browse_filters(
+            buttons, browse_count, current + 1
+        ))
+
+    def _stress_test_click_continue(self):
+        """Stress-Test: Weiter-Button auf Filter-Screen drücken"""
+        if not self.stress_test_active:
+            return
+        if hasattr(self.current_screen, '_on_continue'):
+            self.current_screen._on_continue()
+
+    def _stress_test_auto_finish(self):
+        """Stress-Test: Final-Screen - zufällig Nochmal oder Fertig"""
+        if not self.stress_test_active:
+            return
+
+        self.stress_test_count += 1
+        self.stress_test_btn.configure(text=f"STOP ({self.stress_test_count})")
+
+        # Zufällige Aktion wie ein echter Benutzer
+        # 25% Redo (nochmal fotografieren), 75% Fertig
+        do_redo = random.random() < 0.25
+
+        if do_redo and hasattr(self.current_screen, '_on_redo'):
+            self.stress_test_redos += 1
+            logger.info(f"Stress-Test Session #{self.stress_test_count}: "
+                         f"REDO (Redos gesamt: {self.stress_test_redos})")
+            self.current_screen._on_redo()
+        else:
+            logger.info(f"Stress-Test Session #{self.stress_test_count}: FERTIG")
+            if hasattr(self.current_screen, '_on_finish'):
+                self.current_screen._on_finish()
+
     def run(self):
         """Startet die Anwendung"""
         logger.info("Starte Hauptschleife")

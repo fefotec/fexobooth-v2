@@ -33,16 +33,17 @@ FILTER_EMOJIS = {
 
 
 class FilterCard(ctk.CTkFrame):
-    """Responsive Filter-Karte - passt sich an Bildschirmgröße an"""
+    """Responsive Filter-Karte - passt sich an verfügbaren Platz an"""
 
     def __init__(self, parent, filter_key: str, filter_name: str,
-                 preview_image: Optional[Image.Image] = None, on_click=None):
-        # Responsive Größen laden
+                 preview_image: Optional[Image.Image] = None, on_click=None,
+                 card_width: int = 0, card_height: int = 0):
+        # Dynamische Größen (von FilterScreen berechnet) oder Fallback
         sizes = get_sizes()
-        self._card_width = sizes["filter_card_width"]
-        self._card_height = sizes["filter_card_height"]
-        self._thumb_width = sizes["filter_thumb_width"]
-        self._thumb_height = sizes["filter_thumb_height"]
+        self._card_width = card_width or sizes["filter_card_width"]
+        self._card_height = card_height or sizes["filter_card_height"]
+        self._thumb_width = max(60, self._card_width - 20)
+        self._thumb_height = max(40, self._card_height - 35)
         self._is_small = is_small_screen()
 
         super().__init__(
@@ -77,7 +78,7 @@ class FilterCard(ctk.CTkFrame):
         # Filter-Name mit Emoji - kürzerer Name bei kleinem Screen
         emoji = FILTER_EMOJIS.get(filter_key, "🎨")
         display_name = self._get_short_name(filter_name) if self._is_small else filter_name
-        font_size = 10 if self._is_small else 11
+        font_size = 12 if self._is_small else 13
 
         self.name_label = ctk.CTkLabel(
             self.inner,
@@ -149,7 +150,7 @@ class FilterCard(ctk.CTkFrame):
     def set_selected(self, selected: bool):
         self.is_selected = selected
         border_width = 4 if not self._is_small else 3
-        font_size = 11 if not self._is_small else 10
+        font_size = 13 if not self._is_small else 12
 
         if selected:
             self.configure(
@@ -198,7 +199,7 @@ class FilterScreen(ctk.CTkFrame):
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(fill="x", pady=(10 if self._is_small else 15, 5))
 
-        title_size = 22 if self._is_small else 26
+        title_size = 28 if self._is_small else 32
         title = ctk.CTkLabel(
             header,
             text="🎨 Wähle deinen Style!",
@@ -210,8 +211,8 @@ class FilterScreen(ctk.CTkFrame):
         subtitle = ctk.CTkLabel(
             header,
             text="Tippe auf einen Filter für die Vorschau",
-            font=self._fonts["body"] if not self._is_small else self._fonts["small"],
-            text_color=COLORS["text_muted"]
+            font=self._fonts["body"],
+            text_color=COLORS["text_primary"]
         )
         subtitle.pack(pady=(2, 0))
 
@@ -222,7 +223,7 @@ class FilterScreen(ctk.CTkFrame):
         main_frame.grid_columnconfigure(1, weight=3)
         main_frame.grid_rowconfigure(0, weight=1)
 
-        # Filter-Grid (links) - in eigenem Container
+        # Filter-Grid (links) - ohne Scrollbalken, dynamische Größen
         filter_container = ctk.CTkFrame(
             main_frame,
             fg_color=COLORS["bg_medium"],
@@ -230,17 +231,11 @@ class FilterScreen(ctk.CTkFrame):
         )
         filter_container.grid(row=0, column=0, sticky="nsew", padx=(0, 10 if self._is_small else 15))
 
-        # Scrollbare Filter-Liste
-        filter_scroll = ctk.CTkScrollableFrame(
-            filter_container,
-            fg_color="transparent",
-            scrollbar_button_color=COLORS["primary"],
-            scrollbar_button_hover_color=COLORS["primary_hover"]
-        )
-        filter_scroll.pack(fill="both", expand=True, padx=6 if self._is_small else 10, pady=6 if self._is_small else 10)
+        filter_inner = ctk.CTkFrame(filter_container, fg_color="transparent")
+        filter_inner.pack(fill="both", expand=True, padx=4 if self._is_small else 8, pady=4 if self._is_small else 8)
 
-        # Filter-Buttons in 2er-Reihen
-        self._create_filter_grid(filter_scroll)
+        # Filter-Buttons als Grid (responsive, kein Scrollbalken)
+        self._create_filter_grid(filter_inner)
 
         # Vorschau-Bereich (rechts) - größer
         preview_container = ctk.CTkFrame(
@@ -251,7 +246,7 @@ class FilterScreen(ctk.CTkFrame):
         preview_container.grid(row=0, column=1, sticky="nsew")
 
         # Vorschau-Titel
-        preview_title_size = 14 if self._is_small else 16
+        preview_title_size = 18 if self._is_small else 20
         preview_title = ctk.CTkLabel(
             preview_container,
             text="📸 Vorschau",
@@ -261,7 +256,7 @@ class FilterScreen(ctk.CTkFrame):
         preview_title.pack(pady=(10 if self._is_small else 15, 5))
 
         # Aktueller Filter-Name
-        filter_label_size = 12 if self._is_small else 14
+        filter_label_size = 16 if self._is_small else 18
         self.current_filter_label = ctk.CTkLabel(
             preview_container,
             text="✨ Original",
@@ -284,12 +279,12 @@ class FilterScreen(ctk.CTkFrame):
         button_frame.pack(fill="x", padx=10 if self._is_small else 20, pady=(5, 10 if self._is_small else 15))
 
         # Zurück-Button (links)
-        back_btn_width = 100 if self._is_small else 130
-        back_btn_height = 40 if self._is_small else 50
+        back_btn_width = 130 if self._is_small else 160
+        back_btn_height = 45 if self._is_small else 55
         back_btn = ctk.CTkButton(
             button_frame,
             text="← Nochmal",
-            font=self._fonts["body"],
+            font=self._fonts["button"],
             width=back_btn_width,
             height=back_btn_height,
             fg_color=COLORS["bg_light"],
@@ -301,9 +296,9 @@ class FilterScreen(ctk.CTkFrame):
         back_btn.pack(side="left")
 
         # Weiter-Button (rechts) - prominent
-        continue_btn_width = 140 if self._is_small else 180
-        continue_btn_height = 45 if self._is_small else 55
-        continue_font_size = 14 if self._is_small else 16
+        continue_btn_width = 170 if self._is_small else 200
+        continue_btn_height = 50 if self._is_small else 60
+        continue_font_size = 18 if self._is_small else 20
         self.continue_btn = ctk.CTkButton(
             button_frame,
             text="Weiter →",
@@ -318,29 +313,40 @@ class FilterScreen(ctk.CTkFrame):
         self.continue_btn.pack(side="right")
 
     def _create_filter_grid(self, parent):
-        """Erstellt das Filter-Grid mit 2 Spalten"""
+        """Erstellt das Filter-Grid - feste Kartengrößen, kein Resize-Flackern"""
         filters = list(AVAILABLE_FILTERS.items())
-        card_spacing = 4 if self._is_small else 8
+        num_cols = 2
+        num_rows = (len(filters) + num_cols - 1) // num_cols
+        pad = 3 if self._is_small else 4
 
-        for i in range(0, len(filters), 2):
-            row_frame = ctk.CTkFrame(parent, fg_color="transparent")
-            row_frame.pack(fill="x", pady=card_spacing)
+        # Dynamische Kartengrößen aus verfügbarer Bildschirmhöhe berechnen
+        screen_h = parent.winfo_screenheight()
+        # Abzüge: Top-Bar(~65) + Header(~80) + Buttons(~65) + Padding(~50)
+        overhead = 260 if self._is_small else 280
+        available_h = screen_h - overhead
+        card_h = max(70, (available_h - (num_rows + 1) * pad * 2) // num_rows)
+        card_w = max(80, int(card_h * 1.1))
 
-            # Zentrieren wenn nur ein Element in der Reihe
-            if i + 1 >= len(filters):
-                row_frame.pack_configure(anchor="center")
+        # Grid-Gewichtung: alle Zellen gleich (Platz verteilen)
+        for r in range(num_rows):
+            parent.grid_rowconfigure(r, weight=1)
+        for c in range(num_cols):
+            parent.grid_columnconfigure(c, weight=1)
 
-            for j in range(2):
-                if i + j < len(filters):
-                    key, name = filters[i + j]
-                    card = FilterCard(
-                        row_frame,
-                        filter_key=key,
-                        filter_name=name,
-                        on_click=lambda b: self._select_filter(b)
-                    )
-                    card.pack(side="left", padx=card_spacing)
-                    self.filter_buttons[key] = card
+        for idx, (key, name) in enumerate(filters):
+            row = idx // num_cols
+            col = idx % num_cols
+            card = FilterCard(
+                parent,
+                filter_key=key,
+                filter_name=name,
+                on_click=lambda b: self._select_filter(b),
+                card_width=card_w,
+                card_height=card_h
+            )
+            # KEIN sticky="nsew" - Karten behalten ihre feste Größe (kein Resize-Flackern)
+            card.grid(row=row, column=col, padx=pad, pady=pad)
+            self.filter_buttons[key] = card
 
     def _select_filter(self, button: FilterCard):
         """Wählt einen Filter aus mit Animation"""
@@ -410,8 +416,13 @@ class FilterScreen(ctk.CTkFrame):
             return
 
         # Kleines Sample-Bild für schnelle Filter-Previews
+        # Thumbnail-Größe von erster Karte ableiten (dynamisch berechnet)
         sample = self.app.photos_taken[0].copy()
-        thumb_size = (120, 80) if self._is_small else (160, 110)
+        first_card = next(iter(self.filter_buttons.values()), None)
+        if first_card:
+            thumb_size = (first_card._thumb_width, first_card._thumb_height)
+        else:
+            thumb_size = (120, 80) if self._is_small else (160, 110)
         sample.thumbnail(thumb_size, Image.Resampling.BILINEAR)  # BILINEAR statt LANCZOS = schneller
 
         for key, card in self.filter_buttons.items():
@@ -423,6 +434,7 @@ class FilterScreen(ctk.CTkFrame):
 
     def _on_back(self):
         """Zurück - neue Fotos machen"""
+        logger.info(f"Filter-Screen: Zurück (Fotos verworfen, Filter war '{self.selected_filter}')")
         self.app.photos_taken = []
         self.app.current_photo_index = 0
         self.app.show_screen("session")

@@ -15,6 +15,7 @@ _Aktuell keine dringenden Aufgaben_
 - [ ] Admin-Menü: "Buchung zurücksetzen" Button
 - [ ] Canon DSLR Live-View optimieren
 - [ ] Print-Queue Anzeige
+- [ ] Event-Wechsel & Systemtest auf Tablet testen (echte Hardware)
 
 ---
 
@@ -25,6 +26,15 @@ _Aktuell keine niedrig priorisierten Aufgaben_
 ---
 
 ## Erledigt ✅
+
+### 2026-02-11
+- [x] Event-Wechsel-Dialog bei neuem USB-Template (Annehmen/Ablehnen)
+- [x] Automatischer System-Test nach Event-Wechsel (Kamera → Template → Druck)
+- [x] FEXOSAFE Backup-Stick Erkennung und Bilder-Sicherung
+- [x] Pending-Dialog-Queue (Dialoge warten auf StartScreen)
+- [x] Strom-Status: Grüner/oranger Blitz in Top-Bar (Netz vs. Akku)
+- [x] Drucker-Status blinkende Warnung wenn Drucker aus/offline (wie USB-Warnung)
+- [x] Belastungstest-Button im Developer Mode (Top-Bar)
 
 ### 2026-02-10
 - [x] Flash-Bild gecacht + update_idletasks() für zuverlässige Anzeige

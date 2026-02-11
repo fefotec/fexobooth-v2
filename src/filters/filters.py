@@ -15,11 +15,9 @@ AVAILABLE_FILTERS = {
     "bw": "Schwarz-Weiß",
     "bw_contrast": "BW Kontrast",
     "sepia": "Sepia",
-    "warm": "Warm Glow",
     "cool": "Cool Breeze",
     "vivid": "Vivid Pop",
     "film": "Filmisch",
-    "soft_glow": "Soft Glow",
     "instagram": "Insta Glow",
 }
 
@@ -33,11 +31,9 @@ class FilterManager:
             "bw": self._filter_bw,
             "bw_contrast": self._filter_bw_contrast,
             "sepia": self._filter_sepia,
-            "warm": self._filter_warm,
             "cool": self._filter_cool,
             "vivid": self._filter_vivid,
             "film": self._filter_film,
-            "soft_glow": self._filter_soft_glow,
             "instagram": self._filter_instagram,
         }
         self._cache: Dict[str, Image.Image] = {}
@@ -98,17 +94,6 @@ class FilterManager:
         sepia = ImageEnhance.Color(sepia).enhance(1.1)
         return sepia.convert("RGBA")
     
-    def _filter_warm(self, img: Image.Image) -> Image.Image:
-        """Warme Farbtöne"""
-        rgb = img.convert("RGB")
-        r, g, b = rgb.split()
-        r = r.point(lambda i: min(255, i + 50))
-        g = g.point(lambda i: min(255, i + 15))
-        merged = Image.merge("RGB", (r, g, b))
-        merged = ImageEnhance.Color(merged).enhance(1.2)
-        merged = ImageEnhance.Brightness(merged).enhance(1.05)
-        return merged.convert("RGBA")
-    
     def _filter_cool(self, img: Image.Image) -> Image.Image:
         """Kühle Farbtöne"""
         rgb = img.convert("RGB")
@@ -143,15 +128,6 @@ class FilterManager:
         blended = Image.blend(faded, grain_rgb, 0.08)
         return blended.convert("RGBA")
     
-    def _filter_soft_glow(self, img: Image.Image) -> Image.Image:
-        """Weicher Glow-Effekt"""
-        rgb = img.convert("RGB")
-        blur = rgb.filter(ImageFilter.GaussianBlur(radius=6))
-        glow = Image.blend(rgb, blur, 0.35)
-        glow = ImageEnhance.Brightness(glow).enhance(1.08)
-        glow = ImageEnhance.Color(glow).enhance(1.1)
-        return glow.convert("RGBA")
-
     def _filter_instagram(self, img: Image.Image) -> Image.Image:
         """Instagram-Style: Warmer Glow, leichte Entsättigung, angehobene Schatten"""
         rgb = img.convert("RGB")

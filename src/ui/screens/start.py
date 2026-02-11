@@ -208,8 +208,8 @@ class StartScreen(ctk.CTkFrame):
         self.subtitle_label = ctk.CTkLabel(
             inner_frame,
             text="Tippe auf eine Option",
-            font=self._fonts["body"] if not self._is_small else self._fonts["small"],
-            text_color=COLORS["text_secondary"]
+            font=self._fonts["body"],
+            text_color=COLORS["text_primary"]
         )
         self.subtitle_label.pack(pady=(0, 10 if self._is_small else 15))
 
@@ -218,7 +218,7 @@ class StartScreen(ctk.CTkFrame):
         self.cards_frame.pack()
 
         # Start-Button (groß und auffällig, unter den Karten) - responsive
-        btn_font_size = 18 if self._is_small else 24
+        btn_font_size = 22 if self._is_small else 28
         btn_width = 220 if self._is_small else 280
         btn_height = 55 if self._is_small else 70
         btn_corner = 28 if self._is_small else 35
@@ -506,7 +506,8 @@ class StartScreen(ctk.CTkFrame):
             return
 
         # VLC-Check: Wenn Video konfiguriert ist und VLC noch nicht warm, blockieren
-        if _vlc_available and not is_vlc_warm():
+        # Im Stress-Test überspringen (Videos werden übersprungen)
+        if not self.app.stress_test_active and _vlc_available and not is_vlc_warm():
             video_start = self.config.get("video_start", "")
             if video_start and os.path.exists(video_start):
                 logger.warning("Start blockiert - VLC noch nicht bereit")
@@ -659,7 +660,7 @@ class StartScreen(ctk.CTkFrame):
         ctk.CTkLabel(
             content,
             text="FEXOBOOTH",
-            font=("Segoe UI", 28, "bold"),
+            font=("Segoe UI", 38, "bold"),
             text_color=COLORS["primary"]
         ).pack(pady=(0, 20))
 
@@ -672,30 +673,30 @@ class StartScreen(ctk.CTkFrame):
             ctk.CTkLabel(
                 content,
                 text=f"Hallo {first_name},",
-                font=("Segoe UI", 22, "bold"),
+                font=("Segoe UI", 30, "bold"),
                 text_color=COLORS["text_primary"]
             ).pack(pady=(0, 5))
 
             ctk.CTkLabel(
                 content,
                 text="vielen Dank für deine Buchung bei fexobox!",
-                font=("Segoe UI", 15),
-                text_color=COLORS["text_secondary"]
+                font=("Segoe UI", 20),
+                text_color=COLORS["text_primary"]
             ).pack(pady=(0, 15))
 
             ctk.CTkLabel(
                 content,
                 text="Deine fexobox wärmt sich gerade auf\nund dann kann die Party losgehen!",
-                font=("Segoe UI", 14),
-                text_color=COLORS["text_muted"],
+                font=("Segoe UI", 18),
+                text_color=COLORS["text_secondary"],
                 justify="center"
             ).pack(pady=(0, 10))
 
             ctk.CTkLabel(
                 content,
                 text="Das kann bis zu 2 Minuten dauern.",
-                font=("Segoe UI", 12),
-                text_color=COLORS["text_muted"],
+                font=("Segoe UI", 16),
+                text_color=COLORS["text_secondary"],
                 justify="center"
             ).pack(pady=(0, 25))
         else:
@@ -703,16 +704,16 @@ class StartScreen(ctk.CTkFrame):
             self._loading_label = ctk.CTkLabel(
                 content,
                 text="Software wird geladen...",
-                font=("Segoe UI", 16),
-                text_color=COLORS["text_secondary"]
+                font=("Segoe UI", 22),
+                text_color=COLORS["text_primary"]
             )
             self._loading_label.pack(pady=(0, 5))
 
             ctk.CTkLabel(
                 content,
                 text="Das kann bis zu 2 Minuten dauern.",
-                font=("Segoe UI", 12),
-                text_color=COLORS["text_muted"]
+                font=("Segoe UI", 16),
+                text_color=COLORS["text_secondary"]
             ).pack(pady=(0, 20))
 
         # Progress-Bar
@@ -845,7 +846,7 @@ class StartScreen(ctk.CTkFrame):
             ctk.CTkLabel(
                 info_frame,
                 text="📸 FOTO-GALERIE",
-                font=("Segoe UI", 16, "bold"),
+                font=("Segoe UI", 20, "bold"),
                 text_color=COLORS["primary"]
             ).pack(anchor="w")
 
@@ -856,23 +857,23 @@ class StartScreen(ctk.CTkFrame):
             ctk.CTkLabel(
                 wifi_info,
                 text=f"📶 WLAN:  {ssid}",
-                font=("Segoe UI", 14, "bold"),
+                font=("Segoe UI", 18, "bold"),
                 text_color=COLORS["text_primary"]
             ).pack(anchor="w")
 
             ctk.CTkLabel(
                 wifi_info,
                 text=f"🔑 Passwort:  {password}",
-                font=("Segoe UI", 14),
-                text_color=COLORS["text_secondary"]
+                font=("Segoe UI", 18),
+                text_color=COLORS["text_primary"]
             ).pack(anchor="w", pady=(2, 0))
 
             # Anleitung
             ctk.CTkLabel(
                 info_frame,
                 text="1. Mit WLAN verbinden  →  2. QR-Code scannen  →  3. Fotos ansehen!",
-                font=("Segoe UI", 12),
-                text_color=COLORS["text_muted"]
+                font=("Segoe UI", 15),
+                text_color=COLORS["text_secondary"]
             ).pack(anchor="w", pady=(10, 0))
 
             logger.info(f"✅ Galerie-Banner angezeigt: {url}")

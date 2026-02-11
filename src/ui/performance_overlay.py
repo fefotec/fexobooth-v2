@@ -35,7 +35,7 @@ class PerformanceOverlay:
         # Overlay-Frame in der Top-Bar (ganz rechts, vor Admin-Button)
         self._label = ctk.CTkLabel(
             self.app.top_bar,
-            text="CPU: --% | RAM: --MB",
+            text="CPU:--% | --M",
             font=("Consolas", 11),
             text_color="#00ff00",  # Matrix-Grün
             fg_color="#000000",
@@ -79,7 +79,7 @@ class PerformanceOverlay:
             else:
                 color = "#00ff00"  # Grün - OK
             
-            text = f"CPU: {cpu_percent:4.1f}% | RAM: {process_ram_mb:4.0f}MB ({ram_percent:.0f}%)"
+            text = f"CPU:{cpu_percent:.0f}% | {process_ram_mb:.0f}M"
             
             self._label.configure(text=text, text_color=color)
             

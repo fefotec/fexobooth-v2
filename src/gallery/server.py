@@ -32,6 +32,13 @@ def _create_flask_app():
     from flask import Flask, send_file, render_template_string, abort, jsonify
     
     app = Flask(__name__)
+
+    @app.after_request
+    def add_no_cache_headers(response):
+        """Verhindert Browser-Caching damit gelöschte Bilder sofort verschwinden"""
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        return response
     
     # HTML-Template für die Galerie (responsive, modern)
     GALLERY_HTML = '''

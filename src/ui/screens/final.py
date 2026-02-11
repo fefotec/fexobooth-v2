@@ -70,9 +70,9 @@ class FinalScreen(ctk.CTkFrame):
         self.redo_btn = ctk.CTkButton(
             self,
             text=self.config.get("ui_texts", {}).get("redo", "NOCHMAL"),
-            font=("Segoe UI", 16, "bold"),
-            width=160,
-            height=55,
+            font=("Segoe UI", 20, "bold"),
+            width=180,
+            height=60,
             fg_color=COLORS["bg_light"],
             hover_color=COLORS["bg_card"],
             corner_radius=27,
@@ -84,9 +84,9 @@ class FinalScreen(ctk.CTkFrame):
         self.print_btn = ctk.CTkButton(
             self,
             text="DRUCKEN",
-            font=("Segoe UI", 20, "bold"),
-            width=220,
-            height=65,
+            font=("Segoe UI", 24, "bold"),
+            width=240,
+            height=70,
             fg_color=COLORS["success"],
             hover_color="#00e676",
             corner_radius=32,
@@ -99,9 +99,9 @@ class FinalScreen(ctk.CTkFrame):
             self.finish_btn = ctk.CTkButton(
                 self,
                 text=self.config.get("ui_texts", {}).get("finish", "FERTIG"),
-                font=("Segoe UI", 16, "bold"),
-                width=160,
-                height=55,
+                font=("Segoe UI", 20, "bold"),
+                width=180,
+                height=60,
                 fg_color=COLORS["bg_light"],
                 hover_color=COLORS["bg_card"],
                 corner_radius=27,
@@ -123,6 +123,8 @@ class FinalScreen(ctk.CTkFrame):
 
     def _render_final_image(self) -> Image.Image:
         """Rendert das finale Bild"""
+        logger.info(f"Rendere finales Bild: {len(self.app.photos_taken)} Fotos, "
+                     f"Filter '{self.app.current_filter}'")
         filtered_photos = [
             self.app.filter_manager.apply(photo, self.app.current_filter)
             for photo in self.app.photos_taken

@@ -27,6 +27,9 @@ class USBManager:
         self._check_interval: float = 2.0
         self._was_available: bool = False  # Für Erkennung wenn USB wieder da
         self._pending_files: List[Dict] = []  # In-Memory Cache
+        # FEXOSAFE Sicherungs-Stick
+        self._cached_fexosafe_drive: Optional[str] = None
+        self._last_fexosafe_check_time: float = 0
         self._load_pending_files()
     
     def find_usb_stick(self) -> Optional[str]:
@@ -92,7 +95,60 @@ class USBManager:
     def is_available(self) -> bool:
         """Prüft ob USB-Stick verfügbar ist"""
         return self.find_usb_stick() is not None
-    
+
+    def find_fexosafe_stick(self) -> Optional[str]:
+        """Sucht FEXOSAFE Sicherungs-USB-Stick (Label 'FEXOSAFE', Case-insensitive)"""
+        current_time = time.time()
+
+        # Cache nutzen
+        if current_time - self._last_fexosafe_check_time < self._check_interval:
+            return self._cached_fexosafe_drive
+
+        self._last_fexosafe_check_time = current_time
+        previous_drive = self._cached_fexosafe_drive
+        self._cached_fexosafe_drive = None
+
+        if os.name != "nt":
+            return None
+
+        try:
+            import ctypes
+
+            for letter in "DEFGHIJKLMNOPQRSTUVWXYZ":
+                drive = f"{letter}:\\"
+
+                if not os.path.exists(drive):
+                    continue
+
+                try:
+                    drive_type = ctypes.windll.kernel32.GetDriveTypeW(drive)
+                    if drive_type not in [2, 3]:
+                        continue
+                except:
+                    pass
+
+                try:
+                    volume_name = ctypes.create_unicode_buffer(261)
+                    result = ctypes.windll.kernel32.GetVolumeInformationW(
+                        drive, volume_name, 261,
+                        None, None, None, None, 0
+                    )
+
+                    if result:
+                        label = volume_name.value
+                        if label.lower() == "fexosafe":
+                            self._cached_fexosafe_drive = drive
+                            if previous_drive != drive:
+                                logger.info(f"FEXOSAFE-Stick gefunden: {drive}")
+                            return drive
+                except Exception as e:
+                    logger.debug(f"Volume-Info Fehler für {drive}: {e}")
+
+        except Exception as e:
+            logger.error(f"FEXOSAFE-Suche fehlgeschlagen: {e}")
+
+        return None
+
     def get_images_path(self) -> Optional[Path]:
         """Gibt den Bilder-Pfad auf dem USB-Stick zurück"""
         usb = self.find_usb_stick()

@@ -84,36 +84,38 @@ def is_small_screen() -> bool:
 
 
 # Fonts - Responsive
+# Auf kleinen Tablets (10 Zoll, 1280x800) sind Texte physisch klein,
+# daher werden Nutzer-Texte deutlich größer als auf einem Desktop-Monitor.
 def get_fonts():
     """Gibt Fonts zurück, angepasst an Bildschirmgröße"""
     s = get_screen_size()[2]  # scale factor
 
     return {
-        "title": ("Segoe UI", max(int(32 * s), 20), "bold"),
-        "heading": ("Segoe UI", max(int(22 * s), 14), "bold"),
-        "subheading": ("Segoe UI", max(int(16 * s), 12), "bold"),
-        "body": ("Segoe UI", max(int(14 * s), 11)),
-        "body_bold": ("Segoe UI", max(int(14 * s), 11), "bold"),
-        "small": ("Segoe UI", max(int(12 * s), 10)),
-        "tiny": ("Segoe UI", max(int(11 * s), 9)),
+        "title": ("Segoe UI", max(int(40 * s), 24), "bold"),
+        "heading": ("Segoe UI", max(int(28 * s), 18), "bold"),
+        "subheading": ("Segoe UI", max(int(20 * s), 14), "bold"),
+        "body": ("Segoe UI", max(int(18 * s), 13)),
+        "body_bold": ("Segoe UI", max(int(18 * s), 13), "bold"),
+        "small": ("Segoe UI", max(int(15 * s), 11)),
+        "tiny": ("Segoe UI", max(int(12 * s), 10)),
         "countdown": ("Segoe UI", max(int(180 * s), 100), "bold"),
-        "button": ("Segoe UI", max(int(14 * s), 11), "bold"),
-        "button_large": ("Segoe UI", max(int(18 * s), 14), "bold"),
+        "button": ("Segoe UI", max(int(18 * s), 13), "bold"),
+        "button_large": ("Segoe UI", max(int(22 * s), 16), "bold"),
     }
 
 
-# Statische Fonts (für Kompatibilität)
+# Statische Fonts (für Kompatibilität, gleiche Größen wie get_fonts bei scale=1.0)
 FONTS = {
-    "title": ("Segoe UI", 32, "bold"),
-    "heading": ("Segoe UI", 22, "bold"),
-    "subheading": ("Segoe UI", 16, "bold"),
-    "body": ("Segoe UI", 14),
-    "body_bold": ("Segoe UI", 14, "bold"),
-    "small": ("Segoe UI", 12),
-    "tiny": ("Segoe UI", 11),
+    "title": ("Segoe UI", 40, "bold"),
+    "heading": ("Segoe UI", 28, "bold"),
+    "subheading": ("Segoe UI", 20, "bold"),
+    "body": ("Segoe UI", 18),
+    "body_bold": ("Segoe UI", 18, "bold"),
+    "small": ("Segoe UI", 15),
+    "tiny": ("Segoe UI", 12),
     "countdown": ("Segoe UI", 180, "bold"),
-    "button": ("Segoe UI", 14, "bold"),
-    "button_large": ("Segoe UI", 18, "bold"),
+    "button": ("Segoe UI", 18, "bold"),
+    "button_large": ("Segoe UI", 22, "bold"),
 }
 
 
