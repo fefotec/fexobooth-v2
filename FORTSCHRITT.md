@@ -6,6 +6,14 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-02-11
 
+### Event-Wechsel: Lösch-Bestätigung
+- **Änderung:** Beim Event-Wechsel werden lokale Bilder gelöscht. Jetzt mit 2-Schritt-Bestätigung:
+  1. Dialog zeigt "⚠️ X vorhandene Bilder werden gelöscht!" als Warnung
+  2. Klick auf "NEUES EVENT STARTEN" → zweite Ansicht "Bilder löschen?" mit rotem "LÖSCHEN & NEUES EVENT" Button
+  3. "Zurück"-Button führt zur Hauptansicht zurück
+  4. Wenn keine Bilder vorhanden: direkt ohne Zwischenschritt
+- USB-Sync bei neuem Stick war bereits korrekt deaktiviert (nur bei gleichem Event)
+
 ### System-Test: Komplette Session statt Einzelfoto
 - **Änderung:** System-Test fotografiert jetzt **jeden Template-Slot einzeln** (z.B. 4 Fotos bei 4er-Collage) statt ein Foto zu duplizieren. Ergebnis wird automatisch gedruckt → echter Testausdruck mit Kunden-Template
 - UI zeigt Live-Fortschritt: "Foto 2 von 4 aufnehmen..." mit anteiligem Fortschrittsbalken

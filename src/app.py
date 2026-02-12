@@ -1340,12 +1340,20 @@ class PhotoboothApp:
             self._show_fexosafe_dialog(drive)
 
     def _show_event_change_dialog(self, new_booking_id: str):
-        """Zeigt den Event-Wechsel Dialog"""
+        """Zeigt den Event-Wechsel Dialog mit Lösch-Bestätigung"""
         if self._event_change_dialog_open:
             return
 
         self._event_change_dialog_open = True
         logger.info(f"Event-Wechsel Dialog: {new_booking_id}")
+
+        # Lokale Bilder zählen für Lösch-Warnung
+        image_count = 0
+        from src.storage.local import LocalStorage, SINGLES_PATH, PRINTS_PATH
+        if SINGLES_PATH.exists():
+            image_count += len(list(SINGLES_PATH.glob("*.jpg")))
+        if PRINTS_PATH.exists():
+            image_count += len(list(PRINTS_PATH.glob("*.jpg")))
 
         from src.ui.dialogs.event_change import EventChangeDialog
 
@@ -1360,7 +1368,8 @@ class PhotoboothApp:
         EventChangeDialog(
             self.root, new_booking_id,
             on_accept=on_accept,
-            on_reject=on_reject
+            on_reject=on_reject,
+            image_count=image_count
         )
 
     def _execute_event_change(self, new_booking_id: str):
