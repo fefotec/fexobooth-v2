@@ -6,6 +6,12 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-02-11
 
+### System-Test: Komplette Session statt Einzelfoto
+- **Änderung:** System-Test fotografiert jetzt **jeden Template-Slot einzeln** (z.B. 4 Fotos bei 4er-Collage) statt ein Foto zu duplizieren. Ergebnis wird automatisch gedruckt → echter Testausdruck mit Kunden-Template
+- UI zeigt Live-Fortschritt: "Foto 2 von 4 aufnehmen..." mit anteiligem Fortschrittsbalken
+- 2 Sekunden Pause zwischen Fotos (Kamera nachregeln)
+- Erfolgsmeldung: "Alles OK! Testdruck mit X Fotos gesendet."
+
 ### System-Test "Keine Template-Boxen geladen" behoben
 - **Fix:** System-Test schlug immer bei "Template anwenden" fehl, obwohl Template auf USB funktionierte. Ursache: `reset_session()` (Schritt 9) löschte `template_boxes` und `overlay_image`, die in Schritt 6 gerade erst geladen wurden. Lösung: `reset_session()` VOR dem Template-Laden ausführen (jetzt Schritt 4 statt 9)
 

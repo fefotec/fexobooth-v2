@@ -1,7 +1,7 @@
 """Automatischer System-Test nach Event-Wechsel
 
-Testet die komplette Kette: Kamera → Template → Druck
-Zeigt Fortschritt und Ergebnis an.
+Führt eine komplette Test-Session durch:
+Kamera init → Foto pro Template-Slot → Template rendern → Testdruck
 """
 
 import threading
@@ -26,28 +26,39 @@ ICON_RUNNING = "⏳"
 ICON_SUCCESS = "✅"
 ICON_ERROR = "❌"
 
+# Pause zwischen Fotos (Sekunden) - Kamera braucht Zeit zum Nachregeln
+PHOTO_DELAY = 2.0
+
 
 class SystemTestDialog(ctk.CTkToplevel):
-    """Automatischer System-Test nach Event-Wechsel"""
+    """Automatischer System-Test nach Event-Wechsel.
 
-    STEPS = [
-        ("Kamera initialisieren", "Kamera wird initialisiert..."),
-        ("Testfoto aufnehmen", "Testfoto wird aufgenommen..."),
-        ("Template anwenden", "Template wird angewendet..."),
-        ("Testdruck starten", "Testdruck wird gesendet..."),
-        ("Aufräumen", "Wird aufgeräumt..."),
-    ]
+    Fotografiert jeden Template-Slot einzeln und druckt das Ergebnis.
+    """
 
     def __init__(self, parent, app, on_complete: callable):
         super().__init__(parent)
 
         self.app = app
         self._on_complete = on_complete
-        self._test_photo: Optional[Image.Image] = None
+        self._test_photos: List[Image.Image] = []
         self._test_result: Optional[Image.Image] = None
         self._test_file: Optional[Path] = None
         self._errors: List[str] = []
         self._destroyed = False
+
+        # Anzahl Foto-Slots aus Template ermitteln
+        self._num_photos = max(len(self.app.template_boxes), 1)
+
+        # Schritte definieren (dynamisch je nach Template)
+        foto_text = f"Fotos aufnehmen ({self._num_photos} Stück)"
+        self.STEPS = [
+            ("Kamera initialisieren", "Kamera wird initialisiert..."),
+            (foto_text, "Fotos werden aufgenommen..."),
+            ("Template anwenden", "Template wird angewendet..."),
+            ("Testdruck starten", "Testdruck wird gesendet..."),
+            ("Aufräumen", "Wird aufgeräumt..."),
+        ]
 
         # Fullscreen Overlay
         self.overrideredirect(True)
@@ -64,7 +75,7 @@ class SystemTestDialog(ctk.CTkToplevel):
 
         # Test nach kurzem Delay starten
         self.after(500, self._start_test)
-        logger.info("System-Test Dialog geöffnet")
+        logger.info(f"System-Test Dialog geöffnet ({self._num_photos} Foto-Slots)")
 
     def _build_ui(self, screen_w: int, screen_h: int):
         """Baut die Dialog-UI auf"""
@@ -152,7 +163,7 @@ class SystemTestDialog(ctk.CTkToplevel):
         # Wird erst nach Abschluss gepackt
 
     def _update_step(self, index: int, status: str, error_msg: str = ""):
-        """Aktualisiert den Status eines Schritts (thread-safe Wrapper)"""
+        """Aktualisiert den Status eines Schritts (thread-safe)"""
         if self._destroyed:
             return
         try:
@@ -175,8 +186,21 @@ class SystemTestDialog(ctk.CTkToplevel):
         except Exception:
             pass
 
+    def _update_step_text(self, index: int, new_name: str):
+        """Ändert den Text eines Schritts (für Foto-Fortschritt)"""
+        if self._destroyed:
+            return
+        try:
+            self.STEPS[index] = (new_name, self.STEPS[index][1])
+            self._step_labels[index].configure(
+                text=f"{ICON_RUNNING}  {new_name}",
+                text_color=COLORS["info"]
+            )
+        except Exception:
+            pass
+
     def _update_status(self, text: str, progress: float):
-        """Aktualisiert Status-Text und Fortschritt (thread-safe Wrapper)"""
+        """Aktualisiert Status-Text und Fortschritt (thread-safe)"""
         if self._destroyed:
             return
         try:
@@ -194,7 +218,7 @@ class SystemTestDialog(ctk.CTkToplevel):
         """Führt alle Test-Schritte durch"""
         steps = [
             self._step_init_camera,
-            self._step_capture_photo,
+            self._step_capture_photos,
             self._step_apply_template,
             self._step_print,
             self._step_cleanup,
@@ -219,7 +243,7 @@ class SystemTestDialog(ctk.CTkToplevel):
                 self.after(0, lambda idx=i, err=error_msg: self._update_step(idx, "error", err))
                 logger.error(f"System-Test Schritt '{step_name}' fehlgeschlagen: {e}")
 
-                # Bei Kamera- oder Foto-Fehler: restliche Schritte als übersprungen markieren
+                # Bei Kamera- oder Foto-Fehler: restliche Schritte überspringen
                 if i < 2:
                     for j in range(i + 1, len(steps)):
                         self.after(0, lambda idx=j: self._update_step(idx, "error", "Übersprungen"))
@@ -243,8 +267,8 @@ class SystemTestDialog(ctk.CTkToplevel):
         # Kurz warten bis Kamera bereit
         time.sleep(1.0)
 
-    def _step_capture_photo(self):
-        """Schritt 2: Testfoto aufnehmen"""
+    def _capture_single_photo(self) -> Image.Image:
+        """Nimmt ein einzelnes Foto auf (DSLR oder Webcam)"""
         photo = None
 
         # Canon DSLR
@@ -284,13 +308,41 @@ class SystemTestDialog(ctk.CTkToplevel):
         if photo is None:
             raise Exception("Foto konnte nicht aufgenommen werden")
 
-        self._test_photo = photo
-        logger.info(f"System-Test: Testfoto aufgenommen ({photo.size})")
+        return photo
+
+    def _step_capture_photos(self):
+        """Schritt 2: Ein Foto pro Template-Slot aufnehmen"""
+        total = self._num_photos
+        self._test_photos = []
+
+        for i in range(total):
+            nr = i + 1
+
+            # UI: "Foto 2 von 4 aufnehmen..."
+            self.after(0, lambda n=nr, t=total:
+                self._update_step_text(1, f"Foto {n} von {t} aufnehmen..."))
+            self.after(0, lambda n=nr, t=total:
+                self._update_status(
+                    f"Foto {n} von {t} wird aufgenommen...",
+                    (1 + n / t) / 5  # Schritt 2 von 5, anteilig
+                ))
+
+            # Zwischen Fotos kurz warten (nicht vor dem ersten)
+            if i > 0:
+                time.sleep(PHOTO_DELAY)
+
+            photo = self._capture_single_photo()
+            self._test_photos.append(photo)
+            logger.info(f"System-Test: Foto {nr}/{total} aufgenommen ({photo.size})")
+
+        # Finalen Step-Text setzen
+        self.after(0, lambda t=total:
+            self._update_step_text(1, f"Fotos aufnehmen ({t} Stück)"))
 
     def _step_apply_template(self):
-        """Schritt 3: Template auf Testfoto anwenden"""
-        if self._test_photo is None:
-            raise Exception("Kein Testfoto vorhanden")
+        """Schritt 3: Template mit allen Fotos rendern"""
+        if not self._test_photos:
+            raise Exception("Keine Testfotos vorhanden")
 
         boxes = self.app.template_boxes
         overlay = self.app.overlay_image
@@ -298,10 +350,9 @@ class SystemTestDialog(ctk.CTkToplevel):
         if not boxes:
             raise Exception("Keine Template-Boxen geladen")
 
-        # Foto für alle Slots verwenden (Testbild)
-        photos = [self._test_photo] * len(boxes)
-
-        self._test_result = self.app.renderer.render(photos, boxes, overlay)
+        self._test_result = self.app.renderer.render(
+            self._test_photos, boxes, overlay
+        )
         logger.info(f"System-Test: Template angewendet ({self._test_result.size})")
 
     def _step_print(self):
@@ -318,11 +369,11 @@ class SystemTestDialog(ctk.CTkToplevel):
         img_rgb.save(str(self._test_file), "JPEG", quality=95)
         logger.info(f"System-Test: Testbild gespeichert: {self._test_file}")
 
-        # GDI-Druck (repliziert aus final.py)
+        # GDI-Druck
         self._print_via_gdi(self._test_file)
 
     def _print_via_gdi(self, image_path: Path):
-        """Druckt über Windows GDI (aus final.py repliziert)"""
+        """Druckt über Windows GDI"""
         try:
             import win32print
             import win32ui
@@ -411,7 +462,7 @@ class SystemTestDialog(ctk.CTkToplevel):
         except Exception:
             pass
 
-        self._test_photo = None
+        self._test_photos = []
         self._test_result = None
 
     def _show_result(self):
@@ -421,7 +472,7 @@ class SystemTestDialog(ctk.CTkToplevel):
 
         if not self._errors:
             self.result_label.configure(
-                text="Test abgeschlossen - Alles OK!",
+                text=f"Alles OK! Testdruck mit {self._num_photos} Fotos gesendet.",
                 text_color=COLORS["success"]
             )
             logger.info("System-Test: ERFOLGREICH")

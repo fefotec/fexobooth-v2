@@ -28,6 +28,7 @@ _Aktuell keine niedrig priorisierten Aufgaben_
 ## Erledigt ✅
 
 ### 2026-02-11
+- [x] System-Test: Komplette Session mit Foto pro Slot + automatischer Testdruck
 - [x] System-Test "Keine Template-Boxen geladen" Fix (reset_session Reihenfolge)
 - [x] USB-Sync: Bestätigungsdialog statt Auto-Kopie (Fortschritt + Abbrechen)
 - [x] Service-PIN 6588 Freeze behoben (Dialog-Erstellung nach wait_window)
