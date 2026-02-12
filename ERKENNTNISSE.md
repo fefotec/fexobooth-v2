@@ -6,6 +6,15 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### USB-Stick Erkennung: 3 Typen + Fallback
+
+| | |
+|---|---|
+| **Kontext** | Verschiedene USB-Sticks können eingesteckt werden: Event-Sticks (Buchung), Backup-Sticks, oder fremde Sticks |
+| **Entscheidung** | Label-basierte Erkennung: "fexobox" = Event, "FEXOSAFE" = Backup, alles andere = unbekannt → Export anbieten |
+| **Alternativen** | Nur bekannte Sticks akzeptieren (kein Notfall-Export möglich) |
+| **Begründung** | Wenn ein Kunden-Stick kaputt geht, muss es eine Möglichkeit geben, Bilder auf einen beliebigen USB-Stick zu exportieren. Erkennung über `GetDriveTypeW` (DRIVE_REMOVABLE) + `GetVolumeInformationW` (Label) |
+
 ### USB-Sync: Niemals automatisch, immer fragen
 
 | | |

@@ -104,6 +104,8 @@ class PhotoboothApp:
         self._event_change_dialog_open: bool = False
         self._fexosafe_dialog_open: bool = False
         self._last_fexosafe_trigger: float = 0  # Cooldown nach Backup
+        self._export_dialog_open: bool = False
+        self._last_unknown_stick_drive: Optional[str] = None  # Doppel-Dialog verhindern
 
         # Stress-Test Status (nur im Developer Mode)
         self.stress_test_active: bool = False
@@ -614,6 +616,20 @@ class PhotoboothApp:
         elif not is_available:
             self._was_usb_available = False
 
+        # Unbekannter USB-Stick → Bilder-Export anbieten (Notfall-Fallback)
+        if not is_available and not fexosafe_drive and not self._export_dialog_open:
+            unknown_drive = self.usb_manager.find_unknown_stick()
+            if unknown_drive and unknown_drive != self._last_unknown_stick_drive:
+                self._last_unknown_stick_drive = unknown_drive
+                if self.current_screen_name == "start":
+                    self._show_export_dialog(unknown_drive)
+        elif is_available or fexosafe_drive:
+            # Bekannter Stick da → Unknown-Tracking zurücksetzen
+            self._last_unknown_stick_drive = None
+        elif not self.usb_manager.find_unknown_stick():
+            # Gar kein Stick mehr da → Unknown-Tracking zurücksetzen
+            self._last_unknown_stick_drive = None
+
         text, status = self.usb_manager.get_status_text()
 
         if status == "success":
@@ -846,6 +862,182 @@ class PhotoboothApp:
             font=FONTS["button"], width=140, height=50,
             fg_color=COLORS["success"], hover_color="#00e676",
             corner_radius=SIZES["corner_radius"], command=on_copy
+        ).pack(side="left", padx=10)
+
+        # Abbrechen-Button
+        ctk.CTkButton(
+            btn_frame, text="Abbrechen",
+            font=FONTS["button"], width=140, height=50,
+            fg_color=COLORS["bg_light"], hover_color=COLORS["bg_card"],
+            text_color=COLORS["text_primary"],
+            corner_radius=SIZES["corner_radius"], command=close_dialog
+        ).pack(side="left", padx=10)
+
+        dialog.protocol("WM_DELETE_WINDOW", close_dialog)
+
+    def _show_export_dialog(self, target_drive: str):
+        """Zeigt Dialog: Bilder auf unbekannten USB-Stick exportieren?"""
+        import threading
+        from src.storage.local import LocalStorage, SINGLES_PATH, PRINTS_PATH
+
+        if self._export_dialog_open:
+            return
+
+        # Lokale Bilder zählen
+        image_count = 0
+        if SINGLES_PATH.exists():
+            image_count += len(list(SINGLES_PATH.glob("*.jpg")))
+        if PRINTS_PATH.exists():
+            image_count += len(list(PRINTS_PATH.glob("*.jpg")))
+
+        if image_count == 0:
+            logger.debug("Export-Dialog: Keine lokalen Bilder vorhanden")
+            return
+
+        self._export_dialog_open = True
+        local_path = LocalStorage.get_images_path()
+        logger.info(f"Export-Dialog: {target_drive} ({image_count} Bilder)")
+
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.overrideredirect(True)
+        dialog.configure(fg_color=COLORS["bg_dark"])
+
+        dialog_w, dialog_h = 420, 260
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        x = (screen_w - dialog_w) // 2
+        y = (screen_h - dialog_h) // 2
+        dialog.geometry(f"{dialog_w}x{dialog_h}+{x}+{y}")
+        dialog.attributes("-topmost", True)
+        dialog.grab_set()
+
+        content = ctk.CTkFrame(
+            dialog, fg_color=COLORS["bg_medium"],
+            border_color=COLORS["info"], border_width=2, corner_radius=16
+        )
+        content.pack(fill="both", expand=True, padx=2, pady=2)
+
+        # Titel
+        ctk.CTkLabel(
+            content, text="USB-Stick erkannt",
+            font=("Segoe UI", 20, "bold"), text_color=COLORS["info"]
+        ).pack(pady=(20, 5))
+
+        # Laufwerk-Info
+        drive_letter = target_drive[0]
+        ctk.CTkLabel(
+            content,
+            text=f"Unbekannter Stick ({drive_letter}:) eingesteckt",
+            font=FONTS["small"], text_color=COLORS["text_muted"]
+        ).pack(pady=(0, 5))
+
+        # Status-Text
+        status_label = ctk.CTkLabel(
+            content,
+            text=f"{image_count} Bild(er) auf den Stick kopieren?",
+            font=FONTS["body"], text_color=COLORS["text_primary"], justify="center"
+        )
+        status_label.pack(pady=(5, 15))
+
+        # Fortschrittsbalken (zunächst versteckt)
+        progress_bar = ctk.CTkProgressBar(
+            content, width=340, height=14,
+            fg_color=COLORS["bg_dark"], progress_color=COLORS["info"], corner_radius=7
+        )
+
+        # Button-Container
+        btn_frame = ctk.CTkFrame(content, fg_color="transparent")
+        btn_frame.pack(pady=(0, 20))
+
+        cancel_event = threading.Event()
+
+        def close_dialog():
+            self._export_dialog_open = False
+            try:
+                dialog.destroy()
+            except Exception:
+                pass
+
+        def on_cancel():
+            cancel_event.set()
+            logger.info("Bilder-Export: Abgebrochen")
+            close_dialog()
+
+        def on_export():
+            # Buttons durch Abbrechen-Button ersetzen
+            for widget in btn_frame.winfo_children():
+                widget.destroy()
+
+            cancel_btn = ctk.CTkButton(
+                btn_frame, text="Abbrechen",
+                font=FONTS["button"], width=160, height=45,
+                fg_color=COLORS["bg_light"], hover_color=COLORS["bg_card"],
+                text_color=COLORS["text_primary"],
+                corner_radius=SIZES["corner_radius"], command=on_cancel
+            )
+            cancel_btn.pack()
+
+            progress_bar.set(0)
+            progress_bar.pack(pady=(0, 10))
+            status_label.configure(text="Exportiere...")
+
+            def progress_callback(copied, total):
+                def update():
+                    try:
+                        progress_bar.set(copied / total)
+                        status_label.configure(text=f"Exportiere... {copied}/{total}")
+                    except Exception:
+                        pass
+                dialog.after(0, update)
+
+            def do_export():
+                result = self.usb_manager.export_to_stick(
+                    target_drive, local_path,
+                    progress_callback=progress_callback,
+                    cancel_event=cancel_event
+                )
+                copied = result.get("copied", 0)
+                cancelled = result.get("cancelled", False)
+
+                def show_result():
+                    if cancelled:
+                        status_label.configure(
+                            text=f"Abgebrochen. {copied} Bild(er) exportiert.",
+                            text_color=COLORS["warning"]
+                        )
+                    elif result.get("errors", 0) > 0:
+                        status_label.configure(
+                            text=f"{copied} exportiert, {result['errors']} Fehler.",
+                            text_color=COLORS["warning"]
+                        )
+                    else:
+                        status_label.configure(
+                            text=f"{copied} Bild(er) exportiert!",
+                            text_color=COLORS["success"]
+                        )
+                        progress_bar.set(1.0)
+                        progress_bar.configure(progress_color=COLORS["success"])
+
+                    # Abbrechen-Button durch OK ersetzen
+                    for widget in btn_frame.winfo_children():
+                        widget.destroy()
+                    ctk.CTkButton(
+                        btn_frame, text="OK",
+                        font=FONTS["button"], width=120, height=45,
+                        fg_color=COLORS["primary"], hover_color=COLORS["primary_hover"],
+                        corner_radius=SIZES["corner_radius"], command=close_dialog
+                    ).pack()
+
+                dialog.after(0, show_result)
+
+            threading.Thread(target=do_export, daemon=True).start()
+
+        # Exportieren-Button
+        ctk.CTkButton(
+            btn_frame, text="Exportieren",
+            font=FONTS["button"], width=140, height=50,
+            fg_color=COLORS["success"], hover_color="#00e676",
+            corner_radius=SIZES["corner_radius"], command=on_export
         ).pack(side="left", padx=10)
 
         # Abbrechen-Button

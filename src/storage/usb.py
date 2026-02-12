@@ -149,6 +149,103 @@ class USBManager:
 
         return None
 
+    def find_unknown_stick(self) -> Optional[str]:
+        """Sucht einen Wechseldatenträger der weder 'fexobox' noch 'FEXOSAFE' ist.
+
+        Für Notfall-Export wenn der Kunden-Stick kaputt geht und ein
+        eigener USB-Stick eingesteckt wird.
+        """
+        if os.name != "nt":
+            return None
+
+        try:
+            import ctypes
+
+            known_labels = {"fexobox", "fexosafe"}
+
+            for letter in "DEFGHIJKLMNOPQRSTUVWXYZ":
+                drive = f"{letter}:\\"
+
+                if not os.path.exists(drive):
+                    continue
+
+                try:
+                    drive_type = ctypes.windll.kernel32.GetDriveTypeW(drive)
+                    if drive_type != 2:  # Nur DRIVE_REMOVABLE
+                        continue
+                except:
+                    continue
+
+                try:
+                    volume_name = ctypes.create_unicode_buffer(261)
+                    result = ctypes.windll.kernel32.GetVolumeInformationW(
+                        drive, volume_name, 261,
+                        None, None, None, None, 0
+                    )
+
+                    if result:
+                        label = volume_name.value.lower()
+                        if label not in known_labels:
+                            return drive
+                except Exception:
+                    # Stick ohne Label → auch unbekannt
+                    return drive
+
+        except Exception as e:
+            logger.error(f"Unbekannter-Stick-Suche fehlgeschlagen: {e}")
+
+        return None
+
+    def export_to_stick(self, target_drive: str, local_base_path: Path,
+                        progress_callback=None, cancel_event=None) -> Dict[str, int]:
+        """Exportiert alle lokalen Bilder auf einen beliebigen USB-Stick.
+
+        Args:
+            target_drive: Laufwerk z.B. "E:\\"
+            local_base_path: Lokaler BILDER-Pfad
+            progress_callback: Callback(copied, total) für Fortschritt
+            cancel_event: threading.Event zum Abbrechen
+
+        Returns:
+            {"copied": int, "errors": int, "cancelled": bool}
+        """
+        result = {"copied": 0, "errors": 0, "cancelled": False}
+        target_base = Path(target_drive) / "BILDER"
+
+        # Alle lokalen Dateien sammeln
+        files = []
+        for subfolder in ["Single", "Prints"]:
+            local_folder = local_base_path / subfolder
+            if local_folder.exists():
+                for f in local_folder.glob("*.jpg"):
+                    files.append((f, subfolder))
+
+        if not files:
+            return result
+
+        for i, (source, subfolder) in enumerate(files):
+            if cancel_event and cancel_event.is_set():
+                result["cancelled"] = True
+                break
+
+            try:
+                dest_folder = target_base / subfolder
+                dest_folder.mkdir(parents=True, exist_ok=True)
+                dest = dest_folder / source.name
+                if not dest.exists():
+                    shutil.copy2(source, dest)
+                    result["copied"] += 1
+                    logger.debug(f"Export: {source.name} → {dest}")
+            except Exception as e:
+                result["errors"] += 1
+                logger.error(f"Export fehlgeschlagen: {source.name}: {e}")
+
+            if progress_callback:
+                progress_callback(i + 1, len(files))
+
+        logger.info(f"Export abgeschlossen: {result}")
+        return result
+
     def get_images_path(self) -> Optional[Path]:
         """Gibt den Bilder-Pfad auf dem USB-Stick zurück"""
         usb = self.find_usb_stick()

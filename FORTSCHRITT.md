@@ -6,6 +6,14 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-02-11
 
+### Bilder-Export auf unbekannte USB-Sticks
+- **Neues Feature:** Wenn ein USB-Stick eingesteckt wird der weder "fexobox" noch "FEXOSAFE" heißt, wird ein Export-Dialog angeboten: "X Bild(er) auf den Stick kopieren?"
+- Anwendungsfall: Kunden-Stick kaputt → eigenen USB-Stick einstecken → Bilder retten
+- Dialog mit Fortschrittsbalken und Abbrechen-Button (wie Sync-Dialog)
+- Bilder werden nach `BILDER/Single/` und `BILDER/Prints/` auf den Stick kopiert
+- Dialog erscheint nur einmal pro Stick (Laufwerksbuchstabe wird gemerkt)
+- Kein Dialog wenn keine lokalen Bilder vorhanden
+
 ### Event-Wechsel: Lösch-Bestätigung
 - **Änderung:** Beim Event-Wechsel werden lokale Bilder gelöscht. Jetzt mit 2-Schritt-Bestätigung:
   1. Dialog zeigt "⚠️ X vorhandene Bilder werden gelöscht!" als Warnung
