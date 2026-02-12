@@ -4,7 +4,7 @@
 #define MyAppName "FexoBooth"
 #define MyAppVersion "2.0"
 #define MyAppPublisher "FexoBox"
-#define MyAppURL "https://github.com/fexobox/fexobooth-v2"
+#define MyAppURL "https://github.com/fefotec/fexobooth-v2"
 #define MyAppExeName "FexoBooth.exe"
 
 [Setup]

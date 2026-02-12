@@ -27,7 +27,7 @@ if errorlevel 1 (
 )
 
 set "INSTALL_DIR=C:\FexoBooth-Dev"
-set "GITHUB_REPO=fexobox/fexobooth-v2"
+set "GITHUB_REPO=fefotec/fexobooth-v2"
 set "BRANCH=main"
 
 echo Installationsverzeichnis: %INSTALL_DIR%

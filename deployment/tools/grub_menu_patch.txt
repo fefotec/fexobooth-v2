@@ -1,0 +1,45 @@
+# ============================================
+# FexoBooth GRUB Boot-Menue Eintraege
+# ============================================
+#
+# Diese Eintraege in die grub.cfg auf dem USB-Stick kopieren.
+#
+# Datei auf dem USB-Stick:
+#   EFI/boot/grub.cfg
+#
+# Die Eintraege OBEN in die Datei einfuegen,
+# VOR den bestehenden Clonezilla-Eintraegen.
+#
+# Die bestehenden Eintraege NICHT loeschen -
+# die bleiben als "Experten-Modus" erhalten.
+#
+# WICHTIG: Die Pfade zu vmlinuz und initrd.img
+# muessen mit der Clonezilla-Version uebereinstimmen.
+# Falls Clonezilla nicht bootet, pruefe ob die Pfade
+# in den bestehenden Eintraegen anders sind und passe
+# die Pfade unten entsprechend an.
+# ============================================
+
+# --- AB HIER KOPIEREN ---
+
+set default="0"
+set timeout="10"
+
+menuentry "FexoBooth IMAGE ERSTELLEN (Referenz-Tablet abbilden)" --id fexobooth-capture {
+  search --set -f /live/vmlinuz
+  linux /live/vmlinuz boot=live union=overlay username=user config quiet noswap edd=on nomodeset locales="de_DE.UTF-8" keyboard-layouts="de" ocs_live_run="/live/custom-ocs/custom-ocs-capture" ocs_live_extra_param="" ocs_live_batch="no" vga=788 ip= net.ifnames=0 nosplash noprompt
+  initrd /live/initrd.img
+}
+
+menuentry "FexoBooth IMAGE AUFSPIELEN (Tablet klonen)" --id fexobooth-deploy {
+  search --set -f /live/vmlinuz
+  linux /live/vmlinuz boot=live union=overlay username=user config quiet noswap edd=on nomodeset locales="de_DE.UTF-8" keyboard-layouts="de" ocs_live_run="/live/custom-ocs/custom-ocs-deploy" ocs_live_extra_param="" ocs_live_batch="no" vga=788 ip= net.ifnames=0 nosplash noprompt
+  initrd /live/initrd.img
+}
+
+menuentry "-------------------------------------------" {
+  true
+}
+
+# --- BIS HIER KOPIEREN ---
+# Danach folgen die originalen Clonezilla-Eintraege (nicht loeschen!)

@@ -16,6 +16,9 @@ _Aktuell keine dringenden Aufgaben_
 - [ ] Canon DSLR Live-View optimieren
 - [ ] Print-Queue Anzeige
 - [ ] Event-Wechsel & Systemtest auf Tablet testen (echte Hardware)
+- [ ] Erstes GitHub Release erstellen + OTA-Update auf Tablet testen
+- [ ] Deployment: Referenz-Tablet einrichten und erstes Image testen
+- [ ] Deployment: Clonezilla USB-Stick auf Miix 310 testen (Boot + Capture + Restore)
 
 ---
 
@@ -26,6 +29,13 @@ _Aktuell keine niedrig priorisierten Aufgaben_
 ---
 
 ## Erledigt ✅
+
+### 2026-02-12
+- [x] Deployment-System: `deployment/` Ordner mit Clonezilla-Klon-Workflow
+- [x] OTA-Update System: Service-Menü Button "Software aktualisieren"
+- [x] update_from_github.bat: GitHub Releases statt Source-Archiv
+- [x] build_installer.bat: Erstellt immer ZIP für OTA-Updates
+- [x] Neues Modul: src/updater.py (GitHub API, Download, Update-Script)
 
 ### 2026-02-11
 - [x] System-Test: Komplette Session mit Foto pro Slot + automatischer Testdruck

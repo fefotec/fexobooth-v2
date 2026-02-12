@@ -6,6 +6,15 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### OTA-Update: GitHub Releases statt Source-Archiv
+
+| | |
+|---|---|
+| **Kontext** | 200 Produktions-Tablets laufen als PyInstaller-EXE (kein Python/Git installiert). Source-Download via `archive/refs/heads/main.zip` nutzlos, weil Tablets die EXE brauchen |
+| **Entscheidung** | GitHub Releases API (`/repos/.../releases/latest`) + ZIP-Asset mit fertigem Build. In-App Button im Service-Menü + standalone BAT-Datei als Fallback |
+| **Alternativen** | Auto-Updater mit Polling (braucht dauerhaft Internet), Inno Setup Installer erneut ausführen (braucht Admin-Rechte + User-Interaktion), eigener Update-Server (Overkill) |
+| **Begründung** | Tablets sind meist offline (Hotspot-Modus). Update nur wenn manuell Internet angeschlossen. GitHub Releases ist kostenlos, versioniert, und die API ist stabil. BAT-Script als Fallback wenn App nicht startet |
+
 ### USB-Stick Erkennung: 3 Typen + Fallback
 
 | | |

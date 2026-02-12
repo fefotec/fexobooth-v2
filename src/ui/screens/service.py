@@ -4,6 +4,7 @@ Aufruf über Service-PIN 6588 (hardcodiert).
 Funktionen:
 - Alle Bilder löschen (Datenschutz)
 - Bilder auf USB sichern (mit Event-ID Überordner)
+- Software-Update von GitHub (manuell, nur bei Internetverbindung)
 """
 
 import customtkinter as ctk
@@ -156,6 +157,30 @@ class ServiceDialog(ctk.CTkToplevel):
         ctk.CTkLabel(
             btn_container,
             text="Löscht Singles + Prints von der Festplatte (Datenschutz)",
+            font=FONTS["tiny"],
+            text_color=COLORS["text_muted"]
+        ).pack(pady=(0, 12))
+
+        # 3. Software-Update
+        update_btn = ctk.CTkButton(
+            btn_container,
+            text="Software aktualisieren",
+            font=("Segoe UI", 16, "bold"),
+            width=min(380, int(card_w * 0.8)),
+            height=60,
+            fg_color=COLORS["info"],
+            hover_color="#4dabf7",
+            corner_radius=SIZES["corner_radius"],
+            command=self._check_update
+        )
+        update_btn.pack(pady=8)
+
+        # Versions-Info anzeigen
+        from src.updater import get_current_version
+        version = get_current_version()
+        ctk.CTkLabel(
+            btn_container,
+            text=f"Aktuelle Version: {version} — Prüft GitHub auf neue Version",
             font=FONTS["tiny"],
             text_color=COLORS["text_muted"]
         ).pack(pady=(0, 12))
@@ -523,6 +548,165 @@ class ServiceDialog(ctk.CTkToplevel):
         # 3. Fallback: Datum
         from datetime import datetime
         return datetime.now().strftime("%Y%m%d_%H%M")
+
+    # ========== Software-Update ==========
+
+    def _check_update(self):
+        """Prüft auf neue Version bei GitHub"""
+        self._show_progress("Prüfe auf Updates...", 0.1)
+
+        def do_check():
+            try:
+                from src.updater import check_for_update
+                release = check_for_update()
+            except ConnectionError as e:
+                self.after(0, lambda: self._show_result(
+                    f"Keine Internetverbindung.\nBitte WLAN verbinden und erneut versuchen.",
+                    "error"
+                ))
+                return
+            except Exception as e:
+                self.after(0, lambda: self._show_result(
+                    f"Update-Prüfung fehlgeschlagen:\n{e}",
+                    "error"
+                ))
+                return
+
+            if release is None:
+                self.after(0, lambda: self._show_result(
+                    "Software ist bereits aktuell.", "success"
+                ))
+                return
+
+            # Update verfügbar → Bestätigungsdialog
+            self.after(0, lambda: self._confirm_update(release))
+
+        thread = threading.Thread(target=do_check, daemon=True)
+        thread.start()
+
+    def _confirm_update(self, release: dict):
+        """Zeigt Dialog: Update verfügbar, jetzt installieren?"""
+        self._hide_progress()
+
+        confirm = ctk.CTkToplevel(self)
+        confirm.overrideredirect(True)
+        confirm.configure(fg_color=COLORS["bg_dark"])
+
+        dialog_w, dialog_h = 420, 240
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        x = (screen_w - dialog_w) // 2
+        y = (screen_h - dialog_h) // 2
+        confirm.geometry(f"{dialog_w}x{dialog_h}+{x}+{y}")
+        confirm.attributes("-topmost", True)
+        confirm.grab_set()
+
+        content = ctk.CTkFrame(
+            confirm,
+            fg_color=COLORS["bg_medium"],
+            border_color=COLORS["info"],
+            border_width=2,
+            corner_radius=12
+        )
+        content.pack(fill="both", expand=True, padx=2, pady=2)
+
+        ctk.CTkLabel(
+            content,
+            text="Update verfügbar!",
+            font=("Segoe UI", 18, "bold"),
+            text_color=COLORS["info"]
+        ).pack(pady=(25, 5))
+
+        # Version + Größe anzeigen
+        from src.updater import get_current_version
+        current = get_current_version()
+        new_ver = release.get("version", "?")
+        size_mb = release.get("size", 0) / (1024 * 1024)
+        size_text = f" ({size_mb:.0f} MB)" if size_mb > 0 else ""
+
+        ctk.CTkLabel(
+            content,
+            text=f"Version {current}  →  {new_ver}{size_text}\n\n"
+                 f"Die App wird beendet, aktualisiert\nund automatisch neu gestartet.",
+            font=FONTS["small"],
+            text_color=COLORS["text_muted"],
+            justify="center"
+        ).pack(pady=(0, 20))
+
+        btn_frame = ctk.CTkFrame(content, fg_color="transparent")
+        btn_frame.pack()
+
+        def do_update():
+            confirm.destroy()
+            self._execute_update(release)
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Abbrechen",
+            width=130, height=45,
+            font=FONTS["button"],
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["bg_card"],
+            command=confirm.destroy
+        ).pack(side="left", padx=10)
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Jetzt updaten",
+            width=130, height=45,
+            font=FONTS["button"],
+            fg_color=COLORS["info"],
+            hover_color="#4dabf7",
+            command=do_update
+        ).pack(side="left", padx=10)
+
+    def _execute_update(self, release: dict):
+        """Lädt Update herunter und startet Installation"""
+        self._show_progress("Lade Update herunter...", 0.0)
+
+        def do_download():
+            try:
+                from src.updater import download_update, apply_update_and_restart
+
+                # Download mit Fortschritts-Callback
+                def on_progress(progress, text):
+                    self.after(0, lambda t=text, p=progress:
+                               self._update_progress(t, p))
+
+                zip_path = download_update(
+                    release["download_url"],
+                    progress_callback=on_progress
+                )
+
+                # Update-Script erstellen und starten
+                self.after(0, lambda: self._update_progress(
+                    "Starte Update-Installation...", 1.0
+                ))
+
+                apply_update_and_restart(zip_path)
+
+                # App beenden (nach kurzer Verzögerung für UI-Update)
+                self.after(500, self._quit_for_update)
+
+            except Exception as e:
+                self.after(0, lambda: self._show_result(
+                    f"Update fehlgeschlagen:\n{e}",
+                    "error"
+                ))
+
+        thread = threading.Thread(target=do_download, daemon=True)
+        thread.start()
+
+    def _quit_for_update(self):
+        """Beendet die App für das Update"""
+        logger.info("App wird für Update beendet...")
+        try:
+            self.grab_release()
+            self.destroy()
+        except Exception:
+            pass
+        # App sauber beenden
+        self.app.quit()
 
     # ========== UI-Helpers ==========
 

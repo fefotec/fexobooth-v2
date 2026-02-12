@@ -1,0 +1,98 @@
+#!/bin/bash
+# ============================================
+# FexoBooth Image Deploy Script
+# ============================================
+# Spielt das Image auf ein Ziel-Tablet auf.
+# Wird automatisch von Clonezilla aufgerufen
+# wenn "IMAGE AUFSPIELEN" im Bootmenue gewaehlt wird.
+#
+# ACHTUNG: Ueberschreibt ALLE Daten auf dem Tablet!
+# ============================================
+
+echo ""
+echo "============================================"
+echo "  FexoBooth - IMAGE AUFSPIELEN"
+echo "============================================"
+echo ""
+
+# Image auf dem USB-Stick finden
+IMAGE_DIR=""
+IMAGE_NAME=""
+
+for dir in /home/partimag/fexobooth-image-*; do
+    if [ -d "$dir" ]; then
+        IMAGE_DIR="$dir"
+        IMAGE_NAME=$(basename "$dir")
+    fi
+done
+
+if [ -z "$IMAGE_NAME" ]; then
+    echo "FEHLER: Kein FexoBooth-Image auf dem USB-Stick gefunden!"
+    echo ""
+    echo "Inhalt von /home/partimag/:"
+    ls -la /home/partimag/ 2>/dev/null || echo "(leer)"
+    echo ""
+    echo "Bitte zuerst ein Image erstellen (Capture-Modus)."
+    echo ""
+    read -p "Druecke Enter zum Neustarten..." dummy
+    reboot
+fi
+
+echo "Image gefunden: $IMAGE_NAME"
+echo ""
+
+# Auto-detect Ziel-Disk (gleiche Logik wie Capture)
+if [ -b /dev/mmcblk0 ]; then
+    TARGET_DISK="mmcblk0"
+    echo "Ziel: eMMC Speicher (/dev/mmcblk0)"
+elif [ -b /dev/nvme0n1 ]; then
+    TARGET_DISK="nvme0n1"
+    echo "Ziel: NVMe SSD (/dev/nvme0n1)"
+elif [ -b /dev/sda ]; then
+    USB_DEV=$(mount | grep /home/partimag | awk '{print $1}' | sed 's/[0-9]*$//')
+    if [ "/dev/sda" != "$USB_DEV" ]; then
+        TARGET_DISK="sda"
+        echo "Ziel: Festplatte (/dev/sda)"
+    elif [ -b /dev/sdb ]; then
+        TARGET_DISK="sdb"
+        echo "Ziel: Festplatte (/dev/sdb)"
+    fi
+fi
+
+if [ -z "$TARGET_DISK" ]; then
+    echo ""
+    echo "FEHLER: Keine Ziel-Festplatte gefunden!"
+    echo ""
+    echo "Erkannte Block-Geraete:"
+    lsblk -d -o NAME,SIZE,TYPE,MODEL
+    echo ""
+    read -p "Druecke Enter zum Neustarten..." dummy
+    reboot
+fi
+
+echo "Ziel-Disk: /dev/$TARGET_DISK"
+echo ""
+
+# Disk-Info anzeigen
+echo "Ziel-Disk Informationen:"
+lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL /dev/$TARGET_DISK
+echo ""
+
+echo "============================================"
+echo "  ACHTUNG: ALLE Daten auf /dev/$TARGET_DISK"
+echo "  werden UNWIDERRUFLICH ueberschrieben!"
+echo ""
+echo "  Image: $IMAGE_NAME"
+echo "  Dauer: ca. 15-20 Minuten"
+echo "============================================"
+echo ""
+
+# Clonezilla restoredisk ausfuehren
+# -e1 auto  = Partitionstabelle aus Image uebernehmen
+# -c        = Bestaetigung anfordern (Sicherheit!)
+# -p reboot = Nach Abschluss neustarten
+/usr/sbin/ocs-sr \
+    -e1 auto \
+    -c \
+    -p reboot \
+    restoredisk "$IMAGE_NAME" "$TARGET_DISK"

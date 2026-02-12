@@ -204,20 +204,17 @@ if %errorlevel% neq 0 (
 :skip_installer
 
 REM ─────────────────────────────────────────────
-REM Schritt 9: ZIP nur als Fallback (wenn kein Installer)
+REM Schritt 9: ZIP erstellen (fuer OTA-Updates via GitHub Releases)
 REM ─────────────────────────────────────────────
 
-if not exist "installer_output\FexoBooth_Setup_2.0.exe" (
-    echo.
-    echo Kein Installer vorhanden - erstelle ZIP als Fallback...
-    powershell -Command "Compress-Archive -Path 'installer_output\fexobooth\*' -DestinationPath 'installer_output\fexobooth.zip' -Force"
-    if %errorlevel% neq 0 (
-        echo WARNUNG: ZIP konnte nicht erstellt werden.
-    ) else (
-        echo [OK] ZIP erstellt: installer_output\fexobooth.zip
-    )
+echo.
+echo Erstelle ZIP fuer OTA-Updates...
+powershell -Command "Compress-Archive -Path 'installer_output\fexobooth\*' -DestinationPath 'installer_output\fexobooth.zip' -Force"
+if %errorlevel% neq 0 (
+    echo WARNUNG: ZIP konnte nicht erstellt werden.
 ) else (
-    echo [OK] Installer vorhanden - ZIP wird nicht benoetigt
+    echo [OK] ZIP erstellt: installer_output\fexobooth.zip
+    echo     (Dieses ZIP als Asset zum GitHub Release hochladen!)
 )
 
 REM ─────────────────────────────────────────────
@@ -258,8 +255,15 @@ if %VLC_FOUND%==1 (
 
 echo.
 echo Naechste Schritte:
+echo.
+echo   ERSTINSTALLATION (neue Tablets):
 echo   1. FexoBooth_Setup_2.0.exe auf USB-Stick kopieren
 echo   2. Auf Tablet ausfuehren - installiert nach C:\FexoBooth\
-echo   3. FexoBooth ueber Desktop-Icon oder Startmenue starten
+echo.
+echo   OTA-UPDATE (bestehende Tablets):
+echo   1. GitHub Release erstellen mit Tag (z.B. v2.1.0)
+echo   2. fexobooth.zip als Asset zum Release hochladen
+echo   3. Tablets: Service-Menu -^> "Software aktualisieren"
+echo      oder: update_from_github.bat ausfuehren
 echo.
 pause

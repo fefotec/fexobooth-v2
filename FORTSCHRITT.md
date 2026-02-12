@@ -4,6 +4,39 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-02-12
+
+### Deployment-System (Tablet-Klonen)
+- **Neuer Ordner:** `deployment/` mit komplettem Klon-System für 200 Tablets
+- **Ansatz:** Clonezilla-basiert (kein Sysprep nötig, kein Windows ADK)
+- **Workflow:** Referenz-Tablet einrichten → Image erstellen → auf Ziel-Tablets klonen
+- **Enthält:**
+  - Schritt-für-Schritt Anleitungen (Deutsch, anfängerfreundlich)
+  - `post_install_check.bat` — Prüft ob Referenz-Tablet bereit ist
+  - `create_usb.bat` — Lädt Clonezilla + Rufus herunter
+  - Clonezilla custom-ocs Scripts (auto-detect eMMC, deutsche Bootmenü-Einträge)
+  - `set_computername.bat` — Optionale individuelle Tablet-Benennung
+  - Druckbare Checkliste für den Deployment-Prozess
+- **Zeitschätzung:** ~2 Arbeitstage für 200 Tablets (4 USB-Sticks parallel)
+
+### OTA-Update System (Software aktualisieren)
+- **Neues Feature:** Tablets können sich über GitHub Releases selbst aktualisieren
+- **Service-Menü:** Neuer Button "Software aktualisieren" (PIN 6588)
+  - Prüft GitHub API auf neuestes Release
+  - Vergleicht Versionen automatisch
+  - Download mit Fortschrittsanzeige
+  - App beendet sich → BAT-Script ersetzt Dateien → Neustart
+- **Standalone BAT:** `update_from_github.bat` komplett überarbeitet
+  - Lädt jetzt von GitHub Releases statt Source-Archiv
+  - Funktioniert auf Produktions-Tablets (kein Python/Git nötig)
+  - Ersetzt EXE + `_internal/` + Assets
+- **Geschützte Dateien:** config.json, BILDER/, logs/, .booking_cache/ werden NIE überschrieben
+- **Build-Anpassung:** `build_installer.bat` erstellt immer ZIP für OTA-Updates
+- **Neues Modul:** `src/updater.py` — GitHub Release API, Download, Update-Script-Generierung
+- **Workflow:** Build → GitHub Release erstellen → ZIP hochladen → Tablets updaten
+
+---
+
 ## 2026-02-11
 
 ### Bilder-Export auf unbekannte USB-Sticks

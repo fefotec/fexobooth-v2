@@ -175,6 +175,8 @@ a = Analysis(
         "src.ui.screens.final",
         "src.ui.screens.video",
         "src.ui.screens.admin",
+        "src.ui.screens.service",
+        "src.updater",
         "src.utils",
         "src.utils.logging",
     ] + ctk_hiddenimports,

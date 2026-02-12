@@ -1,0 +1,87 @@
+#!/bin/bash
+# ============================================
+# FexoBooth Image Capture Script
+# ============================================
+# Erstellt ein Image vom Referenz-Tablet.
+# Wird automatisch von Clonezilla aufgerufen
+# wenn "IMAGE ERSTELLEN" im Bootmenue gewaehlt wird.
+#
+# Ziel-Hardware: Lenovo Miix 310 (eMMC = /dev/mmcblk0)
+# ============================================
+
+echo ""
+echo "============================================"
+echo "  FexoBooth - IMAGE ERSTELLEN"
+echo "============================================"
+echo ""
+
+# Auto-detect: eMMC oder SSD?
+if [ -b /dev/mmcblk0 ]; then
+    TARGET_DISK="mmcblk0"
+    echo "Erkannt: eMMC Speicher (/dev/mmcblk0)"
+elif [ -b /dev/nvme0n1 ]; then
+    TARGET_DISK="nvme0n1"
+    echo "Erkannt: NVMe SSD (/dev/nvme0n1)"
+elif [ -b /dev/sda ]; then
+    # Sicherstellen dass sda nicht der USB-Stick ist
+    USB_DEV=$(mount | grep /home/partimag | awk '{print $1}' | sed 's/[0-9]*$//')
+    if [ "/dev/sda" != "$USB_DEV" ]; then
+        TARGET_DISK="sda"
+        echo "Erkannt: Festplatte (/dev/sda)"
+    elif [ -b /dev/sdb ]; then
+        TARGET_DISK="sdb"
+        echo "Erkannt: Festplatte (/dev/sdb)"
+    fi
+fi
+
+if [ -z "$TARGET_DISK" ]; then
+    echo ""
+    echo "FEHLER: Keine Festplatte/eMMC gefunden!"
+    echo ""
+    echo "Erkannte Block-Geraete:"
+    lsblk -d -o NAME,SIZE,TYPE,MODEL
+    echo ""
+    echo "Bitte im Experten-Modus manuell waehlen."
+    read -p "Druecke Enter zum Neustarten..." dummy
+    reboot
+fi
+
+# Image-Name mit Datum
+IMAGE_NAME="fexobooth-image-$(date +%Y%m%d)"
+
+echo ""
+echo "Festplatte:  /dev/$TARGET_DISK"
+echo "Image-Name:  $IMAGE_NAME"
+echo ""
+
+# Disk-Info anzeigen
+echo "Disk-Informationen:"
+lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL /dev/$TARGET_DISK
+echo ""
+
+# Bestaetigung
+echo "============================================"
+echo "  Das Image wird jetzt erstellt."
+echo "  Dies dauert ca. 15-30 Minuten."
+echo "============================================"
+echo ""
+
+# Clonezilla savedisk ausfuehren
+# -q2       = Partclone verwenden (schneller, zuverlaessiger)
+# -c        = Bestaetigung anfordern
+# -j2       = Clone-Info im Image speichern
+# -z5       = zstd Kompression (bestes Verhaeltnis/Geschwindigkeit)
+# -i 4096   = Maximale Fragmentgroesse 4 GB
+# -sfsck    = Dateisystem-Check ueberspringen (schneller)
+# -senc     = Verschluesselung ueberspringen
+# -p reboot = Nach Abschluss neustarten
+/usr/sbin/ocs-sr \
+    -q2 \
+    -c \
+    -j2 \
+    -z5 \
+    -i 4096 \
+    -sfsck \
+    -senc \
+    -p reboot \
+    savedisk "$IMAGE_NAME" "$TARGET_DISK"
