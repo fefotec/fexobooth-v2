@@ -37,6 +37,10 @@ class AdminDialog(ctk.CTkToplevel):
         self.transient(parent)
         self.grab_set()
 
+        # Ctrl+Shift+Q auch im Dialog abfangen (grab_set blockiert Root-Bindings!)
+        self.bind("<Control-Shift-Q>", lambda e: self._emergency_quit_from_dialog())
+        self.bind("<Control-Shift-q>", lambda e: self._emergency_quit_from_dialog())
+
         # Vollbild-Overlay für PIN-Dialog (garantiert zentriert)
         self.overrideredirect(True)
 
@@ -235,16 +239,7 @@ class AdminDialog(ctk.CTkToplevel):
             y = (screen_h - admin_height) // 2
             self.geometry(f"{admin_width}x{admin_height}+{x}+{y}")
 
-            # *** WICHTIG: Fullscreen deaktivieren für Admin ***
-            try:
-                # overrideredirect entfernen damit Fenster normal angezeigt wird
-                self.parent_window.overrideredirect(False)
-                # Normale Fenstergröße
-                self.parent_window.geometry("1024x768")
-                logger.info("Fullscreen deaktiviert für Admin-Modus")
-            except Exception as e:
-                logger.debug(f"Fullscreen-Exit Fehler: {e}")
-
+            # Fullscreen wird bereits von show_admin_dialog() via _exit_fullscreen() deaktiviert
             self._show_settings()
         else:
             self.pin_entry.delete(0, "end")
@@ -1246,10 +1241,62 @@ class AdminDialog(ctk.CTkToplevel):
                 text_color=COLORS["text_primary"]
             ).pack(pady=(0, 10))
         
+        # Lifetime-Drucker-Zähler
+        lifetime_frame = ctk.CTkFrame(scroll, fg_color=COLORS["bg_card"], corner_radius=10)
+        lifetime_frame.pack(fill="x", pady=10)
+
+        ctk.CTkLabel(
+            lifetime_frame,
+            text="🖨️ Drucker-Lifetime",
+            font=FONTS["body_bold"],
+            text_color=COLORS["text_primary"]
+        ).pack(pady=(10, 5))
+
+        try:
+            from src.storage.printer_lifetime import get_printer_lifetime
+            lifetime = get_printer_lifetime()
+            lifetime_count = lifetime.total_prints
+            last_reset = lifetime.last_reset
+
+            reset_info = ""
+            if last_reset:
+                try:
+                    from datetime import datetime
+                    reset_dt = datetime.fromisoformat(last_reset)
+                    reset_info = f"\nLetzter Reset: {reset_dt.strftime('%d.%m.%Y %H:%M')}"
+                except Exception:
+                    pass
+
+            lifetime_text = f"Gesamt-Drucke: {lifetime_count}{reset_info}"
+        except Exception as e:
+            logger.warning(f"Lifetime-Zähler laden fehlgeschlagen: {e}")
+            lifetime_text = "Nicht verfügbar"
+
+        self.lifetime_label = ctk.CTkLabel(
+            lifetime_frame,
+            text=lifetime_text,
+            font=FONTS["small"],
+            text_color=COLORS["text_primary"],
+            justify="center"
+        )
+        self.lifetime_label.pack(pady=(0, 5))
+
+        ctk.CTkButton(
+            lifetime_frame,
+            text="Zähler zurücksetzen (Service-PIN)",
+            font=FONTS["tiny"],
+            width=200,
+            height=28,
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["error"],
+            text_color=COLORS["text_muted"],
+            command=self._reset_printer_lifetime
+        ).pack(pady=(0, 10))
+
         # Export-Buttons
         btn_frame = ctk.CTkFrame(scroll, fg_color="transparent")
         btn_frame.pack(fill="x", pady=15)
-        
+
         ctk.CTkButton(
             btn_frame,
             text="📤 Als CSV exportieren",
@@ -1260,7 +1307,7 @@ class AdminDialog(ctk.CTkToplevel):
             hover_color=COLORS["primary_hover"],
             command=self._export_stats_csv
         ).pack(side="left", padx=(0, 10))
-        
+
         ctk.CTkButton(
             btn_frame,
             text="🔄 Aktualisieren",
@@ -1395,6 +1442,89 @@ class AdminDialog(ctk.CTkToplevel):
             command=do_reset
         ).pack(side="left", padx=5)
     
+    def _reset_printer_lifetime(self):
+        """Setzt den Drucker-Lifetime-Zähler zurück - erfordert Service-PIN (6588)"""
+        from src.ui.screens.service import SERVICE_PIN
+
+        dialog = ctk.CTkToplevel(self)
+        dialog.overrideredirect(True)
+        dialog.configure(fg_color=COLORS["bg_dark"])
+        dialog.transient(self)
+
+        dialog_w, dialog_h = 340, 220
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        x = (screen_w - dialog_w) // 2
+        y = (screen_h - dialog_h) // 2
+        dialog.geometry(f"{dialog_w}x{dialog_h}+{x}+{y}")
+        dialog.attributes("-topmost", True)
+        dialog.grab_set()
+        dialog.lift()
+        dialog.focus_force()
+
+        content = ctk.CTkFrame(
+            dialog, fg_color=COLORS["bg_medium"],
+            border_color=COLORS["warning"], border_width=2, corner_radius=16
+        )
+        content.pack(fill="both", expand=True, padx=2, pady=2)
+
+        ctk.CTkLabel(
+            content, text="🖨️ Drucker-Zähler Reset",
+            font=FONTS["body_bold"], text_color=COLORS["warning"]
+        ).pack(pady=(15, 5))
+
+        ctk.CTkLabel(
+            content, text="Service-PIN eingeben:",
+            font=FONTS["small"], text_color=COLORS["text_secondary"]
+        ).pack(pady=(0, 5))
+
+        pin_entry = ctk.CTkEntry(
+            content, show="●", width=160, height=38,
+            font=("Segoe UI", 18), justify="center",
+            fg_color=COLORS["bg_dark"], border_color=COLORS["border_light"],
+            corner_radius=SIZES["corner_radius"]
+        )
+        pin_entry.pack(pady=(0, 5))
+        pin_entry.focus()
+
+        error_label = ctk.CTkLabel(
+            content, text="", font=FONTS["tiny"], text_color=COLORS["error"]
+        )
+        error_label.pack()
+
+        def do_reset():
+            if pin_entry.get() == SERVICE_PIN:
+                try:
+                    from src.storage.printer_lifetime import get_printer_lifetime
+                    get_printer_lifetime().reset()
+                    self.lifetime_label.configure(text="Gesamt-Drucke: 0\nZähler zurückgesetzt!")
+                    logger.info("Drucker-Lifetime zurückgesetzt via Service-PIN")
+                except Exception as e:
+                    logger.error(f"Lifetime-Reset Fehler: {e}")
+                dialog.destroy()
+            else:
+                pin_entry.delete(0, "end")
+                error_label.configure(text="Falsche PIN!")
+                pin_entry.configure(border_color=COLORS["error"])
+                dialog.after(600, lambda: pin_entry.configure(border_color=COLORS["border_light"]))
+
+        pin_entry.bind("<Return>", lambda e: do_reset())
+
+        btn_frame = ctk.CTkFrame(content, fg_color="transparent")
+        btn_frame.pack(pady=(5, 15))
+
+        ctk.CTkButton(
+            btn_frame, text="Abbrechen", width=100, height=32,
+            font=FONTS["small"], fg_color=COLORS["bg_light"],
+            hover_color=COLORS["bg_card"], command=dialog.destroy
+        ).pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            btn_frame, text="Reset", width=100, height=32,
+            font=FONTS["small"], fg_color=COLORS["error"],
+            hover_color="#ff5555", command=do_reset
+        ).pack(side="left", padx=5)
+
     def _show_message(self, text: str):
         """Zeigt eine kurze Nachricht"""
         msg = ctk.CTkToplevel(self)
@@ -1411,10 +1541,22 @@ class AdminDialog(ctk.CTkToplevel):
         ctk.CTkLabel(msg, text=text, font=FONTS["body"]).pack(expand=True)
         msg.after(2000, msg.destroy)
     
+    def _emergency_quit_from_dialog(self):
+        """Ctrl+Shift+Q im Dialog - Dialog schließen und App beenden"""
+        self.grab_release()
+        self.destroy()
+        app = getattr(self.parent_window, '_photobooth_app', None)
+        if app:
+            app._emergency_quit()
+
     def _quit_app(self):
-        """Beendet die gesamte Anwendung"""
+        """Beendet die gesamte Anwendung - stellt Taskleiste und Benachrichtigungen wieder her."""
         logger.info("App wird beendet (Admin-Dialog)")
         try:
+            app = getattr(self.parent_window, '_photobooth_app', None)
+            if app:
+                app._show_taskbar()
+                app._suppress_notifications(False)
             self.parent_window.destroy()
         except Exception:
             pass

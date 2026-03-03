@@ -37,6 +37,10 @@ class EventChangeDialog(ctk.CTkToplevel):
         self.grab_set()
         self.focus_force()
 
+        # Ctrl+Shift+Q auch im Dialog abfangen (grab_set blockiert Root-Bindings!)
+        self.bind("<Control-Shift-Q>", lambda e: self._emergency_quit())
+        self.bind("<Control-Shift-q>", lambda e: self._emergency_quit())
+
         self._build_ui(screen_w, screen_h)
         logger.info(f"Event-Wechsel Dialog geöffnet: {new_booking_id} ({image_count} Bilder lokal)")
 
@@ -266,3 +270,10 @@ class EventChangeDialog(ctk.CTkToplevel):
         self.destroy()
         if callback:
             callback()
+
+    def _emergency_quit(self):
+        """Ctrl+Shift+Q - Dialog schließen und App beenden"""
+        self.grab_release()
+        self.destroy()
+        if hasattr(self.master, '_photobooth_app'):
+            self.master._photobooth_app._emergency_quit()

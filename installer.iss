@@ -33,9 +33,8 @@ RestartApplications=yes
 OutputDir=installer_output
 OutputBaseFilename=FexoBooth_Setup_{#MyAppVersion}
 SetupIconFile=assets\fexobooth.ico
-Compression=lzma2/ultra64
+Compression=lzma2/normal
 SolidCompression=yes
-LZMAUseSeparateProcess=yes
 
 ; Windows-Version
 MinVersion=10.0

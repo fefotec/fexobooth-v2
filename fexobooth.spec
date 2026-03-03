@@ -162,6 +162,7 @@ a = Analysis(
         "src.storage.usb",
         "src.storage.booking",
         "src.storage.statistics",
+        "src.storage.printer_lifetime",
         "src.templates",
         "src.templates.loader",
         "src.templates.renderer",

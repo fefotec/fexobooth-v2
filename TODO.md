@@ -13,7 +13,7 @@ _Aktuell keine dringenden Aufgaben_
 ## Mittel 🟡
 
 - [ ] Admin-Menü: "Buchung zurücksetzen" Button
-- [ ] Canon DSLR Live-View optimieren
+- [ ] Canon DSLR Live-View optimieren (EVF_INTERNAL_ERROR Retry-Logik)
 - [ ] Print-Queue Anzeige
 - [ ] Event-Wechsel & Systemtest auf Tablet testen (echte Hardware)
 - [ ] Erstes GitHub Release erstellen + OTA-Update auf Tablet testen
@@ -29,6 +29,30 @@ _Aktuell keine niedrig priorisierten Aufgaben_
 ---
 
 ## Erledigt ✅
+
+### 2026-02-26
+- [x] KRITISCH: EDSDK Deadlock behoben (System-Test hing, Tablet musste hard-reboot)
+- [x] System-Test: Globaler Timeout (90s) + Abbrechen-Button
+- [x] Ctrl+Shift+Q funktioniert jetzt in ALLEN Dialogen (auch mit grab_set)
+- [x] Kamera-Status-Anzeige in der Top-Bar (blinkend wenn keine Kamera angeschlossen)
+- [x] Canon DSLR ohne SD-Karte: Host-Download entfernt (unzuverlässig), sofort LiveView-Fallback statt 10s Hänger
+- [x] Taskleiste: atexit-Handler + Recovery beim App-Start (kein permanentes Verschwinden mehr nach Crash)
+- [x] Fix: Permanentes `-topmost` blockierte ALLE Dialoge (USB-Sync, Export, Task-Manager)
+- [x] Kiosk-Modus: topmost nur noch kurz bei Fenster-Positionierung (nicht permanent)
+- [x] Windows-Benachrichtigungen via Registry unterdrücken (statt topmost-Overlay)
+- [x] Notfall-Shortcut Ctrl+Shift+Q zum App-Beenden (auch im Kiosk-Modus)
+
+### 2026-02-25
+- [x] Kiosk-Modus: Taskleiste via Windows API verstecken (kein Durchblitzen mehr)
+- [x] Kiosk-Modus: Fullscreen-Restore sofort nach Admin/Service-Dialog (nicht 10s Timer)
+- [x] Kiosk-Modus: Escape/F11 blockiert (nur per Admin-PIN Vollbild verlassbar)
+- [x] Kiosk-Modus: Sicherheitsnetz alle 5s re-assertet Taskleiste
+- [x] Fix: Service-PIN Dialog hat Fullscreen nie wiederhergestellt
+- [x] Fix: USB-Dialoge (Sync + Export) Vordergrund erzwingen (transient + lift + focus_force)
+- [x] USB-Dialoge: Auto-Close nach Kopiervorgang (3s Erfolg, 4s Fehler)
+- [x] Final-Screen: Template-Vorschau vollständig sichtbar (nicht mehr abgeschnitten)
+- [x] Drucker-Lifetime-Zähler: Gesamt-Drucke im Admin-Menü anzeigen
+- [x] Drucker-Lifetime-Zähler: Reset nur per Service-PIN (6588)
 
 ### 2026-02-12
 - [x] Deployment-System: `deployment/` Ordner mit Clonezilla-Klon-Workflow

@@ -1,9 +1,11 @@
 @echo off
 REM =====================================================
-REM Fexobooth - Normal Mode
+REM Fexobooth - Developer Mode
 REM =====================================================
-REM Startet Fexobooth im normalen Modus (kein Konsolenfenster)
+REM Startet Fexobooth mit sichtbarer Konsole + Dev-Tools
 REM =====================================================
 
 cd /d "%~dp0"
-pythonw src/main.py
+python src/main.py --dev
+
+pause

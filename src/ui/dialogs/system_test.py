@@ -29,11 +29,15 @@ ICON_ERROR = "❌"
 # Pause zwischen Fotos (Sekunden) - Kamera braucht Zeit zum Nachregeln
 PHOTO_DELAY = 2.0
 
+# Maximale Gesamtdauer des Tests (Sekunden) - danach wird abgebrochen
+GLOBAL_TIMEOUT = 90
+
 
 class SystemTestDialog(ctk.CTkToplevel):
     """Automatischer System-Test nach Event-Wechsel.
 
     Fotografiert jeden Template-Slot einzeln und druckt das Ergebnis.
+    Hat einen globalen Timeout und Abbrechen-Button für den Notfall.
     """
 
     def __init__(self, parent, app, on_complete: callable):
@@ -46,6 +50,7 @@ class SystemTestDialog(ctk.CTkToplevel):
         self._test_file: Optional[Path] = None
         self._errors: List[str] = []
         self._destroyed = False
+        self._cancelled = threading.Event()  # Thread-sicheres Abbruch-Signal
 
         # Anzahl Foto-Slots aus Template ermitteln
         self._num_photos = max(len(self.app.template_boxes), 1)
@@ -71,11 +76,18 @@ class SystemTestDialog(ctk.CTkToplevel):
         self.grab_set()
         self.focus_force()
 
+        # Ctrl+Shift+Q auch im Dialog abfangen (grab_set blockiert Root-Bindings!)
+        self.bind("<Control-Shift-Q>", lambda e: self._force_abort())
+        self.bind("<Control-Shift-q>", lambda e: self._force_abort())
+
         self._build_ui(screen_w, screen_h)
+
+        # Globaler Timeout-Timer
+        self._timeout_id = self.after(GLOBAL_TIMEOUT * 1000, self._on_timeout)
 
         # Test nach kurzem Delay starten
         self.after(500, self._start_test)
-        logger.info(f"System-Test Dialog geöffnet ({self._num_photos} Foto-Slots)")
+        logger.info(f"System-Test Dialog geöffnet ({self._num_photos} Foto-Slots, Timeout: {GLOBAL_TIMEOUT}s)")
 
     def _build_ui(self, screen_w: int, screen_h: int):
         """Baut die Dialog-UI auf"""
@@ -148,9 +160,28 @@ class SystemTestDialog(ctk.CTkToplevel):
         )
         # Wird erst nach Abschluss gepackt
 
-        # OK-Button (zunächst unsichtbar)
+        # Button-Container (immer sichtbar)
+        self._btn_frame = ctk.CTkFrame(card, fg_color="transparent")
+        self._btn_frame.pack(pady=(10, 20))
+
+        # Abbrechen-Button (immer sichtbar während Test läuft)
+        self.cancel_btn = ctk.CTkButton(
+            self._btn_frame,
+            text="Abbrechen",
+            font=FONTS["button_large"],
+            width=160,
+            height=50,
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["bg_card"],
+            text_color=COLORS["text_primary"],
+            corner_radius=SIZES["corner_radius"],
+            command=self._on_cancel
+        )
+        self.cancel_btn.pack()
+
+        # OK-Button (zunächst unsichtbar - wird nach Abschluss angezeigt)
         self.ok_btn = ctk.CTkButton(
-            card,
+            self._btn_frame,
             text="OK",
             font=FONTS["button_large"],
             width=160,
@@ -160,7 +191,6 @@ class SystemTestDialog(ctk.CTkToplevel):
             corner_radius=SIZES["corner_radius"],
             command=self._close
         )
-        # Wird erst nach Abschluss gepackt
 
     def _update_step(self, index: int, status: str, error_msg: str = ""):
         """Aktualisiert den Status eines Schritts (thread-safe)"""
@@ -214,6 +244,46 @@ class SystemTestDialog(ctk.CTkToplevel):
         thread = threading.Thread(target=self._run_test, daemon=True)
         thread.start()
 
+    def _on_cancel(self):
+        """Abbrechen-Button gedrückt"""
+        logger.warning("System-Test: Vom Benutzer abgebrochen")
+        self._cancelled.set()
+        self._errors.append("Vom Benutzer abgebrochen")
+        # Kamera freigeben (falls aktiv)
+        try:
+            self.app.camera_manager.release()
+        except Exception:
+            pass
+        self.after(500, self._show_result)
+
+    def _on_timeout(self):
+        """Globaler Timeout erreicht - Test abbrechen"""
+        if self._destroyed or not self._cancelled.is_set():
+            logger.error(f"System-Test: TIMEOUT nach {GLOBAL_TIMEOUT}s!")
+            self._cancelled.set()
+            self._errors.append(f"Timeout nach {GLOBAL_TIMEOUT}s")
+            # Kamera freigeben (falls aktiv)
+            try:
+                self.app.camera_manager.release()
+            except Exception:
+                pass
+            self.after(500, self._show_result)
+
+    def _force_abort(self):
+        """Ctrl+Shift+Q im Dialog - sofort schließen"""
+        logger.warning("System-Test: Force-Abort via Ctrl+Shift+Q")
+        self._cancelled.set()
+        try:
+            self.app.camera_manager.release()
+        except Exception:
+            pass
+        self._destroyed = True
+        self._errors.append("Force-Abort (Ctrl+Shift+Q)")
+        self.grab_release()
+        self.destroy()
+        if self._on_complete:
+            self._on_complete(False, self._errors)
+
     def _run_test(self):
         """Führt alle Test-Schritte durch"""
         steps = [
@@ -225,6 +295,12 @@ class SystemTestDialog(ctk.CTkToplevel):
         ]
 
         for i, step_func in enumerate(steps):
+            # Abbruch prüfen
+            if self._cancelled.is_set():
+                for j in range(i, len(steps)):
+                    self.after(0, lambda idx=j: self._update_step(idx, "error", "Abgebrochen"))
+                break
+
             step_name, status_text = self.STEPS[i]
             progress = i / len(steps)
 
@@ -236,7 +312,8 @@ class SystemTestDialog(ctk.CTkToplevel):
 
             try:
                 step_func()
-                self.after(0, lambda idx=i: self._update_step(idx, "success"))
+                if not self._cancelled.is_set():
+                    self.after(0, lambda idx=i: self._update_step(idx, "success"))
             except Exception as e:
                 error_msg = str(e)
                 self._errors.append(f"{step_name}: {error_msg}")
@@ -249,12 +326,16 @@ class SystemTestDialog(ctk.CTkToplevel):
                         self.after(0, lambda idx=j: self._update_step(idx, "error", "Übersprungen"))
                     break
 
-        # Ergebnis anzeigen
-        self.after(0, lambda: self._update_status("Test abgeschlossen", 1.0))
-        self.after(100, lambda: self._show_result())
+        # Ergebnis anzeigen (nur wenn nicht bereits durch Cancel/Timeout geschehen)
+        if not self._destroyed:
+            self.after(0, lambda: self._update_status("Test abgeschlossen", 1.0))
+            self.after(100, lambda: self._show_result())
 
     def _step_init_camera(self):
         """Schritt 1: Kamera initialisieren"""
+        if self._cancelled.is_set():
+            raise Exception("Abgebrochen")
+
         cam_index = self.app.config.get("camera_index", 0)
         cam_settings = self.app.config.get("camera_settings", {})
         width = cam_settings.get("single_photo_width", 640)
@@ -268,47 +349,43 @@ class SystemTestDialog(ctk.CTkToplevel):
         time.sleep(1.0)
 
     def _capture_single_photo(self) -> Image.Image:
-        """Nimmt ein einzelnes Foto auf (DSLR oder Webcam)"""
-        photo = None
+        """Nimmt ein Foto für den System-Test auf.
 
-        # Canon DSLR
-        if hasattr(self.app.camera_manager, 'capture_photo'):
-            try:
-                photo = self.app.camera_manager.capture_photo(timeout=10.0)
-                if photo:
-                    frame = np.array(photo)
-                    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                    if self.app.config.get("rotate_180", False):
-                        frame = cv2.rotate(frame, cv2.ROTATE_180)
-                    frame = cv2.flip(frame, 1)
-                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    photo = Image.fromarray(rgb)
-            except Exception as e:
-                logger.warning(f"DSLR Fehler bei Systemtest: {e}")
+        Nutzt immer LiveView-Frames (kein echtes Auslösen der DSLR).
+        Der System-Test prüft nur ob Kamera, Template und Drucker funktionieren -
+        volle DSLR-Qualität ist dafür nicht nötig und spart SD-Karten-Abhängigkeit.
+        """
+        if self._cancelled.is_set():
+            raise Exception("Abgebrochen")
 
-        # Webcam Fallback
-        if photo is None:
-            cam_settings = self.app.config.get("camera_settings", {})
-            capture_w = cam_settings.get("single_photo_width", 1920)
-            capture_h = cam_settings.get("single_photo_height", 1080)
+        # LiveView-Frame holen (funktioniert mit DSLR und Webcam)
+        frame = None
 
-            frame = None
-            if hasattr(self.app.camera_manager, 'get_high_res_frame'):
-                frame = self.app.camera_manager.get_high_res_frame(capture_w, capture_h)
-            if frame is None and hasattr(self.app.camera_manager, 'get_frame'):
-                frame = self.app.camera_manager.get_frame(use_cache=False)
+        # Bei Canon DSLR: LiveView starten falls nicht aktiv
+        if hasattr(self.app.camera_manager, 'start_live_view'):
+            if not self.app.camera_manager._live_view_active:
+                self.app.camera_manager.start_live_view()
 
+        # Mehrere Versuche (LiveView braucht nach Start ~1-2s für gültige Frames)
+        for attempt in range(15):
+            if self._cancelled.is_set():
+                raise Exception("Abgebrochen")
+            frame = self.app.camera_manager.get_frame(use_cache=False)
             if frame is not None:
-                if self.app.config.get("rotate_180", False):
-                    frame = cv2.rotate(frame, cv2.ROTATE_180)
-                frame = cv2.flip(frame, 1)
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                photo = Image.fromarray(rgb)
+                break
+            time.sleep(0.3)
 
-        if photo is None:
-            raise Exception("Foto konnte nicht aufgenommen werden")
+        if frame is None:
+            raise Exception("Kein Kamera-Frame verfügbar")
 
-        return photo
+        # Rotation und Spiegelung anwenden
+        if self.app.config.get("rotate_180", False):
+            frame = cv2.rotate(frame, cv2.ROTATE_180)
+        frame = cv2.flip(frame, 1)
+
+        # OpenCV BGR zu PIL RGB
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        return Image.fromarray(rgb)
 
     def _step_capture_photos(self):
         """Schritt 2: Ein Foto pro Template-Slot aufnehmen"""
@@ -316,6 +393,9 @@ class SystemTestDialog(ctk.CTkToplevel):
         self._test_photos = []
 
         for i in range(total):
+            if self._cancelled.is_set():
+                raise Exception("Abgebrochen")
+
             nr = i + 1
 
             # UI: "Foto 2 von 4 aufnehmen..."
@@ -341,6 +421,9 @@ class SystemTestDialog(ctk.CTkToplevel):
 
     def _step_apply_template(self):
         """Schritt 3: Template mit allen Fotos rendern"""
+        if self._cancelled.is_set():
+            raise Exception("Abgebrochen")
+
         if not self._test_photos:
             raise Exception("Keine Testfotos vorhanden")
 
@@ -357,6 +440,9 @@ class SystemTestDialog(ctk.CTkToplevel):
 
     def _step_print(self):
         """Schritt 4: Testdruck ausführen"""
+        if self._cancelled.is_set():
+            raise Exception("Abgebrochen")
+
         if self._test_result is None:
             raise Exception("Kein Testbild zum Drucken")
 
@@ -447,6 +533,10 @@ class SystemTestDialog(ctk.CTkToplevel):
 
         logger.info(f"System-Test: Testdruck gesendet an '{printer_name}'")
 
+        # Lifetime-Drucker-Zähler hochzählen (auch Testdrucke zählen!)
+        from src.storage.printer_lifetime import get_printer_lifetime
+        get_printer_lifetime().increment()
+
     def _step_cleanup(self):
         """Schritt 5: Testdateien aufräumen"""
         if self._test_file and self._test_file.exists():
@@ -470,6 +560,16 @@ class SystemTestDialog(ctk.CTkToplevel):
         if self._destroyed:
             return
 
+        # Timeout-Timer abbrechen
+        if hasattr(self, '_timeout_id') and self._timeout_id:
+            try:
+                self.after_cancel(self._timeout_id)
+            except Exception:
+                pass
+
+        # Abbrechen-Button durch OK-Button ersetzen
+        self.cancel_btn.pack_forget()
+
         if not self._errors:
             self.result_label.configure(
                 text=f"Alles OK! Testdruck mit {self._num_photos} Fotos gesendet.",
@@ -492,6 +592,7 @@ class SystemTestDialog(ctk.CTkToplevel):
     def _close(self):
         """Dialog schließen"""
         self._destroyed = True
+        self._cancelled.set()
         success = len(self._errors) == 0
         callback = self._on_complete
         self.grab_release()
@@ -502,4 +603,5 @@ class SystemTestDialog(ctk.CTkToplevel):
     def destroy(self):
         """Override destroy um Flag zu setzen"""
         self._destroyed = True
+        self._cancelled.set()
         super().destroy()

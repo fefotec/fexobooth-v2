@@ -43,6 +43,9 @@ def _setup_global_exception_handlers():
             sys.__excepthook__(exc_type, exc_value, exc_traceback)
             return
 
+        # Taskleiste wiederherstellen bevor wir crashen
+        _recover_taskbar()
+
         # Vollständigen Stacktrace loggen
         logger.critical("=" * 60)
         logger.critical("UNBEHANDELTE EXCEPTION (Hauptthread)")
@@ -69,12 +72,57 @@ def _setup_global_exception_handlers():
     threading.excepthook = handle_thread_exception
 
 
+def _hide_console_window():
+    """Versteckt das Konsolenfenster (nur Windows).
+
+    Wird nur im Produktionsmodus aufgerufen - im Developer Mode bleibt
+    die Konsole für Debugging sichtbar.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE
+    except Exception:
+        pass
+
+
+def _recover_taskbar():
+    """Stellt Taskleiste wieder her falls ein vorheriger Lauf abgestürzt ist.
+
+    Muss VOR dem App-Start laufen, damit die Taskleiste nicht permanent
+    versteckt bleibt wenn die App vorher per Stromausfall/Force-Kill beendet wurde.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        SW_SHOW = 5
+        taskbar = ctypes.windll.user32.FindWindowW("Shell_TrayWnd", None)
+        if taskbar:
+            ctypes.windll.user32.ShowWindow(taskbar, SW_SHOW)
+        start_btn = ctypes.windll.user32.FindWindowW("Button", "Start")
+        if start_btn:
+            ctypes.windll.user32.ShowWindow(start_btn, SW_SHOW)
+    except Exception:
+        pass
+
+
 def main():
     """Haupteinstiegspunkt"""
+    # WICHTIG: Taskleiste wiederherstellen (Recovery von vorherigem Crash)
+    _recover_taskbar()
+
     # Developer Mode NUR via Kommandozeile (--dev oder -d)
     # Config-Wert wird IGNORIERT - nur CLI zählt!
     developer_mode = "--dev" in sys.argv or "-d" in sys.argv
-    
+
+    # Konsolenfenster verstecken (nur Produktion - im Dev Mode bleibt es sichtbar)
+    if not developer_mode:
+        _hide_console_window()
+
     # Config laden
     config = load_config()
     

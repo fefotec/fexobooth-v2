@@ -6,6 +6,42 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### EDSDK ist NICHT thread-safe! (Windows COM STA)
+
+| | |
+|---|---|
+| **Kontext** | Canon EDSDK DLL nutzt Windows COM mit Single-Threaded Apartment. Wenn zwei Threads gleichzeitig EDSDK-Funktionen aufrufen (z.B. UI-Thread `list_cameras()` + Background-Thread `capture_photo()`), entsteht ein Deadlock |
+| **Entscheidung** | Alle EDSDK-Aufrufe vom UI-Thread nur wenn `camera_manager.is_initialized == False` (= keine aktive Session). Wenn die Kamera in Benutzung ist, überspringt `_check_camera_status()` den EDSDK-Check komplett |
+| **Alternativen** | Thread-Lock um alle EDSDK-Aufrufe (komplexer, fehleranfällig), EDSDK nur von einem Thread (erfordert Message-Queue-Architektur), Kamera-Status ohne EDSDK prüfen (WMI/USB-Enumeration - Overkill) |
+| **Begründung** | Pragmatische Lösung: `is_initialized` ist ein zuverlässiger Proxy. Wenn die Kamera initialisiert ist, wissen wir dass sie verbunden ist. Wenn nicht, ist es sicher EDSDK aufzurufen weil kein anderer Thread es nutzt |
+
+### Kiosk-Modus: Taskleiste verstecken + Benachrichtigungen unterdrücken (KEIN permanentes topmost!)
+
+| | |
+|---|---|
+| **Kontext** | App muss im Kiosk-Modus laufen: Kein Zugang zu Windows für Kunden, keine störenden Windows-Meldungen. Aber eigene App-Dialoge (USB-Sync, Export, Event-Wechsel) müssen im Vordergrund erscheinen |
+| **Entscheidung** | Drei-Säulen-Ansatz: (1) Taskleiste via Windows API verstecken (`FindWindowW("Shell_TrayWnd")` + `ShowWindow(SW_HIDE)`), wird alle 5s re-assertet. (2) Windows-Benachrichtigungen via Registry unterdrücken (`NOC_GLOBAL_SETTING_TOASTS_ENABLED=0`). (3) `-topmost=True` nur KURZ beim Fenster-Positionieren, dann sofort wieder entfernt. Notfall-Shortcut Ctrl+Shift+Q zum Beenden |
+| **Alternativen** | Permanentes `-topmost=True` (**SCHLECHT** - blockiert ALLE Dialoge inkl. eigener App-Dialoge, macht App unbedienbar!), `WS_EX_APPWINDOW` via `withdraw/deiconify` (Race Condition), Windows Kiosk-Modus / Assigned Access (braucht Enterprise) |
+| **Begründung** | Permanentes `-topmost=True` verhindert dass Toplevel-Dialoge (auch eigene!) in den Vordergrund kommen. `transient()` + `grab_set()` reichen nicht gegen ein topmost-Elternfenster. Taskleiste-Verstecken allein ist ausreichend um Windows-Zugang zu verhindern. Benachrichtigungs-Toasts werden über Registry deaktiviert statt durch topmost überlagert |
+
+### Canon DSLR: Dual-Modus Capture (SD-Karte optional, Host-Download als Fallback)
+
+| | |
+|---|---|
+| **Kontext** | Canon EOS 2000D auf Fotoboxen - manche haben SD-Karte, manche nicht. Bilder müssen in voller DSLR-Auflösung auf dem Tablet landen. Host-Download hing anfangs → Ursache war der EDSDK-Deadlock (UI-Thread + Session-Thread gleichzeitig), NICHT der Host-Download selbst |
+| **Entscheidung** | Zwei Modi: (1) MIT SD-Karte: `set_save_to_camera()` + Directory-Polling (zuverlässigster Modus). (2) OHNE SD-Karte: `set_save_to_host()` + Event-Handler (`_on_object_event`) + Queue-basierter Download. System-Test nutzt immer LiveView (braucht keine SD-Karte, schneller) |
+| **Alternativen** | Nur Directory-Polling (braucht SD-Karte - nicht akzeptabel für Boxen ohne SD), nur Host-Download (weniger getestet als Directory-Polling), LiveView-Fallback statt echtem Capture (reduzierte Auflösung) |
+| **Begründung** | Beide Modi müssen funktionieren. Directory-Polling ist bewährt und zuverlässig. Host-Download ist notwendig für Boxen ohne SD-Karte. Der EDSDK-Deadlock-Fix (kein EDSDK vom UI-Thread wenn Session aktiv) war die eigentliche Lösung für das Hängen. `get_event()` MUSS regelmäßig gepollt werden damit Events auf Windows dispatched werden |
+
+### Taskleiste: Crash-Sicherheit durch 3-Schichten-Schutz
+
+| | |
+|---|---|
+| **Kontext** | `ShowWindow(SW_HIDE)` auf der Windows-Taskleiste ist persistent - bleibt auch nach App-Crash versteckt. Wenn die App abstürzt oder per Force-Kill beendet wird, ist die Taskleiste dauerhaft weg |
+| **Entscheidung** | 3-Schichten-Schutz: (1) `atexit.register()` in `app.py` als Safety-Net bei sauberen Python-Exits. (2) `_recover_taskbar()` in `main.py` beim App-Start - stellt Taskleiste wieder her bevor die App das Fenster erstellt. (3) Global Exception Handler stellt Taskleiste bei unbehandelten Exceptions wieder her |
+| **Alternativen** | Windows-Service der Taskleiste überwacht (Overkill), Scheduled Task beim Login (unzuverlässig), nur `atexit` (reicht nicht für harte Kills) |
+| **Begründung** | `atexit` allein fängt keine SIGKILL/Stromausfälle ab. Die Recovery beim nächsten Start ist die zuverlässigste Lösung - selbst nach hartem Crash wird die Taskleiste beim nächsten Programmstart sofort wiederhergestellt, bevor die App sie erneut versteckt |
+
 ### OTA-Update: GitHub Releases statt Source-Archiv
 
 | | |

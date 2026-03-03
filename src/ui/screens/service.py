@@ -39,6 +39,10 @@ class ServiceDialog(ctk.CTkToplevel):
         self.transient(parent)
         self.grab_set()
 
+        # Ctrl+Shift+Q auch im Dialog abfangen (grab_set blockiert Root-Bindings!)
+        self.bind("<Control-Shift-Q>", lambda e: self._emergency_quit())
+        self.bind("<Control-Shift-q>", lambda e: self._emergency_quit())
+
         # Vollbild-Overlay
         self.overrideredirect(True)
         self.update_idletasks()
@@ -751,6 +755,13 @@ class ServiceDialog(ctk.CTkToplevel):
             )
         except Exception:
             pass
+
+    def _emergency_quit(self):
+        """Ctrl+Shift+Q im Dialog - Dialog schließen und App beenden"""
+        self.grab_release()
+        self.destroy()
+        if hasattr(self.app, '_emergency_quit'):
+            self.app._emergency_quit()
 
     def _close(self):
         """Schließt das Service-Menü"""

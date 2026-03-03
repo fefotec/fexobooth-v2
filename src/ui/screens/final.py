@@ -193,6 +193,10 @@ class FinalScreen(ctk.CTkFrame):
                 self.app.prints_in_session = self.prints_count
                 self.app.statistics.record_print_success()
 
+                # Lifetime-Drucker-Zähler hochzählen
+                from src.storage.printer_lifetime import get_printer_lifetime
+                get_printer_lifetime().increment()
+
                 remaining = max_prints - self.prints_count
                 if remaining > 0:
                     self.print_info.configure(
@@ -376,8 +380,12 @@ class FinalScreen(ctk.CTkFrame):
         if container_h < 100:
             container_h = 600
 
+        # Sichtbare Höhe: Platz für Overlay-Buttons (ab rely=0.80) abziehen
+        # damit das komplette Template sichtbar ist und nicht abgeschnitten wird
+        visible_h = int(container_h * 0.78)
+
         preview = self.final_image.copy()
-        preview.thumbnail((container_w, container_h), Image.Resampling.LANCZOS)
+        preview.thumbnail((container_w, visible_h), Image.Resampling.LANCZOS)
 
         ctk_img = ctk.CTkImage(light_image=preview, dark_image=preview, size=preview.size)
         self.preview_label.configure(image=ctk_img)

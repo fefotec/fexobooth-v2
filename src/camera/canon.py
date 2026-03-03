@@ -39,23 +39,21 @@ class CanonCameraManager(CameraManager):
     
     def __init__(self):
         self._is_initialized = False
+        self._initializing = False  # True während initialize() läuft (Deadlock-Schutz)
         self._camera_ref: Optional[c_void_p] = None
         self._camera_info: Optional[Dict] = None
         self._live_view_active = False
-        
+
         # Frame Cache
         self._last_frame: Optional[np.ndarray] = None
         self._last_frame_time: float = 0
         self._frame_cache_duration: float = 0.033  # ~30fps
-        
-        # Capture State
+
+        # Capture State & Mode
         self._photo_queue: Queue = Queue()
         self._capture_in_progress: bool = False
         self._captured_image: Optional[Image.Image] = None
-        
-        # Captured Photo Queue (für async Download)
-        self._photo_queue: Queue = Queue()
-        self._capture_in_progress: bool = False
+        self._use_host_download: bool = False  # True = kein SD, Bild via Event-Handler empfangen
     
     @staticmethod
     def is_available() -> bool:
@@ -78,7 +76,11 @@ class CanonCameraManager(CameraManager):
             width/height: Werden bei Canon ignoriert (Live View hat feste Auflösung)
         """
         logger.info(f"=== Canon Kamera initialisieren (index={camera_index}) ===")
-        
+
+        # Deadlock-Schutz: Flag setzen BEVOR EDSDK-Aufrufe beginnen
+        # Verhindert dass _check_camera_status() im UI-Thread gleichzeitig EDSDK aufruft
+        self._initializing = True
+
         # Wenn bereits initialisiert, erst aufräumen
         if self._is_initialized:
             logger.info("Bereits initialisiert, führe Cleanup durch...")
@@ -86,12 +88,14 @@ class CanonCameraManager(CameraManager):
         
         if not EDSDK_AVAILABLE:
             logger.error("EDSDK nicht verfügbar")
+            self._initializing = False
             return False
         
         # SDK initialisieren
         logger.debug("SDK initialisieren...")
         if not edsdk.initialize():
             logger.error("SDK-Initialisierung fehlgeschlagen")
+            self._initializing = False
             return False
         
         # Kamera-Liste holen
@@ -101,6 +105,7 @@ class CanonCameraManager(CameraManager):
         
         if not cameras:
             logger.error("Keine Canon Kamera gefunden")
+            self._initializing = False
             return False
         
         for i, cam in enumerate(cameras):
@@ -108,6 +113,7 @@ class CanonCameraManager(CameraManager):
         
         if camera_index >= len(cameras):
             logger.error(f"Kamera-Index {camera_index} ungültig (nur {len(cameras)} Kameras)")
+            self._initializing = False
             return False
         
         # Kamera auswählen
@@ -122,29 +128,52 @@ class CanonCameraManager(CameraManager):
             logger.error("Session konnte nicht geöffnet werden")
             self._camera_ref = None
             self._camera_info = None
+            self._initializing = False
             return False
         
         logger.info("Session erfolgreich geöffnet")
         
-        # Speicherung auf SD-Karte konfigurieren (für Directory-Polling)
+        # Speicherung konfigurieren: SD-Karte bevorzugt, Host-Download als Fallback
+        self._use_host_download = False
         logger.debug("Konfiguriere SaveTo Camera (SD-Karte)...")
-        if not edsdk.set_save_to_camera(self._camera_ref):
-            logger.warning("SaveTo konnte nicht auf Camera gesetzt werden")
-            # Fallback: Versuche Host
-            logger.debug("Versuche SaveTo Host als Fallback...")
-            edsdk.set_save_to_host(self._camera_ref)
-        
+        if edsdk.set_save_to_camera(self._camera_ref):
+            # Prüfen ob DCIM-Ordner erreichbar ist (= SD-Karte vorhanden)
+            volume = edsdk.get_first_volume(self._camera_ref)
+            if volume:
+                dcim = edsdk.get_dcim_folder(volume)
+                if dcim:
+                    logger.info("SD-Karte erkannt (DCIM vorhanden) -> Directory-Polling Modus")
+                    edsdk.EDSDK_DLL.EdsRelease(dcim)
+                else:
+                    logger.warning("Keine SD-Karte (DCIM nicht gefunden) -> Host-Download Modus")
+                    self._use_host_download = True
+                edsdk.EDSDK_DLL.EdsRelease(volume)
+            else:
+                logger.warning("Kein Volume gefunden -> Host-Download Modus")
+                self._use_host_download = True
+        else:
+            logger.warning("SaveTo Camera fehlgeschlagen -> Host-Download Modus")
+            self._use_host_download = True
+
+        # Bei Host-Download: SaveTo auf Host setzen und Event-Handler registrieren
+        if self._use_host_download:
+            logger.info("Konfiguriere SaveTo Host + Event-Handler...")
+            if edsdk.set_save_to_host(self._camera_ref):
+                logger.info("SaveTo Host gesetzt")
+            else:
+                logger.error("SaveTo Host fehlgeschlagen!")
+            edsdk.set_object_event_handler(self._camera_ref, self._on_object_event)
+            logger.info("Host-Download Modus aktiv (Bild wird via USB zum Tablet übertragen)")
+
         # Bildqualität auf JPG Large Fine setzen (kein RAW!) - nicht kritisch wenn fehlschlägt
         try:
             if not edsdk.set_image_quality_jpg(self._camera_ref):
                 logger.warning("Bildqualität konnte nicht auf JPG gesetzt werden - bitte manuell prüfen!")
         except Exception as e:
             logger.warning(f"set_image_quality_jpg Exception (ignoriert): {e}")
-        
-        # Event-Handler wird bei capture_photo() registriert (nicht hier)
-        logger.debug("Event-Handler wird bei capture_photo() registriert")
 
         self._is_initialized = True
+        self._initializing = False
         logger.info(f"✅ Canon Kamera initialisiert: {self._camera_info['name']}")
 
         # Kamera-Einstellungen loggen (für Debugging)
@@ -156,16 +185,18 @@ class CanonCameraManager(CameraManager):
         """Gibt Kamera-Ressourcen frei"""
         if self._live_view_active:
             self.stop_live_view()
-        
+
         if self._camera_ref and self._is_initialized:
             edsdk.close_session(self._camera_ref)
             edsdk.EDSDK_DLL.EdsRelease(self._camera_ref)
-        
+
         self._camera_ref = None
         self._camera_info = None
         self._is_initialized = False
+        self._initializing = False
+        self._use_host_download = False
         self._last_frame = None
-        
+
         logger.info("Canon Kamera freigegeben")
     
     def start_live_view(self) -> bool:
@@ -271,73 +302,47 @@ class CanonCameraManager(CameraManager):
         return self._last_frame
     
     def _on_object_event(self, event_type: int, obj_ref: c_void_p) -> int:
-        """Callback für EDSDK Object Events (wird aufgerufen wenn Bild bereit ist)
+        """Callback für EDSDK Object Events (Host-Download Modus)
 
-        Event-Typen:
-        - 0x00000100: DirItemCreated (Datei wurde erstellt)
-        - 0x00000108: DirItemRequestTransfer (Bild bereit zum Download)
+        Wird aufgerufen wenn die Kamera ein Bild bereit hat zum Download.
+        Das Bild wird in den Speicher geladen und in die Photo-Queue gelegt.
         """
-        # Event-Namen für besseres Logging
         event_names = {
             0x00000100: "DirItemCreated",
-            0x00000101: "DirItemRemoved",
-            0x00000102: "DirItemInfoChanged",
-            0x00000103: "DirItemContentChanged",
-            0x00000104: "DirItemRequestTransferDT",
-            0x00000105: "DirItemRequestTransferFTP",
             0x00000108: "DirItemRequestTransfer",
-            0x00000109: "FolderUpdateItems",
-            0x0000010A: "VolumeInfoChanged",
-            0x0000010B: "VolumeUpdateItems",
         }
-        event_name = event_names.get(event_type, f"Unknown({hex(event_type)})")
-        logger.info(f">>> OBJECT EVENT: {event_name} (0x{event_type:08x})")
+        event_name = event_names.get(event_type, f"0x{event_type:08x}")
+        logger.info(f">>> OBJECT EVENT: {event_name}")
 
         # kEdsObjectEvent_DirItemRequestTransfer = 0x00000108
         if event_type == 0x00000108:
-            logger.info(">>> Bild bereit zum Download!")
-
             try:
-                # Bild direkt in Speicher laden
-                logger.info(">>> Starte Bild-Download in Speicher...")
                 image_data = edsdk.download_image_to_memory(obj_ref)
-
                 if image_data:
-                    # In Queue für capture_photo() legen
                     self._photo_queue.put(image_data)
-                    logger.info(f">>> ✓ Bild in Queue: {len(image_data)} bytes ({len(image_data)/1024/1024:.2f} MB)")
+                    logger.info(f">>> Bild empfangen: {len(image_data)} bytes ({len(image_data)/1024/1024:.1f} MB)")
                 else:
-                    logger.error(">>> ✗ Download fehlgeschlagen (keine Daten)")
+                    logger.error(">>> Download fehlgeschlagen (keine Daten)")
                     self._photo_queue.put(None)
-
             except Exception as e:
-                logger.error(f">>> ✗ Exception beim Download: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
+                logger.error(f">>> Download Exception: {e}")
                 self._photo_queue.put(None)
 
             # Objekt freigeben
             try:
                 if edsdk.EDSDK_DLL:
                     edsdk.EDSDK_DLL.EdsRelease(obj_ref)
-                    logger.debug(">>> Objekt freigegeben")
-            except Exception as e:
-                logger.warning(f">>> Warnung: EdsRelease fehlgeschlagen: {e}")
-
-        elif event_type == 0x00000100:  # DirItemCreated
-            logger.info(">>> Datei auf Kamera erstellt (warte auf TransferRequest)")
+            except Exception:
+                pass
 
         return 0  # EDS_ERR_OK
-    
+
     def capture_photo(self, timeout: float = 10.0) -> Optional[Image.Image]:
         """Nimmt ein Foto in voller DSLR-Auflösung auf
 
-        Prozess:
-        1. LiveView stoppen (Kamera braucht das für manche Modelle)
-        2. Foto auslösen (TakePicture) - Kamera fokussiert und löst aus
-        3. Auf neues Bild warten (Directory-Polling statt Event-Handler)
-        4. Bild von Kamera herunterladen
-        5. LiveView wieder starten
+        Zwei Modi je nach SD-Karten-Verfügbarkeit:
+        - MIT SD-Karte: Directory-Polling (Bild auf SD -> Download)
+        - OHNE SD-Karte: Host-Download (Bild direkt via USB zum Tablet)
 
         Args:
             timeout: Maximale Wartezeit in Sekunden
@@ -345,8 +350,9 @@ class CanonCameraManager(CameraManager):
         Returns:
             PIL Image in voller DSLR-Auflösung oder None bei Fehler
         """
+        mode_text = "Host-Download" if self._use_host_download else "Directory-Polling"
         logger.info("=" * 60)
-        logger.info("=== CAPTURE_PHOTO (Volle DSLR-Auflösung) ===")
+        logger.info(f"=== CAPTURE_PHOTO ({mode_text}) ===")
         logger.info("=" * 60)
 
         if not self._is_initialized or not self._camera_ref:
@@ -356,16 +362,24 @@ class CanonCameraManager(CameraManager):
         live_view_was_active = self._live_view_active
 
         try:
-            # SCHRITT 1: LiveView stoppen
+            # SCHRITT 1: LiveView stoppen (WICHTIG für echte Aufnahme!)
             if self._live_view_active:
                 logger.info("[1/5] Stoppe LiveView für Foto-Aufnahme...")
                 self.stop_live_view()
-                time.sleep(0.5)  # Kamera Zeit geben
+                time.sleep(0.5)
                 logger.info("[1/5] ✓ LiveView gestoppt")
             else:
                 logger.info("[1/5] LiveView war nicht aktiv")
 
-            # SCHRITT 2: Foto auslösen
+            # SCHRITT 2: Photo-Queue leeren (für Host-Download)
+            if self._use_host_download:
+                while not self._photo_queue.empty():
+                    try:
+                        self._photo_queue.get_nowait()
+                    except Empty:
+                        break
+
+            # SCHRITT 3: Foto auslösen
             logger.info("[2/5] Löse Kamera aus (TakePicture)...")
             if not edsdk.take_picture(self._camera_ref):
                 logger.error("[2/5] ✗ TakePicture fehlgeschlagen!")
@@ -373,31 +387,48 @@ class CanonCameraManager(CameraManager):
 
             logger.info("[2/5] ✓ Kamera ausgelöst!")
 
-            # SCHRITT 3: Auf neues Bild warten und herunterladen
-            logger.info(f"[3/5] Warte auf Bild (max {timeout}s)...")
-            image_data = edsdk.wait_for_new_image(self._camera_ref, timeout=timeout)
+            # SCHRITT 4: Auf Bild warten (je nach Modus)
+            image_data = None
+
+            if self._use_host_download:
+                # HOST-MODUS: Bild kommt über Event-Handler in _photo_queue
+                logger.info(f"[3/5] Warte auf Host-Download (max {timeout}s)...")
+                start_time = time.time()
+                while time.time() - start_time < timeout:
+                    # Events pollen (WICHTIG - ohne das kommen keine Events auf Windows!)
+                    edsdk.get_event()
+                    try:
+                        image_data = self._photo_queue.get(timeout=0.1)
+                        if image_data:
+                            logger.info(f"[3/5] ✓ Bild via Host-Download: {len(image_data)} bytes")
+                            break
+                        else:
+                            logger.warning("[3/5] None aus Queue - Download fehlgeschlagen")
+                            image_data = None
+                    except Empty:
+                        continue
+            else:
+                # SD-MODUS: Directory-Polling
+                logger.info(f"[3/5] Warte auf Bild via Directory-Polling (max {timeout}s)...")
+                image_data = edsdk.wait_for_new_image(self._camera_ref, timeout=timeout)
 
             if image_data is None:
                 logger.error("[3/5] ✗ Kein Bild empfangen!")
-                logger.error("    Mögliche Ursachen:")
-                logger.error("    - Keine SD-Karte in der Kamera")
-                logger.error("    - SaveTo nicht auf 'Both' oder 'Camera' gesetzt")
-                logger.error("    - Kamera hat nicht fokussiert (AF-Fehler)")
                 return self._fallback_to_live_view(live_view_was_active)
 
             logger.info(f"[3/5] ✓ Bild empfangen: {len(image_data)} bytes")
 
-            # SCHRITT 4: Bild dekodieren
+            # SCHRITT 5: Bild dekodieren
             logger.info("[4/5] Dekodiere Bild...")
             try:
                 image = Image.open(io.BytesIO(image_data))
-                image.load()  # Bild sofort laden
+                image.load()
                 logger.info(f"[4/5] ✓ Bild dekodiert: {image.size[0]}x{image.size[1]} ({image.mode})")
             except Exception as e:
                 logger.error(f"[4/5] ✗ Fehler beim Dekodieren: {e}")
                 return self._fallback_to_live_view(live_view_was_active)
 
-            # SCHRITT 5: LiveView wieder starten
+            # SCHRITT 6: LiveView wieder starten
             if live_view_was_active:
                 logger.info("[5/5] Starte LiveView wieder...")
                 time.sleep(0.3)
@@ -420,18 +451,28 @@ class CanonCameraManager(CameraManager):
             return self._fallback_to_live_view(live_view_was_active)
 
     def _fallback_to_live_view(self, restart_live_view: bool) -> Optional[Image.Image]:
-        """Fallback: Gibt Live-View Frame zurück wenn DSLR-Aufnahme fehlschlägt"""
+        """Fallback: Gibt Live-View Frame zurück wenn DSLR-Aufnahme fehlschlägt
+
+        Nach LiveView-Start braucht die Canon EOS 2000D ~1-2s bis gültige Frames
+        kommen (EVF_INTERNAL_ERROR in den ersten Versuchen). Daher Retry-Logik.
+        """
         logger.warning("=== FALLBACK auf Live-View Frame ===")
 
-        # Live-View wieder starten wenn nötig
-        if restart_live_view and not self._live_view_active:
+        # Live-View starten wenn nicht aktiv
+        if not self._live_view_active:
             logger.info("Starte Live-View für Fallback...")
             self.start_live_view()
-            time.sleep(0.5)
 
-        frame = self.get_frame(use_cache=False)
+        # Mehrere Versuche - Kamera braucht nach LiveView-Start etwas Zeit
+        frame = None
+        for attempt in range(10):
+            frame = self.get_frame(use_cache=False)
+            if frame is not None:
+                break
+            time.sleep(0.3)
+
         if frame is None:
-            logger.error("Fallback fehlgeschlagen: Kein Live-View Frame!")
+            logger.error("Fallback fehlgeschlagen: Kein Live-View Frame nach 10 Versuchen!")
             return None
 
         # OpenCV BGR zu PIL RGB

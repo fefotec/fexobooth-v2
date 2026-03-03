@@ -40,6 +40,10 @@ class FexosafeBackupDialog(ctk.CTkToplevel):
         self.grab_set()
         self.focus_force()
 
+        # Ctrl+Shift+Q auch im Dialog abfangen (grab_set blockiert Root-Bindings!)
+        self.bind("<Control-Shift-Q>", lambda e: self._emergency_quit())
+        self.bind("<Control-Shift-q>", lambda e: self._emergency_quit())
+
         self._build_ui(screen_w, screen_h)
         logger.info(f"FEXOSAFE Backup Dialog geöffnet: {fexosafe_drive}")
 
@@ -334,6 +338,14 @@ class FexosafeBackupDialog(ctk.CTkToplevel):
         self.destroy()
         if callback:
             callback()
+
+    def _emergency_quit(self):
+        """Ctrl+Shift+Q - Dialog schließen und App beenden"""
+        self._destroyed = True
+        self.grab_release()
+        self.destroy()
+        if hasattr(self.app, '_emergency_quit'):
+            self.app._emergency_quit()
 
     def destroy(self):
         """Override destroy um Flag zu setzen"""

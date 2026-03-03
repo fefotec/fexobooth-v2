@@ -8,9 +8,11 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 from PIL import Image
 import os
+import sys
 import time
 import threading
 import random
+import atexit
 
 from src.config.config import load_config, save_config
 from src.camera import get_camera_manager, CANON_AVAILABLE
@@ -52,6 +54,10 @@ class PhotoboothApp:
         screen_height = self.root.winfo_screenheight()
         logger.info(f"Bildschirm: {screen_width}x{screen_height}")
         
+        # Sicherheitsnetz: Bei JEDEM App-Ende Taskleiste wiederherstellen
+        # atexit wird auch bei unbehandelten Exceptions aufgerufen (nicht bei SIGKILL/Stromausfall)
+        atexit.register(self._restore_taskbar_safe)
+
         # Fullscreen wenn konfiguriert
         self._is_fullscreen = False
         if config.get("start_fullscreen", True):
@@ -63,6 +69,10 @@ class PhotoboothApp:
         # Escape zum Beenden / F11 zum Toggle
         self.root.bind("<Escape>", lambda e: self._toggle_fullscreen())
         self.root.bind("<F11>", lambda e: self._toggle_fullscreen())
+
+        # Notfall-Shortcut: Ctrl+Shift+Q beendet die App sofort (auch im Kiosk-Modus)
+        self.root.bind("<Control-Shift-Q>", lambda e: self._emergency_quit())
+        self.root.bind("<Control-Shift-q>", lambda e: self._emergency_quit())
         
         # Manager initialisieren
         camera_type = config.get("camera_type", "webcam")
@@ -330,38 +340,55 @@ class PhotoboothApp:
             logger.debug(f"Icon konnte nicht gesetzt werden: {e}")
 
     def _enter_fullscreen(self):
-        """Aktiviert Vollbildmodus mit overrideredirect + WS_EX_APPWINDOW für Taskmanager"""
+        """Aktiviert Kiosk-Vollbildmodus.
+
+        - overrideredirect(True) entfernt Fensterrahmen und deckt den gesamten Bildschirm ab
+        - topmost wird KURZ gesetzt um Fenster in den Vordergrund zu bringen, dann wieder entfernt
+        - Taskleiste wird via Windows API versteckt
+        - Windows-Benachrichtigungen werden über Focus Assist unterdrückt
+        - Kein permanentes topmost - das blockiert eigene App-Dialoge!
+        """
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
 
-        # overrideredirect(True) = deckt den gesamten Bildschirm ab (getestet auf Lenovo Miix 310)
         self.root.overrideredirect(True)
         self.root.geometry(f"{screen_width}x{screen_height}+0+0")
 
-        # Kurz topmost setzen damit Fenster sicher im Vordergrund ist
+        # topmost KURZ setzen um Fenster in den Vordergrund zu bringen
         self.root.attributes("-topmost", True)
-        self.root.after(100, lambda: self.root.attributes("-topmost", False))
 
-        # Windows API: WS_EX_APPWINDOW setzen damit App als Vordergrund-Prozess im Taskmanager erscheint
-        # (overrideredirect entfernt normalerweise den Taskbar-Eintrag)
-        self._set_appwindow()
+        # Taskleiste verstecken für echten Kiosk-Modus
+        self._hide_taskbar()
 
+        # Windows-Benachrichtigungen unterdrücken (Focus Assist)
+        self._suppress_notifications(True)
+
+        # Fenster in den Vordergrund zwingen
+        self.root.lift()
         self.root.focus_force()
+        self.root.update_idletasks()
+
+        # topmost nach kurzem Moment wieder entfernen - sonst blockiert es eigene Dialoge
+        self.root.after(500, lambda: self.root.attributes("-topmost", False))
+
         self._is_fullscreen = True
-        logger.info(f"Vollbild aktiviert: {screen_width}x{screen_height}")
+        logger.info(f"Kiosk-Vollbild aktiviert: {screen_width}x{screen_height}")
 
     def _exit_fullscreen(self):
-        """Beendet Vollbildmodus"""
+        """Beendet Vollbildmodus - zeigt Taskleiste und Fensterrahmen wieder an."""
+        self.root.attributes("-topmost", False)
         self.root.overrideredirect(False)
         self.root.geometry("1024x768")
+        self._show_taskbar()
+        self._suppress_notifications(False)
         self._is_fullscreen = False
         logger.info("Vollbild deaktiviert")
     
-    def _set_appwindow(self):
-        """Setzt WS_EX_APPWINDOW via Windows API damit die App im Taskmanager als Vordergrund-Prozess erscheint.
+    def _hide_taskbar(self):
+        """Versteckt die Windows-Taskleiste für echten Kiosk-Modus.
 
-        overrideredirect(True) entfernt den Fensterrahmen UND den Taskbar-Eintrag.
-        Mit WS_EX_APPWINDOW erzwingen wir den Taskbar-Eintrag zurück.
+        Nutzt FindWindowW um Shell_TrayWnd (Taskleiste) und Button (Start-Button)
+        zu finden und via ShowWindow zu verstecken.
         """
         import sys
         if sys.platform != "win32":
@@ -369,30 +396,110 @@ class PhotoboothApp:
 
         try:
             import ctypes
-            GWL_EXSTYLE = -20
-            WS_EX_APPWINDOW = 0x00040000
-            WS_EX_TOOLWINDOW = 0x00000080
+            SW_HIDE = 0
 
-            # HWND des Tkinter-Fensters holen
-            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+            # Taskleiste verstecken
+            taskbar = ctypes.windll.user32.FindWindowW("Shell_TrayWnd", None)
+            if taskbar:
+                ctypes.windll.user32.ShowWindow(taskbar, SW_HIDE)
 
-            # Aktuellen Extended Style lesen
-            style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            # Start-Button verstecken (Windows 10/11)
+            start_btn = ctypes.windll.user32.FindWindowW("Button", "Start")
+            if start_btn:
+                ctypes.windll.user32.ShowWindow(start_btn, SW_HIDE)
 
-            # TOOLWINDOW entfernen (versteckt aus Taskbar), APPWINDOW setzen (zeigt in Taskbar)
-            style = (style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
-            ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
-
-            # Fenster kurz verstecken und wieder zeigen damit Windows den Style übernimmt
-            self.root.withdraw()
-            self.root.after(10, self.root.deiconify)
-
-            logger.info("WS_EX_APPWINDOW gesetzt - App erscheint als Vordergrund-Prozess")
+            logger.debug("Taskleiste versteckt")
         except Exception as e:
-            logger.warning(f"WS_EX_APPWINDOW konnte nicht gesetzt werden: {e}")
+            logger.debug(f"Taskleiste verstecken fehlgeschlagen: {e}")
+
+    def _show_taskbar(self):
+        """Zeigt die Windows-Taskleiste wieder an."""
+        import sys
+        if sys.platform != "win32":
+            return
+
+        try:
+            import ctypes
+            SW_SHOW = 5
+
+            taskbar = ctypes.windll.user32.FindWindowW("Shell_TrayWnd", None)
+            if taskbar:
+                ctypes.windll.user32.ShowWindow(taskbar, SW_SHOW)
+
+            start_btn = ctypes.windll.user32.FindWindowW("Button", "Start")
+            if start_btn:
+                ctypes.windll.user32.ShowWindow(start_btn, SW_SHOW)
+
+            logger.debug("Taskleiste wiederhergestellt")
+        except Exception as e:
+            logger.debug(f"Taskleiste anzeigen fehlgeschlagen: {e}")
+
+    def _restore_taskbar_safe(self):
+        """atexit-Handler: Stellt Taskleiste wieder her, fängt ALLE Fehler ab.
+
+        Wird bei App-Beendigung aufgerufen (auch bei Exceptions).
+        Muss komplett eigenständig funktionieren (App-State evtl. kaputt).
+        """
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            SW_SHOW = 5
+            taskbar = ctypes.windll.user32.FindWindowW("Shell_TrayWnd", None)
+            if taskbar:
+                ctypes.windll.user32.ShowWindow(taskbar, SW_SHOW)
+            start_btn = ctypes.windll.user32.FindWindowW("Button", "Start")
+            if start_btn:
+                ctypes.windll.user32.ShowWindow(start_btn, SW_SHOW)
+        except Exception:
+            pass  # Absolut nichts werfen im atexit-Handler
+
+    def _suppress_notifications(self, suppress: bool):
+        """Aktiviert/deaktiviert Windows Focus Assist (Benachrichtigungen unterdrücken).
+
+        Setzt Registry-Key für Focus Assist:
+        - suppress=True: Priority Only (nur wichtige Benachrichtigungen)
+        - suppress=False: Alles erlaubt (normal)
+
+        Zusätzlich wird das Action Center (Benachrichtigungszentrum) versteckt/gezeigt.
+        """
+        import sys
+        if sys.platform != "win32":
+            return
+
+        try:
+            import winreg
+
+            # Focus Assist / Quiet Hours: 0=Aus, 1=Priority Only, 2=Alarms Only
+            key_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Notifications\Settings"
+            try:
+                key = winreg.OpenKey(
+                    winreg.HKEY_CURRENT_USER, key_path,
+                    0, winreg.KEY_SET_VALUE
+                )
+                winreg.SetValueEx(
+                    key, "NOC_GLOBAL_SETTING_TOASTS_ENABLED",
+                    0, winreg.REG_DWORD,
+                    0 if suppress else 1
+                )
+                winreg.CloseKey(key)
+                logger.debug(f"Windows-Benachrichtigungen: {'unterdrückt' if suppress else 'erlaubt'}")
+            except Exception as e:
+                logger.debug(f"Focus Assist Registry fehlgeschlagen: {e}")
+
+        except Exception as e:
+            logger.debug(f"Benachrichtigungen unterdrücken fehlgeschlagen: {e}")
 
     def _toggle_fullscreen(self):
-        """Toggle Fullscreen"""
+        """Toggle Fullscreen - nur im Fenstermodus erlaubt.
+
+        Im Kiosk-Modus (start_fullscreen=True) wird Escape/F11 ignoriert.
+        Vollbild kann dann nur über den Admin-PIN verlassen werden.
+        """
+        if self.config.get("start_fullscreen", True):
+            # Kiosk-Modus: Escape/F11 blockiert - kein Zugriff auf Windows ohne PIN
+            return
+
         if self._is_fullscreen:
             self._exit_fullscreen()
         else:
@@ -542,6 +649,22 @@ class PhotoboothApp:
         self.printer_status.pack_forget()  # Verstecken wenn OK
         self._printer_blink_state = False
 
+        # Kamera-Status (feste Breite wie USB/Drucker-Status)
+        self.camera_status = ctk.CTkLabel(
+            status_frame,
+            text="",
+            font=FONTS["small"],
+            text_color=COLORS["error"],
+            fg_color=COLORS["bg_light"],
+            corner_radius=8,
+            width=165,
+            padx=8,
+            pady=5
+        )
+        self.camera_status.pack(side="right", padx=4)
+        self.camera_status.pack_forget()  # Verstecken wenn OK
+        self._camera_blink_state = False
+
         # Strom-Status (kompakt, immer sichtbar)
         self.power_status = ctk.CTkLabel(
             status_frame,
@@ -562,6 +685,7 @@ class PhotoboothApp:
         """Startet periodische Status-Checks"""
         self._check_usb_status()
         self._check_printer_status()
+        self._check_camera_status()
         self._check_power_status()
         self._check_fullscreen_restore()
     
@@ -666,23 +790,28 @@ class PhotoboothApp:
         self.root.after(1000, self._check_usb_status)
 
     def _check_fullscreen_restore(self):
-        """Stellt Fullscreen automatisch wieder her wenn es deaktiviert wurde.
+        """Sicherheitsnetz: Stellt Kiosk-Modus wieder her falls er verloren geht.
 
-        Prüft alle 10 Sekunden ob start_fullscreen=True aber _is_fullscreen=False.
-        z.B. nach Admin-Menü wenn der User das Fenster nur maximiert statt Fullscreen.
+        Prüft alle 5 Sekunden:
+        - Wenn Fullscreen verloren: wiederherstellen (falls kein Dialog offen)
+        - Wenn Fullscreen aktiv: Taskleiste re-asserten (KEIN topmost - blockiert Dialoge!)
         """
-        if self.config.get("start_fullscreen", True) and not self._is_fullscreen:
-            # Prüfen ob ein Admin-Dialog offen ist (dann NICHT wiederherstellen)
-            admin_open = False
-            for child in self.root.winfo_children():
-                if child.winfo_class() == "Toplevel":
-                    admin_open = True
-                    break
-            if not admin_open:
-                logger.info("Auto-Fullscreen: Stelle Vollbild wieder her")
-                self._enter_fullscreen()
+        if self.config.get("start_fullscreen", True):
+            if not self._is_fullscreen:
+                # Fullscreen verloren - prüfen ob ein Dialog offen ist
+                dialog_open = False
+                for child in self.root.winfo_children():
+                    if child.winfo_class() == "Toplevel":
+                        dialog_open = True
+                        break
+                if not dialog_open:
+                    logger.info("Kiosk-Sicherheit: Stelle Vollbild wieder her")
+                    self._enter_fullscreen()
+            else:
+                # Fullscreen aktiv - nur Taskleiste sicherstellen (kein topmost!)
+                self._hide_taskbar()
 
-        self.root.after(10000, self._check_fullscreen_restore)
+        self.root.after(5000, self._check_fullscreen_restore)
 
     def _update_booking_display(self):
         """Aktualisiert die Buchungsanzeige in der Top-Bar"""
@@ -733,6 +862,7 @@ class PhotoboothApp:
         dialog = ctk.CTkToplevel(self.root)
         dialog.overrideredirect(True)
         dialog.configure(fg_color=COLORS["bg_dark"])
+        dialog.transient(self.root)
 
         dialog_w, dialog_h = 420, 250
         screen_w = self.root.winfo_screenwidth()
@@ -742,6 +872,10 @@ class PhotoboothApp:
         dialog.geometry(f"{dialog_w}x{dialog_h}+{x}+{y}")
         dialog.attributes("-topmost", True)
         dialog.grab_set()
+        dialog.lift()
+        dialog.focus_force()
+        dialog.bind("<Control-Shift-Q>", lambda e: self._emergency_quit())
+        dialog.bind("<Control-Shift-q>", lambda e: self._emergency_quit())
 
         content = ctk.CTkFrame(
             dialog, fg_color=COLORS["bg_medium"],
@@ -842,15 +976,13 @@ class PhotoboothApp:
                         progress_bar.set(1.0)
                         progress_bar.configure(progress_color=COLORS["success"])
 
-                    # Abbrechen-Button durch OK ersetzen
+                    # Buttons entfernen
                     for widget in btn_frame.winfo_children():
                         widget.destroy()
-                    ctk.CTkButton(
-                        btn_frame, text="OK",
-                        font=FONTS["button"], width=120, height=45,
-                        fg_color=COLORS["primary"], hover_color=COLORS["primary_hover"],
-                        corner_radius=SIZES["corner_radius"], command=close_dialog
-                    ).pack()
+
+                    # Auto-Close nach 3 Sekunden (Erfolg) oder 4 Sekunden (Fehler/Abbruch)
+                    auto_close_ms = 3000 if not cancelled and result.get("errors", 0) == 0 else 4000
+                    dialog.after(auto_close_ms, close_dialog)
 
                 dialog.after(0, show_result)
 
@@ -901,6 +1033,7 @@ class PhotoboothApp:
         dialog = ctk.CTkToplevel(self.root)
         dialog.overrideredirect(True)
         dialog.configure(fg_color=COLORS["bg_dark"])
+        dialog.transient(self.root)
 
         dialog_w, dialog_h = 420, 260
         screen_w = self.root.winfo_screenwidth()
@@ -910,6 +1043,10 @@ class PhotoboothApp:
         dialog.geometry(f"{dialog_w}x{dialog_h}+{x}+{y}")
         dialog.attributes("-topmost", True)
         dialog.grab_set()
+        dialog.lift()
+        dialog.focus_force()
+        dialog.bind("<Control-Shift-Q>", lambda e: self._emergency_quit())
+        dialog.bind("<Control-Shift-q>", lambda e: self._emergency_quit())
 
         content = ctk.CTkFrame(
             dialog, fg_color=COLORS["bg_medium"],
@@ -1018,15 +1155,13 @@ class PhotoboothApp:
                         progress_bar.set(1.0)
                         progress_bar.configure(progress_color=COLORS["success"])
 
-                    # Abbrechen-Button durch OK ersetzen
+                    # Buttons entfernen
                     for widget in btn_frame.winfo_children():
                         widget.destroy()
-                    ctk.CTkButton(
-                        btn_frame, text="OK",
-                        font=FONTS["button"], width=120, height=45,
-                        fg_color=COLORS["primary"], hover_color=COLORS["primary_hover"],
-                        corner_radius=SIZES["corner_radius"], command=close_dialog
-                    ).pack()
+
+                    # Auto-Close nach 3 Sekunden (Erfolg) oder 4 Sekunden (Fehler/Abbruch)
+                    auto_close_ms = 3000 if not cancelled and result.get("errors", 0) == 0 else 4000
+                    dialog.after(auto_close_ms, close_dialog)
 
                 dialog.after(0, show_result)
 
@@ -1373,6 +1508,77 @@ class PhotoboothApp:
         except Exception as e:
             logger.debug(f"Drucker-Dialog Vordergrund fehlgeschlagen: {e}")
 
+    def _check_camera_status(self):
+        """Prüft Kamera-Status - BLINKEND wenn keine Kamera erreichbar
+
+        WICHTIG: EDSDK ist NICHT thread-safe (Windows COM STA)!
+        Wenn die Kamera bereits initialisiert ist (z.B. System-Test oder Session),
+        dürfen KEINE EDSDK-Aufrufe vom UI-Thread gemacht werden - sonst DEADLOCK!
+        """
+        problem_text = None
+
+        try:
+            camera_type = self.config.get("camera_type", "webcam")
+
+            if camera_type == "canon":
+                if self.camera_manager.is_initialized:
+                    # Kamera ist aktiv (Session offen) → alles OK
+                    # KEINE weiteren EDSDK-Aufrufe! (Deadlock-Gefahr!)
+                    pass
+                elif hasattr(self.camera_manager, '_initializing') and self.camera_manager._initializing:
+                    # Initialisierung läuft gerade → KEINE EDSDK-Aufrufe!
+                    # Sonst DEADLOCK: UI-Thread + Session-Thread rufen gleichzeitig EDSDK auf
+                    pass
+                elif not CANON_AVAILABLE:
+                    problem_text = "EDSDK FEHLT!"
+                else:
+                    # Kamera nicht aktiv → sicher EDSDK aufzurufen
+                    from src.camera.canon import CanonCameraManager
+                    cameras = CanonCameraManager.list_cameras()
+                    if not cameras:
+                        problem_text = "KEINE KAMERA!"
+            else:
+                # Webcam: Prüfen ob Kamera erreichbar ist
+                if self.camera_manager.is_initialized:
+                    pass  # Kamera aktiv → OK
+                else:
+                    import cv2
+                    cap = cv2.VideoCapture(
+                        self.config.get("camera_index", 0), cv2.CAP_DSHOW
+                    )
+                    if cap.isOpened():
+                        cap.release()
+                    else:
+                        problem_text = "KEINE KAMERA!"
+        except Exception:
+            problem_text = "KAMERA FEHLER!"
+
+        if problem_text:
+            # Blinkend anzeigen (wie USB/Drucker-Warnung)
+            self._camera_blink_state = not self._camera_blink_state
+
+            if self._camera_blink_state:
+                self.camera_status.configure(
+                    text=f"📷 {problem_text}",
+                    text_color="#ffffff",
+                    fg_color="#ff0000"
+                )
+            else:
+                self.camera_status.configure(
+                    text=f"📷 {problem_text}",
+                    text_color="#000000",
+                    fg_color="#ffcc00"
+                )
+            self.camera_status.pack(side="right", padx=4)
+            # Bei Problem: schneller blinken (2s statt 1.5s - weniger EDSDK-Last)
+            self.root.after(2000, self._check_camera_status)
+        else:
+            # Alles OK -> Warnung verstecken
+            self._camera_blink_state = False
+            self.camera_status.pack_forget()
+            # Kein Problem: seltener prüfen (15s)
+            self.root.after(15000, self._check_camera_status)
+
     def _check_power_status(self):
         """Prüft Stromversorgung - Grün=Netzbetrieb, Orange=Akku"""
         try:
@@ -1475,7 +1681,11 @@ class PhotoboothApp:
             self._stress_test_auto_proceed(screen_name)
 
     def show_admin_dialog(self):
-        """Zeigt den Admin-Dialog"""
+        """Zeigt den Admin-Dialog.
+
+        Fullscreen wird vor dem Dialog deaktiviert und danach sofort wiederhergestellt
+        (falls start_fullscreen in der Config aktiv ist).
+        """
         from src.ui.screens.admin import AdminDialog
         self._exit_fullscreen()
         dialog = AdminDialog(self.root, self.config)
@@ -1486,13 +1696,11 @@ class PhotoboothApp:
             from src.ui.screens.service import ServiceDialog
             service = ServiceDialog(self.root, self)
             self.root.wait_window(service)
-            return
-
-        if dialog.result:
+        elif dialog.result:
             self.config = dialog.result
             save_config(self.config)
             logger.info("Admin-Einstellungen gespeichert")
-            
+
             # Galerie/Hotspot starten oder stoppen je nach Einstellung
             if self.config.get("gallery_enabled", False):
                 self._start_gallery_if_needed()
@@ -1503,11 +1711,13 @@ class PhotoboothApp:
             # StartScreen aktualisieren wenn aktiv
             if self.current_screen_name == "start" and self.current_screen:
                 logger.info("Aktualisiere StartScreen nach Admin-Änderung...")
-                # Config im Screen aktualisieren
                 self.current_screen.config = self.config
-                # on_show aufrufen für Refresh
                 if hasattr(self.current_screen, "on_show"):
                     self.current_screen.on_show()
+
+        # Kiosk-Modus sofort wiederherstellen (prüft aktuelle Config)
+        if self.config.get("start_fullscreen", True):
+            self.root.after(200, self._enter_fullscreen)
     
     # ========================================
     # Event-Wechsel & FEXOSAFE
@@ -1996,7 +2206,20 @@ class PhotoboothApp:
         logger.info("Starte Hauptschleife")
         self.root.mainloop()
     
+    def _emergency_quit(self):
+        """Notfall-Beenden über Ctrl+Shift+Q - funktioniert IMMER, auch im Kiosk-Modus."""
+        logger.warning("NOTFALL-BEENDEN: Ctrl+Shift+Q gedrückt")
+        self._show_taskbar()
+        self._suppress_notifications(False)
+        try:
+            self.camera_manager.release()
+        except Exception:
+            pass
+        self.root.destroy()
+
     def quit(self):
-        """Beendet die Anwendung"""
+        """Beendet die Anwendung - stellt Taskleiste und Benachrichtigungen wieder her."""
+        self._show_taskbar()
+        self._suppress_notifications(False)
         self.camera_manager.release()
         self.root.quit()
