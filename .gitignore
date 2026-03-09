@@ -38,6 +38,8 @@ logs/
 # Lokale Daten
 BILDER/
 config.json
+settings.json
+settings*.json
 
 # Booking & USB Cache
 .booking_cache/
