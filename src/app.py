@@ -70,6 +70,9 @@ class PhotoboothApp:
         self.root.bind("<Escape>", lambda e: self._toggle_fullscreen())
         self.root.bind("<F11>", lambda e: self._toggle_fullscreen())
 
+        # Maximize-Klick abfangen → direkt in Kiosk-Vollbild wechseln
+        self.root.bind("<Configure>", self._on_window_configure)
+
         # Notfall-Shortcut: Ctrl+Shift+Q beendet die App sofort (auch im Kiosk-Modus)
         self.root.bind("<Control-Shift-Q>", lambda e: self._emergency_quit())
         self.root.bind("<Control-Shift-q>", lambda e: self._emergency_quit())
@@ -489,6 +492,18 @@ class PhotoboothApp:
 
         except Exception as e:
             logger.debug(f"Benachrichtigungen unterdrücken fehlgeschlagen: {e}")
+
+    def _on_window_configure(self, event):
+        """Fängt Maximize-Klick ab und wechselt in echten Kiosk-Vollbild"""
+        if self._is_fullscreen:
+            return
+        # Nur auf Root-Window Events reagieren (nicht auf Child-Widgets)
+        if event.widget != self.root:
+            return
+        if self.root.state() == "zoomed":
+            # Maximize rückgängig machen und stattdessen echten Kiosk-Vollbild
+            self.root.state("normal")
+            self.root.after(50, self._enter_fullscreen)
 
     def _toggle_fullscreen(self):
         """Toggle Fullscreen - nur im Fenstermodus erlaubt.
@@ -1534,9 +1549,18 @@ class PhotoboothApp:
                 else:
                     # Kamera nicht aktiv → sicher EDSDK aufzurufen
                     from src.camera.canon import CanonCameraManager
+                    from src.camera import edsdk as _edsdk
                     cameras = CanonCameraManager.list_cameras()
                     if not cameras:
                         problem_text = "KEINE KAMERA!"
+                    # Kamera-Handles freigeben (sonst EDSDK Handle-Leak bei jedem Check!)
+                    for cam in cameras:
+                        ref = cam.get("ref")
+                        if ref and _edsdk.EDSDK_DLL:
+                            try:
+                                _edsdk.EDSDK_DLL.EdsRelease(ref)
+                            except Exception:
+                                pass
             else:
                 # Webcam: Prüfen ob Kamera erreichbar ist
                 if self.camera_manager.is_initialized:
@@ -1908,7 +1932,29 @@ class PhotoboothApp:
         logger.info(f"🎬 Starte Video: {video_path}")
         self.show_screen("video")
         self.current_screen.play(video_path, next_screen)
+
+        # Kamera vorinitialisieren während Video läuft (für schnellen Session-Start)
+        # VLC spielt in eigenem Thread weiter, kurze Tkinter-Blockade (~1s) ist okay
+        if next_screen == "session" and not self.camera_manager.is_initialized:
+            self.root.after(200, self._pre_init_camera)
     
+    def _pre_init_camera(self):
+        """Kamera vorinitialisieren während Video läuft (Background-Warmup)"""
+        if self.camera_manager.is_initialized:
+            return  # Bereits initialisiert (z.B. durch schnelle Wiedergabe)
+
+        logger.info("🎥 Kamera-Vorinitialisierung während Video...")
+        cam_settings = self.config.get("camera_settings", {})
+        live_res = cam_settings.get("live_view_resolution", 480)
+        if self.camera_manager.initialize(
+            self.config.get("camera_index", 0),
+            live_res,
+            int(live_res * 0.75)
+        ):
+            logger.info("🎥 Kamera vorinitialisiert - Session-Start wird schneller!")
+        else:
+            logger.warning("🎥 Kamera-Vorinitialisierung fehlgeschlagen (wird bei Session-Start erneut versucht)")
+
     def play_video_and_return(self, video_path: str, callback):
         """Spielt ein Video ab und ruft dann Callback auf (für Zwischen-Videos)
 
@@ -2022,7 +2068,7 @@ class PhotoboothApp:
         return False
     
     def reset_session(self):
-        """Setzt die Session zurück"""
+        """Setzt die Session zurück (Kamera bleibt initialisiert für schnellen Neustart)"""
         self.photos_taken = []
         self.current_photo_index = 0
         self.current_filter = "none"
@@ -2034,9 +2080,13 @@ class PhotoboothApp:
         self._cached_scaled_overlay = None
         self._cached_overlay_scale = 0.0
         self._cached_overlay_source_size = None
-        self.camera_manager.release()
+        # Kamera NICHT freigeben - bleibt initialisiert für schnellen Session-Start
+        # (Neuinitialisierung dauert ~5s, LiveView-Restart nur ~1s)
+        # LiveView stoppen falls aktiv (wird bei nächster Session neu gestartet)
+        if self.camera_manager.is_initialized and hasattr(self.camera_manager, 'stop_live_view'):
+            self.camera_manager.stop_live_view()
         self.filter_manager.clear_cache()
-        logger.info("Session zurückgesetzt")
+        logger.info("Session zurückgesetzt (Kamera bleibt initialisiert)")
     
     # ========================================
     # Stress-Test (Developer Mode)

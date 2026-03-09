@@ -6,6 +6,42 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### EDSDK: EdsSetObjectEventHandler kehrt nie zurück, funktioniert aber trotzdem!
+
+| | |
+|---|---|
+| **Kontext** | Canon EOS 2000D: `EdsSetObjectEventHandler` DLL-Call blockiert permanent (kehrt nie zurück), registriert aber den Event-Handler trotzdem (~150ms). Events feuern korrekt |
+| **Ursache** | EDSDK nutzt intern COM (STA). Der DLL-Call wartet vermutlich auf eine COM-Synchronisation die nie abschließt. Das Message-Pumping ermöglicht die Handler-Registrierung, aber die Funktion kehrt trotzdem nicht zurück |
+| **Entscheidung** | DLL-Call in daemon Background-Thread starten, Hauptthread pumpt 500ms Windows-Messages. Danach gilt der Handler als registriert (basierend auf beobachteten Events). Daemon-Thread bleibt im Hintergrund, wird bei App-Exit automatisch beendet |
+| **Alternativen** | 5s Timeout (zu lang, blockiert Session-Start), Lazy Registration in `capture_photo()` (gleicher Deadlock), alle EDSDK-Calls in dediziertem Thread (zu großer Refactor) |
+| **Begründung** | Der Handler funktioniert trotz non-return. 500ms Pump reicht (Events nach ~150ms). Daemon-Thread verhindert Resource-Leaks. Minimal-invasiv: nur `edsdk.py` geändert |
+| **Merke** | EDSDK `EdsSetObjectEventHandler` kehrt auf manchen Systemen nie zurück. Nicht auf Return warten! Stattdessen: Threaded Call + kurzes Message-Pumping + vertrauen dass Handler funktioniert (Events prüfen) |
+
+### Canon EOS 2000D: Event 0x208 statt 0x108 bei Host-Download
+
+| | |
+|---|---|
+| **Kontext** | Canon EOS 2000D sendet bei Host-Download (ohne SD-Karte) Event `0x00000208` statt Standard `0x00000108` (DirItemRequestTransfer). Wird dieses Event ignoriert, läuft der Capture in einen 10s-Timeout, Bilder werden nie heruntergeladen |
+| **Entscheidung** | `_on_object_event()` behandelt `0x108`, `0x208` UND `0x100` (DirItemCreated) als Download-Trigger. Objekt wird nach Download mit `EdsRelease()` freigegeben |
+| **Merke** | Nicht alle Canon-Modelle senden dieselben Events! Event-IDs immer loggen und großzügig behandeln. Standard-Events aus der EDSDK-Doku sind nur Richtwerte |
+
+### Canon DSLR: Kamera-Shutdown Recovery (Event 0x301)
+
+| | |
+|---|---|
+| **Kontext** | Canon EOS 2000D sendet `0x00000301` (Shutdown) wenn Transfer-Events nicht beantwortet werden. Danach schlagen ALLE EDSDK-Calls mit Fehler 0x61 (UNKNOWN) fehl |
+| **Entscheidung** | `_camera_shutdown` Flag wird bei 0x301 gesetzt. Beim nächsten `capture_photo()` wird automatisch die Session geschlossen und neu geöffnet (SaveTo + Event-Handler neu konfiguriert) |
+| **Merke** | EDSDK-Kamera kann sich in einen unrecoverable State begeben. Proaktive Recovery (Session close/reopen) ist besser als App-Neustart |
+
+### Performance: Kamera zwischen Sessions offen halten!
+
+| | |
+|---|---|
+| **Kontext** | Jede Session-Start dauerte 7s weil `reset_session()` die Kamera komplett freigab und `on_show()` sie neu initialisierte |
+| **Entscheidung** | Kamera bleibt zwischen Sessions initialisiert. `reset_session()` stoppt nur LiveView. `on_show()` prüft `is_initialized` und überspringt Init. Kamera wird nur noch bei App-Exit und `_emergency_quit()` freigegeben |
+| **Ergänzung** | Kamera-Vorinitialisierung während Start-Video: `play_video("video_start")` startet Init nach 200ms parallel. VLC spielt in eigenem Thread weiter. Wenn Video endet, ist Kamera bereit |
+| **Merke** | EDSDK Session/Init ist teuer (~1-5s). Kamera-Connection zwischen Sessions wiederverwenden, nicht jedes Mal neu aufbauen |
+
 ### EDSDK ist NICHT thread-safe! (Windows COM STA)
 
 | | |
@@ -23,6 +59,23 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 | **Entscheidung** | Drei-Säulen-Ansatz: (1) Taskleiste via Windows API verstecken (`FindWindowW("Shell_TrayWnd")` + `ShowWindow(SW_HIDE)`), wird alle 5s re-assertet. (2) Windows-Benachrichtigungen via Registry unterdrücken (`NOC_GLOBAL_SETTING_TOASTS_ENABLED=0`). (3) `-topmost=True` nur KURZ beim Fenster-Positionieren, dann sofort wieder entfernt. Notfall-Shortcut Ctrl+Shift+Q zum Beenden |
 | **Alternativen** | Permanentes `-topmost=True` (**SCHLECHT** - blockiert ALLE Dialoge inkl. eigener App-Dialoge, macht App unbedienbar!), `WS_EX_APPWINDOW` via `withdraw/deiconify` (Race Condition), Windows Kiosk-Modus / Assigned Access (braucht Enterprise) |
 | **Begründung** | Permanentes `-topmost=True` verhindert dass Toplevel-Dialoge (auch eigene!) in den Vordergrund kommen. `transient()` + `grab_set()` reichen nicht gegen ein topmost-Elternfenster. Taskleiste-Verstecken allein ist ausreichend um Windows-Zugang zu verhindern. Benachrichtigungs-Toasts werden über Registry deaktiviert statt durch topmost überlagert |
+
+### Webcam: Buffer-Flush mit grab() statt read(), niedrige Preview-Auflösung beibehalten
+
+| | |
+|---|---|
+| **Kontext** | Webcam bei 320×240/640×480 für Preview (schwache Tablet-Hardware). Bei jedem Foto wird auf 1920×1080 umgeschaltet. Buffer-Flush mit `cap.read()` dekodiert jedes Frame komplett → langsam |
+| **Entscheidung** | `cap.grab()` statt `cap.read()` für Buffer-Flush (grab bewegt nur den Pointer, dekodiert nicht). Flush-Frames von 5+3 auf 2+2 reduziert. Preview-Auflösung NICHT auf Capture-Auflösung erhöhen (LiveView wird zu laggy auf Miix 310!) |
+| **Alternativen** | Webcam direkt in 1920×1080 initialisieren (LiveView zu laggy auf schwacher Hardware), gar kein Flush (alte Frames im Buffer) |
+| **Merke** | `cap.grab()` ist deutlich schneller als `cap.read()` wenn man das Bild nicht braucht. Auf schwacher Hardware unbedingt niedrige Preview-Auflösung beibehalten |
+
+### CustomTkinter: Runde Buttons auf transparentem Hintergrund → schwarze Ecken
+
+| | |
+|---|---|
+| **Kontext** | CTkButton mit `corner_radius > 0` über einem Bild (via `place()`) zeigt schwarze Ecken. `bg_color="transparent"` funktioniert nicht wenn der Parent kein einheitliches `fg_color` hat |
+| **Entscheidung** | Buttons auf einer schwarzen Leiste (`CTkFrame` mit `fg_color="#000000"`) platzieren statt direkt über dem Bild. Die Leiste geht über die volle Breite → Buttons mit `corner_radius` sehen sauber aus |
+| **Merke** | CTk-Widgets können keine echte Transparenz über Bildern. Workaround: einheitlich farbiger Container als Basis für gerundete Buttons |
 
 ### Canon DSLR: Dual-Modus Capture (SD-Karte optional, Host-Download als Fallback)
 
@@ -322,6 +375,7 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 - **Gallery-Server Pfad ≠ Lokaler Bilder-Pfad** - Der Gallery-Server kann auf den USB-BILDER-Ordner zeigen, nicht auf den lokalen. Beim Löschen von Bildern muss auch der Gallery-Pfad berücksichtigt werden, sonst bleiben Bilder im Live-Server sichtbar
 - **PyInstaller 6.x _internal-Ordner** - Neuere PyInstaller-Versionen legen Daten-Assets in `_internal/` ab, nicht im Root des Dist-Ordners. Desktop-Shortcuts und andere externe Referenzen auf Assets müssen den korrekten Pfad verwenden. Im Installer die ICO-Datei separat kopieren
 - **Windows Mobile Hotspot braucht Internet** - `NetworkOperatorTetheringManager.GetInternetConnectionProfile()` gibt null zurück ohne Internetverbindung. Stattdessen `GetConnectionProfiles()` nutzen und ALLE Profile durchprobieren. Als Offline-Fallback: `netsh wlan hostednetwork` (braucht kein Internet, nutzt WiFi-Adapter direkt als SoftAP). Wichtig: WiFi-Adapter muss AKTIV bleiben, nur keine Verbindung zu einem Netzwerk haben
+- **Flash-Timing von Capture entkoppeln** - `show_flash = False` muss AM ANFANG von `_capture_photo()` gesetzt werden (mit `update_idletasks()`), NICHT am Ende. Sonst bleibt der Flash während des gesamten blockierenden Capture-Aufrufs sichtbar (bis zu 10s bei Timeout). Die Flash-Dauer wird durch den `after(flash_duration)` Timer bestimmt, nicht durch die Capture-Dauer
 - **Flash-Bild muss gecacht werden** - `_display_flash()` lädt bei jedem Foto das JPEG neu (~120ms auf Atom CPU). Zusammen mit dem blockierenden `get_high_res_frame()` bleibt kaum Zeit für die GUI den Flash tatsächlich zu malen. Lösung: Flash-PIL-Image einmalig beim Session-Start cachen, und `update_idletasks()` nach dem Setzen aufrufen um den Redraw zu erzwingen
 - **subprocess text=True Encoding** - `subprocess.run(..., text=True)` nutzt `locale.getpreferredencoding()` (cp1252 auf dt. Windows). PowerShell-Output mit Sonderzeichen (Umlaute, Unicode) kann `UnicodeDecodeError` auslösen. Fix: `text=True` weglassen und stattdessen `result.stdout.decode("utf-8", errors="replace")` verwenden
 - **overrideredirect(True) nach Dialog** - Auf Windows wird `overrideredirect(True)` nicht immer sofort übernommen. Die App muss `withdraw()` + `deiconify()` aufrufen (in `_set_appwindow()`). Admin-Dialog darf Fullscreen-Restore NICHT selbst machen, sondern die App übernimmt das nach `wait_window()` mit `_enter_fullscreen()`

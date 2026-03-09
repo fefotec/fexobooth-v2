@@ -803,6 +803,9 @@ class AdminDialog(ctk.CTkToplevel):
         
         # Bild um 180° drehen (für kopfüber montierte Kameras)
         self._add_checkbox(scroll, "Bild um 180° drehen", "rotate_180")
+
+        # Template-Overlay im LiveView
+        self._add_checkbox(scroll, "Template im LiveView anzeigen", "liveview_template_overlay")
         
         # Auflösung
         cam_settings = self.config_data.get("camera_settings", {})
@@ -1581,7 +1584,7 @@ class AdminDialog(ctk.CTkToplevel):
         
         # Checkboxen - alle auslesen und speichern
         checkbox_keys = ["allow_single_mode", "performance_mode", "start_fullscreen", "hide_finish_button",
-                         "template1_enabled", "template2_enabled", "rotate_180", "gallery_enabled"]
+                         "template1_enabled", "template2_enabled", "rotate_180", "liveview_template_overlay", "gallery_enabled"]
         logger.info("Checkbox-Werte:")
         for key in checkbox_keys:
             var = getattr(self, f"check_{key}", None)

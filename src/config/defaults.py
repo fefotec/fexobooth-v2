@@ -37,6 +37,7 @@ DEFAULT_CONFIG = {
     "camera_type": "webcam",
     "camera_index": 0,
     "rotate_180": False,
+    "liveview_template_overlay": True,  # Template-Overlay im LiveView anzeigen
     "camera_settings": {
         "single_photo_width": 1920,
         "single_photo_height": 1080,

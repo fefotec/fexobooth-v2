@@ -6,7 +6,7 @@ Aufgabenliste mit Prioritäten.
 
 ## Hoch 🔴
 
-_Aktuell keine dringenden Aufgaben_
+- [x] KRITISCH: Canon DSLR Freeze bei Host-Download behoben (EdsSetObjectEventHandler blockierte Message-Pump)
 
 ---
 
@@ -29,6 +29,9 @@ _Aktuell keine niedrig priorisierten Aufgaben_
 ---
 
 ## Erledigt ✅
+
+### 2026-03-09
+- [x] Template-Overlay im LiveView als Option im Admin-Menü (Kamera-Tab)
 
 ### 2026-02-26
 - [x] KRITISCH: EDSDK Deadlock behoben (System-Test hing, Tablet musste hard-reboot)

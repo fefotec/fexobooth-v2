@@ -24,6 +24,8 @@ class WebcamManager(CameraManager):
         self.last_frame: Optional[np.ndarray] = None
         self.last_frame_time: float = 0
         self.frame_cache_duration: float = 0.033  # ~30fps
+        self._preview_width: int = 0  # Gespeicherte Preview-Auflösung
+        self._preview_height: int = 0
     
     def initialize(self, camera_index: int, width: int, height: int) -> bool:
         """Initialisiert die Kamera"""
@@ -56,11 +58,13 @@ class WebcamManager(CameraManager):
         self.cap.set(cv2.CAP_PROP_FPS, 30)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimiert Latenz
         
-        # Tatsächliche Auflösung loggen
+        # Tatsächliche Auflösung loggen und als Preview-Auflösung merken
         actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self._preview_width = actual_w
+        self._preview_height = actual_h
         logger.info(f"Kamera initialisiert: {actual_w}x{actual_h}")
-        
+
         self._is_initialized = True
         return True
     
@@ -106,9 +110,14 @@ class WebcamManager(CameraManager):
             logger.warning("get_high_res_frame: Keine Kamera initialisiert")
             return None
 
-        # Alte Auflösung merken
-        old_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        old_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        # Gespeicherte Preview-Auflösung verwenden (nicht von Kamera lesen - kann 0x0 sein!)
+        old_w = self._preview_width
+        old_h = self._preview_height
+
+        # Fallback: Von Kamera lesen wenn gespeicherte Werte fehlen
+        if old_w <= 0 or old_h <= 0:
+            old_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            old_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
         logger.info(f"High-Res Capture: {old_w}x{old_h} -> {width}x{height}")
 
@@ -131,9 +140,10 @@ class WebcamManager(CameraManager):
             actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             logger.info(f"Kamera-Auflösung nach Umschaltung: {actual_w}x{actual_h}")
 
-            # Buffer leeren (5 Frames für sicheres Flushen, besonders wichtig bei C920/C922)
-            for i in range(5):
-                self.cap.read()
+            # Buffer leeren mit grab() statt read() (grab bewegt nur den Pointer,
+            # dekodiert nicht - deutlich schneller als read!)
+            for i in range(2):
+                self.cap.grab()
 
             # Tatsächliches High-Res Frame holen
             ret, frame = self.cap.read()
@@ -155,9 +165,9 @@ class WebcamManager(CameraManager):
             # WICHTIG: Immer zurück auf Preview-Auflösung!
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, old_w)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, old_h)
-            # Buffer leeren für flüssige Preview
-            for _ in range(3):
-                self.cap.read()
+            # Buffer mit grab() leeren (schneller als read)
+            for _ in range(2):
+                self.cap.grab()
             logger.debug(f"Zurück auf Preview-Auflösung: {old_w}x{old_h}")
 
         return frame

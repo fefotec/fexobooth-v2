@@ -4,6 +4,70 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-03-09
+
+### Collage: Nochmal + Weiter Buttons nach jedem Foto
+- **Neues Verhalten:** Bei Collagen (>1 Foto) wird nach jedem Foto eine schwarze Button-Leiste am unteren Bildschirmrand eingeblendet
+- **Buttons:** "↻ NOCHMAL" (rot, wiederholt das letzte Foto) + "WEITER →" (grün, geht zum nächsten Foto)
+- **Timeout:** Leiste bleibt 60 Sekunden sichtbar, danach automatisch weiter zum nächsten Foto
+- **Design:** Schwarze Leiste über volle Breite löst Transparenz-Problem. `tk.Frame` statt `CTkFrame` (CTk place/lift/z-order unzuverlässig)
+- **Betrifft:** `session.py` (_setup_ui, _show_redo_button, _on_continue_photo)
+
+### Template-Overlay: Default ON + kein Vollbild-Flicker beim Start
+- **Default geändert:** `liveview_template_overlay` ist jetzt `True` (statt False)
+- **Fix:** Template-Cache wird SYNCHRON aufgebaut bevor LiveView startet (kein kurzer Vollbild-Kamera-Blitz mehr)
+- **Lade-Anzeige:** Während Webcam-Capture wird 📸 Emoji statt leerer Bildschirm gezeigt
+
+### Fix: Webcam Buffer-Flush optimiert (grab statt read)
+- **Problem:** `get_high_res_frame()` brauchte ~3-5s für Auflösungsumschaltung
+- **Optimierung:** `cap.grab()` statt `cap.read()` für Buffer-Flush (grab dekodiert nicht), 2 statt 5/3 Flush-Frames
+- **Betrifft:** `webcam.py` (get_high_res_frame), `session.py` (_capture_photo)
+
+### Template-Overlay im LiveView (optional, Admin-Menü)
+- **Neues Feature:** LiveView kann jetzt das Template als Overlay anzeigen, sodass der Kamera-Feed direkt an der Stelle positioniert wird, wo das Foto im Template landen wird
+- **Konfigurierbar:** Neue Checkbox "Template im LiveView anzeigen" im Admin-Menü (Kamera-Tab). Standard: deaktiviert (Performance)
+- **Funktionsweise:**
+  - Template-Overlay wird einmalig beim Session-Start auf Display-Größe skaliert und gecacht
+  - Bereits aufgenommene Fotos werden in ihren jeweiligen Boxen angezeigt
+  - LiveView-Feed wird in die aktuelle Foto-Box eingesetzt (Cover-Modus)
+  - Template-Rahmen wird als RGBA-Overlay darüber gelegt
+  - Countdown wird über das Gesamtbild gerendert
+- **Performance:** BILINEAR-Resampling statt LANCZOS für schnelles Scaling, Cache wird bei on_hide freigegeben
+- **Hintergrund:** Feature war früher Standard (vor 2026-02-09) und wurde für Performance entfernt. Jetzt als Option zurück
+
+---
+
+## 2026-03-03
+
+### KRITISCH: Canon DSLR Freeze bei Host-Download behoben (App friert ein)
+- **Problem:** Canon EOS 2000D ohne SD-Karte → App friert ein. Sowohl beim Session-Start als auch beim Capture-Screen. Kamera löst nicht aus
+- **Ursache:** `EdsSetObjectEventHandler` (EDSDK DLL) deadlockt - der DLL-Call kehrt nie zurück, registriert aber den Handler trotzdem (Events feuern nach ~150ms). EDSDK nutzt intern COM (STA)
+- **Finaler Fix:** `set_object_event_handler()` in `edsdk.py`:
+  1. DLL-Call in daemon Background-Thread (kehrt evtl. nie zurück - bekanntes Verhalten)
+  2. Hauptthread pumpt 500ms Windows-Messages (reicht für Handler-Registrierung)
+  3. Danach: Handler gilt als registriert, egal ob DLL returned (Events funktionieren)
+  4. Daemon-Thread bleibt im Hintergrund, wird bei App-Exit automatisch beendet
+- **Bonus-Fixes:**
+  - `CFUNCTYPE` → `WINFUNCTYPE` für EDSDK Callback (korrekte Calling-Convention `__stdcall`)
+  - Handle-Leak in `_check_camera_status()` gefixt: Kamera-Refs von `list_cameras()` werden nach dem Check freigegeben
+
+### Fix: Canon EOS 2000D sendet falsches Event (0x208 statt 0x108)
+- **Problem:** DSLR-Fotos kamen nie an (10s Timeout), Flash-Bild blieb ~10s sichtbar, bei Collagen fielen Fotos 3-4 aus (kein Auslösegeräusch mehr)
+- **Ursache:** Canon EOS 2000D sendet bei Host-Download Event `0x00000208` (DirItemRequestTransfer_Alt) statt Standard `0x00000108`. Der Event-Handler erkannte dieses Event nicht → Bilder wurden nie heruntergeladen → 10s Timeout → LiveView-Fallback. Nach mehreren ignorierten Transfer-Events sendete die Kamera `0x00000301` (Shutdown) → alle weiteren EDSDK-Calls schlugen mit Fehler 0x61 fehl
+- **Fix 1: Event-Handler erweitert** - `_on_object_event()` in `canon.py` erkennt jetzt `0x208` UND `0x108` als Download-Trigger. Zusätzlich wird `0x100` (DirItemCreated) als Fallback für andere Kamera-Modelle behandelt
+- **Fix 2: Flash-Timing entkoppelt** - Flash wird jetzt am Anfang von `_capture_photo()` ausgeschaltet (mit `update_idletasks()` GUI-Redraw), BEVOR der blockierende Capture startet. Vorher blieb der Flash während des gesamten Capture-Timeouts sichtbar
+- **Fix 3: Kamera-Recovery bei Shutdown** - Wenn Kamera `0x301` (Shutdown) sendet, wird dies erkannt und beim nächsten `capture_photo()` automatisch die Session geschlossen und neu geöffnet (Event-Handler wird neu registriert)
+
+### Performance: Session-Start massiv beschleunigt (7s → <1s)
+- **Problem:** Nach jedem Video dauerte es 7 Sekunden bis der LiveView erschien (5.5s Kamera-Init + 1.5s LiveView-Start)
+- **Ursache 1:** `reset_session()` gab die Kamera komplett frei → bei jeder neuen Session musste die gesamte EDSDK-Initialisierung neu durchlaufen werden (Session öffnen, SaveTo setzen, Event-Handler registrieren)
+- **Ursache 2:** Event-Handler Timeout war 5s (jetzt 500ms, da Handler nach ~150ms funktioniert)
+- **Fix 1: Kamera-Persistenz** - `reset_session()` gibt Kamera nicht mehr frei, nur LiveView wird gestoppt. `session.on_show()` prüft `is_initialized` und überspringt Neuinitialisierung
+- **Fix 2: Kamera-Vorinitialisierung** - Wenn `play_video("video_start")` abgespielt wird, startet die Kamera-Init bereits nach 200ms parallel (VLC spielt in eigenem Thread weiter). Wenn das Video endet, ist die Kamera bereits bereit
+- **Ergebnis:** Erste Session: Init während Video (~1s, unsichtbar). Folge-Sessions: 0s Init (Kamera bleibt aktiv)
+
+---
+
 ## 2026-02-26
 
 ### Fix: Taskleiste verschwindet permanent nach App-Crash
