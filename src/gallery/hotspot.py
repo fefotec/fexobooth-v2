@@ -202,8 +202,8 @@ def _run_netsh(args: list[str]) -> tuple[bool, str]:
         result = subprocess.run(
             ["netsh"] + args,
             capture_output=True,
-            text=True,
             timeout=15,
+            encoding="utf-8", errors="replace",
             creationflags=subprocess.CREATE_NO_WINDOW
         )
         output = result.stdout.strip()

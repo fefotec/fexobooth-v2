@@ -119,6 +119,8 @@ class PhotoboothApp:
         self._last_fexosafe_trigger: float = 0  # Cooldown nach Backup
         self._export_dialog_open: bool = False
         self._last_unknown_stick_drive: Optional[str] = None  # Doppel-Dialog verhindern
+        self._boot_drives: set = set()  # Laufwerke die beim Start schon da waren
+        self._boot_grace_period: float = 0  # Zeitpunkt nach dem unknown-stick-check aktiv wird
 
         # Stress-Test Status (nur im Developer Mode)
         self.stress_test_active: bool = False
@@ -126,6 +128,14 @@ class PhotoboothApp:
 
         # Drucker initialisieren wenn nicht gesetzt
         self._init_default_printer()
+
+        # PrinterController mit Druckername initialisieren
+        from src.printer.controller import get_printer_controller
+        printer_ctrl = get_printer_controller()
+        printer_ctrl.update_printer_name(self.config.get("printer_name", ""))
+
+        # Overlay-Referenz
+        self._printer_error_overlay = None
 
         # WICHTIG: Settings ZUERST laden, BEVOR UI erstellt wird!
         # Sonst zeigt die UI falsche Optionen (z.B. Single-Foto obwohl deaktiviert)
@@ -161,21 +171,49 @@ class PhotoboothApp:
         if self.booking_manager.is_loaded:
             self._update_booking_display()
         
+        # Boot-Drives ZUERST erfassen (VOR Status-Checks, damit Export-Dialog sie ignoriert)
+        self._record_boot_drives()
+
         # Status-Timer starten
         self._start_status_checks()
-        
+
         # Galerie-Server starten wenn aktiviert (NACH Settings-Anwendung!)
         self._init_gallery_server()
-        
+
         # Developer Mode: Performance Overlay
         self._init_performance_overlay()
-        
+
         # Statistik IMMER starten (auch ohne USB/Buchung)
         if not self.statistics.current:
             self._start_statistics_event()
             logger.info("📊 Statistik gestartet (ohne USB)")
-        
+
         logger.info("PhotoboothApp initialisiert")
+
+    def _record_boot_drives(self):
+        """Merkt sich alle Wechseldatenträger die beim Boot schon da sind.
+        Diese werden nicht als 'unbekannter Stick' für den Export-Dialog behandelt.
+        Grace period: 15s nach Boot keine Unknown-Stick-Checks.
+        """
+        import ctypes
+        self._boot_drives = set()
+        try:
+            for letter in "DEFGHIJKLMNOPQRSTUVWXYZ":
+                drive = f"{letter}:\\"
+                if not os.path.exists(drive):
+                    continue
+                try:
+                    drive_type = ctypes.windll.kernel32.GetDriveTypeW(drive)
+                    if drive_type == 2:  # DRIVE_REMOVABLE
+                        self._boot_drives.add(drive)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.debug(f"Boot-Drive-Erkennung fehlgeschlagen: {e}")
+
+        self._boot_grace_period = time.time() + 15  # 15s Grace Period nach Boot
+        if self._boot_drives:
+            logger.info(f"Boot-Drives (ignoriert für Export): {self._boot_drives}")
 
     def _load_settings_from_usb_immediately(self):
         """Lädt Settings vom USB-Stick SOFORT beim App-Start
@@ -585,7 +623,7 @@ class PhotoboothApp:
                 text_color=COLORS["primary"]
             ).pack()
 
-        # Stress-Test Button (nur im Developer Mode)
+        # Dev-Mode Buttons (nur im Developer Mode)
         if self.config.get("developer_mode", False):
             self.stress_test_btn = ctk.CTkButton(
                 bar,
@@ -600,6 +638,21 @@ class PhotoboothApp:
                 command=self._toggle_stress_test
             )
             self.stress_test_btn.pack(side="left", padx=10, pady=10)
+
+            # Drucker-Reset Button (Dev Mode)
+            printer_reset_btn = ctk.CTkButton(
+                bar,
+                text="DRUCKER RESET",
+                width=160,
+                height=35,
+                font=("Segoe UI", 12, "bold"),
+                fg_color=COLORS["bg_light"],
+                hover_color=COLORS["error"],
+                text_color=COLORS["text_primary"],
+                corner_radius=8,
+                command=self.trigger_printer_reset
+            )
+            printer_reset_btn.pack(side="left", padx=5, pady=10)
 
         # Status-Bereich rechts
         status_frame = ctk.CTkFrame(bar, fg_color="transparent")
@@ -756,18 +809,37 @@ class PhotoboothApp:
             self._was_usb_available = False
 
         # Unbekannter USB-Stick → Bilder-Export anbieten (Notfall-Fallback)
+        # Ignoriert Drives die beim Boot schon da waren (z.B. SD-Karten-Slot)
         if not is_available and not fexosafe_drive and not self._export_dialog_open:
-            unknown_drive = self.usb_manager.find_unknown_stick()
-            if unknown_drive and unknown_drive != self._last_unknown_stick_drive:
-                self._last_unknown_stick_drive = unknown_drive
-                if self.current_screen_name == "start":
-                    self._show_export_dialog(unknown_drive)
+            if time.time() > self._boot_grace_period:  # Grace Period nach Boot
+                unknown_drive = self.usb_manager.find_unknown_stick()
+                if unknown_drive and unknown_drive not in self._boot_drives:
+                    if unknown_drive != self._last_unknown_stick_drive:
+                        self._last_unknown_stick_drive = unknown_drive
+                        if self.current_screen_name == "start":
+                            self._show_export_dialog(unknown_drive)
         elif is_available or fexosafe_drive:
             # Bekannter Stick da → Unknown-Tracking zurücksetzen
             self._last_unknown_stick_drive = None
         elif not self.usb_manager.find_unknown_stick():
             # Gar kein Stick mehr da → Unknown-Tracking zurücksetzen
             self._last_unknown_stick_drive = None
+            # Boot-Drives die abgezogen wurden aus der Ignorier-Liste entfernen
+            # Damit sie beim erneuten Einstecken als Export-Ziel angeboten werden
+            if self._boot_drives:
+                import ctypes as _ctypes
+                still_present = set()
+                for bd in self._boot_drives:
+                    if os.path.exists(bd):
+                        try:
+                            if _ctypes.windll.kernel32.GetDriveTypeW(bd) == 2:
+                                still_present.add(bd)
+                        except Exception:
+                            pass
+                removed = self._boot_drives - still_present
+                if removed:
+                    self._boot_drives = still_present
+                    logger.info(f"Boot-Drives abgezogen (jetzt Export-fähig): {removed}")
 
         text, status = self.usb_manager.get_status_text()
 
@@ -1057,7 +1129,8 @@ class PhotoboothApp:
         y = (screen_h - dialog_h) // 2
         dialog.geometry(f"{dialog_w}x{dialog_h}+{x}+{y}")
         dialog.attributes("-topmost", True)
-        dialog.grab_set()
+        # Kein grab_set() - Dialog soll die App NICHT blockieren!
+        # User kann weiterhin den Start-Button oder Einstellungen nutzen
         dialog.lift()
         dialog.focus_force()
         dialog.bind("<Control-Shift-Q>", lambda e: self._emergency_quit())
@@ -1202,326 +1275,92 @@ class PhotoboothApp:
         dialog.protocol("WM_DELETE_WINDOW", close_dialog)
 
     def _check_printer_status(self):
-        """Prüft Drucker-Status - BLINKEND wenn Drucker nicht bereit
+        """Prüft Drucker-Status via PrinterController
 
-        Prüft 3 Ebenen:
-        1. Drucker-Spooler-Status (offline, error, paper_out, paper_jam)
-        2. Druckjob-Queue (fehlgeschlagene Jobs = Kassette/Papier leer)
-        3. Canon Status-Monitor Fenster in Vordergrund bringen
+        Bei erkanntem Fehler:
+        - Blockierendes Overlay anzeigen (nur einmal!)
+        - Canon-Dialog wird vom Overlay per SW_HIDE versteckt
+        - Blinkende Warnung in Top-Bar
+        - KEIN close_canon_dialogs() hier! Das macht das Overlay selbst.
         """
-        problem_text = None
+        from src.printer.controller import get_printer_controller
+        controller = get_printer_controller()
+        controller.update_printer_name(self.config.get("printer_name", ""))
 
-        try:
-            import win32print
-            printer_name = self.config.get("printer_name") or win32print.GetDefaultPrinter()
+        # Nicht prüfen wenn Overlay aktiv (Overlay kümmert sich selbst)
+        overlay_active = (
+            hasattr(self, '_printer_error_overlay') and
+            self._printer_error_overlay is not None and
+            self._printer_error_overlay.is_open
+        )
+        if overlay_active:
+            self.root.after(2000, self._check_printer_status)
+            return
 
-            if not printer_name:
-                problem_text = "KEIN DRUCKER!"
-            else:
-                hPrinter = win32print.OpenPrinter(printer_name)
-                try:
-                    info = win32print.GetPrinter(hPrinter, 2)
-
-                    status = info.get("Status", 0)
-                    attributes = info.get("Attributes", 0)
-
-                    # 1. Spooler-Status-Flags prüfen
-                    is_offline = bool(status & 0x80)          # PRINTER_STATUS_OFFLINE
-                    is_work_offline = bool(attributes & 0x400) # PRINTER_ATTRIBUTE_WORK_OFFLINE
-                    is_error = bool(status & 0x2)              # PRINTER_STATUS_ERROR
-                    is_paper_jam = bool(status & 0x8)          # PRINTER_STATUS_PAPER_JAM
-                    is_paper_out = bool(status & 0x10)         # PRINTER_STATUS_PAPER_OUT
-                    is_not_available = bool(status & 0x1000)   # PRINTER_STATUS_NOT_AVAILABLE
-                    is_door_open = bool(status & 0x400000)     # PRINTER_STATUS_DOOR_OPEN
-                    is_no_toner = bool(status & 0x40000)       # PRINTER_STATUS_TONER_OUT
-                    is_user_intervention = bool(status & 0x100000)  # PRINTER_STATUS_USER_INTERVENTION
-
-                    if is_offline or is_work_offline or is_not_available:
-                        problem_text = "DRUCKER AUS!"
-                    elif is_paper_out:
-                        problem_text = "PAPIER LEER!"
-                    elif is_no_toner:
-                        problem_text = "KASSETTE LEER!"
-                    elif is_paper_jam:
-                        problem_text = "PAPIERSTAU!"
-                    elif is_door_open:
-                        problem_text = "KLAPPE OFFEN!"
-                    elif is_user_intervention:
-                        problem_text = "DRUCKER PRÜFEN!"
-                    elif is_error:
-                        problem_text = "DRUCKER FEHLER!"
-
-                    # 2. Druckjob-Queue prüfen (Canon meldet Fehler oft nur hier)
-                    if not problem_text:
-                        problem_text = self._check_print_jobs(hPrinter)
-
-                finally:
-                    win32print.ClosePrinter(hPrinter)
-
-        except Exception:
-            problem_text = "DRUCKER FEHLT!"
-
-        # 3. Canon-Treiber-Fehlerfenster erkennen (zuverlässigste Methode!)
-        if not problem_text:
-            canon_error = self._detect_canon_error_window()
-            if canon_error:
-                problem_text = canon_error
+        problem_text = controller.get_error()
 
         if problem_text:
-            # Canon Status-Fenster in Vordergrund bringen
-            self._bring_printer_dialog_to_front()
+            logger.info(f"Drucker-Fehler erkannt: '{problem_text}' → Overlay wird gezeigt")
+            # Overlay zeigen (kümmert sich um Canon-Dialog + Bestätigung)
+            self._show_printer_error_overlay(problem_text)
 
-            # Blinkend anzeigen (wie USB-Warnung)
+            # Blinkend in Top-Bar anzeigen
             self._printer_blink_state = not self._printer_blink_state
 
             if self._printer_blink_state:
                 self.printer_status.configure(
                     text=f"⚠️ {problem_text}",
                     text_color="#ffffff",
-                    fg_color="#ff0000"  # Knallrot
+                    fg_color="#ff0000"
                 )
             else:
                 self.printer_status.configure(
                     text=f"⚠️ {problem_text}",
                     text_color="#000000",
-                    fg_color="#ffcc00"  # Gelb
+                    fg_color="#ffcc00"
                 )
             self.printer_status.pack(side="right", padx=5)
-            # Bei Problem: schneller blinken (1s)
             self.root.after(1000, self._check_printer_status)
         else:
             # Alles OK -> Warnung verstecken
             self._printer_blink_state = False
             self.printer_status.pack_forget()
-            # Kein Problem: seltener prüfen (5s)
             self.root.after(5000, self._check_printer_status)
 
-    def _check_print_jobs(self, hPrinter) -> str:
-        """Prüft Druckjobs auf Fehler (Canon meldet Kassette/Papier hier)
+    def _show_printer_error_overlay(self, error_text: str):
+        """Zeigt blockierendes Drucker-Fehler-Overlay
 
-        Nutzt JOB_INFO Level 2 für das pStatus-Textfeld, das Canon-Treiber
-        möglicherweise mit spezifischen Fehlertexten befüllen.
-
-        Returns:
-            Fehlertext oder None wenn alles OK
+        - Papierstau → automatischer Reset mit Animation
+        - Verbrauchsmaterial → wartet bis Material gewechselt
+        - other → nur Top-Bar (offline, etc.)
         """
-        try:
-            import win32print
+        from src.ui.dialogs.printer_error import PrinterErrorOverlay, classify_error
 
-            # Level 2 für pStatus-Textfeld (Level 1 hat kein pStatus!)
-            jobs = win32print.EnumJobs(hPrinter, 0, 10, 2)
-            if not jobs:
-                return None
+        category = classify_error(error_text)
 
-            for job in jobs:
-                job_status = job.get("Status", 0)
-
-                # Job-Status-Flags (aus winspool.h)
-                JOB_STATUS_ERROR = 0x2
-                JOB_STATUS_OFFLINE = 0x20
-                JOB_STATUS_PAPEROUT = 0x40
-                JOB_STATUS_BLOCKED = 0x200
-                JOB_STATUS_USER_INTERVENTION = 0x400
-
-                # pStatus: Freitext vom Drucker-Treiber (Canon-spezifisch)
-                status_text = (job.get("pStatus") or "").strip()
-
-                # Zuerst Freitext prüfen (spezifischer als Flags)
-                if status_text:
-                    lower = status_text.lower()
-                    logger.info(f"Druckjob pStatus: '{status_text}' (flags=0x{job_status:X})")
-
-                    # Canon Selphy Fehlertexte erkennen
-                    if any(w in lower for w in ["ink", "tinte", "kassette", "cartridge", "cassette"]):
-                        return "KASSETTE LEER!"
-                    elif any(w in lower for w in ["paper", "papier"]):
-                        return "PAPIER LEER!"
-                    elif any(w in lower for w in ["mismatch", "incorrect", "stimmt nicht"]):
-                        return "KASSETTE FALSCH!"
-                    elif any(w in lower for w in ["jam", "stau"]):
-                        return "PAPIERSTAU!"
-                    elif any(w in lower for w in ["cover", "door", "klappe", "deckel"]):
-                        return "KLAPPE OFFEN!"
-                    else:
-                        # Unbekannter Text -> trotzdem anzeigen (gekürzt)
-                        short = status_text[:20]
-                        return f"FEHLER: {short}"
-
-                # Dann Flags prüfen
-                if job_status & JOB_STATUS_PAPEROUT:
-                    return "PAPIER/KASSETTE LEER!"
-                elif job_status & JOB_STATUS_USER_INTERVENTION:
-                    return "DRUCKER PRÜFEN!"
-                elif job_status & JOB_STATUS_BLOCKED:
-                    return "DRUCK BLOCKIERT!"
-                elif job_status & JOB_STATUS_OFFLINE:
-                    return "DRUCKER OFFLINE!"
-                elif job_status & JOB_STATUS_ERROR:
-                    return "DRUCK-FEHLER!"
-
-        except Exception as e:
-            logger.debug(f"Job-Check Fehler: {e}")
-
-        return None
-
-    def _detect_canon_error_window(self) -> str:
-        """Erkennt Canon-Treiber-Fehlerfenster via Windows EnumWindows API
-
-        Canon SELPHY zeigt bei Papier-/Kassettenfehlern ein eigenes
-        Dialog-Fenster. Titel z.B.: 'Canon SELPHY CP1000 (Kopie 1)(USB002)'
-        Inhalt z.B.: 'Kein Papier / Kassette falsch eingesetzt!'
-
-        Returns: Kurztext für Status-Leiste oder None
-        """
-        try:
-            import ctypes
-            from ctypes import wintypes
-
-            user32 = ctypes.windll.user32
-
-            WNDENUMPROC = ctypes.WINFUNCTYPE(
-                wintypes.BOOL, wintypes.HWND, wintypes.LPARAM
-            )
-
-            found_text = [None]
-
-            def _read_child_text(hwnd, lParam):
-                """Liest Text aus Static-Label Child-Controls"""
-                class_buf = ctypes.create_unicode_buffer(64)
-                user32.GetClassNameW(hwnd, class_buf, 64)
-
-                if class_buf.value.lower() == "static":
-                    length = user32.GetWindowTextLengthW(hwnd)
-                    if length > 5:
-                        text_buf = ctypes.create_unicode_buffer(length + 1)
-                        user32.GetWindowTextW(hwnd, text_buf, length + 1)
-                        text = text_buf.value.strip()
-                        if text and len(text) > 5:
-                            found_text[0] = text
-                            return False  # Gefunden, Stop
-                return True
-
-            # Callback-Referenzen halten (ctypes GC-Schutz)
-            child_proc = WNDENUMPROC(_read_child_text)
-
-            def _find_canon_window(hwnd, lParam):
-                if not user32.IsWindowVisible(hwnd):
-                    return True
-
-                title_buf = ctypes.create_unicode_buffer(256)
-                user32.GetWindowTextW(hwnd, title_buf, 256)
-                title = title_buf.value.lower()
-
-                if "canon selphy" in title:
-                    # Child-Controls nach Fehlertext durchsuchen
-                    user32.EnumChildWindows(hwnd, child_proc, 0)
-                    if not found_text[0]:
-                        found_text[0] = "DRUCKER PRÜFEN!"
-                    return False  # Gefunden, Stop
-                return True
-
-            enum_proc = WNDENUMPROC(_find_canon_window)
-            user32.EnumWindows(enum_proc, 0)
-
-            if found_text[0]:
-                error = found_text[0]
-                error_lower = error.lower()
-                logger.info(f"Canon-Fehlerfenster erkannt: '{error}'")
-                # Bekannte Canon SELPHY Fehlermeldungen → Kurztext
-                # WICHTIG: "tintenkassette" VOR "kassette" prüfen!
-                if "tintenkassette" in error_lower or "druckerpatrone" in error_lower:
-                    return "KEINE TINTENKASSETTE!"
-                elif "kein papier" in error_lower:
-                    return "KEIN PAPIER / KASSETTE!"
-                elif "kassette" in error_lower:
-                    return "KASSETTE PRÜFEN!"
-                elif "tinte" in error_lower or "ink" in error_lower:
-                    return "TINTE LEER!"
-                elif error == "DRUCKER PRÜFEN!":
-                    return error
-                else:
-                    # Unbekannter Fehler - kürzen für Leiste
-                    upper = error.upper()
-                    return upper[:25] + "..." if len(upper) > 25 else upper
-
-        except Exception as e:
-            logger.debug(f"Canon-Fenster-Erkennung: {e}")
-
-        return None
-
-    def _bring_printer_dialog_to_front(self):
-        """Bringt Canon/Windows Drucker-Dialoge in den Vordergrund
-
-        Sucht nach bekannten Drucker-Status-Fenstern und holt sie
-        vor die Fullscreen-App (die durch overrideredirect oben liegt).
-        """
-        if not hasattr(self, '_last_printer_dialog_check'):
-            self._last_printer_dialog_check = 0
-
-        # Nur alle 5s prüfen (FindWindow ist günstig, aber nicht spammen)
-        if time.time() - self._last_printer_dialog_check < 5:
+        # "other"-Fehler (offline, etc.) nur in Top-Bar anzeigen, kein Overlay
+        if category == "other":
+            logger.debug(f"Drucker-Fehler '{error_text}' → kein Overlay (other)")
             return
-        self._last_printer_dialog_check = time.time()
 
-        try:
-            import ctypes
-            from ctypes import wintypes
+        logger.info(
+            f">>> DRUCKER-OVERLAY WIRD ANGEZEIGT: '{error_text}' "
+            f"(Kategorie: {category})"
+        )
+        self._printer_error_overlay = PrinterErrorOverlay(
+            self.root, self, error_text, category
+        )
 
-            user32 = ctypes.windll.user32
-            EnumWindows = user32.EnumWindows
-            GetWindowTextW = user32.GetWindowTextW
-            IsWindowVisible = user32.IsWindowVisible
-            SetForegroundWindow = user32.SetForegroundWindow
-            ShowWindow = user32.ShowWindow
-            SetWindowPos = user32.SetWindowPos
+    def trigger_printer_reset(self):
+        """Manueller Drucker-Reset (für Dev-Mode Button)"""
+        from src.ui.dialogs.printer_error import PrinterErrorOverlay
+        logger.info("Manueller Drucker-Reset ausgelöst")
+        self._printer_error_overlay = PrinterErrorOverlay(
+            self.root, self, "MANUELLER RESET", "jam"
+        )
 
-            SW_SHOW = 5
-            HWND_TOPMOST = -1
-            SWP_NOMOVE = 0x0002
-            SWP_NOSIZE = 0x0001
-            SWP_SHOWWINDOW = 0x0040
-
-            # Bekannte Fenster-Titel von Drucker-Dialogen
-            printer_keywords = [
-                "canon", "selphy", "drucker", "printer",
-                "druckerstatus", "printer status",
-                "ink", "tinte", "papier", "paper",
-                "kassette", "cartridge",
-            ]
-
-            WNDENUMPROC = ctypes.WINFUNCTYPE(
-                wintypes.BOOL, wintypes.HWND, wintypes.LPARAM
-            )
-
-            def enum_callback(hwnd, lParam):
-                if not IsWindowVisible(hwnd):
-                    return True
-
-                title = ctypes.create_unicode_buffer(256)
-                GetWindowTextW(hwnd, title, 256)
-                window_title = title.value.lower()
-
-                if not window_title:
-                    return True
-
-                for keyword in printer_keywords:
-                    if keyword in window_title:
-                        # Fenster in Vordergrund bringen
-                        ShowWindow(hwnd, SW_SHOW)
-                        SetWindowPos(
-                            hwnd, HWND_TOPMOST,
-                            0, 0, 0, 0,
-                            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
-                        )
-                        logger.info(f"Drucker-Dialog in Vordergrund: '{title.value}'")
-                        return True
-
-                return True
-
-            EnumWindows(WNDENUMPROC(enum_callback), 0)
-
-        except Exception as e:
-            logger.debug(f"Drucker-Dialog Vordergrund fehlgeschlagen: {e}")
+    # _check_print_jobs, _detect_canon_error_window, _bring_printer_dialog_to_front
+    # → Ausgelagert nach src/printer/controller.py (PrinterController)
 
     def _check_camera_status(self):
         """Prüft Kamera-Status - BLINKEND wenn keine Kamera erreichbar

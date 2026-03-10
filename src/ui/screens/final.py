@@ -1,7 +1,6 @@
 """Final-Screen - Fertiges Bild mit Druck-Option
 
-Bild bildschirmfüllend mit Rand, Buttons als Overlay per place().
-Einzelne Buttons direkt platziert (kein Container-Frame = kein sichtbares Rechteck).
+Bild oben (expand), schwarze Button-Leiste unten (fest).
 """
 
 import customtkinter as ctk
@@ -35,91 +34,105 @@ class FinalScreen(ctk.CTkFrame):
         self._setup_ui()
 
     def _setup_ui(self):
-        """Erstellt die UI - Bild mit Rand, Buttons als Overlay"""
-        # Bild-Container (mit Rand für bessere Optik)
-        self.image_frame = ctk.CTkFrame(self, fg_color=COLORS["bg_dark"], corner_radius=0)
-        self.image_frame.pack(fill="both", expand=True, padx=10, pady=(5, 5))
+        """Erstellt die UI - Bild oben, schwarze Button-Leiste unten.
 
-        self.preview_label = ctk.CTkLabel(self.image_frame, text="", fg_color="transparent")
-        self.preview_label.pack(expand=True, fill="both")
-
-        # === Overlay-Elemente per place() direkt auf self ===
-        # Keine Container-Frames → keine sichtbaren Rechtecke
-
-        # Countdown-Text oben
-        self.subtitle_label = ctk.CTkLabel(
-            self,
-            text="",
-            font=FONTS["small"],
-            text_color=COLORS["text_secondary"],
-            fg_color="transparent"
-        )
-        self.subtitle_label.place(relx=0.5, rely=0.03, anchor="n")
-
-        # Druck-Info
-        self.print_info = ctk.CTkLabel(
-            self,
-            text="",
-            font=FONTS["body_bold"] if "body_bold" in FONTS else FONTS["body"],
-            text_color=COLORS["text_primary"],
-            fg_color="transparent"
-        )
-        self.print_info.place(relx=0.5, rely=0.83, anchor="center")
-
-        # NOCHMAL Button (Pill-Form, direkt platziert)
-        self.redo_btn = ctk.CTkButton(
-            self,
-            text=self.config.get("ui_texts", {}).get("redo", "NOCHMAL"),
-            font=("Segoe UI", 20, "bold"),
-            width=180,
-            height=60,
-            fg_color=COLORS["bg_light"],
-            hover_color=COLORS["bg_card"],
-            corner_radius=27,
-            command=self._on_redo
-        )
-        self.redo_btn.place(relx=0.28, rely=0.92, anchor="center")
-
-        # DRUCKEN Button (groß, prominent, direkt platziert)
-        self.print_btn = ctk.CTkButton(
-            self,
-            text="DRUCKEN",
-            font=("Segoe UI", 24, "bold"),
-            width=240,
-            height=70,
-            fg_color=COLORS["success"],
-            hover_color="#00e676",
-            corner_radius=32,
-            command=self._on_print
-        )
-        self.print_btn.place(relx=0.5, rely=0.92, anchor="center")
-
-        # FERTIG Button (direkt platziert)
-        if not self.config.get("hide_finish_button", False):
-            self.finish_btn = ctk.CTkButton(
-                self,
-                text=self.config.get("ui_texts", {}).get("finish", "FERTIG"),
-                font=("Segoe UI", 20, "bold"),
-                width=180,
-                height=60,
-                fg_color=COLORS["bg_light"],
-                hover_color=COLORS["bg_card"],
-                corner_radius=27,
-                command=self._on_finish
-            )
-            self.finish_btn.place(relx=0.72, rely=0.92, anchor="center")
-
-        # Progress-Bar ganz unten
+        Pack-Reihenfolge: bottom-Elemente ZUERST, dann expand=True für Bild.
+        """
+        # === 1. Progress-Bar ganz unten (zuerst packen!) ===
         self.progress_bar = ctk.CTkProgressBar(
             self,
-            width=500,
             height=4,
             fg_color=COLORS["bg_light"],
             progress_color=COLORS["primary"],
             corner_radius=2
         )
-        self.progress_bar.place(relx=0.5, rely=0.97, anchor="center")
+        self.progress_bar.pack(fill="x", side="bottom")
         self.progress_bar.set(1.0)
+
+        # === 2. Schwarze Button-Leiste (vor dem Bild packen!) ===
+        bottom_bar = ctk.CTkFrame(self, fg_color=COLORS["bg_medium"], corner_radius=0, height=90)
+        bottom_bar.pack(fill="x", side="bottom")
+        bottom_bar.pack_propagate(False)
+
+        # Innerer Container für zentrierte Ausrichtung
+        bar_inner = ctk.CTkFrame(bottom_bar, fg_color="transparent")
+        bar_inner.pack(expand=True, fill="both", padx=15, pady=8)
+
+        # Druck-Info (oben in der Leiste)
+        self.print_info = ctk.CTkLabel(
+            bar_inner,
+            text="",
+            font=FONTS["small"],
+            text_color=COLORS["text_muted"],
+            fg_color="transparent"
+        )
+        self.print_info.pack(side="top", pady=(0, 2))
+
+        # Button-Container (unten in der Leiste)
+        btn_frame = ctk.CTkFrame(bar_inner, fg_color="transparent")
+        btn_frame.pack(side="bottom", fill="x", pady=(0, 2))
+
+        # NOCHMAL Button (links)
+        self.redo_btn = ctk.CTkButton(
+            btn_frame,
+            text=self.config.get("ui_texts", {}).get("redo", "NOCHMAL"),
+            font=("Segoe UI", 18, "bold"),
+            width=160,
+            height=50,
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["bg_card"],
+            text_color=COLORS["text_primary"],
+            corner_radius=12,
+            command=self._on_redo
+        )
+        self.redo_btn.pack(side="left", padx=(10, 0))
+
+        # DRUCKEN Button (mitte, prominent)
+        self.print_btn = ctk.CTkButton(
+            btn_frame,
+            text="DRUCKEN",
+            font=("Segoe UI", 22, "bold"),
+            width=220,
+            height=55,
+            fg_color=COLORS["success"],
+            hover_color="#00e676",
+            corner_radius=14,
+            command=self._on_print
+        )
+        self.print_btn.pack(side="left", expand=True)
+
+        # FERTIG Button (rechts)
+        if not self.config.get("hide_finish_button", False):
+            self.finish_btn = ctk.CTkButton(
+                btn_frame,
+                text=self.config.get("ui_texts", {}).get("finish", "FERTIG"),
+                font=("Segoe UI", 18, "bold"),
+                width=160,
+                height=50,
+                fg_color=COLORS["bg_light"],
+                hover_color=COLORS["bg_card"],
+                text_color=COLORS["text_primary"],
+                corner_radius=12,
+                command=self._on_finish
+            )
+            self.finish_btn.pack(side="right", padx=(0, 10))
+
+        # === 3. Countdown-Text oben ===
+        self.subtitle_label = ctk.CTkLabel(
+            self,
+            text="",
+            font=FONTS["small"],
+            text_color=COLORS["text_secondary"],
+            fg_color=COLORS["bg_dark"]
+        )
+        self.subtitle_label.pack(fill="x", side="top", pady=(2, 0))
+
+        # === 4. Bild-Container (füllt den restlichen Raum) ===
+        self.image_frame = ctk.CTkFrame(self, fg_color=COLORS["bg_dark"], corner_radius=0)
+        self.image_frame.pack(fill="both", expand=True, padx=10, pady=(0, 0))
+
+        self.preview_label = ctk.CTkLabel(self.image_frame, text="", fg_color="transparent")
+        self.preview_label.pack(expand=True, fill="both")
 
     def _render_final_image(self) -> Image.Image:
         """Rendert das finale Bild"""
@@ -378,16 +391,16 @@ class FinalScreen(ctk.CTkFrame):
         if container_w < 100:
             container_w = 1000
         if container_h < 100:
-            container_h = 600
+            container_h = 500
 
-        # Sichtbare Höhe: Platz für Overlay-Buttons (ab rely=0.80) abziehen
-        # damit das komplette Template sichtbar ist und nicht abgeschnitten wird
-        visible_h = int(container_h * 0.78)
-
+        # Bild auf Container-Größe skalieren (Seitenverhältnis beibehalten)
         preview = self.final_image.copy()
-        preview.thumbnail((container_w, visible_h), Image.Resampling.LANCZOS)
+        preview.thumbnail((container_w, container_h), Image.Resampling.LANCZOS)
 
-        ctk_img = ctk.CTkImage(light_image=preview, dark_image=preview, size=preview.size)
+        # CTkImage size in logischen Pixeln (DPI-korrigiert)
+        scaling = self._get_widget_scaling()
+        logical_size = (int(preview.size[0] / scaling), int(preview.size[1] / scaling))
+        ctk_img = ctk.CTkImage(light_image=preview, dark_image=preview, size=logical_size)
         self.preview_label.configure(image=ctk_img)
         self.preview_label.image = ctk_img
 

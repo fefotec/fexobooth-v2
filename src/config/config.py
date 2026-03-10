@@ -167,14 +167,26 @@ def _find_usb_template_on_drive() -> Optional[str]:
 
 
 def _is_valid_template_zip(zip_path: str) -> bool:
-    """Prüft ob eine ZIP-Datei ein gültiges Template ist (enthält PNG)."""
+    """Prüft ob eine ZIP-Datei ein gültiges Template ist.
+
+    Rejects:
+    - ZIPs die .exe/.dll Dateien enthalten (Anwendungs-ZIPs)
+    - ZIPs die _internal/ Verzeichnisse enthalten (PyInstaller builds)
+    - ZIPs ohne PNG-Dateien
+    """
     import zipfile
 
     try:
         with zipfile.ZipFile(zip_path, "r") as zf:
+            has_png = False
             for name in zf.namelist():
-                if name.lower().endswith(".png"):
-                    return True
+                lower = name.lower()
+                # Anwendungs-ZIP erkennen (PyInstaller build, Installer etc.)
+                if lower.endswith((".exe", ".dll")) or "_internal/" in lower:
+                    return False
+                if lower.endswith(".png"):
+                    has_png = True
+            return has_png
     except:
         pass
 

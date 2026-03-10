@@ -105,13 +105,18 @@ class AdminDialog(ctk.CTkToplevel):
         )
         close_btn.pack(anchor="e", padx=(0, 8), pady=(8, 0))
 
-        # Icon
+        # Icon (5x tippen = Windows-Neustart)
         icon_size = max(28, min(44, int(screen_h * 0.05)))
-        ctk.CTkLabel(
+        self._restart_tap_count = 0
+        self._restart_tap_timer = None
+        icon_label = ctk.CTkLabel(
             card,
             text="🔐",
-            font=("Segoe UI Emoji", icon_size)
-        ).pack(pady=(0, 4))
+            font=("Segoe UI Emoji", icon_size),
+            cursor="hand2"
+        )
+        icon_label.pack(pady=(0, 4))
+        icon_label.bind("<Button-1>", self._on_icon_tap)
 
         # Titel
         ctk.CTkLabel(
@@ -210,7 +215,7 @@ class AdminDialog(ctk.CTkToplevel):
                 self.after(100, self._check_pin)
     
     def _check_pin(self):
-        """Prüft die PIN (Admin oder Service)"""
+        """Prüft die PIN (Admin, Service oder Restart)"""
         entered = self.pin_entry.get()
         correct = self.config_data.get("admin_pin", "3198")
 
@@ -251,6 +256,79 @@ class AdminDialog(ctk.CTkToplevel):
                 border_color=COLORS["border_light"]
             ))
     
+    def _on_icon_tap(self, event=None):
+        """5x auf das Icon tippen = Windows-Neustart anbieten"""
+        self._restart_tap_count += 1
+
+        # Timer zurücksetzen (alle Taps müssen innerhalb von 3s kommen)
+        if self._restart_tap_timer:
+            self.after_cancel(self._restart_tap_timer)
+        self._restart_tap_timer = self.after(3000, self._reset_tap_count)
+
+        if self._restart_tap_count >= 5:
+            self._restart_tap_count = 0
+            self._confirm_restart()
+
+    def _reset_tap_count(self):
+        """Setzt den Tap-Counter zurück"""
+        self._restart_tap_count = 0
+
+    def _confirm_restart(self):
+        """Zeigt Bestätigungs-Dialog für Windows-Neustart"""
+        self.pin_frame.destroy()
+
+        # Bestätigungs-UI
+        confirm_frame = ctk.CTkFrame(self, fg_color="transparent")
+        confirm_frame.place(relx=0.5, rely=0.5, anchor="center")
+
+        ctk.CTkLabel(
+            confirm_frame,
+            text="⚠️ Windows Neustart",
+            font=("Segoe UI", 24, "bold"),
+            text_color=COLORS["warning"]
+        ).pack(pady=(0, 10))
+
+        ctk.CTkLabel(
+            confirm_frame,
+            text="Der Computer wird jetzt neu gestartet.\nAlle laufenden Prozesse werden beendet.",
+            font=FONTS["body"],
+            text_color=COLORS["text_primary"],
+            justify="center"
+        ).pack(pady=(0, 20))
+
+        btn_frame = ctk.CTkFrame(confirm_frame, fg_color="transparent")
+        btn_frame.pack()
+
+        def do_restart():
+            import subprocess
+            logger.info("Windows-Neustart über PIN ausgelöst")
+            subprocess.Popen(["shutdown", "/r", "/t", "3", "/c", "FexoBooth: Neustart über Admin-PIN"],
+                             creationflags=0x08000000)
+            self.destroy()
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Neustart",
+            font=("Segoe UI", 18, "bold"),
+            width=150, height=50,
+            fg_color=COLORS["warning"],
+            hover_color="#ff6600",
+            corner_radius=12,
+            command=do_restart
+        ).pack(side="left", padx=10)
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Abbrechen",
+            font=("Segoe UI", 18, "bold"),
+            width=150, height=50,
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["bg_card"],
+            text_color=COLORS["text_primary"],
+            corner_radius=12,
+            command=self.destroy
+        ).pack(side="left", padx=10)
+
     def _open_service_menu(self):
         """Markiert Service-Menü zum Öffnen und schließt den Admin-Dialog.
 

@@ -89,6 +89,12 @@ class PerformanceOverlay:
             logger.warning("psutil nicht installiert - Performance Overlay deaktiviert")
             self.enabled = False
             return
+        except AttributeError as e:
+            # psutil importiert aber Funktionen fehlen (PyInstaller-Problem)
+            logger.warning(f"psutil unvollständig, Performance Overlay deaktiviert: {e}")
+            self._label.configure(text="", text_color="#666666")
+            self.enabled = False
+            return
         except Exception as e:
             logger.debug(f"Performance Update Fehler: {e}")
         

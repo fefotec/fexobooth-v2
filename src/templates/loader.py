@@ -95,6 +95,14 @@ class TemplateLoader:
             with zipfile.ZipFile(zip_path, "r") as zf:
                 file_list = zf.namelist()
                 logger.debug(f"Dateien im ZIP: {file_list}")
+
+                # Prüfen ob ZIP ein Anwendungs-ZIP ist (kein Template!)
+                for name in file_list:
+                    lower = name.lower()
+                    if lower.endswith((".exe", ".dll")) or "_internal/" in lower:
+                        logger.error(f"ZIP ist kein Template (enthält Anwendungsdateien): {zip_path}")
+                        return None, []
+
                 zf.extractall(temp_dir)
             
             overlay = None

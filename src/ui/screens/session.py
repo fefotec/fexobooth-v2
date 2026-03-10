@@ -65,6 +65,7 @@ class SessionScreen(ctk.CTkFrame):
         self._cached_template_boxes_scaled = []  # Skalierte Box-Koordinaten
         self._cached_template_scale = 1.0
         self._cached_template_display_size = (0, 0)
+        self._cached_template_container_size = (0, 0)  # Container-Größe bei Cache-Erstellung
 
         logger.info(f"Session: FPS={self._target_fps}, delay={self._frame_delay_ms}ms, skip={self._skip_frames}")
 
@@ -281,6 +282,13 @@ class SessionScreen(ctk.CTkFrame):
 
                 # Template-Overlay anwenden (wenn aktiviert)
                 if self._template_overlay_enabled and self._cached_template_composite is not None:
+                    # Cache-Rebuild wenn Container-Größe sich deutlich geändert hat
+                    cw = self.preview_container.winfo_width()
+                    ch = self.preview_container.winfo_height()
+                    old_cw, old_ch = self._cached_template_container_size
+                    if cw > 100 and ch > 100 and (abs(cw - old_cw) > 50 or abs(ch - old_ch) > 50):
+                        logger.info(f"Container-Resize erkannt: {old_cw}x{old_ch} → {cw}x{ch} → Cache rebuild")
+                        self._build_template_overlay_cache()
                     live_img = self._apply_template_overlay(live_img)
 
                 if self.is_countdown_active and self.countdown_value > 0:
@@ -323,23 +331,35 @@ class SessionScreen(ctk.CTkFrame):
         return img
 
     def _display_preview(self, img: Image.Image):
-        """Zeigt das Vorschau-Bild bildschirmfüllend an"""
+        """Zeigt das Vorschau-Bild bildschirmfüllend an.
+
+        WICHTIG: winfo_width()/winfo_height() geben Tk-Pixel zurück,
+        CTkImage.size erwartet aber DPI-unabhängige (logische) Pixel.
+        Bei 125% DPI-Skalierung (Lenovo Miix 310): Tk=1280, Logisch=1024.
+        Ohne Korrektur wird das Bild zu groß und abgeschnitten.
+        """
         container_w = self.preview_container.winfo_width()
         container_h = self.preview_container.winfo_height()
 
         if container_w < 100 or container_h < 100:
-            container_w, container_h = 900, 500
+            container_w = self.winfo_screenwidth()
+            container_h = self.winfo_screenheight()
 
-        # Seitenverhältnis beibehalten, Container füllen
+        # Tk-Pixel → logische Pixel umrechnen (DPI-Skalierung berücksichtigen)
+        scaling = self._get_widget_scaling()
+        logical_w = container_w / scaling
+        logical_h = container_h / scaling
+
+        # Seitenverhältnis beibehalten, Container füllen (in logischen Pixeln)
         img_ratio = img.width / img.height
-        container_ratio = container_w / container_h
+        container_ratio = logical_w / logical_h
 
         if img_ratio > container_ratio:
-            display_w = container_w
-            display_h = int(container_w / img_ratio)
+            display_w = int(logical_w)
+            display_h = int(logical_w / img_ratio)
         else:
-            display_h = container_h
-            display_w = int(container_h * img_ratio)
+            display_h = int(logical_h)
+            display_w = int(logical_h * img_ratio)
 
         ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(display_w, display_h))
         self.preview_label.configure(image=ctk_img)
@@ -412,7 +432,11 @@ class SessionScreen(ctk.CTkFrame):
                           cx + mouth_width // 2, mouth_y + mouth_height],
                          start=0, end=180, fill=(50, 50, 50), width=max(4, size // 20))
 
-            self._cached_flash_ctk = ctk.CTkImage(light_image=flash, dark_image=flash, size=(container_w, container_h))
+            # CTkImage size in logischen Pixeln (DPI-korrigiert)
+            scaling = self._get_widget_scaling()
+            logical_w = int(container_w / scaling)
+            logical_h = int(container_h / scaling)
+            self._cached_flash_ctk = ctk.CTkImage(light_image=flash, dark_image=flash, size=(logical_w, logical_h))
             self._cached_flash_size = (container_w, container_h)
             logger.info(f"Flash-Cache erstellt: {container_w}x{container_h}")
 
@@ -429,10 +453,16 @@ class SessionScreen(ctk.CTkFrame):
                 logger.info("Template-Overlay: Kein Overlay oder keine Boxen vorhanden")
                 return
 
+            # Layout sicherstellen bevor wir messen
+            self.update_idletasks()
+
             container_w = self.preview_container.winfo_width()
             container_h = self.preview_container.winfo_height()
             if container_w < 100 or container_h < 100:
-                container_w, container_h = 900, 500
+                # Fallback: Bildschirmgröße verwenden (nicht 900x500!)
+                container_w = self.winfo_screenwidth()
+                container_h = self.winfo_screenheight()
+                logger.debug(f"Container noch nicht gerendert, verwende Bildschirmgröße: {container_w}x{container_h}")
 
             # Template auf Container-Größe skalieren (Seitenverhältnis beibehalten)
             overlay_w, overlay_h = overlay.size
@@ -456,7 +486,8 @@ class SessionScreen(ctk.CTkFrame):
             self._cached_template_boxes_scaled = scaled_boxes
             self._cached_template_scale = scale
             self._cached_template_display_size = (display_w, display_h)
-            logger.info(f"Template-Overlay Cache: {overlay_w}x{overlay_h} -> {display_w}x{display_h} (scale={scale:.3f})")
+            self._cached_template_container_size = (container_w, container_h)
+            logger.info(f"Template-Overlay Cache: {overlay_w}x{overlay_h} -> {display_w}x{display_h} (Container: {container_w}x{container_h}, scale={scale:.3f})")
 
         except Exception as e:
             logger.error(f"Template-Overlay Cache fehlgeschlagen: {e}")

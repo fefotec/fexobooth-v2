@@ -6,6 +6,43 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-03-09
 
+### Drucker-Steuerung: Software-Reset + Fehlermeldungen ersetzen
+- **Neues Feature:** Drucker-Fehler werden jetzt mit eigenem Fullscreen-Overlay angezeigt statt Windows/Canon-Dialoge in den Vordergrund zu bringen
+- **Canon-Dialog-Unterdrückung:** Canon SELPHY Fehlerdialoge werden automatisch geschlossen, eigene Meldungen übernehmen
+- **Zwei Modi:**
+  - **Papierstau:** Automatischer 3-stufiger Reset (Purge → Spooler Restart → USB Device Restart) mit Lade-Animation. Blockiert Bedienung bis behoben
+  - **Verbrauchsmaterial (Papier/Tinte leer):** Blockierendes Overlay "Bitte Papier/Tinte nachfüllen". Verschwindet NUR wenn Drucker wieder OK meldet (Polling alle 3s)
+- **Dev-Mode Button:** "DRUCKER RESET" Button in der Top-Bar zum Testen des Reset-Ablaufs
+- **Neue Dateien:**
+  - `src/printer/__init__.py` + `src/printer/controller.py` (PrinterController: Reset-Eskalation, Dialog-Unterdrückung, Status-Abfrage)
+  - `src/ui/dialogs/printer_error.py` (PrinterErrorOverlay: Blockierendes Vollbild-Overlay)
+- **Refactoring:** `_check_print_jobs()`, `_detect_canon_error_window()`, `_bring_printer_dialog_to_front()` aus `app.py` in `PrinterController` ausgelagert
+- **Bugfix (Real-Hardware-Test):**
+  - Canon-Dialog-Text per `WM_GETTEXT` statt `GetWindowTextW` lesen (Canon-Controls antworten nicht auf GetWindowTextW)
+  - Alle Child-Controls enumerieren, längsten Text als Fehlermeldung verwenden
+  - Falls Text nicht lesbar: sicher als "KEIN PAPIER / KASSETTE!" (consumable) behandeln
+  - Canon-Dialog NICHT schließen wenn Overlay aktiv (Dialog = einziger Fehlerindikator beim SELPHY!)
+  - Reset immer alle 3 Stufen durchlaufen (SELPHY setzt keine Spooler-Status-Flags)
+  - Overlay: periodisches `lift()` + `focus_force()` gegen Canon-Dialog Focus-Stealing
+  - Umfangreiches Debug-Logging für alle Drucker-Operationen
+
+### Export-Dialog blockierte UI (Boot-Drives + grab_set)
+- **Export-Dialog blockierte UI**: D:\ (SD-Karten-Slot im Miix 310) wurde als "unbekannter USB-Stick" erkannt → Export-Dialog mit `grab_set()` blockierte gesamte Interaktion. Fixes: (1) Boot-Drives werden beim Start erfasst und für Export ignoriert, (2) 15s Grace Period nach Boot, (3) Export-Dialog ohne `grab_set()` (non-blocking), (4) Abgezogene Boot-Drives werden aus Ignorier-Liste entfernt.
+
+### ZIP-Validierung, Default-Template, Freeze-Fix, Encoding (2026-03-10 continued)
+- **ZIP-Validierung**: Template-Loader und `find_usb_template()` erkennen jetzt Anwendungs-ZIPs (mit .exe, .dll, `_internal/`). Solche ZIPs werden abgelehnt. Das verhindert, dass fexobooth.zip (das Installationspaket) als Template interpretiert wird.
+- **Default-Template.zip**: `create_default_template()` lädt jetzt `assets/Default-Template.zip` statt programmatisch ein 2x2-Grid zu generieren. ZIP ist bereits über `("assets", "assets")` im Build enthalten. Ergebnis wird gecacht.
+- **Freeze-Ursache gefunden**: 41-Sekunden-Freeze beim Rendern des finalen Bildes — Ursache: USB-Stick enthielt `fexobooth.zip` (Anwendungspaket statt Template), Loader nahm Logo-PNG (6889x6889) als Overlay → Compositing dauerte 41s auf Miix 310. Fix: ZIP-Validierung.
+- **PowerShell Encoding**: `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` zu allen PowerShell-Subprocess-Aufrufen hinzugefügt (behebt `durchgef�hrt` → `durchgeführt`)
+
+### Drucker-Steuerung: Kritische Bugfixes (2026-03-10)
+- **Fix: `win32timezone` fehlte im PyInstaller-Build** — `EnumJobs` Level 2 braucht `win32timezone` für DateTime-Felder. JEDER Job-Queue-Check schlug im Build fehl (`No module named 'win32timezone'`). Drucker-Fehler bei aktiven Druckjobs wurden NIE erkannt!
+  - Fix 1: `win32timezone` als `hiddenimport` in `fexobooth.spec`
+  - Fix 2: `EnumJobs` mit Level 1 statt Level 2 (hat kein DateTime, braucht kein `win32timezone`)
+- **Fix: Canon-Dialog-Erkennung findet jetzt auch versteckte Fenster** — `_detect_canon_error_window()` prüfte nur `IsWindowVisible()`. Fenster die wir per `SW_HIDE` versteckt hatten, wurden danach nicht mehr erkannt. Jetzt werden ALLE Fenster (sichtbar + versteckt) geprüft
+- **Fix: `close_canon_dialogs()` findet jetzt versteckte Fenster** — Cleanup nach Overlay-Schließen fand versteckte Canon-Dialoge nicht
+- **Cleanup: Debug-Spam für Child-Controls entfernt** — Jeder Child-Control-Scan loggte Klasse + Textlänge → massiver Log-Spam
+
 ### Collage: Nochmal + Weiter Buttons nach jedem Foto
 - **Neues Verhalten:** Bei Collagen (>1 Foto) wird nach jedem Foto eine schwarze Button-Leiste am unteren Bildschirmrand eingeblendet
 - **Buttons:** "↻ NOCHMAL" (rot, wiederholt das letzte Foto) + "WEITER →" (grün, geht zum nächsten Foto)

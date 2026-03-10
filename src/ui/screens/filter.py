@@ -406,7 +406,10 @@ class FilterScreen(ctk.CTkFrame):
 
     def _show_main_preview(self, preview: Image.Image):
         """Zeigt die Main-Preview an"""
-        ctk_img = ctk.CTkImage(light_image=preview, size=preview.size)
+        # CTkImage size in logischen Pixeln (DPI-korrigiert)
+        scaling = self._get_widget_scaling()
+        logical_size = (int(preview.size[0] / scaling), int(preview.size[1] / scaling))
+        ctk_img = ctk.CTkImage(light_image=preview, size=logical_size)
         self.preview_label.configure(image=ctk_img)
         self.preview_label.image = ctk_img
 

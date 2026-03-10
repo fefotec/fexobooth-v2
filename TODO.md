@@ -15,6 +15,7 @@ Aufgabenliste mit Prioritäten.
 - [ ] Admin-Menü: "Buchung zurücksetzen" Button
 - [ ] Canon DSLR Live-View optimieren (EVF_INTERNAL_ERROR Retry-Logik)
 - [ ] Print-Queue Anzeige
+- [ ] Drucker-Reset + Fehler-Overlay auf echtem Tablet mit Canon SELPHY testen
 - [ ] Event-Wechsel & Systemtest auf Tablet testen (echte Hardware)
 - [ ] Erstes GitHub Release erstellen + OTA-Update auf Tablet testen
 - [ ] Deployment: Referenz-Tablet einrichten und erstes Image testen
@@ -30,7 +31,20 @@ _Aktuell keine niedrig priorisierten Aufgaben_
 
 ## Erledigt ✅
 
+### 2026-03-10
+- [x] Export-Dialog blockiert UI (Boot-Drives, grab_set)
+- [x] ZIP-Validierung: Anwendungs-ZIPs (.exe, .dll, _internal/) als Template ablehnen
+- [x] Default-Template.zip als Fallback einbauen (statt programmatisches 2x2-Grid)
+- [x] Freeze-Analyse: Ursache gefunden (fexobooth.zip als Template → 6889x6889 Logo als Overlay → 41s Freeze)
+- [x] PowerShell UTF-8 Encoding Fix (`[Console]::OutputEncoding` in allen Subprocess-Aufrufen)
+
 ### 2026-03-09
+- [x] Drucker-Steuerung: Software-Reset bei Papierstau (3 Stufen: Purge → Spooler → USB)
+- [x] Drucker-Steuerung: Canon-Dialoge per SW_HIDE verstecken + eigene Fehlermeldungen
+- [x] Drucker-Steuerung: TOPMOST-Overlay mit Bestätigungs-Button ("PAPIER EINGELEGT")
+- [x] Drucker-Steuerung: Canon-Dialog-Text per WM_GETTEXT lesen
+- [x] Drucker-Steuerung: PowerShell/Konsole-Fenster versteckt (CREATE_NO_WINDOW)
+- [x] Dev-Mode: "DRUCKER RESET" Test-Button in Top-Bar
 - [x] Template-Overlay im LiveView als Option im Admin-Menü (Kamera-Tab)
 
 ### 2026-02-26

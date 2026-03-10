@@ -389,6 +389,14 @@ class StartScreen(ctk.CTkFrame):
             card.pack(side="left", padx=card_padx)
             self.cards["single"] = card
 
+        # Auto-Select: Erste Karte vorauswählen wenn noch nichts gewählt
+        # (USB-Template wird oben schon vorausgewählt)
+        if not self.selected_card and self.cards:
+            first_key = next(iter(self.cards))
+            first_card = self.cards[first_key]
+            self._select_card(first_card, first_key)
+            logger.info(f"Auto-Select: '{first_key}' (keine USB-Vorlage)")
+
         logger.info(f"Erstellte Karten: {list(self.cards.keys())}")
     
     def _resolve_template_path(self, template_path: str) -> Optional[str]:
@@ -506,7 +514,7 @@ class StartScreen(ctk.CTkFrame):
             return
 
         # VLC-Check: Wenn Video konfiguriert ist und VLC noch nicht warm, blockieren
-        # Im Stress-Test überspringen (Videos werden übersprungen)
+        # Sonst friert das erste Video ~77s ein auf schwacher Hardware
         if not self.app.stress_test_active and _vlc_available and not is_vlc_warm():
             video_start = self.config.get("video_start", "")
             if video_start and os.path.exists(video_start):

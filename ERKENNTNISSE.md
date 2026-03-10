@@ -6,6 +6,19 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### CTkImage DPI-Skalierung: winfo_width() vs CTkImage.size
+
+**Problem:** `winfo_width()`/`winfo_height()` geben **Tk-Pixel** zurück, `CTkImage(size=...)` erwartet aber **logische (DPI-unabhängige) Pixel**. Bei 125% DPI-Skalierung (Lenovo Miix 310: 1280x800 physisch, 1024x640 logisch) waren alle Bilder 25% zu groß → Template im LiveView abgeschnitten.
+
+**Fix:** Immer durch `_get_widget_scaling()` teilen:
+```python
+scaling = self._get_widget_scaling()
+logical_w = int(container_w / scaling)
+ctk_img = ctk.CTkImage(size=(logical_w, logical_h))
+```
+
+Betrifft: `_display_preview()`, `_build_flash_cache()`, `_show_main_preview()`, Final-Screen Preview.
+
 ### EDSDK: EdsSetObjectEventHandler kehrt nie zurück, funktioniert aber trotzdem!
 
 | | |
@@ -166,6 +179,80 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 | **Entscheidung** | Fehlererkennung über `EnumWindows` API: Canon-Treiber zeigt eigene Dialog-Fenster (Titel "Canon SELPHY CP1000 ..."), deren Child-Controls (Static Labels) den Fehlertext enthalten |
 | **Alternativen** | win32print Spooler-Flags (Canon setzt diese nicht), EnumJobs pStatus (Canon befüllt das Feld nicht zuverlässig) |
 | **Begründung** | Der Canon-Treiber nutzt seinen eigenen Dialog statt des Windows-Spooler-Mechanismus. EnumWindows + EnumChildWindows ist die einzige zuverlässige Methode, den Fehlertext abzugreifen |
+
+### Canon SELPHY: SW_HIDE statt WM_CLOSE für Dialoge!
+
+| | |
+|---|---|
+| **Kontext** | Canon SELPHY zeigt eigene Fehlerdialoge. `WM_CLOSE` schließt den Dialog, aber Canon erstellt ihn sofort neu → endloses Flackern jede Sekunde. Der User sieht beide Meldungen abwechselnd (Canon + unser Overlay) |
+| **Entscheidung** | Canon-Dialoge per `ShowWindow(SW_HIDE)` verstecken statt `PostMessage(WM_CLOSE)`. SW_HIDE macht den Dialog unsichtbar ohne ihn zu zerstören. Canon erstellt keinen neuen. Unser TOPMOST-Overlay zeigt die eigene Meldung + Bestätigungs-Button |
+| **Alternativen** | WM_CLOSE (Canon erstellt Dialog sofort neu → Flackern), SetWindowPos(HWND_BOTTOM) (funktioniert unzuverlässig mit Canon-Treiber) |
+| **Merke** | NIEMALS `WM_CLOSE` auf Canon-Fehler-Dialoge! Immer `SW_HIDE`. Und periodisch wiederholen (alle 1s) falls Canon neue Dialoge erstellt |
+
+### Canon SELPHY: Dialog-Text lesen per WM_GETTEXT (nicht GetWindowTextW!)
+
+| | |
+|---|---|
+| **Kontext** | Canon SELPHY CP1000 Fehlerdialoge: `GetWindowTextW` auf Child-Controls liefert leeren Text. `EnumChildWindows` mit `GetWindowTextW` fand den Text "Kein Papier / Kassette falsch eingesetzt!" nicht. Fallback "DRUCKER PRÜFEN!" wurde als "other" klassifiziert → kein Overlay |
+| **Entscheidung** | `SendMessageW(WM_GETTEXT)` statt `GetWindowTextW` verwenden. Alle Child-Controls enumerieren (nicht nur Static), den längsten Text als Fehlermeldung nehmen. Falls Text nicht lesbar: sicher als "KEIN PAPIER / KASSETTE!" (consumable) behandeln |
+| **Merke** | Canon-Treiber-Dialoge nutzen vermutlich Owner-Draw oder spezielle Controls. `WM_GETTEXT` funktioniert bei mehr Control-Typen als `GetWindowTextW`. Immer ALLE Children lesen, nicht beim ersten Static stoppen |
+
+### Canon SELPHY: Bestätigungs-Button statt Auto-Polling
+
+| | |
+|---|---|
+| **Kontext** | Auto-Polling funktioniert nicht: SELPHY setzt keine Spooler-Flags, einziger Indikator ist der Canon-Dialog. Wenn wir den Dialog verstecken (SW_HIDE), können wir den Fehler nicht mehr erkennen → Overlay schließt sich sofort |
+| **Entscheidung** | Kein Auto-Polling für Consumable-Fehler! Stattdessen Bestätigungs-Button ("PAPIER EINGELEGT" / "KASSETTE GEWECHSELT"). User klickt wenn Problem behoben. Dann: Canon-Dialog per WM_CLOSE schließen + Jobs purgen + 2s warten + Drucker prüfen. Falls noch Fehler: Button erneut zeigen |
+| **Merke** | Für den SELPHY CP1000 ist der einzige zuverlässige "Fehler behoben"-Check: Canon-Dialoge schließen, Jobs purgen, warten, und dann schauen ob ein neuer Canon-Dialog erscheint. Das geht nur nach User-Bestätigung |
+
+### Canon SELPHY: Software-Reset per 3-Stufen-Eskalation
+
+| | |
+|---|---|
+| **Kontext** | Canon SELPHY hängt bei Papierstau. Bisher musste ein Knopf am Gerät gedrückt werden |
+| **Entscheidung** | 3-Stufen-Reset: (1) Purge Jobs. (2) Spooler Restart. (3) `Disable-PnpDevice`/`Enable-PnpDevice` für echten USB-Reset (= wie Drucker aus/einstecken). Aggressiver als `pnputil /restart-device` |
+| **Merke** | `pnputil /restart-device` hat das SELPHY gar nicht gefunden! PnP-FriendlyName enthält nicht immer "SELPHY". Breiter suchen nach `*Canon*` + `Class -eq 'Printer'`. Disable/Enable ist der "gold standard" laut Doku |
+
+### PyInstaller: win32timezone für win32print.EnumJobs Level 2
+
+| | |
+|---|---|
+| **Kontext** | `win32print.EnumJobs(hPrinter, 0, 10, 2)` (Level 2 = JOB_INFO_2) braucht intern `win32timezone` für DateTime-Felder. Fehlt das Modul im PyInstaller-Build, crasht der Job-Queue-Check → Druckerfehler werden NICHT erkannt |
+| **Fix** | Level 1 (JOB_INFO_1) statt Level 2 verwenden. Level 1 hat `Status` + `pStatus` — reicht für Fehlererkennung. Zusätzlich `win32timezone` als `hiddenimport` im `.spec` File |
+| **Merke** | pywin32 hat viele interne Abhängigkeiten die PyInstaller nicht automatisch findet. `win32timezone` ist eine davon. Bei `No module named 'win32timezone'` Fehlern: entweder als hiddenimport oder pywin32 Level reduzieren |
+
+### Canon SELPHY: Fundamentale Limitation bei Status-Erkennung
+
+| | |
+|---|---|
+| **Kontext** | Windows meldet IMMER Status 0 (ready) für USB-Drucker wenn kein Druckjob aktiv ist. Das ist ein dokumentiertes Microsoft-Verhalten (KB 160129). Der Canon-Treiber meldet Fehler NUR über sein eigenes Fenster, und NUR bei aktivem Druckjob |
+| **Konsequenz** | Nach Jobs purgen + Canon-Dialog schließen gibt `get_error()` IMMER None zurück — auch wenn der SELPHY physisch "Kein Papier" anzeigt. Wir können den echten Drucker-Status NICHT lesen ohne einen Druckjob zu senden |
+| **Workaround** | Bestätigungs-Button: User klickt "PAPIER EINGELEGT". Wir schließen Canon-Dialoge, purgen Jobs, warten 5-8s, prüfen ob Canon einen NEUEN Dialog erstellt. Falls kein Dialog: Overlay schließen, nächster Druckversuch zeigt ggf. erneut den Fehler |
+| **Alternative (Zukunft)** | SELPHY hat 12-Byte Readback-Protokoll mit echten Fehler-Codes (Byte[2]: 0x02=Papier, 0x06=Tinte, 0x0B=Stau). Aber: braucht WinUSB/Zadig → bricht Canon-Druckertreiber. Oder: `DeviceIoControl(IOCTL_USBPRINT_VENDOR_GET_COMMAND)` — aber Canons Kommandos sind undokumentiert |
+
+### ZIP-Validierung ist kritisch: Anwendungs-ZIPs von Template-ZIPs unterscheiden
+
+| | |
+|---|---|
+| **Kontext** | Jedes ZIP auf USB wird als Template-Kandidat geprüft. Ohne Validierung kann `fexobooth.zip` (das Installationspaket mit 100+ MB, .exe, DLLs) als Template geladen werden → 30s Entpacken + 6889x6889 Logo als Overlay → 41s Freeze beim Compositing |
+| **Entscheidung** | ZIPs mit `.exe`, `.dll` oder `_internal/` Ordner werden als Anwendungs-ZIPs erkannt und abgelehnt. Prüfung in `TemplateLoader` und `find_usb_template()` |
+| **Merke** | Nie blind jedes ZIP als Template akzeptieren. Auf USB-Sticks können beliebige ZIPs liegen (Installer, Backups, etc.). Reject-Kriterien: `.exe`, `.dll`, `_internal/` im ZIP |
+
+### PowerShell Output Encoding: UTF-8 explizit setzen
+
+| | |
+|---|---|
+| **Kontext** | PowerShell gibt standardmäßig in der System-Codepage (cp1252 auf Deutsch-Windows) aus, nicht UTF-8. Auch mit `encoding="utf-8"` im subprocess kommt Müll raus (z.B. `durchgef�hrt` statt `durchgeführt`) |
+| **Entscheidung** | `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8;` am Anfang jedes PowerShell-Commands einfügen |
+| **Merke** | `subprocess.run(..., encoding="utf-8")` reicht NICHT für PowerShell auf deutschem Windows. Die Console-Output-Encoding muss explizit auf UTF-8 gesetzt werden, sonst kommen Umlaute und Sonderzeichen kaputt an |
+
+### USB-Export-Dialog darf nicht blockieren
+
+| | |
+|---|---|
+| **Kontext** | Der Export-Dialog für unbekannte USB-Sticks nutzte `grab_set()` was die gesamte UI blockierte. Dazu wurden beim Start bereits vorhandene Wechseldatenträger (z.B. SD-Karten-Slot D:\) fälschlicherweise als "unbekannter Stick" erkannt |
+| **Entscheidung** | Boot-Drives ignorieren + Grace Period + kein `grab_set()` |
+| **Merke** | Export-Dialoge niemals mit `grab_set()` blockierend machen. Beim Start vorhandene Wechseldatenträger (SD-Karten-Slots etc.) müssen als Boot-Drives erfasst und ignoriert werden. Grace Period nach Boot verhindert Race Conditions |
 
 ### Video-Wiedergabe: VLC mit DXVA2 Hardware-Beschleunigung
 
