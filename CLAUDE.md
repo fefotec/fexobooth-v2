@@ -51,6 +51,7 @@ fexobooth-v2/
 │   ├── app.py              # Hauptanwendung
 │   ├── ui/                 # GUI-Komponenten (Screens, Theme)
 │   ├── camera/             # Webcam + Canon DSLR Support
+│   ├── printer/            # Canon SELPHY Steuerung (Reset, Dialog-Unterdrückung)
 │   ├── storage/            # USB, Lokal, Booking, Statistik
 │   ├── gallery/            # Flask Webserver + QR-Code
 │   ├── templates/          # Template-Loader
