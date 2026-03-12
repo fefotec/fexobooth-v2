@@ -75,7 +75,7 @@ class FilterCard(ctk.CTkFrame):
         )
         self.preview_label.pack(expand=True, fill="both")
 
-        # Filter-Name mit Emoji - kürzerer Name bei kleinem Screen
+        # Filter-Name mit Emoji - auf kleinen Screens ausgeblendet
         emoji = FILTER_EMOJIS.get(filter_key, "🎨")
         display_name = self._get_short_name(filter_name) if self._is_small else filter_name
         font_size = 12 if self._is_small else 13
@@ -86,7 +86,8 @@ class FilterCard(ctk.CTkFrame):
             font=("Segoe UI", font_size, "bold"),
             text_color=COLORS["text_secondary"]
         )
-        self.name_label.pack(pady=(2, 0))
+        if not self._is_small:
+            self.name_label.pack(pady=(2, 0))
 
         # Click-Bindings für alle Elemente
         for widget in [self, self.inner, self.preview_label, self.name_label]:
@@ -208,18 +209,19 @@ class FilterScreen(ctk.CTkFrame):
         )
         title.pack()
 
-        subtitle = ctk.CTkLabel(
-            header,
-            text="Tippe auf einen Filter für die Vorschau",
-            font=self._fonts["body"],
-            text_color=COLORS["text_primary"]
-        )
-        subtitle.pack(pady=(2, 0))
+        if not self._is_small:
+            subtitle = ctk.CTkLabel(
+                header,
+                text="Tippe auf einen Filter für die Vorschau",
+                font=self._fonts["body"],
+                text_color=COLORS["text_primary"]
+            )
+            subtitle.pack(pady=(2, 0))
 
         # Hauptbereich
         main_frame = ctk.CTkFrame(self, fg_color="transparent")
         main_frame.pack(fill="both", expand=True, padx=10 if self._is_small else 20, pady=8)
-        main_frame.grid_columnconfigure(0, weight=2)
+        main_frame.grid_columnconfigure(0, weight=1 if self._is_small else 2)
         main_frame.grid_columnconfigure(1, weight=3)
         main_frame.grid_rowconfigure(0, weight=1)
 
@@ -253,7 +255,8 @@ class FilterScreen(ctk.CTkFrame):
             font=("Segoe UI", preview_title_size, "bold"),
             text_color=COLORS["text_primary"]
         )
-        preview_title.pack(pady=(10 if self._is_small else 15, 5))
+        if not self._is_small:
+            preview_title.pack(pady=(15, 5))
 
         # Aktueller Filter-Name
         filter_label_size = 16 if self._is_small else 18
@@ -263,7 +266,7 @@ class FilterScreen(ctk.CTkFrame):
             font=("Segoe UI", filter_label_size),
             text_color=COLORS["primary"]
         )
-        self.current_filter_label.pack(pady=(0, 8))
+        self.current_filter_label.pack(pady=(4 if self._is_small else 0, 4 if self._is_small else 8))
 
         # Großes Vorschau-Bild
         self.preview_label = ctk.CTkLabel(
@@ -389,7 +392,7 @@ class FilterScreen(ctk.CTkFrame):
                         self.app.filter_manager.apply(photo, filter_key)
                         for photo in self.app.photos_taken
                     ]
-                    max_preview_size = 400 if self._is_small else 500
+                    max_preview_size = 500
                     preview = self.app.renderer.render_preview(
                         filtered_photos,
                         self.app.template_boxes,

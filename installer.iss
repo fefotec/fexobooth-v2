@@ -50,6 +50,7 @@ Name: "german"; MessagesFile: "compiler:Languages\German.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 Name: "autostart"; Description: "FexoBooth beim Windows-Start automatisch starten"; GroupDescription: "Autostart:"
+Name: "disableupdates"; Description: "Windows Update dauerhaft deaktivieren (empfohlen fuer Photobooth-Betrieb)"; GroupDescription: "Systemoptimierung:"; Flags: checkedonce
 
 [Files]
 ; Hauptanwendung (PyInstaller Output)
@@ -93,6 +94,25 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilen
 Name: "{commonstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: autostart; IconFilename: "{app}\assets\fexobooth.ico"
 
 [Run]
+; Windows Update deaktivieren (wenn Checkbox ausgewaehlt)
+; 1. Windows Update Dienst
+Filename: "sc.exe"; Parameters: "stop wuauserv"; Tasks: disableupdates; Flags: runhidden nowait; StatusMsg: "Deaktiviere Windows Update..."
+Filename: "sc.exe"; Parameters: "config wuauserv start=disabled"; Tasks: disableupdates; Flags: runhidden nowait
+; 2. Update Medic Service (reaktiviert sonst Windows Update heimlich)
+Filename: "sc.exe"; Parameters: "stop WaaSMedicSvc"; Tasks: disableupdates; Flags: runhidden nowait
+Filename: "sc.exe"; Parameters: "config WaaSMedicSvc start=disabled"; Tasks: disableupdates; Flags: runhidden nowait
+; 3. Update Orchestrator
+Filename: "sc.exe"; Parameters: "stop UsoSvc"; Tasks: disableupdates; Flags: runhidden nowait
+Filename: "sc.exe"; Parameters: "config UsoSvc start=disabled"; Tasks: disableupdates; Flags: runhidden nowait
+; 4. Delivery Optimization
+Filename: "sc.exe"; Parameters: "stop DoSvc"; Tasks: disableupdates; Flags: runhidden nowait
+Filename: "sc.exe"; Parameters: "config DoSvc start=disabled"; Tasks: disableupdates; Flags: runhidden nowait
+; 5. Registry: Automatische Updates per Gruppenrichtlinie blockieren
+Filename: "reg.exe"; Parameters: "add ""HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"" /v NoAutoUpdate /t REG_DWORD /d 1 /f"; Tasks: disableupdates; Flags: runhidden nowait
+Filename: "reg.exe"; Parameters: "add ""HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"" /v DoNotConnectToWindowsUpdateInternetLocations /t REG_DWORD /d 1 /f"; Tasks: disableupdates; Flags: runhidden nowait
+; 6. Automatischen Neustart durch Updates verhindern
+Filename: "reg.exe"; Parameters: "add ""HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"" /v NoAutoRebootWithLoggedOnUsers /t REG_DWORD /d 1 /f"; Tasks: disableupdates; Flags: runhidden nowait
+
 ; Windows Icon-Cache per PowerShell löschen (erzwingt Rebuild beim nächsten Explorer-Start)
 ; ie4uinit.exe existiert nicht auf allen Geräten (z.B. Lenovo Miix 310), daher nur PowerShell
 Filename: "powershell.exe"; Parameters: "-NoProfile -Command ""Remove-Item -Path $env:LOCALAPPDATA\IconCache.db -Force -ErrorAction SilentlyContinue; Remove-Item -Path $env:LOCALAPPDATA\Microsoft\Windows\Explorer\iconcache_*.db -Force -ErrorAction SilentlyContinue"""; Flags: runhidden nowait; StatusMsg: "Aktualisiere Icon-Cache..."

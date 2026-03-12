@@ -11,6 +11,7 @@ Optimiert für Lenovo Miix 310 (1280x800)
 import customtkinter as ctk
 from typing import Dict, Any, Optional, List
 import os
+import threading
 
 from src.ui.theme import COLORS, FONTS, SIZES
 from src.utils.logging import get_logger
@@ -21,7 +22,7 @@ logger = get_logger(__name__)
 class AdminDialog(ctk.CTkToplevel):
     """Moderner Admin-Einstellungen Dialog"""
 
-    def __init__(self, parent, config: Dict[str, Any]):
+    def __init__(self, parent, config: Dict[str, Any], kiosk_mode: bool = False):
         super().__init__(parent)
 
         self.title("⚙️ Admin-Einstellungen")
@@ -32,6 +33,7 @@ class AdminDialog(ctk.CTkToplevel):
         self.is_authenticated = False
         self._open_service = False
         self.parent_window = parent
+        self._kiosk_mode = kiosk_mode
 
         # Modal machen
         self.transient(parent)
@@ -50,13 +52,14 @@ class AdminDialog(ctk.CTkToplevel):
 
         # Ganzen Bildschirm überdecken - Inhalt wird darin zentriert
         self.geometry(f"{screen_w}x{screen_h}+0+0")
-        
+
         # Dialog in den Vordergrund bringen
         self.lift()
         self.focus_force()
 
-        # Escape zum Schließen
-        self.bind("<Escape>", lambda e: self.destroy())
+        # Escape zum Schließen (nur im Fenstermodus)
+        if not kiosk_mode:
+            self.bind("<Escape>", lambda e: self.destroy())
 
         # PIN-Abfrage zuerst
         self._show_pin_dialog()
@@ -105,18 +108,14 @@ class AdminDialog(ctk.CTkToplevel):
         )
         close_btn.pack(anchor="e", padx=(0, 8), pady=(8, 0))
 
-        # Icon (5x tippen = Windows-Neustart)
+        # Icon
         icon_size = max(28, min(44, int(screen_h * 0.05)))
-        self._restart_tap_count = 0
-        self._restart_tap_timer = None
         icon_label = ctk.CTkLabel(
             card,
             text="🔐",
-            font=("Segoe UI Emoji", icon_size),
-            cursor="hand2"
+            font=("Segoe UI Emoji", icon_size)
         )
         icon_label.pack(pady=(0, 4))
-        icon_label.bind("<Button-1>", self._on_icon_tap)
 
         # Titel
         ctk.CTkLabel(
@@ -215,9 +214,15 @@ class AdminDialog(ctk.CTkToplevel):
                 self.after(100, self._check_pin)
     
     def _check_pin(self):
-        """Prüft die PIN (Admin, Service oder Restart)"""
+        """Prüft die PIN (Admin, Service, Kunden-Menü)"""
         entered = self.pin_entry.get()
         correct = self.config_data.get("admin_pin", "3198")
+
+        # Kunden-PIN: Öffnet Kunden-Menü
+        if entered == "2015":
+            self.pin_frame.destroy()
+            self._show_customer_menu()
+            return
 
         # Service-PIN: Öffnet Service-Menü statt Admin
         from src.ui.screens.service import SERVICE_PIN
@@ -231,21 +236,21 @@ class AdminDialog(ctk.CTkToplevel):
             self.is_authenticated = True
             self.pin_frame.destroy()
 
-            # Fensterrand für Admin-Einstellungen wiederherstellen
-            self.overrideredirect(False)
-            self.title("⚙️ Admin-Einstellungen")
-            
-            # Admin-Dialog vergrößern und zentrieren
-            admin_width = 750
-            admin_height = 550
-            screen_w = self.winfo_screenwidth()
-            screen_h = self.winfo_screenheight()
-            x = (screen_w - admin_width) // 2
-            y = (screen_h - admin_height) // 2
-            self.geometry(f"{admin_width}x{admin_height}+{x}+{y}")
-
-            # Fullscreen wird bereits von show_admin_dialog() via _exit_fullscreen() deaktiviert
-            self._show_settings()
+            if self._kiosk_mode:
+                # Im Kiosk-Modus: Settings als Fullscreen-Overlay anzeigen
+                self._show_settings()
+            else:
+                # Im Fenstermodus: Normales Fenster
+                self.overrideredirect(False)
+                self.title("⚙️ Admin-Einstellungen")
+                admin_width = 750
+                admin_height = 550
+                screen_w = self.winfo_screenwidth()
+                screen_h = self.winfo_screenheight()
+                x = (screen_w - admin_width) // 2
+                y = (screen_h - admin_height) // 2
+                self.geometry(f"{admin_width}x{admin_height}+{x}+{y}")
+                self._show_settings()
         else:
             self.pin_entry.delete(0, "end")
             self.pin_error.configure(text="❌ Falsche PIN!")
@@ -256,78 +261,469 @@ class AdminDialog(ctk.CTkToplevel):
                 border_color=COLORS["border_light"]
             ))
     
-    def _on_icon_tap(self, event=None):
-        """5x auf das Icon tippen = Windows-Neustart anbieten"""
-        self._restart_tap_count += 1
+    def _show_customer_menu(self):
+        """Zeigt das Kunden-Menü mit Service-Optionen"""
+        menu_frame = ctk.CTkFrame(self, fg_color="#0a0a10", corner_radius=0)
+        menu_frame.pack(fill="both", expand=True)
 
-        # Timer zurücksetzen (alle Taps müssen innerhalb von 3s kommen)
-        if self._restart_tap_timer:
-            self.after_cancel(self._restart_tap_timer)
-        self._restart_tap_timer = self.after(3000, self._reset_tap_count)
+        # Zentrierte Karte
+        screen_w = self.winfo_screenwidth()
+        card_w = min(420, int(screen_w * 0.8))
+        card = ctk.CTkFrame(
+            menu_frame,
+            fg_color=COLORS["bg_medium"],
+            border_color=COLORS["border"],
+            border_width=1,
+            corner_radius=16
+        )
+        card.place(relx=0.5, rely=0.5, anchor="center")
 
-        if self._restart_tap_count >= 5:
-            self._restart_tap_count = 0
-            self._confirm_restart()
-
-    def _reset_tap_count(self):
-        """Setzt den Tap-Counter zurück"""
-        self._restart_tap_count = 0
-
-    def _confirm_restart(self):
-        """Zeigt Bestätigungs-Dialog für Windows-Neustart"""
-        self.pin_frame.destroy()
-
-        # Bestätigungs-UI
-        confirm_frame = ctk.CTkFrame(self, fg_color="transparent")
-        confirm_frame.place(relx=0.5, rely=0.5, anchor="center")
+        # Titel
+        ctk.CTkLabel(
+            card,
+            text="🔧 Service-Menü",
+            font=("Segoe UI", 22, "bold"),
+            text_color=COLORS["primary"]
+        ).pack(pady=(20, 5))
 
         ctk.CTkLabel(
-            confirm_frame,
-            text="⚠️ Windows Neustart",
-            font=("Segoe UI", 24, "bold"),
-            text_color=COLORS["warning"]
-        ).pack(pady=(0, 10))
+            card,
+            text="Bitte wählen Sie eine Option:",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"]
+        ).pack(pady=(0, 15))
+
+        # Buttons-Container
+        btn_container = ctk.CTkFrame(card, fg_color="transparent")
+        btn_container.pack(fill="x", padx=25, pady=(0, 10))
+
+        btn_style = {
+            "font": ("Segoe UI", 16, "bold"),
+            "width": card_w - 60,
+            "height": 50,
+            "corner_radius": 12,
+            "anchor": "w",
+        }
+
+        # 1. Template-Auswahl
+        ctk.CTkButton(
+            btn_container,
+            text="  📋  Template wählen",
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["bg_card"],
+            text_color=COLORS["text_primary"],
+            command=lambda: self._customer_template_select(menu_frame),
+            **btn_style
+        ).pack(pady=4)
+
+        # 2. Live-View Template Overlay ein/aus
+        app = self.parent_window._photobooth_app if hasattr(self.parent_window, '_photobooth_app') else None
+        overlay_on = self.config_data.get("liveview_template_overlay", True)
+        overlay_text = "  👁  Live-View Overlay: EIN" if overlay_on else "  👁  Live-View Overlay: AUS"
+
+        self._overlay_btn = ctk.CTkButton(
+            btn_container,
+            text=overlay_text,
+            fg_color=COLORS["success"] if overlay_on else COLORS["bg_light"],
+            hover_color=COLORS["bg_card"],
+            text_color="#ffffff" if overlay_on else COLORS["text_primary"],
+            command=lambda: self._customer_toggle_overlay(),
+            **btn_style
+        )
+        self._overlay_btn.pack(pady=4)
+
+        # 3. Druckstau beheben
+        ctk.CTkButton(
+            btn_container,
+            text="  🖨  Druckstau beheben",
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["bg_card"],
+            text_color=COLORS["text_primary"],
+            command=lambda: self._customer_fix_paper_jam(menu_frame),
+            **btn_style
+        ).pack(pady=4)
+
+        # 4. Neustart
+        ctk.CTkButton(
+            btn_container,
+            text="  🔄  Windows Neustart",
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["warning"],
+            text_color=COLORS["text_primary"],
+            command=lambda: self._customer_restart(menu_frame),
+            **btn_style
+        ).pack(pady=4)
+
+        # Schließen-Button
+        ctk.CTkButton(
+            card,
+            text="Schließen",
+            font=FONTS["body"],
+            width=120, height=38,
+            fg_color="transparent",
+            hover_color=COLORS["bg_light"],
+            text_color=COLORS["text_muted"],
+            command=self.destroy
+        ).pack(pady=(5, 15))
+
+    def _customer_toggle_overlay(self):
+        """Toggle Live-View Template Overlay"""
+        current = self.config_data.get("liveview_template_overlay", True)
+        new_val = not current
+        self.config_data["liveview_template_overlay"] = new_val
+
+        # App-Config auch sofort aktualisieren
+        app = self.parent_window._photobooth_app if hasattr(self.parent_window, '_photobooth_app') else None
+        if app:
+            app.config["liveview_template_overlay"] = new_val
+            from src.config.config import save_config
+            save_config(app.config)
+            logger.info(f"Live-View Overlay {'aktiviert' if new_val else 'deaktiviert'}")
+
+        # Button-Text aktualisieren
+        if new_val:
+            self._overlay_btn.configure(
+                text="  👁  Live-View Overlay: EIN",
+                fg_color=COLORS["success"],
+                text_color="#ffffff"
+            )
+        else:
+            self._overlay_btn.configure(
+                text="  👁  Live-View Overlay: AUS",
+                fg_color=COLORS["bg_light"],
+                text_color=COLORS["text_primary"]
+            )
+
+    def _get_templates_dir(self) -> str:
+        """Findet den Pfad zum templates-Ordner (Build + Entwicklung)"""
+        import sys
+        candidates = []
+        if hasattr(sys, '_MEIPASS'):
+            candidates.append(os.path.join(sys._MEIPASS, "assets", "templates"))
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        candidates.append(os.path.join(project_root, "assets", "templates"))
+        for c in candidates:
+            if os.path.isdir(c):
+                return c
+        return ""
+
+    def _get_template_preview(self, zip_path: str, thumb_size=(140, 95)) -> "ctk.CTkImage | None":
+        """Extrahiert ein Vorschau-Bild aus einer Template-ZIP"""
+        import zipfile
+        from PIL import Image
+        try:
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                png_files = [n for n in zf.namelist() if n.lower().endswith(".png")]
+                if not png_files:
+                    return None
+                # template.png bevorzugen, sonst erstes PNG
+                target = next((n for n in png_files if "template" in n.lower()), png_files[0])
+                with zf.open(target) as f:
+                    img = Image.open(f)
+                    img.load()
+                    img.thumbnail(thumb_size, Image.Resampling.BILINEAR)
+                    return ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
+        except Exception as e:
+            logger.debug(f"Template-Preview fehlgeschlagen für {zip_path}: {e}")
+            return None
+
+    def _customer_template_select(self, parent_frame):
+        """Zeigt Template-Auswahl mit Vorschau-Bildern aus assets/templates/"""
+        parent_frame.destroy()
+
+        select_frame = ctk.CTkFrame(self, fg_color="#0a0a10", corner_radius=0)
+        select_frame.pack(fill="both", expand=True)
+
+        card = ctk.CTkFrame(
+            select_frame,
+            fg_color=COLORS["bg_medium"],
+            border_color=COLORS["border"],
+            border_width=1,
+            corner_radius=16
+        )
+        card.place(relx=0.5, rely=0.5, anchor="center")
 
         ctk.CTkLabel(
-            confirm_frame,
-            text="Der Computer wird jetzt neu gestartet.\nAlle laufenden Prozesse werden beendet.",
+            card,
+            text="📋 Template wählen",
+            font=("Segoe UI", 20, "bold"),
+            text_color=COLORS["primary"]
+        ).pack(pady=(15, 10))
+
+        # Scrollbarer Container für Templates
+        scroll = ctk.CTkScrollableFrame(
+            card, fg_color="transparent",
+            width=380, height=400,
+            scrollbar_button_color=COLORS["bg_light"]
+        )
+        scroll.pack(fill="both", expand=True, padx=15, pady=(0, 5))
+
+        app = self.parent_window._photobooth_app if hasattr(self.parent_window, '_photobooth_app') else None
+
+        # Alle ZIPs aus assets/templates/ sammeln
+        templates_dir = self._get_templates_dir()
+        zip_files = []
+        if templates_dir:
+            try:
+                for f in sorted(os.listdir(templates_dir)):
+                    if f.lower().endswith(".zip"):
+                        zip_files.append(os.path.join(templates_dir, f))
+            except OSError:
+                pass
+
+        # Default-Template.zip auch anbieten (falls nicht schon in templates/)
+        import sys
+        default_candidates = []
+        if hasattr(sys, '_MEIPASS'):
+            default_candidates.append(os.path.join(sys._MEIPASS, "assets", "Default-Template.zip"))
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        default_candidates.append(os.path.join(project_root, "assets", "Default-Template.zip"))
+        default_zip = None
+        for c in default_candidates:
+            if os.path.isfile(c):
+                default_zip = c
+                break
+
+        # Preview-Cache (damit Bilder nicht garbage-collected werden)
+        self._template_previews = []
+
+        def create_template_card(parent, name: str, zip_path: str, is_default: bool = False):
+            """Erstellt eine Template-Karte mit Vorschau"""
+            card_frame = ctk.CTkFrame(
+                parent,
+                fg_color=COLORS["bg_card"] if not is_default else COLORS["bg_light"],
+                corner_radius=10,
+                border_width=2,
+                border_color=COLORS["primary"] if is_default else COLORS["border"]
+            )
+            card_frame.pack(fill="x", pady=4)
+
+            inner = ctk.CTkFrame(card_frame, fg_color="transparent")
+            inner.pack(fill="x", padx=10, pady=8)
+
+            # Vorschau-Bild links
+            preview = self._get_template_preview(zip_path)
+            if preview:
+                self._template_previews.append(preview)
+                preview_label = ctk.CTkLabel(inner, text="", image=preview)
+                preview_label.pack(side="left", padx=(0, 10))
+
+            # Name + Button rechts
+            info_frame = ctk.CTkFrame(inner, fg_color="transparent")
+            info_frame.pack(side="left", fill="x", expand=True)
+
+            display_name = name.replace(".zip", "").replace("-", " ").replace("_", " ")
+            if is_default:
+                display_name = f"✨ {display_name}"
+
+            ctk.CTkLabel(
+                info_frame,
+                text=display_name,
+                font=("Segoe UI", 14, "bold"),
+                text_color=COLORS["text_primary"],
+                anchor="w"
+            ).pack(anchor="w")
+
+            def select(p=zip_path):
+                if app:
+                    from src.templates.loader import TemplateLoader
+                    overlay, boxes = TemplateLoader.load(p, use_cache=True)
+                    if overlay and boxes:
+                        app.overlay_image = overlay
+                        app.template_boxes = boxes
+                        app.template_path = p
+                        app._cached_scaled_overlay = None
+                        logger.info(f"Kunden-Menü: Template '{name}' geladen von {p}")
+                self.destroy()
+
+            ctk.CTkButton(
+                info_frame,
+                text="Auswählen",
+                font=("Segoe UI", 13, "bold"),
+                width=100, height=32,
+                fg_color=COLORS["primary"] if is_default else COLORS["bg_light"],
+                hover_color=COLORS["primary_hover"] if is_default else COLORS["bg_card"],
+                text_color="#ffffff" if is_default else COLORS["text_primary"],
+                corner_radius=8,
+                command=select
+            ).pack(anchor="w", pady=(4, 0))
+
+            # Klick auf gesamte Karte
+            for w in [card_frame, inner]:
+                w.bind("<Button-1>", lambda e, s=select: s())
+
+        # Default-Template zuerst
+        if default_zip:
+            create_template_card(scroll, "Standard Template", default_zip, is_default=True)
+
+        # Templates aus assets/templates/
+        for zp in zip_files:
+            name = os.path.basename(zp)
+            # Default-Template nicht doppelt anzeigen
+            if default_zip and os.path.basename(default_zip) == name:
+                continue
+            create_template_card(scroll, name, zp)
+
+        # USB-Template wenn vorhanden
+        if app and app.cached_usb_template:
+            usb_name = app.cached_usb_template.get("name", "USB-Template")
+            usb_path = app.cached_usb_template.get("path", "")
+            if usb_path and os.path.isfile(usb_path):
+                create_template_card(scroll, f"💾 {usb_name}", usb_path)
+
+        # Zurück-Button
+        ctk.CTkButton(
+            card,
+            text="← Zurück",
+            font=FONTS["body"],
+            width=120, height=38,
+            fg_color="transparent",
+            hover_color=COLORS["bg_light"],
+            text_color=COLORS["text_muted"],
+            command=lambda: self._customer_back_to_menu(select_frame)
+        ).pack(pady=(5, 12))
+
+    def _customer_fix_paper_jam(self, parent_frame):
+        """Druckstau beheben - Drucker zurücksetzen"""
+        parent_frame.destroy()
+
+        status_frame = ctk.CTkFrame(self, fg_color="#0a0a10", corner_radius=0)
+        status_frame.pack(fill="both", expand=True)
+
+        card = ctk.CTkFrame(
+            status_frame,
+            fg_color=COLORS["bg_medium"],
+            border_color=COLORS["border"],
+            border_width=1,
+            corner_radius=16
+        )
+        card.place(relx=0.5, rely=0.5, anchor="center")
+
+        ctk.CTkLabel(
+            card,
+            text="🖨 Druckstau beheben",
+            font=("Segoe UI", 20, "bold"),
+            text_color=COLORS["primary"]
+        ).pack(pady=(20, 10))
+
+        status_label = ctk.CTkLabel(
+            card,
+            text="Drucker wird zurückgesetzt...",
             font=FONTS["body"],
             text_color=COLORS["text_primary"],
-            justify="center"
-        ).pack(pady=(0, 20))
+            wraplength=300
+        )
+        status_label.pack(pady=(0, 20), padx=25)
 
-        btn_frame = ctk.CTkFrame(confirm_frame, fg_color="transparent")
-        btn_frame.pack()
+        def do_fix():
+            import subprocess
+            try:
+                # Druckerwarteschlange leeren
+                subprocess.run(["net", "stop", "spooler"], capture_output=True, timeout=10,
+                               creationflags=0x08000000)
+                subprocess.run(["net", "start", "spooler"], capture_output=True, timeout=10,
+                               creationflags=0x08000000)
+                self.after(0, lambda: status_label.configure(
+                    text="✅ Drucker wurde zurückgesetzt!\n\nBitte Papier prüfen und\nggf. Drucker aus-/einschalten.",
+                    text_color=COLORS["success"]
+                ))
+                logger.info("Kunden-Menü: Druckstau behoben (Spooler neugestartet)")
+            except Exception as e:
+                self.after(0, lambda: status_label.configure(
+                    text=f"❌ Fehler: {e}\n\nBitte Drucker manuell\naus- und einschalten.",
+                    text_color=COLORS["error"]
+                ))
+                logger.error(f"Druckstau-Fix fehlgeschlagen: {e}")
+
+        threading.Thread(target=do_fix, daemon=True).start()
+
+        ctk.CTkButton(
+            card,
+            text="Schließen",
+            font=FONTS["body"],
+            width=120, height=38,
+            fg_color="transparent",
+            hover_color=COLORS["bg_light"],
+            text_color=COLORS["text_muted"],
+            command=self.destroy
+        ).pack(pady=(5, 15))
+
+    def _customer_restart(self, parent_frame):
+        """Windows Neustart mit Bestätigung und Wartehinweis"""
+        parent_frame.destroy()
+
+        confirm_frame = ctk.CTkFrame(self, fg_color="#0a0a10", corner_radius=0)
+        confirm_frame.pack(fill="both", expand=True)
+
+        card = ctk.CTkFrame(
+            confirm_frame,
+            fg_color=COLORS["bg_medium"],
+            border_color=COLORS["border"],
+            border_width=1,
+            corner_radius=16
+        )
+        card.place(relx=0.5, rely=0.5, anchor="center")
+
+        ctk.CTkLabel(
+            card,
+            text="🔄 Windows Neustart",
+            font=("Segoe UI", 20, "bold"),
+            text_color=COLORS["warning"]
+        ).pack(pady=(20, 10))
+
+        self._restart_status = ctk.CTkLabel(
+            card,
+            text="Der Computer wird neu gestartet.\nDies dauert ca. 1-2 Minuten.",
+            font=FONTS["body"],
+            text_color=COLORS["text_primary"],
+            justify="center",
+            wraplength=300
+        )
+        self._restart_status.pack(pady=(0, 20), padx=25)
+
+        btn_frame = ctk.CTkFrame(card, fg_color="transparent")
+        btn_frame.pack(pady=(0, 15))
 
         def do_restart():
             import subprocess
-            logger.info("Windows-Neustart über PIN ausgelöst")
-            subprocess.Popen(["shutdown", "/r", "/t", "3", "/c", "FexoBooth: Neustart über Admin-PIN"],
-                             creationflags=0x08000000)
-            self.destroy()
+            self._restart_status.configure(
+                text="⏳ Computer wird neu gestartet...\n\nBitte warten Sie, bis das Gerät\nwieder hochgefahren ist.",
+                text_color=COLORS["warning"]
+            )
+            btn_frame.destroy()
+            logger.info("Kunden-Menü: Windows-Neustart ausgelöst")
+            subprocess.Popen(
+                ["shutdown", "/r", "/t", "5", "/c", "FexoBooth: Neustart über Kunden-Menü"],
+                creationflags=0x08000000
+            )
 
         ctk.CTkButton(
             btn_frame,
             text="Neustart",
-            font=("Segoe UI", 18, "bold"),
-            width=150, height=50,
+            font=("Segoe UI", 16, "bold"),
+            width=130, height=45,
             fg_color=COLORS["warning"],
             hover_color="#ff6600",
             corner_radius=12,
             command=do_restart
-        ).pack(side="left", padx=10)
+        ).pack(side="left", padx=8)
 
         ctk.CTkButton(
             btn_frame,
             text="Abbrechen",
-            font=("Segoe UI", 18, "bold"),
-            width=150, height=50,
+            font=("Segoe UI", 16, "bold"),
+            width=130, height=45,
             fg_color=COLORS["bg_light"],
             hover_color=COLORS["bg_card"],
             text_color=COLORS["text_primary"],
             corner_radius=12,
             command=self.destroy
-        ).pack(side="left", padx=10)
+        ).pack(side="left", padx=8)
+
+    def _customer_back_to_menu(self, current_frame):
+        """Zurück zum Kunden-Hauptmenü"""
+        current_frame.destroy()
+        self._show_customer_menu()
 
     def _open_service_menu(self):
         """Markiert Service-Menü zum Öffnen und schließt den Admin-Dialog.
@@ -338,23 +734,64 @@ class AdminDialog(ctk.CTkToplevel):
         self._open_service = True
         self.destroy()
 
+    def _minimize_to_taskbar(self):
+        """Minimiert den Admin-Dialog (nur im Kiosk-Modus)"""
+        # Taskleiste kurz einblenden damit der Nutzer sie sieht
+        app = getattr(self.parent_window, '_photobooth_app', None)
+        if app:
+            app._show_taskbar()
+        self.iconify()
+        # Wenn wieder hergestellt: Taskleiste wieder verstecken
+        def on_deiconify(event=None):
+            if app:
+                app._hide_taskbar()
+        self.bind("<Map>", on_deiconify)
+
     def _show_settings(self):
         """Zeigt Einstellungen - mit Lazy Loading für schnelleren Start"""
-        # Hauptcontainer
-        main = ctk.CTkFrame(self, fg_color="transparent")
-        main.pack(fill="both", expand=True, padx=15, pady=15)
+        if self._kiosk_mode:
+            # Im Kiosk-Modus: zentriertes Panel mit Rand
+            outer = ctk.CTkFrame(self, fg_color="#0a0a10", corner_radius=0)
+            outer.pack(fill="both", expand=True)
+
+            # Zentrierter Container mit Padding
+            screen_w = self.winfo_screenwidth()
+            pad_x = max(20, (screen_w - 780) // 2)
+
+            main = ctk.CTkFrame(
+                outer,
+                fg_color=COLORS["bg_medium"],
+                border_color=COLORS["border"],
+                border_width=1,
+                corner_radius=16
+            )
+            main.pack(fill="both", expand=True, padx=pad_x, pady=20)
+        else:
+            # Im Fenstermodus: wie bisher
+            main = ctk.CTkFrame(self, fg_color="transparent")
+            main.pack(fill="both", expand=True, padx=15, pady=15)
         
+        # Titel im Kiosk-Modus
+        if self._kiosk_mode:
+            ctk.CTkLabel(
+                main,
+                text="⚙️ Admin-Einstellungen",
+                font=("Segoe UI", 20, "bold"),
+                text_color=COLORS["text_primary"]
+            ).pack(pady=(10, 5))
+
         # Tabview
+        tab_height = 350 if self._kiosk_mode else 420
         self.tabview = ctk.CTkTabview(
             main,
-            fg_color=COLORS["bg_medium"],
+            fg_color=COLORS["bg_dark"] if self._kiosk_mode else COLORS["bg_medium"],
             segmented_button_fg_color=COLORS["bg_light"],
             segmented_button_selected_color=COLORS["primary"],
             segmented_button_unselected_color=COLORS["bg_card"],
-            height=420,
+            height=tab_height,
             command=self._on_tab_changed  # Lazy Loading
         )
-        self.tabview.pack(fill="both", expand=True)
+        self.tabview.pack(fill="both", expand=True, padx=10 if self._kiosk_mode else 0)
         
         # Tab-Namen und ihre Erstellungsfunktionen
         self._tab_creators = {
@@ -378,7 +815,7 @@ class AdminDialog(ctk.CTkToplevel):
         # Button-Leiste
         btn_frame = ctk.CTkFrame(main, fg_color="transparent")
         btn_frame.pack(fill="x", pady=(15, 0))
-        
+
         ctk.CTkButton(
             btn_frame,
             text="Abbrechen",
@@ -404,6 +841,21 @@ class AdminDialog(ctk.CTkToplevel):
             corner_radius=SIZES["corner_radius"],
             command=self._quit_app
         ).pack(side="left", padx=(15, 0))
+
+        # Minimieren-Button (nur im Kiosk-Modus)
+        if self._kiosk_mode:
+            ctk.CTkButton(
+                btn_frame,
+                text="Minimieren",
+                font=FONTS["small"],
+                width=120,
+                height=40,
+                fg_color=COLORS["bg_card"],
+                hover_color=COLORS["bg_light"],
+                text_color=COLORS["text_primary"],
+                corner_radius=SIZES["corner_radius"],
+                command=self._minimize_to_taskbar
+            ).pack(side="left", padx=(15, 0))
 
         ctk.CTkButton(
             btn_frame,

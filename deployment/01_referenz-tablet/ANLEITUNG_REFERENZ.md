@@ -66,7 +66,15 @@ Oeffne `C:\FexoBooth\config.json` mit Notepad und pruefe:
 - Pfade muessen **relativ** sein (z.B. `"assets/videos/start.mp4"`, NICHT `"C:/Git-Projects/..."`)
 - Alle Einstellungen die fuer ALLE Tablets gelten hier setzen
 
-### 5. Testen
+### 5. Windows Update deaktivieren (WICHTIG!)
+
+Die Tablets laufen offline — Updates sind unnoetig und koennen das Tablet lahmlegen!
+
+1. Rechtsklick auf `windows_update_deaktivieren.bat` → **Als Administrator ausfuehren**
+2. Alle Eintraege muessen **[OK]** zeigen
+3. Tablet **neustarten**
+
+### 6. Testen
 
 1. **Neustart** des Tablets
 2. FexoBooth muss automatisch starten (Fullscreen)
@@ -76,7 +84,7 @@ Oeffne `C:\FexoBooth\config.json` mit Notepad und pruefe:
    - Mit "fexobox-gallery" WLAN verbinden
    - Browser oeffnen, Galerie sollte erreichbar sein (wenn aktiviert)
 
-### 6. Aufraeumen (WICHTIG!)
+### 7. Aufraeumen (WICHTIG!)
 
 Vor dem Image-Erstellen alles Unnoetige entfernen:
 
@@ -96,13 +104,13 @@ Vor dem Image-Erstellen alles Unnoetige entfernen:
    - Rechtsklick auf C: > Eigenschaften
    - Sollte unter 20 GB belegt sein
 
-### 7. Verifikation
+### 8. Verifikation
 
 Kopiere `post_install_check.bat` (aus dem `deployment/01_referenz-tablet/` Ordner) auf das Tablet und fuehre es aus.
 
 Alle Checks muessen **GRUEN [OK]** sein. Falls ein Check **ROT [FEHLER]** zeigt, behebe das Problem zuerst.
 
-### 8. Herunterfahren
+### 9. Herunterfahren
 
 **WICHTIG:** Das Tablet komplett **herunterfahren** (nicht Neustart, nicht Ruhezustand!).
 

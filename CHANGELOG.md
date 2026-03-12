@@ -8,6 +8,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ## [Unreleased]
 
+### Hinzugefügt
+- **Kunden-PIN "2015"** — Kunden können Template wählen, Live-View Overlay togglen, Druckstau beheben und Windows neustarten (ohne Admin-Zugang)
+- **Template-Vorschau** — Template-Auswahl zeigt Vorschau-Bilder aus ZIP-Dateien. Ordner `assets/templates/` für einfaches Hinzufügen
+- **Minimieren-Button** in Admin-Einstellungen (nur im Kiosk-Modus)
+
+### Geändert
+- **Admin-Dialog im Kiosk-Modus** — Einstellungen als Fullscreen-Overlay, kein Fenstermodus-Wechsel, verhindert Taskleisten-Aufblitzen
+- **Filter-Screen optimiert** für Lenovo Miix 310 — Labels entfernt, Preview größer, bessere Platznutzung
+- **USB-Status-Indikator** hat jetzt feste Breite (Frame-Container)
+
+### Entfernt
+- **5x Icon-Tap Neustart** entfernt (durch Kunden-PIN "2015" ersetzt)
+
 ### Geplant
 - [ ] Admin-Menü: "Buchung zurücksetzen" Button
 - [ ] Canon DSLR Live-View optimieren

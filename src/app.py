@@ -687,19 +687,23 @@ class PhotoboothApp:
         )
         self.booking_label.pack(side="right", padx=8)
 
-        # USB-Status (feste Breite damit Position stabil bleibt)
+        # USB-Status in festem Container (verhindert Größenänderung bei wechselndem Text)
+        usb_container = ctk.CTkFrame(status_frame, fg_color="transparent", width=160, height=28)
+        usb_container.pack(side="right", padx=4)
+        usb_container.pack_propagate(False)  # Container-Größe fixieren
+
         self.usb_status = ctk.CTkLabel(
-            status_frame,
+            usb_container,
             text="⚠️ USB",
             font=FONTS["small"],
             text_color=COLORS["warning"],
             fg_color=COLORS["bg_light"],
             corner_radius=8,
-            width=145,  # Feste Breite für stabiles Layout
             padx=8,
-            pady=5
+            pady=5,
+            anchor="center"
         )
-        self.usb_status.pack(side="right", padx=4)
+        self.usb_status.pack(fill="both", expand=True)
 
         # Drucker-Status (feste Breite wie USB-Status)
         self.printer_status = ctk.CTkLabel(
@@ -1546,12 +1550,14 @@ class PhotoboothApp:
     def show_admin_dialog(self):
         """Zeigt den Admin-Dialog.
 
-        Fullscreen wird vor dem Dialog deaktiviert und danach sofort wiederhergestellt
-        (falls start_fullscreen in der Config aktiv ist).
+        Im Kiosk-Modus: Dialog als Fullscreen-Overlay (kein Fenstermodus-Wechsel).
+        Im Fenstermodus: Dialog als normales Fenster.
         """
         from src.ui.screens.admin import AdminDialog
-        self._exit_fullscreen()
-        dialog = AdminDialog(self.root, self.config)
+        is_kiosk = self.config.get("start_fullscreen", True) and self._is_fullscreen
+        if not is_kiosk:
+            self._exit_fullscreen()
+        dialog = AdminDialog(self.root, self.config, kiosk_mode=is_kiosk)
         self.root.wait_window(dialog)
 
         # Service-Menü öffnen wenn über Service-PIN angefordert
@@ -1578,8 +1584,8 @@ class PhotoboothApp:
                 if hasattr(self.current_screen, "on_show"):
                     self.current_screen.on_show()
 
-        # Kiosk-Modus sofort wiederherstellen (prüft aktuelle Config)
-        if self.config.get("start_fullscreen", True):
+        # Kiosk-Modus wiederherstellen (nur wenn vorher deaktiviert)
+        if not is_kiosk and self.config.get("start_fullscreen", True):
             self.root.after(200, self._enter_fullscreen)
     
     # ========================================

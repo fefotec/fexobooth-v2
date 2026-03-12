@@ -31,6 +31,15 @@ _Aktuell keine niedrig priorisierten Aufgaben_
 
 ## Erledigt ✅
 
+### 2026-03-11
+- [x] Kunden-PIN "2015" mit Service-Menü (Template-Auswahl, Overlay-Toggle, Druckstau, Neustart)
+- [x] 5x Icon-Tap Neustart entfernt (durch Kunden-PIN ersetzt)
+- [x] Filter-Screen: Labels entfernt, Preview größer (Lenovo-Optimierung)
+- [x] USB-Status-Indikator feste Breite (Frame-Container statt Label-Width)
+- [x] Template-Auswahl mit Vorschau-Bildern aus assets/templates/ Ordner
+- [x] Admin-Dialog: Kiosk-Modus ohne Fensterwechsel (alles als Fullscreen-Overlay)
+- [x] Admin: Minimieren-Button im Kiosk-Modus
+
 ### 2026-03-10
 - [x] Export-Dialog blockiert UI (Boot-Drives, grab_set)
 - [x] ZIP-Validierung: Anwendungs-ZIPs (.exe, .dll, _internal/) als Template ablehnen

@@ -97,6 +97,19 @@ if %AUTOSTART_FOUND%==1 (
 )
 
 :: ─────────────────────────────────────────────
+:: Windows Update pruefen (muss deaktiviert sein!)
+:: ─────────────────────────────────────────────
+
+for /f "tokens=3" %%A in ('sc qc wuauserv 2^>nul ^| findstr START_TYPE') do set WU_START=%%A
+if "%WU_START%"=="DISABLED" (
+    echo [OK] Windows Update Dienst ist deaktiviert
+) else (
+    echo [FEHLER] Windows Update ist NICHT deaktiviert!
+    echo          Fuehre windows_update_deaktivieren.bat als Admin aus
+    set /a ERRORS+=1
+)
+
+:: ─────────────────────────────────────────────
 :: Windows-Aktivierung pruefen
 :: ─────────────────────────────────────────────
 

@@ -4,6 +4,43 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-03-11
+
+### Kunden-PIN Menü (PIN 2015)
+- **Neues Feature:** Kunden können über PIN "2015" ein Service-Menü öffnen (ohne Admin-Zugang)
+- **4 Optionen:**
+  1. **Template wählen** — Zeigt Default-Template, konfigurierte Templates und USB-Template zur Auswahl
+  2. **Live-View Overlay ein/aus** — Toggle für `liveview_template_overlay`, speichert sofort in Config
+  3. **Druckstau beheben** — Stoppt/Startet Windows Print Spooler (behebt Druckerwarteschlange)
+  4. **Windows Neustart** — Mit Bestätigungs-Dialog und Wartehinweis
+- **Entfernt:** 5x Icon-Tap für Neustart (durch Kunden-PIN ersetzt)
+
+### Filter-Screen optimiert für Lenovo Miix 310
+- **Filter-Labels entfernt** auf kleinen Screens (mehr Platz für Vorschau-Thumbnails)
+- **Subtitle-Text entfernt** auf kleinen Screens ("Tippe auf einen Filter...")
+- **Vorschau-Titel entfernt** auf kleinen Screens ("📸 Vorschau")
+- **Spalten-Gewichtung angepasst**: Filter-Grid bekommt weniger Platz (1:3 statt 2:3)
+- **Preview-Auflösung erhöht**: max_preview_size jetzt 500 für alle Screens
+
+### Template-Auswahl mit Vorschau-Bildern
+- **Kunden-Menü Template-Auswahl** zeigt jetzt Vorschau-Bilder aus den ZIP-Dateien
+- **Template-Ordner:** `assets/templates/` — einfach weitere ZIP-Dateien ablegen, werden automatisch erkannt
+- **Build:** Ordner wird über `("assets", "assets")` automatisch in die EXE eingebaut
+- **Preview:** Extrahiert `template.png` (oder erstes PNG) als Thumbnail aus jeder ZIP
+
+### Admin-Dialog: Kiosk-Modus ohne Fensterwechsel
+- **Problem:** Beim Öffnen der Einstellungen wechselte die App kurz in den Fenstermodus → Taskleiste blitzte auf, Fenster sprang
+- **Lösung:** Im Kiosk-Modus bleibt alles fullscreen. PIN-Dialog, Kunden-Menü UND Admin-Einstellungen werden als Overlay innerhalb des Vollbildschirms angezeigt
+- **Neuer Parameter:** `AdminDialog(parent, config, kiosk_mode=True)` — steuert ob Einstellungen als Fenster oder Fullscreen-Overlay dargestellt werden
+- **Minimieren-Button:** Im Kiosk-Modus gibt es einen "Minimieren"-Button in den Admin-Einstellungen (zeigt Taskleiste, minimiert Dialog)
+- **Taskleiste:** Wird beim Minimieren eingeblendet, beim Wiederherstellen automatisch versteckt
+
+### USB-Status-Indikator: Feste Breite
+- **Fix:** USB-Badge änderte Größe je nach Text ("USB OK" vs "⚠️ USB FEHLT! [13]") → Blitz-Icon sprang
+- **Lösung:** Label in festem CTkFrame-Container (160x28, `pack_propagate(False)`)
+
+---
+
 ## 2026-03-09
 
 ### Drucker-Steuerung: Software-Reset + Fehlermeldungen ersetzen

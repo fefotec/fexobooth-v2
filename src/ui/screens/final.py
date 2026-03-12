@@ -188,6 +188,10 @@ class FinalScreen(ctk.CTkFrame):
             )
             return
 
+        # Drucker-Status prüfen bevor gedruckt wird
+        if self._check_printer_before_print():
+            return  # Drucker nicht bereit, Meldung wird angezeigt
+
         logger.info("Drucke Bild...")
 
         self.print_btn.configure(state="disabled", text="Wird gedruckt...")
@@ -233,6 +237,81 @@ class FinalScreen(ctk.CTkFrame):
 
         # Auto-Return Timer zurücksetzen
         self.auto_return_time = time.time() + self.config.get("final_time", 30)
+
+    def _check_printer_before_print(self) -> bool:
+        """Prüft ob der Drucker bereit ist. Zeigt Meldung wenn nicht.
+        Returns True wenn Drucker NICHT bereit (= abbrechen)."""
+        try:
+            from src.printer.controller import get_printer_controller
+            controller = get_printer_controller()
+            controller.update_printer_name(self.config.get("printer_name", ""))
+            error = controller.get_error()
+
+            if error:
+                # Fehlermeldung je nach Problem
+                if "AUS" in error or "FEHLT" in error or "KEIN" in error:
+                    msg = "Drucker ist aus! Bitte einschalten und warten bis das Display leuchtet."
+                elif "PAPIER" in error and "STAU" in error:
+                    msg = "Papierstau! Bitte Drucker öffnen und Papier entfernen."
+                elif "PAPIER" in error:
+                    msg = "Kein Papier! Bitte Papier nachlegen."
+                elif "KASSETTE" in error:
+                    msg = "Farbkassette leer! Bitte wechseln."
+                elif "KLAPPE" in error:
+                    msg = "Druckerklappe offen! Bitte schließen."
+                else:
+                    msg = f"Drucker meldet: {error}"
+
+                logger.warning(f"Drucken abgebrochen - Drucker nicht bereit: {error}")
+                self._show_printer_warning(msg)
+                return True
+
+        except Exception as e:
+            logger.debug(f"Drucker-Prüfung fehlgeschlagen: {e}")
+
+        return False
+
+    def _show_printer_warning(self, message: str):
+        """Zeigt Drucker-Warnung als Overlay über dem Final-Screen"""
+        overlay = ctk.CTkFrame(self, fg_color="rgba(0,0,0,0.85)" if hasattr(ctk, 'TRANSPARENT') else "#1a1a1a")
+        overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+        # Zentrierter Container
+        container = ctk.CTkFrame(overlay, fg_color=COLORS["bg_card"], corner_radius=20, width=500, height=280)
+        container.place(relx=0.5, rely=0.5, anchor="center")
+        container.pack_propagate(False)
+
+        # Drucker-Icon
+        ctk.CTkLabel(
+            container, text="🖨️", font=("Segoe UI", 48),
+            fg_color="transparent"
+        ).pack(pady=(30, 10))
+
+        # Meldung
+        ctk.CTkLabel(
+            container, text=message,
+            font=("Segoe UI", 16, "bold"),
+            text_color=COLORS["warning"],
+            fg_color="transparent",
+            wraplength=400
+        ).pack(pady=(0, 20))
+
+        def close_warning():
+            overlay.destroy()
+
+        # OK-Button
+        ctk.CTkButton(
+            container, text="Verstanden",
+            font=("Segoe UI", 16, "bold"),
+            width=200, height=45,
+            fg_color=COLORS["primary"],
+            hover_color=COLORS["primary_hover"] if "primary_hover" in COLORS else COLORS["primary"],
+            corner_radius=12,
+            command=close_warning
+        ).pack(pady=(0, 20))
+
+        # Auto-schließen nach 8 Sekunden
+        overlay.after(8000, lambda: overlay.destroy() if overlay.winfo_exists() else None)
 
     def _print_image(self, image_path: Path):
         """Druckt ein Bild über GDI
