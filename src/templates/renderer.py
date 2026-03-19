@@ -20,7 +20,7 @@ class TemplateRenderer:
         photos: List[Image.Image],
         boxes: List[Dict],
         overlay: Optional[Image.Image] = None,
-        background_color: str = "#000000"
+        background_color: str = "#FFFFFF"
     ) -> Image.Image:
         """Rendert Fotos in Template
 

@@ -65,8 +65,8 @@ class TemplateLoader:
             logger.error(f"Nicht unterstütztes Template-Format: {path}")
             return None, []
 
-        # Ergebnis cachen
-        if use_cache and result[0] is not None:
+        # Ergebnis cachen (wenn Overlay oder Boxen vorhanden)
+        if use_cache and (result[0] is not None or result[1]):
             try:
                 mtime = os.path.getmtime(abs_path)
                 cache_key = (abs_path, mtime)
@@ -111,33 +111,63 @@ class TemplateLoader:
             # Dateien finden
             png_path = None
             xml_path = None
+            template_png_path = None  # Explizit "template.png" benannt
             max_png_size = 0
-            
+            fallback_png_path = None  # Größte PNG als Fallback
+
             all_files = []
             for root, dirs, files in os.walk(temp_dir):
                 for fn in files:
                     full_path = os.path.join(root, fn)
                     all_files.append(full_path)
                     lower_fn = fn.lower()
-                    
-                    # Größte PNG finden (ignoriert Thumbnails/Previews)
+
                     if lower_fn.endswith(".png"):
                         try:
                             size = os.path.getsize(full_path)
                             logger.debug(f"  PNG gefunden: {fn} ({size} bytes)")
-                            if size > max_png_size:
-                                max_png_size = size
-                                png_path = full_path
+
+                            # Explizit "template.png" bevorzugen
+                            if lower_fn == "template.png":
+                                template_png_path = full_path
+                                logger.debug(f"  → template.png gefunden!")
+                            elif lower_fn != "preview.png":
+                                # Andere PNGs (nicht preview) als Fallback
+                                if size > max_png_size:
+                                    max_png_size = size
+                                    fallback_png_path = full_path
+                            else:
+                                logger.debug(f"  → preview.png übersprungen (nur Vorschaubild)")
                         except OSError:
                             pass
-                    
+
                     # XML finden
                     elif lower_fn.endswith(".xml"):
                         logger.debug(f"  XML gefunden: {fn}")
                         xml_path = full_path
-            
+
+            # PNG-Auswahl: template.png > größte Nicht-Preview-PNG
+            # preview.png wird NICHT als Overlay verwendet (ist nur ein Vorschaubild)
+            if template_png_path:
+                png_path = template_png_path
+                logger.info(f"Verwende template.png: {png_path}")
+            elif fallback_png_path:
+                png_path = fallback_png_path
+                logger.info(f"Verwende größte PNG (Fallback): {png_path} ({max_png_size} bytes)")
+            elif not xml_path:
+                # Kein template.png UND kein XML — preview.png als absoluter Notfall-Fallback
+                for root, dirs, files in os.walk(temp_dir):
+                    for fn in files:
+                        if fn.lower() == "preview.png":
+                            png_path = os.path.join(root, fn)
+                            logger.warning(f"Nur preview.png vorhanden (kein XML) — verwende als Overlay")
+                            break
+            else:
+                # XML vorhanden aber kein template.png — kein Overlay (nur Fotos in Boxen)
+                logger.info("Kein Overlay-PNG vorhanden — Template rendert nur Fotos in die XML-Boxen")
+
             logger.debug(f"Entpackte Dateien: {all_files}")
-            logger.info(f"Gewählte PNG: {png_path} ({max_png_size} bytes)")
+            logger.info(f"Gewählte PNG: {png_path}")
             logger.info(f"Gewählte XML: {xml_path}")
             
             # PNG laden

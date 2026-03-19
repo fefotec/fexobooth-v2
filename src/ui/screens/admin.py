@@ -428,152 +428,189 @@ class AdminDialog(ctk.CTkToplevel):
             return None
 
     def _customer_template_select(self, parent_frame):
-        """Zeigt Template-Auswahl mit Vorschau-Bildern aus assets/templates/"""
+        """Zeigt Template-Auswahl als Touch-Grid ohne Scrollen"""
         parent_frame.destroy()
 
         select_frame = ctk.CTkFrame(self, fg_color="#0a0a10", corner_radius=0)
         select_frame.pack(fill="both", expand=True)
 
-        card = ctk.CTkFrame(
-            select_frame,
-            fg_color=COLORS["bg_medium"],
-            border_color=COLORS["border"],
-            border_width=1,
-            corner_radius=16
-        )
-        card.place(relx=0.5, rely=0.5, anchor="center")
-
+        # Titel
         ctk.CTkLabel(
-            card,
-            text="📋 Template wählen",
+            select_frame,
+            text="Template wählen",
             font=("Segoe UI", 20, "bold"),
             text_color=COLORS["primary"]
-        ).pack(pady=(15, 10))
-
-        # Scrollbarer Container für Templates
-        scroll = ctk.CTkScrollableFrame(
-            card, fg_color="transparent",
-            width=380, height=400,
-            scrollbar_button_color=COLORS["bg_light"]
-        )
-        scroll.pack(fill="both", expand=True, padx=15, pady=(0, 5))
+        ).pack(pady=(12, 8))
 
         app = self.parent_window._photobooth_app if hasattr(self.parent_window, '_photobooth_app') else None
+        current_path = self.config_data.get("template_paths", {}).get("template1", "")
+        # Auch aktuellen App-Pfad prüfen
+        if app and hasattr(app, 'template_path') and app.template_path:
+            current_path = current_path or app.template_path
 
-        # Alle ZIPs aus assets/templates/ sammeln
+        # Alle ZIPs sammeln
         templates_dir = self._get_templates_dir()
-        zip_files = []
-        if templates_dir:
-            try:
-                for f in sorted(os.listdir(templates_dir)):
-                    if f.lower().endswith(".zip"):
-                        zip_files.append(os.path.join(templates_dir, f))
-            except OSError:
-                pass
+        all_templates = []  # (name, path, is_current)
+        seen_basenames = set()
 
-        # Default-Template.zip auch anbieten (falls nicht schon in templates/)
+        # Default-Template.zip aus assets/ (falls vorhanden)
         import sys
         default_candidates = []
         if hasattr(sys, '_MEIPASS'):
             default_candidates.append(os.path.join(sys._MEIPASS, "assets", "Default-Template.zip"))
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         default_candidates.append(os.path.join(project_root, "assets", "Default-Template.zip"))
-        default_zip = None
         for c in default_candidates:
             if os.path.isfile(c):
-                default_zip = c
+                basename = os.path.basename(c)
+                is_current = basename == os.path.basename(current_path) or "Default" in current_path
+                all_templates.append(("Standard (4 Fotos)", c, is_current))
+                seen_basenames.add(basename)
                 break
 
-        # Preview-Cache (damit Bilder nicht garbage-collected werden)
+        if templates_dir:
+            try:
+                for f in sorted(os.listdir(templates_dir)):
+                    if f.lower().endswith(".zip") and "(DEFEKT)" not in f:
+                        if f in seen_basenames:
+                            continue
+                        path = os.path.join(templates_dir, f)
+                        display_name = f.replace(".zip", "").replace("-", " ").replace("_", " ")
+                        is_current = os.path.basename(path) == os.path.basename(current_path)
+                        all_templates.append((display_name, path, is_current))
+                        seen_basenames.add(f)
+            except OSError:
+                pass
+
+        # USB-Stick Template wenn vorhanden (Original vom Stick)
+        if app and hasattr(app, '_usb_stick_template') and app._usb_stick_template:
+            usb_name = app._usb_stick_template.get("name", "USB-Template")
+            usb_path = app._usb_stick_template.get("path", "")
+            if usb_path and os.path.isfile(usb_path) and usb_name not in seen_basenames:
+                display = usb_name.replace(".zip", "").replace("-", " ").replace("_", " ")
+                is_usb_current = os.path.basename(current_path) == usb_name
+                all_templates.append((f"USB: {display}", usb_path, is_usb_current))
+                seen_basenames.add(usb_name)
+
+        # Preview-Cache
         self._template_previews = []
 
-        def create_template_card(parent, name: str, zip_path: str, is_default: bool = False):
-            """Erstellt eine Template-Karte mit Vorschau"""
-            card_frame = ctk.CTkFrame(
-                parent,
-                fg_color=COLORS["bg_card"] if not is_default else COLORS["bg_light"],
-                corner_radius=10,
-                border_width=2,
-                border_color=COLORS["primary"] if is_default else COLORS["border"]
+        # Grid-Layout berechnen (max 4 Spalten, passt sich an)
+        count = len(all_templates)
+        cols = min(4, count) if count > 0 else 1
+        if count <= 3:
+            cols = count
+        elif count <= 6:
+            cols = 3
+        else:
+            cols = 4
+
+        # Grid-Container
+        grid_frame = ctk.CTkFrame(select_frame, fg_color="transparent")
+        grid_frame.pack(fill="both", expand=True, padx=15, pady=(0, 8))
+
+        # Grid-Spalten gleichmäßig verteilen
+        for c in range(cols):
+            grid_frame.columnconfigure(c, weight=1)
+
+        # Thumbnail-Größe an Anzahl anpassen
+        if count <= 4:
+            thumb_w, thumb_h = 180, 120
+        elif count <= 6:
+            thumb_w, thumb_h = 140, 95
+        else:
+            thumb_w, thumb_h = 110, 75
+
+        def select_template(zip_path, name):
+            """Template laden, übernehmen und als aktives Template setzen"""
+            if app:
+                from src.templates.loader import TemplateLoader
+                TemplateLoader.clear_cache()
+                overlay, boxes = TemplateLoader.load(zip_path, use_cache=True)
+                if boxes:
+                    # Aktives Template setzen
+                    app.overlay_image = overlay
+                    app.template_boxes = boxes
+                    app.template_path = zip_path
+                    app._cached_scaled_overlay = None
+
+                    # Aktives Template setzen
+                    app.cached_usb_template = {
+                        "path": zip_path,
+                        "name": os.path.basename(zip_path),
+                        "overlay": overlay,
+                        "boxes": boxes
+                    }
+
+                    # Prüfen ob das gewählte Template das USB-Stick-Template ist
+                    usb_stick = getattr(app, '_usb_stick_template', None)
+                    if usb_stick and usb_stick.get("path") == zip_path:
+                        # User wählt USB-Template zurück → Override aufheben
+                        app._user_template_override = False
+                        logger.info(f"Kunden-Menü: USB-Template '{name}' wiederhergestellt")
+                    else:
+                        # User wählt anderes Template → Override setzen
+                        app._user_template_override = True
+                        logger.info(f"Kunden-Menü: Template '{name}' überschreibt USB-Template")
+
+                    # Config speichern damit Template nach Neustart erhalten bleibt
+                    if "template_paths" not in self.config_data:
+                        self.config_data["template_paths"] = {}
+                    self.config_data["template_paths"]["template1"] = zip_path
+                    self.config_data["template1_enabled"] = True
+                    from src.config.config import save_config
+                    save_config(self.config_data)
+                    logger.info(f"Kunden-Menü: Template '{name}' gespeichert: {zip_path}")
+                else:
+                    logger.error(f"Template '{name}' konnte nicht geladen werden")
+            self.destroy()
+
+        def _bind_click_recursive(widget, callback):
+            """Bindet Click-Event auf Widget UND alle Kind-Widgets (auch CTk-interne Canvas)"""
+            widget.bind("<Button-1>", callback)
+            for child in widget.winfo_children():
+                _bind_click_recursive(child, callback)
+
+        for idx, (name, path, is_current) in enumerate(all_templates):
+            row = idx // cols
+            col = idx % cols
+
+            # Kachel als CTkButton für zuverlässigen Touch
+            tile = ctk.CTkFrame(
+                grid_frame,
+                fg_color=COLORS["bg_light"] if is_current else COLORS["bg_card"],
+                corner_radius=12,
+                border_width=3 if is_current else 1,
+                border_color=COLORS["primary"] if is_current else COLORS["border"],
             )
-            card_frame.pack(fill="x", pady=4)
+            tile.grid(row=row, column=col, padx=6, pady=6, sticky="nsew")
+            grid_frame.rowconfigure(row, weight=1)
 
-            inner = ctk.CTkFrame(card_frame, fg_color="transparent")
-            inner.pack(fill="x", padx=10, pady=8)
-
-            # Vorschau-Bild links
-            preview = self._get_template_preview(zip_path)
+            # Preview-Bild
+            preview = self._get_template_preview(path, thumb_size=(thumb_w, thumb_h))
             if preview:
                 self._template_previews.append(preview)
-                preview_label = ctk.CTkLabel(inner, text="", image=preview)
-                preview_label.pack(side="left", padx=(0, 10))
+                img_label = ctk.CTkLabel(tile, text="", image=preview)
+                img_label.pack(pady=(8, 4), padx=8)
 
-            # Name + Button rechts
-            info_frame = ctk.CTkFrame(inner, fg_color="transparent")
-            info_frame.pack(side="left", fill="x", expand=True)
+            # Name
+            label_text = f"✓ {name}" if is_current else name
+            name_label = ctk.CTkLabel(
+                tile,
+                text=label_text,
+                font=("Segoe UI", 12, "bold"),
+                text_color=COLORS["primary"] if is_current else COLORS["text_primary"],
+                wraplength=thumb_w + 20,
+            )
+            name_label.pack(pady=(0, 8), padx=6)
 
-            display_name = name.replace(".zip", "").replace("-", " ").replace("_", " ")
-            if is_default:
-                display_name = f"✨ {display_name}"
-
-            ctk.CTkLabel(
-                info_frame,
-                text=display_name,
-                font=("Segoe UI", 14, "bold"),
-                text_color=COLORS["text_primary"],
-                anchor="w"
-            ).pack(anchor="w")
-
-            def select(p=zip_path):
-                if app:
-                    from src.templates.loader import TemplateLoader
-                    overlay, boxes = TemplateLoader.load(p, use_cache=True)
-                    if overlay and boxes:
-                        app.overlay_image = overlay
-                        app.template_boxes = boxes
-                        app.template_path = p
-                        app._cached_scaled_overlay = None
-                        logger.info(f"Kunden-Menü: Template '{name}' geladen von {p}")
-                self.destroy()
-
-            ctk.CTkButton(
-                info_frame,
-                text="Auswählen",
-                font=("Segoe UI", 13, "bold"),
-                width=100, height=32,
-                fg_color=COLORS["primary"] if is_default else COLORS["bg_light"],
-                hover_color=COLORS["primary_hover"] if is_default else COLORS["bg_card"],
-                text_color="#ffffff" if is_default else COLORS["text_primary"],
-                corner_radius=8,
-                command=select
-            ).pack(anchor="w", pady=(4, 0))
-
-            # Klick auf gesamte Karte
-            for w in [card_frame, inner]:
-                w.bind("<Button-1>", lambda e, s=select: s())
-
-        # Default-Template zuerst
-        if default_zip:
-            create_template_card(scroll, "Standard Template", default_zip, is_default=True)
-
-        # Templates aus assets/templates/
-        for zp in zip_files:
-            name = os.path.basename(zp)
-            # Default-Template nicht doppelt anzeigen
-            if default_zip and os.path.basename(default_zip) == name:
-                continue
-            create_template_card(scroll, name, zp)
-
-        # USB-Template wenn vorhanden
-        if app and app.cached_usb_template:
-            usb_name = app.cached_usb_template.get("name", "USB-Template")
-            usb_path = app.cached_usb_template.get("path", "")
-            if usb_path and os.path.isfile(usb_path):
-                create_template_card(scroll, f"💾 {usb_name}", usb_path)
+            # Klick auf ALLE Elemente der Kachel (auch interne Canvas-Widgets von CTk)
+            click_handler = lambda e, p=path, n=name: select_template(p, n)
+            self.after(50, lambda t=tile, h=click_handler: _bind_click_recursive(t, h))
 
         # Zurück-Button
         ctk.CTkButton(
-            card,
+            select_frame,
             text="← Zurück",
             font=FONTS["body"],
             width=120, height=38,
@@ -581,7 +618,7 @@ class AdminDialog(ctk.CTkToplevel):
             hover_color=COLORS["bg_light"],
             text_color=COLORS["text_muted"],
             command=lambda: self._customer_back_to_menu(select_frame)
-        ).pack(pady=(5, 12))
+        ).pack(pady=(4, 12))
 
     def _customer_fix_paper_jam(self, parent_frame):
         """Druckstau beheben - Drucker zurücksetzen"""
@@ -693,7 +730,7 @@ class AdminDialog(ctk.CTkToplevel):
             btn_frame.destroy()
             logger.info("Kunden-Menü: Windows-Neustart ausgelöst")
             subprocess.Popen(
-                ["shutdown", "/r", "/t", "5", "/c", "FexoBooth: Neustart über Kunden-Menü"],
+                ["shutdown", "/r", "/f", "/t", "5", "/c", "FexoBooth: Neustart über Kunden-Menü"],
                 creationflags=0x08000000
             )
 

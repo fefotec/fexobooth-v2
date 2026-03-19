@@ -30,7 +30,7 @@ class SessionScreen(ctk.CTkFrame):
     """Session-Screen mit Vollbild-LiveView"""
 
     def __init__(self, parent, app: "PhotoboothApp"):
-        super().__init__(parent, fg_color=COLORS["bg_dark"])
+        super().__init__(parent, fg_color="#FFFFFF")
         self.app = app
         self.config = app.config
 
@@ -108,7 +108,7 @@ class SessionScreen(ctk.CTkFrame):
         # Preview Container (volle Größe)
         self.preview_container = ctk.CTkFrame(
             main_frame,
-            fg_color="#000000",
+            fg_color="#FFFFFF",
             corner_radius=0
         )
         self.preview_container.pack(expand=True, fill="both")
@@ -283,13 +283,19 @@ class SessionScreen(ctk.CTkFrame):
                 # Template-Overlay anwenden (wenn aktiviert)
                 if self._template_overlay_enabled and self._cached_template_composite is not None:
                     # Cache-Rebuild wenn Container-Größe sich deutlich geändert hat
-                    cw = self.preview_container.winfo_width()
-                    ch = self.preview_container.winfo_height()
-                    old_cw, old_ch = self._cached_template_container_size
-                    if cw > 100 and ch > 100 and (abs(cw - old_cw) > 50 or abs(ch - old_ch) > 50):
-                        logger.info(f"Container-Resize erkannt: {old_cw}x{old_ch} → {cw}x{ch} → Cache rebuild")
-                        self._build_template_overlay_cache()
-                    live_img = self._apply_template_overlay(live_img)
+                    try:
+                        cw = self.preview_container.winfo_width()
+                        ch = self.preview_container.winfo_height()
+                        old_size = getattr(self, '_cached_template_container_size', None)
+                        if old_size and cw > 100 and ch > 100:
+                            old_cw, old_ch = old_size
+                            if abs(cw - old_cw) > 50 or abs(ch - old_ch) > 50:
+                                logger.info(f"Container-Resize erkannt: {old_cw}x{old_ch} → {cw}x{ch} → Cache rebuild")
+                                self._build_template_overlay_cache()
+                        live_img = self._apply_template_overlay(live_img)
+                    except Exception as e:
+                        logger.warning(f"Template-Overlay Fehler im LiveView: {e}")
+                        self._cached_template_composite = None
 
                 if self.is_countdown_active and self.countdown_value > 0:
                     live_img = self._add_countdown_overlay(live_img)
@@ -736,11 +742,16 @@ class SessionScreen(ctk.CTkFrame):
         self._continue_btn.pack(side="left", padx=(15, 0), expand=True, anchor="w")
         logger.info("Button-Leiste eingeblendet (Nochmal + Weiter)")
 
-        # Stress-Test: 15% Chance das aktuelle Foto zu wiederholen
-        if self.app.stress_test_active and random.random() < 0.15:
-            delay = random.randint(500, 1500)
-            logger.info("Stress-Test: Redo einzelnes Foto")
-            self.after(delay, self._on_redo_photo)
+        # Stress-Test: 15% Redo, 85% Weiter
+        if self.app.stress_test_active:
+            if random.random() < 0.15:
+                delay = random.randint(500, 1500)
+                logger.info("Stress-Test: Redo einzelnes Foto")
+                self.after(delay, self._on_redo_photo)
+            else:
+                delay = random.randint(500, 1500)
+                logger.info("Stress-Test: Weiter zum nächsten Foto")
+                self.after(delay, self._on_continue_photo)
 
     def _hide_redo_button(self):
         """Versteckt die Button-Leiste"""

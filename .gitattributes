@@ -1,0 +1,6 @@
+# Windows Batch-Dateien muessen immer CRLF haben
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# PowerShell
+*.ps1 text eol=crlf

@@ -68,6 +68,10 @@ Source: "installer_files\update_from_github.bat"; DestDir: "{app}"; Flags: ignor
 ; Setup-Skripte
 Source: "setup\*"; DestDir: "{app}\setup"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+; Deployment-Tools (Image-Vorbereitung)
+Source: "deployment\01_referenz-tablet\prepare_image.bat"; DestDir: "{app}\deployment"; Flags: ignoreversion
+Source: "deployment\01_referenz-tablet\post_install_check.bat"; DestDir: "{app}\deployment"; Flags: ignoreversion
+
 ; Beispiel-Konfiguration
 Source: "config.example.json"; DestDir: "{app}"; Flags: ignoreversion
 
@@ -85,6 +89,8 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "
 Name: "{group}\{#MyAppName} (Entwicklermodus)"; Filename: "{app}\start_dev.bat"; IconFilename: "{app}\assets\fexobooth.ico"
 Name: "{group}\Von GitHub aktualisieren"; Filename: "{app}\update_from_github.bat"
 Name: "{group}\Hotspot einrichten (Einmalig)"; Filename: "{app}\setup\einmalig_hotspot_einrichten.bat"
+Name: "{group}\Image vorbereiten (Deployment)"; Filename: "{app}\deployment\prepare_image.bat"
+Name: "{group}\Tablet-Pruefung (Deployment)"; Filename: "{app}\deployment\post_install_check.bat"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 
 ; Desktop-Icon IMMER erstellen/überschreiben bei Installation (nicht nur bei Task-Auswahl)

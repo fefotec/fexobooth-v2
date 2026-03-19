@@ -31,6 +31,26 @@ _Aktuell keine niedrig priorisierten Aufgaben_
 
 ## Erledigt ✅
 
+### 2026-03-18
+- [x] USB-Sync Dialog kommt nicht bei Stick-Wiedereinstecken (gleicher Event) — behoben
+- [x] `_offer_sync_dialog`: try/except im Thread, Fallback auf pending_count, Logging
+
+### 2026-03-17
+- [x] `prepare_image.bat`: Windows-Optimierung + Daten-Bereinigung für Image-Erstellung
+- [x] Script wird über Installer mitinstalliert (`deployment/` Ordner + Startmenü)
+
+### 2026-03-13
+- [x] Template-Karte: "Wunsch-Template" statt Buchungsnummer/Dateiname anzeigen
+- [x] Header-Text anpassen bei nur einer Karte ("Dein Druckformat" statt "Wähle dein Layout!")
+- [x] USB-Template vs. User-Template Trennung (Override-Flag)
+- [x] Capture-Hintergrund: Weiß statt Schwarz
+- [x] LiveView Template-Overlay Absicherung
+
+### 2026-03-12
+- [x] Template-Loader: preview.png nicht als Overlay verwenden (Default-Template Fix)
+- [x] Start-Screen Refresh nach Template-Wechsel im Kunden-Menü (PIN 2015)
+- [x] Galerie: Sharing-Erkennung + Hinweis bei HTTP (kein File-Share ohne HTTPS)
+
 ### 2026-03-11
 - [x] Kunden-PIN "2015" mit Service-Menü (Template-Auswahl, Overlay-Toggle, Druckstau, Neustart)
 - [x] 5x Icon-Tap Neustart entfernt (durch Kunden-PIN ersetzt)

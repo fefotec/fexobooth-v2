@@ -4,6 +4,85 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-03-18
+
+### USB-Sync Dialog: Kommt jetzt zuverlässig bei Stick-Wiedereinstecken
+- **Bug:** Gleichen USB-Stick abziehen → Fotos machen → wieder einstecken → kein Sync-Dialog obwohl Bilder fehlen
+- **Ursache:** `_offer_sync_dialog()` zählte fehlende Bilder in Background-Thread ohne try/except. Bei jeder Exception (USB noch nicht fertig gemounted, IO-Fehler) starb der Thread leise — kein Dialog, kein Log, kein Retry
+- **Fix 1:** try/except im Background-Thread mit Logging bei Fehler
+- **Fix 2:** Fallback auf `pending_count` — wenn `count_missing()` 0 oder Exception zurückgibt aber Pending-Files existieren, wird der Dialog trotzdem angezeigt (`max(missing, pending_count)`)
+- **Fix 3:** Logging bei USB-Transition (da→weg, weg→da) mit new_booking und pending-Status für Debugging
+- **Betroffen:** `src/app.py` (`_check_usb_status`, `_offer_sync_dialog`)
+
+---
+
+## 2026-03-17
+
+### prepare_image.bat: Tablet für Clonezilla-Image vorbereiten
+- **Neues Script:** `deployment/01_referenz-tablet/prepare_image.bat` — Alles-in-einem Script für Image-Vorbereitung
+- **Teil 1 — Dienste deaktivieren (25+):** Windows Update (komplett), Windows Search, SysMain/Superfetch, Windows Defender, Telemetrie (DiagTrack, dmwappushservice), Error Reporting, Xbox-Dienste, Maps, Bluetooth, Biometrie, Remote Registry, Fax, Windows Insider, Connected User Experiences
+- **Teil 2 — Registry-Optimierungen:** Telemetrie aus, Cortana aus, visuelle Effekte auf Performance, Transparenz aus, Benachrichtigungen aus, Tips/Tricks/vorgeschlagene Apps aus, Hintergrund-Apps aus, OneDrive aus, Sperrbildschirm-Werbung aus, automatische Wartung aus, Storage Sense aus, Energiesparmodus (nie Standby/Bildschirm-Aus), Ruhezustand deaktiviert (spart ~3GB), Schnellstart aus, Defender per Policy aus, geplante Tasks (Defrag, Diagnose, CEIP) aus
+- **Teil 3 — FexoBooth bereinigen:** BILDER/Single und Prints geleert, logs/ geleert, .booking_cache/ geleert, statistics.json und printer_lifetime.json gelöscht, gallery_cache/ gelöscht
+- **Teil 4 — Windows Temp bereinigen:** User-Temp, Windows-Temp, Prefetch, Windows Update Cache, Thumbnail/Icon-Cache, Papierkorb, Delivery Optimization Cache, Event-Logs, automatische Datenträgerbereinigung (cleanmgr)
+- **Installer:** Script wird über `installer.iss` nach `{app}\deployment\` installiert + Startmenü-Eintrag "Image vorbereiten"
+- **Auch mitinstalliert:** `post_install_check.bat` zur Verifizierung vor dem Klonen
+
+---
+
+## 2026-03-13
+
+### Start-Screen: Template-Karten-Text verbessert
+- **Bug:** Template-Karte zeigte rohen Dateinamen (z.B. Buchungsnummer "134830_...") statt freundlichen Namen
+- **Fix:** Aktive Template-Karte zeigt immer "Wunsch-Template"
+- **Verbesserung:** Bei nur einer Karte (nichts zu wählen): Header wechselt von "Wähle dein Layout!" zu "Dein Druckformat" / "Tippe zum Starten"
+- **Betroffen:** `src/ui/screens/start.py`
+
+### USB-Template vs. User-Template Trennung
+- USB-Stick Template wird automatisch geladen, aber User-Auswahl über PIN 2015 wird respektiert
+- `_usb_stick_template` speichert Original vom Stick, `_user_template_override` Flag bei expliziter Wahl
+- USB-Template bleibt als Extra-Karte wählbar wenn User anderes Template gewählt hat
+
+### Capture-Hintergrund: Schwarz → Weiß
+- Default-Hintergrund im TemplateRenderer von `#000000` auf `#FFFFFF` geändert
+- Templates ohne Overlay-Frame rendern Fotos jetzt vor weißem Hintergrund
+
+### LiveView Template-Overlay Absicherung
+- Try/Except um Template-Overlay im LiveView gegen Freeze bei fehlenden Attributen
+
+---
+
+## 2026-03-12
+
+### Template-Loader: preview.png nicht mehr als Overlay verwenden
+- **Bug:** Default-Template.zip enthielt nur `preview.png` (Vorschaubild mit Nummern 1-4), kein `template.png`
+- **Ursache:** Loader wählte größtes PNG als Overlay → `preview.png` wurde über die Fotos gelegt und verdeckte sie
+- **Fix:** PNG-Auswahl-Logik komplett überarbeitet:
+  1. `template.png` wird bevorzugt (exakter Name)
+  2. Andere PNGs (nicht preview) als Fallback
+  3. `preview.png` wird NIE als Overlay verwendet wenn XML-Boxen vorhanden sind
+  4. Templates ohne Overlay-Frame rendern korrekt (nur Fotos in Boxen)
+- **Betroffen:** `src/templates/loader.py`, `src/ui/screens/start.py`, `src/ui/screens/admin.py`
+
+### Start-Screen Refresh nach Template-Wechsel im Kunden-Menü
+- **Bug:** Template über PIN 2015 gewechselt → Startscreen zeigte noch altes Template-Bild
+- **Ursache:** `on_show()` wurde nur bei Admin-Settings aufgerufen (wenn `dialog.result` gesetzt), nicht nach Kunden-Menü
+- **Fix:** Start-Screen wird IMMER nach AdminDialog-Schließung aktualisiert (auch nach PIN 2015)
+- **Betroffen:** `src/app.py` (Admin-Dialog Nachbehandlung)
+
+### Galerie: Foto-Sharing verbessert
+- **Bug:** Web Share API `files`-Parameter wird auf HTTP stumm ignoriert (braucht HTTPS)
+- **Fix:** Erkennung ob File-Sharing wirklich funktioniert (`canShare` mit Test-File)
+- Bei HTTP: Hinweis "Erst Bild speichern, dann aus Galerie teilen" + WhatsApp/Facebook nur-Text-Fallback
+- Bei HTTPS/nativem Support: Vollständiges File-Sharing mit Bild
+- **Betroffen:** `src/gallery/server.py`
+
+### Template-Cache und Overlay-Handling
+- Template-Cache speichert jetzt auch Templates ohne Overlay (nur Boxen)
+- `cached_usb_template` funktioniert korrekt mit `overlay=None`
+- Start-Screen Preview: Lädt `preview.png` aus ZIP für Karten-Vorschau (getrennt vom Overlay)
+
+---
+
 ## 2026-03-11
 
 ### Kunden-PIN Menü (PIN 2015)

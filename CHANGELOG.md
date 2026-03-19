@@ -6,28 +6,34 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
-## [Unreleased]
+## [2.0.0] - 2026-03-19 - Erster stabiler Release
 
 ### Hinzugefügt
-- **Kunden-PIN "2015"** — Kunden können Template wählen, Live-View Overlay togglen, Druckstau beheben und Windows neustarten (ohne Admin-Zugang)
-- **Template-Vorschau** — Template-Auswahl zeigt Vorschau-Bilder aus ZIP-Dateien. Ordner `assets/templates/` für einfaches Hinzufügen
+- **Kunden-PIN "2015"** — Template wählen, Live-View Overlay togglen, Druckstau beheben, Windows neustarten (ohne Admin-Zugang)
+- **Template-Vorschau** — Template-Auswahl zeigt Vorschau-Bilder aus ZIP-Dateien. Ordner `assets/templates/`
 - **Minimieren-Button** in Admin-Einstellungen (nur im Kiosk-Modus)
+- **prepare_image.bat** — Tablet für Clonezilla-Image vorbereiten (Windows-Optimierung + Daten-Bereinigung)
+- **USB-Sync Dialog Fallback** — Pending-Count als Fallback wenn count_missing fehlschlägt
 
 ### Geändert
-- **Admin-Dialog im Kiosk-Modus** — Einstellungen als Fullscreen-Overlay, kein Fenstermodus-Wechsel, verhindert Taskleisten-Aufblitzen
-- **Filter-Screen optimiert** für Lenovo Miix 310 — Labels entfernt, Preview größer, bessere Platznutzung
+- **Admin-Dialog im Kiosk-Modus** — Fullscreen-Overlay statt Fenstermodus-Wechsel
+- **Filter-Screen optimiert** für Lenovo Miix 310 — Labels entfernt, Preview größer
 - **USB-Status-Indikator** hat jetzt feste Breite (Frame-Container)
 
 ### Entfernt
 - **5x Icon-Tap Neustart** entfernt (durch Kunden-PIN "2015" ersetzt)
 
-### Geplant
-- [ ] Admin-Menü: "Buchung zurücksetzen" Button
-- [ ] Canon DSLR Live-View optimieren
-- [ ] Print-Queue Anzeige
+### Behoben
+- **USB-Sync Dialog** kam nicht bei Stick-Wiedereinstecken (gleicher Event) — Background-Thread fehlte try/except + Fallback
+- **Template-Loader:** `preview.png` nicht mehr als Overlay verwenden
+- **Start-Screen Refresh:** Template-Wechsel über Kunden-PIN 2015 aktualisiert sofort die Karten
+- **Galerie Sharing:** Erkennt ob Foto-Teilen möglich ist (HTTPS nötig)
+- **Template-Karte:** Zeigt "Wunsch-Template" statt rohem Dateinamen
+- **Capture-Hintergrund:** Weiß statt Schwarz bei Templates ohne Overlay-Frame
+- **USB-Template:** Überschreibt nicht mehr die explizite User-Auswahl
 
-### Bekannte Bugs
-- Keine aktuell bekannt
+### Bekannte Einschränkungen
+- Galerie: Foto-Sharing mit Bild nur über HTTPS möglich (lokales HTTP → nur Text-Sharing)
 
 ---
 

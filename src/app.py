@@ -107,6 +107,10 @@ class PhotoboothApp:
 
         # USB-Template Cache (bleibt erhalten wenn USB abgezogen wird)
         self.cached_usb_template: Optional[Dict] = None  # {path, name, overlay, boxes}
+        # USB-Stick Template (Original vom Stick, wird nie überschrieben)
+        self._usb_stick_template: Optional[Dict] = None  # {path, name, overlay, boxes}
+        # Flag: User hat explizit ein Template über 2015-Menü gewählt
+        self._user_template_override: bool = False
 
         # USB-Sync Dialog State
         self._sync_dialog_open: bool = False  # Verhindert mehrfache Dialoge
@@ -177,6 +181,14 @@ class PhotoboothApp:
         # Status-Timer starten
         self._start_status_checks()
 
+        # Event-Wechsel Dialog beim Start (USB hatte andere Buchung als Cache)
+        if self._startup_event_change:
+            logger.info(f"🔄 Event-Wechsel-Dialog wird nach Start angezeigt: {self._startup_event_change}")
+            booking_id = self._startup_event_change
+            self._startup_event_change = None
+            # Verzögert anzeigen damit UI vollständig geladen ist
+            self.root.after(500, lambda: self._show_event_change_dialog(booking_id))
+
         # Galerie-Server starten wenn aktiviert (NACH Settings-Anwendung!)
         self._init_gallery_server()
 
@@ -217,28 +229,42 @@ class PhotoboothApp:
 
     def _load_settings_from_usb_immediately(self):
         """Lädt Settings vom USB-Stick SOFORT beim App-Start
-        
+
         Wichtig: Nicht auf den Timer warten - Settings müssen sofort geladen werden,
         damit allow_single_mode, gallery_enabled etc. von Anfang an korrekt sind.
+
+        Wenn eine ANDERE Buchung als im Cache erkannt wird, wird ein Flag gesetzt
+        damit nach dem UI-Setup der Event-Wechsel-Dialog angezeigt wird.
         """
         from pathlib import Path
-        
+
+        self._startup_event_change = None  # Flag für Event-Wechsel beim Start
+
         try:
             usb_drive = self.usb_manager.find_usb_stick()
             if not usb_drive:
                 logger.debug("Kein USB beim Start gefunden - verwende Cache")
                 return
-            
+
             usb_root = Path(usb_drive)
-            
+
+            # Alte Booking-ID merken (aus Cache) BEVOR neue geladen wird
+            old_booking_id = self.booking_manager.booking_id
+
             # Settings vom USB laden (sucht alle .json Dateien, nimmt neueste)
             logger.info(f"📂 USB gefunden beim Start: {usb_drive}")
             if self.booking_manager.load_from_usb(usb_root, force=True):
-                logger.info(f"✅ Settings vom USB geladen: {self.booking_manager.booking_id}")
-                
+                new_booking_id = self.booking_manager.booking_id
+                logger.info(f"✅ Settings vom USB geladen: {new_booking_id}")
+
+                # Prüfen ob es eine ANDERE Buchung ist als im Cache
+                if old_booking_id and new_booking_id and old_booking_id != new_booking_id:
+                    logger.info(f"🔄 Neue Buchung beim Start erkannt: {old_booking_id} → {new_booking_id}")
+                    self._startup_event_change = new_booking_id
+
                 # Statistik-Event starten
                 self._start_statistics_event(usb_root)
-            
+
         except Exception as e:
             logger.warning(f"USB-Check beim Start fehlgeschlagen: {e}")
 
@@ -805,11 +831,14 @@ class PhotoboothApp:
         # USB wurde gerade (wieder) eingesteckt -> Sync anbieten wenn gleiches Event
         if is_available and not self._sync_dialog_open:
             if not hasattr(self, '_was_usb_available') or not self._was_usb_available:
+                logger.info(f"USB-Transition: nicht da → da (new_booking={new_booking}, pending={pending_count})")
                 self._was_usb_available = True
                 # Nur bei gleichem Event synchronisieren (kein neues Event erkannt)
                 if not new_booking:
                     self._offer_sync_dialog()
         elif not is_available:
+            if hasattr(self, '_was_usb_available') and self._was_usb_available:
+                logger.info("USB-Transition: da → nicht da")
             self._was_usb_available = False
 
         # Unbekannter USB-Stick → Bilder-Export anbieten (Notfall-Fallback)
@@ -928,15 +957,30 @@ class PhotoboothApp:
 
         local_path = LocalStorage.get_images_path()
         if not local_path.exists():
+            logger.warning(f"USB-Sync: local_path existiert nicht: {local_path}")
             return
+
+        pending_count = self.usb_manager.get_pending_count()
+        logger.info(f"USB-Sync: Prüfe fehlende Bilder (local={local_path}, pending={pending_count})")
 
         # Fehlende Bilder im Hintergrund zählen
         def check_missing():
-            missing = self.usb_manager.count_missing(local_path)
-            if missing > 0:
-                self.root.after(0, lambda: self._show_sync_dialog(missing, local_path))
-            else:
-                logger.debug("USB-Sync: Alle Bilder bereits auf USB")
+            try:
+                missing = self.usb_manager.count_missing(local_path)
+                logger.info(f"USB-Sync: count_missing={missing}, pending={pending_count}")
+
+                # count_missing ODER pending_count — das höhere zählt
+                effective_count = max(missing, pending_count)
+
+                if effective_count > 0:
+                    self.root.after(0, lambda: self._show_sync_dialog(effective_count, local_path))
+                else:
+                    logger.debug("USB-Sync: Alle Bilder bereits auf USB")
+            except Exception as e:
+                logger.error(f"USB-Sync: Fehler beim Zählen: {e}")
+                # Fallback: Wenn pending_count > 0, trotzdem Dialog anbieten
+                if pending_count > 0:
+                    self.root.after(0, lambda: self._show_sync_dialog(pending_count, local_path))
 
         threading.Thread(target=check_missing, daemon=True).start()
 
@@ -1577,12 +1621,13 @@ class PhotoboothApp:
                 # Galerie deaktiviert -> Hotspot stoppen
                 self._stop_hotspot_if_running()
 
-            # StartScreen aktualisieren wenn aktiv
-            if self.current_screen_name == "start" and self.current_screen:
-                logger.info("Aktualisiere StartScreen nach Admin-Änderung...")
-                self.current_screen.config = self.config
-                if hasattr(self.current_screen, "on_show"):
-                    self.current_screen.on_show()
+        # StartScreen IMMER aktualisieren nach Dialog-Schließung
+        # (auch nach Kunden-Menü 2015 Template-Wechsel, nicht nur nach Admin-Settings)
+        if self.current_screen_name == "start" and self.current_screen:
+            logger.info("Aktualisiere StartScreen nach Admin-Dialog...")
+            self.current_screen.config = self.config
+            if hasattr(self.current_screen, "on_show"):
+                self.current_screen.on_show()
 
         # Kiosk-Modus wiederherstellen (nur wenn vorher deaktiviert)
         if not is_kiosk and self.config.get("start_fullscreen", True):
@@ -1685,13 +1730,15 @@ class PhotoboothApp:
         usb_template = find_usb_template(include_cache=False)
         if usb_template:
             overlay, boxes = TemplateLoader.load(usb_template, use_cache=False)
-            if overlay and boxes:
-                self.cached_usb_template = {
+            if boxes:
+                template_data = {
                     "path": usb_template,
                     "name": os.path.basename(usb_template),
                     "overlay": overlay,
                     "boxes": boxes
                 }
+                self.cached_usb_template = template_data
+                self._usb_stick_template = template_data
                 self.template_boxes = boxes
                 self.overlay_image = overlay
                 logger.info(f"Template geladen: {usb_template} ({len(boxes)} Slots)")

@@ -14,6 +14,7 @@ pywin32>=306; sys_platform == "win32"
 # QR-Code und Galerie-Server
 qrcode>=7.4.0
 flask>=3.0.0
+cryptography>=41.0.0
 
 # Developer Mode (CPU/RAM Monitoring)
 psutil>=5.9.0

@@ -138,6 +138,7 @@ a = Analysis(
         "jinja2",
         "qrcode",
         "qrcode.image.svg",
+        "cryptography",
         "win32print",
         "win32api",
         "win32timezone",

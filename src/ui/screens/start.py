@@ -251,19 +251,15 @@ class StartScreen(ctk.CTkFrame):
         count = 0
         has_custom = False
 
-        cached = self.app.cached_usb_template
-        usb_active = cached or (hasattr(self, '_usb_template_path') and self._usb_template_path)
-        if usb_active:
+        # Aktives Template (USB oder User-Override)
+        if self.app.cached_usb_template:
             count += 1
             has_custom = True
 
-        if not usb_active:
-            for key in ["template1", "template2"]:
-                if self.config.get(f"{key}_enabled", False):
-                    path = self.config.get("template_paths", {}).get(key, "")
-                    if path:
-                        count += 1
-                        has_custom = True
+        # USB-Stick Template als extra Karte wenn User Override aktiv
+        if (self.app._user_template_override and self.app._usb_stick_template
+                and self.app._usb_stick_template != self.app.cached_usb_template):
+            count += 1
 
         if not has_custom:
             count += 1  # default_2x2
@@ -293,17 +289,20 @@ class StartScreen(ctk.CTkFrame):
         # Responsive Abstand zwischen Karten
         card_padx = 6 if self._is_small else 10
 
-        # USB-Template hat höchste Priorität
+        # Aktives Template (vom User gewählt oder USB auto-aktiviert)
         cached = self.app.cached_usb_template
-        if cached or (hasattr(self, '_usb_template_path') and self._usb_template_path):
-            if cached and cached.get("overlay"):
+        if cached:
+            if cached.get("overlay"):
                 preview = cached.get("overlay")
             else:
-                preview = self._load_template_preview(self._usb_template_path)
+                preview = self._load_template_preview(cached.get("path", ""))
+
+            # Titel: Immer "Wunsch-Template" anzeigen (nicht den Dateinamen)
+            display_name = "Wunsch-Template"
 
             card = TemplateCard(
                 self.cards_frame,
-                title="Druckvorlage",
+                title=display_name,
                 preview_image=preview,
                 on_click=lambda c: self._select_card(c, "usb_template"),
                 card_width=card_w, card_height=card_h
@@ -312,45 +311,29 @@ class StartScreen(ctk.CTkFrame):
             self.cards["usb_template"] = card
             self._select_card(card, "usb_template")
             has_custom_template = True
-            logger.info("✅ USB-Template Karte erstellt")
+            logger.info(f"✅ Aktives Template Karte: {display_name}")
 
-        usb_active = self.app.cached_usb_template or (hasattr(self, '_usb_template_path') and self._usb_template_path)
+        # USB-Stick Template als EXTRA Karte wenn User ein anderes gewählt hat
+        usb_stick = self.app._usb_stick_template
+        if (usb_stick and self.app._user_template_override
+                and usb_stick.get("path") != (cached.get("path") if cached else None)):
+            usb_name = usb_stick.get("name", "USB").replace(".zip", "")
+            if usb_stick.get("overlay"):
+                usb_preview = usb_stick.get("overlay")
+            else:
+                usb_preview = self._load_template_preview(usb_stick.get("path", ""))
 
-        # Template 1
-        t1_enabled = self.config.get("template1_enabled", False) and not usb_active
-        t1_path = self.config.get("template_paths", {}).get("template1", "")
-        t1_resolved = self._resolve_template_path(t1_path) if t1_path else None
-
-        if t1_enabled and t1_resolved:
-            preview = self._load_template_preview(t1_resolved)
             card = TemplateCard(
                 self.cards_frame,
-                title="Template 1",
-                preview_image=preview,
-                on_click=lambda c: self._select_card(c, "template1"),
+                title=f"USB: {usb_name}" if len(usb_name) <= 12 else "USB-Vorlage",
+                preview_image=usb_preview,
+                on_click=lambda c: self._select_card(c, "usb_stick_original"),
                 card_width=card_w, card_height=card_h
             )
             card.pack(side="left", padx=card_padx)
-            self.cards["template1"] = card
+            self.cards["usb_stick_original"] = card
             has_custom_template = True
-
-        # Template 2
-        t2_enabled = self.config.get("template2_enabled", False) and not usb_active
-        t2_path = self.config.get("template_paths", {}).get("template2", "")
-        t2_resolved = self._resolve_template_path(t2_path) if t2_path else None
-
-        if t2_enabled and t2_resolved:
-            preview = self._load_template_preview(t2_resolved)
-            card = TemplateCard(
-                self.cards_frame,
-                title="Template 2",
-                preview_image=preview,
-                on_click=lambda c: self._select_card(c, "template2"),
-                card_width=card_w, card_height=card_h
-            )
-            card.pack(side="left", padx=card_padx)
-            self.cards["template2"] = card
-            has_custom_template = True
+            logger.info(f"✅ USB-Stick Template Karte: {usb_name}")
 
         # Standard 2x2 (wenn keine Custom-Templates)
         if not has_custom_template:
@@ -396,6 +379,15 @@ class StartScreen(ctk.CTkFrame):
             first_card = self.cards[first_key]
             self._select_card(first_card, first_key)
             logger.info(f"Auto-Select: '{first_key}' (keine USB-Vorlage)")
+
+        # Header-Text anpassen wenn nur 1 Karte (nichts zu wählen)
+        if len(self.cards) <= 1:
+            self.title_label.configure(text="Dein Druckformat")
+            self.subtitle_label.configure(text="Tippe zum Starten")
+        else:
+            default_title = self.config.get("ui_texts", {}).get("choose_mode", "Wähle dein Layout!")
+            self.title_label.configure(text=default_title)
+            self.subtitle_label.configure(text="Tippe auf eine Option")
 
         logger.info(f"Erstellte Karten: {list(self.cards.keys())}")
     
@@ -455,7 +447,22 @@ class StartScreen(ctk.CTkFrame):
                 logger.debug(f"PNG-Vorschau geladen: {preview.size}")
                 return preview
             
-            # Für ZIP den Loader nutzen
+            # Für ZIP: Erst preview.png suchen (schnelles Vorschaubild)
+            import zipfile
+            if resolved.lower().endswith(".zip"):
+                try:
+                    with zipfile.ZipFile(resolved, "r") as zf:
+                        for name in zf.namelist():
+                            if name.lower().endswith("preview.png"):
+                                import io
+                                with zf.open(name) as f:
+                                    preview = Image.open(io.BytesIO(f.read())).convert("RGBA")
+                                    logger.debug(f"Preview aus ZIP geladen: {preview.size}")
+                                    return preview
+                except Exception:
+                    pass
+
+            # Fallback: Overlay aus Loader
             overlay, _ = TemplateLoader.load(resolved)
             return overlay
         except Exception as e:
@@ -541,17 +548,17 @@ class StartScreen(ctk.CTkFrame):
         elif self.selected_option == "usb_template":
             # USB-Template aus Cache verwenden (falls vorhanden)
             cached = self.app.cached_usb_template
-            if cached and cached.get("overlay") and cached.get("boxes"):
+            if cached and cached.get("boxes"):
                 logger.info(f"Verwende gecachtes USB-Template: {cached.get('name')}")
                 self.app.template_path = cached.get("path")
                 self.app.template_boxes = cached.get("boxes")
-                self.app.overlay_image = cached.get("overlay")
-                logger.info(f"USB-Template aus Cache: {len(cached.get('boxes'))} Foto-Slots")
+                self.app.overlay_image = cached.get("overlay")  # kann None sein (kein Overlay-Frame)
+                logger.info(f"USB-Template aus Cache: {len(cached.get('boxes'))} Foto-Slots, Overlay: {cached.get('overlay') is not None}")
             elif hasattr(self, '_usb_template_path') and self._usb_template_path:
                 # Fallback: Direkt laden wenn Cache leer
                 logger.info(f"Lade USB-Template direkt: {self._usb_template_path}")
                 overlay, boxes = TemplateLoader.load(self._usb_template_path)
-                if overlay and boxes:
+                if boxes:
                     self.app.template_path = self._usb_template_path
                     self.app.template_boxes = boxes
                     self.app.overlay_image = overlay
@@ -568,6 +575,21 @@ class StartScreen(ctk.CTkFrame):
                     return
             else:
                 logger.error("Kein USB-Template verfügbar (weder Cache noch USB)!")
+                return
+
+        elif self.selected_option == "usb_stick_original":
+            # User wählt zurück zum USB-Stick Template
+            usb_stick = self.app._usb_stick_template
+            if usb_stick and usb_stick.get("boxes"):
+                self.app.template_path = usb_stick.get("path")
+                self.app.template_boxes = usb_stick.get("boxes")
+                self.app.overlay_image = usb_stick.get("overlay")
+                # USB-Override zurücksetzen
+                self.app.cached_usb_template = usb_stick
+                self.app._user_template_override = False
+                logger.info(f"Zurück zum USB-Stick Template: {usb_stick.get('name')}")
+            else:
+                logger.error("USB-Stick Template nicht verfügbar!")
                 return
 
         else:
@@ -588,47 +610,64 @@ class StartScreen(ctk.CTkFrame):
         # Config könnte sich geändert haben (Admin-Dialog)
         self.config = self.app.config
 
-        # USB-Template prüfen mit Caching-Logik
-        current_usb_template = find_usb_template()
+        # === USB-Stick Template erkennen (getrennt vom aktiven Template) ===
+        real_usb = find_usb_template(include_cache=False)  # Nur echte USB-Sticks
 
-        if current_usb_template:
-            # USB eingesteckt mit Template
-            template_name = os.path.basename(current_usb_template)
+        if real_usb:
+            template_name = os.path.basename(real_usb)
+            usb_cached = self.app._usb_stick_template
 
-            # Prüfen ob es ein NEUES Template ist (anderer Name)
-            cached = self.app.cached_usb_template
-            if cached and cached.get("name") == template_name:
-                # Gleiches Template - Cache verwenden
-                logger.info(f"USB-Template unverändert: {template_name} (verwende Cache)")
-                self._usb_template_path = current_usb_template
-            else:
-                # Neues Template - laden und cachen
-                logger.info(f"=== NEUES USB-Template gefunden: {current_usb_template} ===")
-                self._usb_template_path = current_usb_template
-
-                # Template vorladen und cachen
+            if not usb_cached or usb_cached.get("name") != template_name:
+                # Neues USB-Template — laden und separat speichern
+                logger.info(f"=== USB-Stick Template gefunden: {real_usb} ===")
                 try:
-                    overlay, boxes = TemplateLoader.load(current_usb_template)
-                    if overlay and boxes:
-                        self.app.cached_usb_template = {
-                            "path": current_usb_template,
+                    overlay, boxes = TemplateLoader.load(real_usb)
+                    if boxes:
+                        self.app._usb_stick_template = {
+                            "path": real_usb,
                             "name": template_name,
                             "overlay": overlay,
                             "boxes": boxes
                         }
-                        logger.info(f"USB-Template gecached: {template_name} ({len(boxes)} Slots)")
-
-                        # Lokal auf Disk kopieren (überlebt USB-Abzug und Neustart)
-                        self._persist_template_to_disk(current_usb_template)
+                        logger.info(f"USB-Stick Template geladen: {template_name} ({len(boxes)} Slots)")
+                        self._persist_template_to_disk(real_usb)
                 except Exception as e:
                     logger.error(f"USB-Template laden fehlgeschlagen: {e}")
-        else:
-            # Kein USB eingesteckt - prüfen ob Cache vorhanden
-            if self.app.cached_usb_template:
-                logger.info(f"USB nicht eingesteckt - verwende gecachtes Template: {self.app.cached_usb_template.get('name')}")
-                self._usb_template_path = self.app.cached_usb_template.get("path")
             else:
-                self._usb_template_path = None
+                logger.info(f"USB-Stick Template unverändert: {template_name}")
+
+            # Nur auto-aktivieren wenn User NICHT explizit ein anderes gewählt hat
+            if not self.app._user_template_override:
+                self.app.cached_usb_template = self.app._usb_stick_template
+                logger.info(f"USB-Template als aktives Template gesetzt (kein User-Override)")
+            else:
+                logger.info(f"User-Override aktiv — USB-Template nicht auto-aktiviert")
+        else:
+            # Kein USB-Stick — USB-Stick-Referenz behalten falls vorher geladen
+            if not self.app._usb_stick_template:
+                # Booking-Cache als Fallback für USB-Stick-Template
+                cache_template = find_usb_template(include_cache=True)
+                if cache_template:
+                    try:
+                        overlay, boxes = TemplateLoader.load(cache_template)
+                        if boxes:
+                            self.app._usb_stick_template = {
+                                "path": cache_template,
+                                "name": os.path.basename(cache_template),
+                                "overlay": overlay,
+                                "boxes": boxes
+                            }
+                    except Exception as e:
+                        logger.error(f"Cache-Template laden fehlgeschlagen: {e}")
+
+        # Aktives Template bestimmen
+        if self.app.cached_usb_template:
+            self._usb_template_path = self.app.cached_usb_template.get("path")
+        elif self.app._usb_stick_template and not self.app._user_template_override:
+            self.app.cached_usb_template = self.app._usb_stick_template
+            self._usb_template_path = self.app._usb_stick_template.get("path")
+        else:
+            self._usb_template_path = None
 
         # Alte Karten entfernen und neu erstellen (setzt auch selected_card = None)
         self._refresh_template_cards()
