@@ -98,7 +98,7 @@ echo.
 if not exist "%DOWNLOAD_DIR%" mkdir "%DOWNLOAD_DIR%"
 
 :: Clonezilla herunterladen (~500 MB)
-set "CZ_VERSION=3.3.0-33"
+set "CZ_VERSION=3.3.1-35"
 set "CZ_FILE=clonezilla-live-!CZ_VERSION!-amd64.zip"
 set "CZ_URL=https://sourceforge.net/projects/clonezilla/files/clonezilla_live_stable/!CZ_VERSION!/!CZ_FILE!/download"
 set "CZ_URL_ALT=https://free.nchc.org.tw/clonezilla-live/stable/!CZ_FILE!"
@@ -404,7 +404,9 @@ goto :capture_inline
 
 :capture_from_file
 copy /Y "%SCRIPT_DIR%custom-ocs\custom-ocs-capture" "%BOOT_DRIVE%:\live\custom-ocs\" >nul
-echo [OK] custom-ocs-capture kopiert
+:: CRLF zu LF konvertieren (Linux-Scripts muessen LF haben)
+powershell -Command "$f='%BOOT_DRIVE%:\live\custom-ocs\custom-ocs-capture'; [System.IO.File]::WriteAllText($f, ([System.IO.File]::ReadAllText($f) -replace \"`r`n\", \"`n\"))"
+echo [OK] custom-ocs-capture kopiert (LF)
 goto :capture_done
 
 :capture_inline
@@ -420,7 +422,9 @@ goto :deploy_inline
 
 :deploy_from_file
 copy /Y "%SCRIPT_DIR%custom-ocs\custom-ocs-deploy" "%BOOT_DRIVE%:\live\custom-ocs\" >nul
-echo [OK] custom-ocs-deploy kopiert
+:: CRLF zu LF konvertieren (Linux-Scripts muessen LF haben)
+powershell -Command "$f='%BOOT_DRIVE%:\live\custom-ocs\custom-ocs-deploy'; [System.IO.File]::WriteAllText($f, ([System.IO.File]::ReadAllText($f) -replace \"`r`n\", \"`n\"))"
+echo [OK] custom-ocs-deploy kopiert (LF)
 goto :deploy_done
 
 :deploy_inline
@@ -461,7 +465,7 @@ if exist "%SCRIPT_DIR%..\tools\grub_menu_patch.txt" goto :grub_from_file
 goto :grub_inline
 
 :grub_from_file
-powershell -Command "$patch = Get-Content '%SCRIPT_DIR%..\tools\grub_menu_patch.txt' -Raw; $orig = Get-Content '%GRUB_CFG%.original' -Raw; Set-Content '%GRUB_CFG%' -Value ($patch + \"`n`n\" + $orig) -Encoding UTF8"
+powershell -Command "$patch = Get-Content '%SCRIPT_DIR%..\tools\grub_menu_patch.txt' -Raw; $orig = Get-Content '%GRUB_CFG%.original' -Raw; [System.IO.File]::WriteAllText('%GRUB_CFG%', ($patch + \"`n`n\" + $orig))"
 echo [OK] GRUB-Bootmenue: Deutsche FexoBooth-Eintraege hinzugefuegt
 goto :grub_done
 

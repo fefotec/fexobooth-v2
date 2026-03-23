@@ -4,3 +4,6 @@
 
 # PowerShell
 *.ps1 text eol=crlf
+
+# Linux Shell-Scripts muessen LF haben (werden in Clonezilla ausgefuehrt)
+custom-ocs* text eol=lf
