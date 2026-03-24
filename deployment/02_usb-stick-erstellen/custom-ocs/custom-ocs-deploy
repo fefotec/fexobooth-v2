@@ -15,6 +15,25 @@ echo "  FexoBooth - IMAGE AUFSPIELEN"
 echo "============================================"
 echo ""
 
+# --- FEXODATEN (NTFS) mounten ---
+# Das Image liegt auf der NTFS-Datenpartition,
+# nicht auf der FAT32-Bootpartition.
+NTFS_PART=$(blkid -t LABEL=FEXODATEN -o device 2>/dev/null | head -1)
+if [ -n "$NTFS_PART" ]; then
+    echo "FEXODATEN gefunden: $NTFS_PART"
+    umount /home/partimag 2>/dev/null
+    mkdir -p /home/partimag
+    mount $NTFS_PART /home/partimag
+    if [ $? -eq 0 ]; then
+        echo "[OK] FEXODATEN gemountet nach /home/partimag"
+    else
+        echo "WARNUNG: FEXODATEN konnte nicht gemountet werden!"
+    fi
+else
+    echo "FEXODATEN nicht gefunden, nutze Standard-Speicher (FEXOBOOT)"
+fi
+echo ""
+
 # Image auf dem USB-Stick finden
 IMAGE_DIR=""
 IMAGE_NAME=""
@@ -41,30 +60,57 @@ fi
 echo "Image gefunden: $IMAGE_NAME"
 echo ""
 
-# Auto-detect Ziel-Disk (gleiche Logik wie Capture)
-if [ -b /dev/mmcblk0 ]; then
-    TARGET_DISK="mmcblk0"
-    echo "Ziel: eMMC Speicher (/dev/mmcblk0)"
-elif [ -b /dev/nvme0n1 ]; then
-    TARGET_DISK="nvme0n1"
-    echo "Ziel: NVMe SSD (/dev/nvme0n1)"
-elif [ -b /dev/sda ]; then
-    USB_DEV=$(mount | grep /home/partimag | awk '{print $1}' | sed 's/[0-9]*$//')
-    if [ "/dev/sda" != "$USB_DEV" ]; then
-        TARGET_DISK="sda"
-        echo "Ziel: Festplatte (/dev/sda)"
-    elif [ -b /dev/sdb ]; then
-        TARGET_DISK="sdb"
-        echo "Ziel: Festplatte (/dev/sdb)"
+# Auto-detect Ziel-Disk
+# USB-Stick ermitteln (wo Clonezilla + Image drauf sind)
+USB_DISK=""
+for mnt in /run/live/medium /home/partimag; do
+    DEV=$(mount | grep " $mnt " | awk '{print $1}')
+    if [ -n "$DEV" ]; then
+        # Partition zu Disk aufloesen (sda1->sda, nvme0n1p1->nvme0n1)
+        DISK=$(lsblk -no PKNAME "$DEV" 2>/dev/null | head -1)
+        if [ -n "$DISK" ]; then
+            USB_DISK="$DISK"
+        fi
     fi
-fi
+done
+echo "USB-Stick erkannt als: /dev/$USB_DISK"
+
+# Alle echten Disks durchsuchen (USB-Stick ausschliessen)
+TARGET_DISK=""
+for dev in /dev/mmcblk[0-9] /dev/mmcblk[0-9][0-9] /dev/nvme[0-9]n[0-9] /dev/sd[a-z]; do
+    if [ -b "$dev" ]; then
+        DEVNAME=$(basename "$dev")
+        # USB-Stick ueberspringen
+        if [ "$DEVNAME" = "$USB_DISK" ]; then
+            echo "Ueberspringe USB-Stick: /dev/$DEVNAME"
+            continue
+        fi
+        # mmcblk0bootX sind keine echten Disks
+        case "$DEVNAME" in
+            mmcblk*boot*) continue ;;
+        esac
+        # Loop-Devices ueberspringen
+        TYPE=$(lsblk -no TYPE "$dev" 2>/dev/null | head -1)
+        if [ "$TYPE" != "disk" ]; then
+            continue
+        fi
+        TARGET_DISK="$DEVNAME"
+        echo "Ziel gefunden: /dev/$TARGET_DISK"
+        break
+    fi
+done
 
 if [ -z "$TARGET_DISK" ]; then
     echo ""
     echo "FEHLER: Keine Ziel-Festplatte gefunden!"
     echo ""
-    echo "Erkannte Block-Geraete:"
-    lsblk -d -o NAME,SIZE,TYPE,MODEL
+    echo "USB-Stick war: /dev/$USB_DISK"
+    echo ""
+    echo "Alle erkannten Block-Geraete:"
+    lsblk -d -o NAME,SIZE,TYPE,MODEL,TRAN
+    echo ""
+    echo "Alle Mount-Punkte:"
+    mount | grep -E "^/dev/"
     echo ""
     read -p "Druecke Enter zum Neustarten..." dummy
     reboot

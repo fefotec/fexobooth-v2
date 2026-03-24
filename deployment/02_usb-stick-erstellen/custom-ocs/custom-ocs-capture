@@ -6,7 +6,7 @@
 # Wird automatisch von Clonezilla aufgerufen
 # wenn "IMAGE ERSTELLEN" im Bootmenue gewaehlt wird.
 #
-# Ziel-Hardware: Lenovo Miix 310 (eMMC = /dev/mmcblk0)
+# Unterstuetzt: eMMC, NVMe, SATA (beliebiges Lenovo-Modell)
 # ============================================
 
 echo ""
@@ -15,33 +15,73 @@ echo "  FexoBooth - IMAGE ERSTELLEN"
 echo "============================================"
 echo ""
 
-# Auto-detect: eMMC oder SSD?
-if [ -b /dev/mmcblk0 ]; then
-    TARGET_DISK="mmcblk0"
-    echo "Erkannt: eMMC Speicher (/dev/mmcblk0)"
-elif [ -b /dev/nvme0n1 ]; then
-    TARGET_DISK="nvme0n1"
-    echo "Erkannt: NVMe SSD (/dev/nvme0n1)"
-elif [ -b /dev/sda ]; then
-    # Sicherstellen dass sda nicht der USB-Stick ist
-    USB_DEV=$(mount | grep /home/partimag | awk '{print $1}' | sed 's/[0-9]*$//')
-    if [ "/dev/sda" != "$USB_DEV" ]; then
-        TARGET_DISK="sda"
-        echo "Erkannt: Festplatte (/dev/sda)"
-    elif [ -b /dev/sdb ]; then
-        TARGET_DISK="sdb"
-        echo "Erkannt: Festplatte (/dev/sdb)"
+# --- Image auf FEXODATEN (NTFS) speichern ---
+# FEXOBOOT (FAT32) ist zu klein fuer grosse Images,
+# daher wird die NTFS-Datenpartition verwendet.
+NTFS_PART=$(blkid -t LABEL=FEXODATEN -o device 2>/dev/null | head -1)
+if [ -n "$NTFS_PART" ]; then
+    echo "FEXODATEN gefunden: $NTFS_PART"
+    umount /home/partimag 2>/dev/null
+    mkdir -p /home/partimag
+    mount $NTFS_PART /home/partimag
+    if [ $? -eq 0 ]; then
+        echo "[OK] Image wird auf FEXODATEN gespeichert"
+    else
+        echo "WARNUNG: FEXODATEN konnte nicht gemountet werden, nutze Standard-Speicher"
     fi
+else
+    echo "FEXODATEN nicht gefunden, nutze Standard-Speicher (FEXOBOOT)"
 fi
+echo ""
+
+# Auto-detect Quell-Disk
+# USB-Stick ermitteln (wo Clonezilla + Image drauf sind)
+USB_DISK=""
+for mnt in /run/live/medium /home/partimag; do
+    DEV=$(mount | grep " $mnt " | awk '{print $1}')
+    if [ -n "$DEV" ]; then
+        DISK=$(lsblk -no PKNAME "$DEV" 2>/dev/null | head -1)
+        if [ -n "$DISK" ]; then
+            USB_DISK="$DISK"
+        fi
+    fi
+done
+echo "USB-Stick erkannt als: /dev/$USB_DISK"
+
+# Alle echten Disks durchsuchen (USB-Stick ausschliessen)
+TARGET_DISK=""
+for dev in /dev/mmcblk[0-9] /dev/mmcblk[0-9][0-9] /dev/nvme[0-9]n[0-9] /dev/sd[a-z]; do
+    if [ -b "$dev" ]; then
+        DEVNAME=$(basename "$dev")
+        if [ "$DEVNAME" = "$USB_DISK" ]; then
+            echo "Ueberspringe USB-Stick: /dev/$DEVNAME"
+            continue
+        fi
+        case "$DEVNAME" in
+            mmcblk*boot*) continue ;;
+        esac
+        TYPE=$(lsblk -no TYPE "$dev" 2>/dev/null | head -1)
+        if [ "$TYPE" != "disk" ]; then
+            continue
+        fi
+        TARGET_DISK="$DEVNAME"
+        echo "Quelle gefunden: /dev/$TARGET_DISK"
+        break
+    fi
+done
 
 if [ -z "$TARGET_DISK" ]; then
     echo ""
     echo "FEHLER: Keine Festplatte/eMMC gefunden!"
     echo ""
-    echo "Erkannte Block-Geraete:"
-    lsblk -d -o NAME,SIZE,TYPE,MODEL
+    echo "USB-Stick war: /dev/$USB_DISK"
     echo ""
-    echo "Bitte im Experten-Modus manuell waehlen."
+    echo "Alle erkannten Block-Geraete:"
+    lsblk -d -o NAME,SIZE,TYPE,MODEL,TRAN
+    echo ""
+    echo "Alle Mount-Punkte:"
+    mount | grep -E "^/dev/"
+    echo ""
     read -p "Druecke Enter zum Neustarten..." dummy
     reboot
 fi
@@ -57,6 +97,11 @@ echo ""
 # Disk-Info anzeigen
 echo "Disk-Informationen:"
 lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL /dev/$TARGET_DISK
+echo ""
+
+# Speicherplatz anzeigen
+echo "Verfuegbarer Speicher fuer Image:"
+df -h /home/partimag | tail -1
 echo ""
 
 # Bestaetigung
