@@ -77,6 +77,7 @@ DEFAULT_CONFIG = {
     # Sonstiges
     "admin_button_alpha": 0.1,
     "hide_finish_button": True,
+    "print_enabled": True,
     
     # Developer Mode
     "developer_mode": False,  # Aktiviert: Logging, CPU/RAM Anzeige

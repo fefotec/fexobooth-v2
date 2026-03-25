@@ -87,19 +87,22 @@ class FinalScreen(ctk.CTkFrame):
         )
         self.redo_btn.pack(side="left", padx=(10, 0))
 
-        # DRUCKEN Button (mitte, prominent)
-        self.print_btn = ctk.CTkButton(
-            btn_frame,
-            text="DRUCKEN",
-            font=("Segoe UI", 22, "bold"),
-            width=220,
-            height=55,
-            fg_color=COLORS["success"],
-            hover_color="#00e676",
-            corner_radius=14,
-            command=self._on_print
-        )
-        self.print_btn.pack(side="left", expand=True)
+        # DRUCKEN Button (mitte, prominent) - nur wenn Drucken aktiviert
+        if self.config.get("print_enabled", True):
+            self.print_btn = ctk.CTkButton(
+                btn_frame,
+                text="DRUCKEN",
+                font=("Segoe UI", 22, "bold"),
+                width=220,
+                height=55,
+                fg_color=COLORS["success"],
+                hover_color="#00e676",
+                corner_radius=14,
+                command=self._on_print
+            )
+            self.print_btn.pack(side="left", expand=True)
+        else:
+            self.print_btn = None
 
         # FERTIG Button (rechts)
         if not self.config.get("hide_finish_button", False):
@@ -194,7 +197,8 @@ class FinalScreen(ctk.CTkFrame):
 
         logger.info("Drucke Bild...")
 
-        self.print_btn.configure(state="disabled", text="Wird gedruckt...")
+        if self.print_btn:
+            self.print_btn.configure(state="disabled", text="Wird gedruckt...")
 
         if self.final_image:
             saved_path = self.app.local_storage.save_print(
@@ -220,20 +224,22 @@ class FinalScreen(ctk.CTkFrame):
                         text=f"Gedruckt! Noch {remaining} Druck(e) möglich",
                         text_color=COLORS["success"]
                     )
-                    self.print_btn.configure(
-                        state="normal",
-                        text=f"{self.config.get('ui_texts', {}).get('print', 'DRUCKEN')}"
-                    )
+                    if self.print_btn:
+                        self.print_btn.configure(
+                            state="normal",
+                            text=f"{self.config.get('ui_texts', {}).get('print', 'DRUCKEN')}"
+                        )
                 else:
                     self.print_info.configure(
                         text="Gedruckt! Keine weiteren Drucke möglich",
                         text_color=COLORS["text_primary"]
                     )
-                    self.print_btn.configure(
-                        state="disabled",
-                        text="Limit erreicht",
-                        fg_color=COLORS["bg_light"]
-                    )
+                    if self.print_btn:
+                        self.print_btn.configure(
+                            state="disabled",
+                            text="Limit erreicht",
+                            fg_color=COLORS["bg_light"]
+                        )
 
         # Auto-Return Timer zurücksetzen
         self.auto_return_time = time.time() + self.config.get("final_time", 30)
@@ -485,14 +491,15 @@ class FinalScreen(ctk.CTkFrame):
 
         # Druck-Button zurücksetzen
         max_prints = self.config.get("max_prints_per_session", 1)
-        self.print_btn.configure(
-            state="normal",
-            text=f"{self.config.get('ui_texts', {}).get('print', 'DRUCKEN')}",
-            fg_color=COLORS["success"]
-        )
+        if self.print_btn:
+            self.print_btn.configure(
+                state="normal",
+                text=f"{self.config.get('ui_texts', {}).get('print', 'DRUCKEN')}",
+                fg_color=COLORS["success"]
+            )
         self.print_info.configure(
-            text=f"{max_prints} Druck(e) verfügbar",
-            text_color=COLORS["text_primary"]
+            text=f"{max_prints} Druck(e) verfügbar" if self.print_btn else "Drucken deaktiviert",
+            text_color=COLORS["text_primary"] if self.print_btn else COLORS["text_muted"]
         )
 
         # Auto-Return Timer starten

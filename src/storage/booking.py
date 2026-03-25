@@ -38,6 +38,7 @@ class BookingSettings:
     
     # Feature-Flags
     print_singles: bool = True  # Einzelbilder drucken erlaubt
+    print_enabled: bool = True  # Druckfunktion aktiviert (False = "Ohne Druck")
     live_gallery: bool = False  # Live-Galerie-Feature aktiv
     dslr_camera: bool = False  # DSLR statt Webcam
 
@@ -68,6 +69,7 @@ class BookingSettings:
             template_text=template.get("text", ""),
             template_date=template.get("date", ""),
             print_singles=features.get("print_singles", True),
+            print_enabled=features.get("print_enabled", True),
             live_gallery=features.get("live_gallery", False),
             dslr_camera=features.get("dslr_camera", False),
             customer_name=customer.get("name", ""),
@@ -95,6 +97,7 @@ class BookingSettings:
             },
             "features": {
                 "print_singles": self.print_singles,
+                "print_enabled": self.print_enabled,
                 "live_gallery": self.live_gallery,
                 "dslr_camera": self.dslr_camera,
             },
@@ -422,6 +425,10 @@ class BookingManager:
             config["camera_type"] = "canon"
             logger.info(f"   📋 camera_type = canon (DSLR)")
         
+        # Druckfunktion
+        config["print_enabled"] = self._settings.print_enabled
+        logger.info(f"   📋 print_enabled = {self._settings.print_enabled}")
+
         logger.info(f"✅ BookingSettings auf Config angewendet")
         return True
     

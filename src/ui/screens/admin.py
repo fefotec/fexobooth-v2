@@ -1029,7 +1029,8 @@ class AdminDialog(ctk.CTkToplevel):
         self._add_checkbox(scroll, "Performance-Modus", "performance_mode")
         self._add_checkbox(scroll, "Vollbild beim Start", "start_fullscreen")
         self._add_checkbox(scroll, "Fertig-Button ausblenden", "hide_finish_button")
-        
+        self._add_checkbox(scroll, "Drucken aktivieren", "print_enabled")
+
         # Neue PIN
         pin_frame = ctk.CTkFrame(scroll, fg_color="transparent")
         pin_frame.pack(fill="x", pady=(15, 5))
@@ -2151,7 +2152,7 @@ class AdminDialog(ctk.CTkToplevel):
         
         # Checkboxen - alle auslesen und speichern
         checkbox_keys = ["allow_single_mode", "performance_mode", "start_fullscreen", "hide_finish_button",
-                         "template1_enabled", "template2_enabled", "rotate_180", "liveview_template_overlay", "gallery_enabled"]
+                         "print_enabled", "template1_enabled", "template2_enabled", "rotate_180", "liveview_template_overlay", "gallery_enabled"]
         logger.info("Checkbox-Werte:")
         for key in checkbox_keys:
             var = getattr(self, f"check_{key}", None)

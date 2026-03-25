@@ -1770,12 +1770,34 @@ class PhotoboothApp:
 
         def on_complete(success: bool, errors: list):
             logger.info(f"System-Test abgeschlossen: success={success}, errors={errors}")
-            # StartScreen refreshen nach Test
-            if self.current_screen_name == "start" and self.current_screen:
-                if hasattr(self.current_screen, "on_show"):
-                    self.current_screen.on_show()
+
+            if success:
+                # Buchungsmodus-Bestätigung anzeigen
+                print_enabled = self.config.get("print_enabled", True)
+                booking_id = ""
+                if self.booking_manager and self.booking_manager._settings:
+                    booking_id = self.booking_manager._settings.booking_id
+
+                from src.ui.dialogs.print_mode_confirmation import PrintModeConfirmationDialog
+                PrintModeConfirmationDialog(
+                    parent=self.root,
+                    print_enabled=print_enabled,
+                    booking_id=booking_id,
+                    on_confirm=lambda: self._after_print_mode_confirmed()
+                )
+            else:
+                # Bei fehlgeschlagenem Test direkt weiter
+                if self.current_screen_name == "start" and self.current_screen:
+                    if hasattr(self.current_screen, "on_show"):
+                        self.current_screen.on_show()
 
         SystemTestDialog(self.root, self, on_complete=on_complete)
+
+    def _after_print_mode_confirmed(self):
+        """Wird aufgerufen nachdem der Druck-Modus bestätigt wurde."""
+        if self.current_screen_name == "start" and self.current_screen:
+            if hasattr(self.current_screen, "on_show"):
+                self.current_screen.on_show()
 
     def _show_fexosafe_dialog(self, drive: str):
         """Zeigt den FEXOSAFE Backup Dialog"""
