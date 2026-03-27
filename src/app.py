@@ -82,18 +82,24 @@ class PhotoboothApp:
         self.camera_manager = get_camera_manager(camera_type)
         logger.info(f"Kamera-Typ: {camera_type} (Canon verfügbar: {CANON_AVAILABLE})")
 
-        # Webcam: Automatisch beste Kamera wählen (Logitech vor interner Kamera)
+        # Webcam: Automatisch beste EXTERNE Kamera wählen
+        # Interne Tablet-Kameras werden ignoriert (physisch verdeckt)
         if camera_type == "webcam":
             try:
                 from src.camera.webcam import WebcamManager
                 available = WebcamManager.list_cameras()
                 if available:
                     best_idx = WebcamManager.find_best_camera(available)
-                    current_idx = config.get("camera_index", 0)
-                    if best_idx != current_idx:
-                        best_name = next((c["name"] for c in available if c["index"] == best_idx), "?")
-                        logger.info(f"Kamera Auto-Auswahl: [{best_idx}] {best_name} (statt [{current_idx}])")
-                        config["camera_index"] = best_idx
+                    if best_idx >= 0:
+                        current_idx = config.get("camera_index", 0)
+                        if best_idx != current_idx:
+                            best_name = next((c["name"] for c in available if c["index"] == best_idx), "?")
+                            logger.info(f"Kamera Auto-Auswahl: [{best_idx}] {best_name} (statt [{current_idx}])")
+                            config["camera_index"] = best_idx
+                    else:
+                        # Keine externe Kamera → Index auf -1 setzen damit Warnung blinkt
+                        logger.warning("⚠️ Keine externe Kamera gefunden! Interne Kamera wird NICHT verwendet.")
+                        config["camera_index"] = -1
             except Exception as e:
                 logger.debug(f"Kamera Auto-Auswahl fehlgeschlagen: {e}")
         self.usb_manager = get_shared_usb_manager()
@@ -1586,13 +1592,28 @@ class PhotoboothApp:
                                 pass
             else:
                 # Webcam: Prüfen ob Kamera erreichbar ist
-                if self.camera_manager.is_initialized:
+                cam_idx = self.config.get("camera_index", 0)
+                if cam_idx < 0:
+                    # Keine externe Kamera konfiguriert → nochmal suchen
+                    # (Kamera könnte im laufenden Betrieb angesteckt worden sein)
+                    from src.camera.webcam import WebcamManager
+                    available = WebcamManager.list_cameras()
+                    if available:
+                        best_idx = WebcamManager.find_best_camera(available)
+                        if best_idx >= 0:
+                            best_name = next((c["name"] for c in available if c["index"] == best_idx), "?")
+                            logger.info(f"📷 Externe Kamera gefunden: [{best_idx}] {best_name}")
+                            self.config["camera_index"] = best_idx
+                            # Kein problem_text → Warnung verschwindet
+                        else:
+                            problem_text = "KEINE KAMERA!"
+                    else:
+                        problem_text = "KEINE KAMERA!"
+                elif self.camera_manager.is_initialized:
                     pass  # Kamera aktiv → OK
                 else:
                     import cv2
-                    cap = cv2.VideoCapture(
-                        self.config.get("camera_index", 0), cv2.CAP_DSHOW
-                    )
+                    cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW)
                     if cap.isOpened():
                         cap.release()
                     else:

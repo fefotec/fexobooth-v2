@@ -242,36 +242,44 @@ class WebcamManager(CameraManager):
 
     @staticmethod
     def find_best_camera(cameras: list) -> int:
-        """Findet die beste Webcam (externe wie Logitech bevorzugt)
+        """Findet die beste externe Webcam (interne Kameras werden ignoriert!)
+
+        Die interne Tablet-Kamera (z.B. Lenovo Miix 310) ist physisch verdeckt
+        und darf NICHT als Fallback verwendet werden. Wenn keine externe Kamera
+        angeschlossen ist, wird -1 zurückgegeben → Kamera-Warnung blinkt.
 
         Priorisierung:
         1. Logitech Kameras (bekannt gut für Fotoboxen)
-        2. Andere externe USB-Kameras (nicht 'Integrated', nicht 'Internal')
-        3. Erste verfügbare Kamera
+        2. Andere externe USB-Kameras
+        3. -1 (keine brauchbare Kamera) → NICHT auf interne Kamera fallen!
 
         Args:
             cameras: Liste von list_cameras() Ergebnis
 
         Returns:
-            Kamera-Index der besten Kamera, oder 0 als Fallback
+            Kamera-Index der besten externen Kamera, oder -1 wenn keine gefunden
         """
         if not cameras:
-            return 0
+            return -1
+
+        internal_keywords = ["integrated", "internal", "ir camera", "infrarot",
+                             "front camera", "rear camera", "built-in"]
 
         # Priorität 1: Logitech
         for cam in cameras:
-            if "logitech" in cam.get("name", "").lower():
+            name_lower = cam.get("name", "").lower()
+            if "logitech" in name_lower:
                 logger.info(f"Logitech Kamera bevorzugt: [{cam['index']}] {cam['name']}")
                 return cam["index"]
 
-        # Priorität 2: Externe Kamera (nicht intern/integriert)
-        internal_keywords = ["integrated", "internal", "ir camera", "infrarot",
-                             "front camera", "rear camera", "built-in"]
+        # Priorität 2: Andere externe Kamera (nicht intern/integriert)
         for cam in cameras:
             name_lower = cam.get("name", "").lower()
             if not any(kw in name_lower for kw in internal_keywords) and name_lower != f"kamera {cam['index']}":
                 logger.info(f"Externe Kamera bevorzugt: [{cam['index']}] {cam['name']}")
                 return cam["index"]
 
-        # Fallback: Erste Kamera
-        return cameras[0]["index"]
+        # KEIN Fallback auf interne Kamera! Warnung soll blinken.
+        internal_names = [c.get("name", "?") for c in cameras]
+        logger.warning(f"Keine externe Kamera gefunden! Interne Kameras ignoriert: {internal_names}")
+        return -1

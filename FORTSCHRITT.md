@@ -19,6 +19,12 @@ Chronologisches Protokoll aller Änderungen.
   - `_reload_template_from_usb()` — stellt Template bei Stick-Wiedereinstecken sofort wieder her
 - **Betroffen:** `src/app.py`, `src/storage/booking.py`
 
+### Feature: Interne Tablet-Kamera wird ignoriert
+- **Problem:** Die interne Kamera des Lenovo Miix 310 ist physisch verdeckt. Wenn keine externe Kamera angeschlossen war, fiel die App still auf die interne zurück → Kunde merkte nicht, dass die Logitech fehlt
+- **Fix:** `find_best_camera()` gibt jetzt `-1` zurück wenn nur interne Kameras da sind (statt auf `cameras[0]` zu fallen). Der Kamera-Status-Check blinkt "KEINE KAMERA!" wenn `camera_index = -1`
+- **Auto-Erkennung:** Wenn im laufenden Betrieb eine externe Kamera angesteckt wird, wird sie automatisch erkannt und aktiviert (periodischer Re-Scan bei `camera_index = -1`)
+- **Betroffen:** `src/camera/webcam.py`, `src/app.py`
+
 ### Fix: Installer — Cached Template überlebt keine Neuinstallation mehr
 - **Bug:** `[InstallDelete]` löschte nur `{app}\.booking_cache`, aber der tatsächliche Cache liegt im PyInstaller-Build unter `{app}\_internal\.booking_cache\` — alte Templates überlebten Neuinstallationen.
 - **Fix:** `_internal\.booking_cache` zu `[InstallDelete]` und `[UninstallDelete]` hinzugefügt. `.booking_cache` aus `[Dirs]` entfernt (wird erst im Produktionsbetrieb vom Code erstellt).
