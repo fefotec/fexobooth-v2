@@ -163,14 +163,18 @@ class PhotoboothApp:
         # Settings auf Config anwenden (VOR UI-Setup!)
         if self.booking_manager.is_loaded:
             logger.info(f"📂 Buchung aktiv: {self.booking_manager.booking_id}")
-            
+
             # Template in Config eintragen
             if self.booking_manager.apply_cached_template_to_config(self.config):
                 logger.info("📦 Template wird verwendet")
-            
+
             # BookingSettings auf Config anwenden (allow_single_mode, gallery_enabled, etc.)
             self.booking_manager.apply_settings_to_config(self.config)
-        
+
+        # Gecachtes Template VOR UI-Erstellung laden, damit StartScreen sofort
+        # das richtige Template anzeigt (nicht kurz "Standard 2x2" flashen)
+        self._restore_cached_template()
+
         # Log aktuelle Config nach Settings-Anwendung
         logger.info(f"📋 Config nach Settings-Load:")
         logger.info(f"   allow_single_mode = {self.config.get('allow_single_mode', True)}")
@@ -272,6 +276,25 @@ class PhotoboothApp:
                 new_booking_id = self.booking_manager.booking_id
                 logger.info(f"✅ Settings vom USB geladen: {new_booking_id}")
 
+                # USB-Template SOFORT in Memory laden + auf Disk persistieren
+                from src.config.config import find_usb_template
+                usb_template = find_usb_template(include_cache=False)
+                if usb_template:
+                    try:
+                        overlay, boxes = TemplateLoader.load(usb_template, use_cache=True)
+                        if overlay and boxes:
+                            self.cached_usb_template = {
+                                "path": usb_template,
+                                "name": os.path.basename(usb_template),
+                                "overlay": overlay,
+                                "boxes": boxes
+                            }
+                            self._usb_stick_template = self.cached_usb_template
+                            self._persist_template_to_cache(usb_template)
+                            logger.info(f"📦 USB-Template beim Start geladen: {os.path.basename(usb_template)}")
+                    except Exception as e:
+                        logger.warning(f"USB-Template laden beim Start fehlgeschlagen: {e}")
+
                 # Prüfen ob es eine ANDERE Buchung ist als im Cache
                 if old_booking_id and new_booking_id and old_booking_id != new_booking_id:
                     logger.info(f"🔄 Neue Buchung beim Start erkannt: {old_booking_id} → {new_booking_id}")
@@ -282,6 +305,99 @@ class PhotoboothApp:
 
         except Exception as e:
             logger.warning(f"USB-Check beim Start fehlgeschlagen: {e}")
+
+    def _restore_cached_template(self):
+        """Stellt gecachtes Template beim App-Start wieder her.
+
+        Lädt cached_template.zip in self.cached_usb_template, damit der StartScreen
+        sofort das richtige Template anzeigt — ohne den Umweg über on_show().
+        Wird nur aktiv wenn eine Buchung aus dem Cache geladen wurde UND kein
+        USB-Stick eingesteckt ist (sonst kommt das Template direkt vom Stick).
+
+        WICHTIG: Sucht NUR im lokalen Cache, nicht auf USB-Sticks!
+        USB-Templates werden separat über _load_settings_from_usb_immediately geladen.
+        """
+        # Schon geladen (z.B. vom USB beim Start)
+        if self.cached_usb_template:
+            return
+
+        # Keine Buchung → kein gecachtes Template nötig
+        if not self.booking_manager.is_loaded:
+            return
+
+        # NUR lokalen Cache prüfen (nicht USB durchsuchen!)
+        cached_path = self.booking_manager.cached_template_path
+        if not cached_path:
+            logger.debug("Kein gecachtes Template zum Wiederherstellen gefunden")
+            return
+
+        try:
+            overlay, boxes = TemplateLoader.load(str(cached_path), use_cache=True)
+            if overlay and boxes:
+                self.cached_usb_template = {
+                    "path": str(cached_path),
+                    "name": cached_path.name,
+                    "overlay": overlay,
+                    "boxes": boxes
+                }
+                self._usb_stick_template = self.cached_usb_template
+                logger.info(f"📦 Gecachtes Template wiederhergestellt: {cached_path.name} ({len(boxes)} Slots)")
+            else:
+                logger.warning(f"Gecachtes Template konnte nicht geladen werden: {cached_path}")
+        except Exception as e:
+            logger.warning(f"Fehler beim Wiederherstellen des gecachten Templates: {e}")
+
+    def _reload_template_from_usb(self, usb_root: Path):
+        """Lädt Template vom USB-Stick wenn cached_usb_template leer ist.
+
+        Wird aufgerufen wenn der gleiche Stick wieder eingesteckt wird und
+        das Template aus dem Memory verloren ging (z.B. nach Neustart).
+        """
+        from src.config.config import find_usb_template
+
+        usb_template = find_usb_template(include_cache=False)
+        if not usb_template:
+            # Fallback: aus Cache laden
+            cached_path = self.booking_manager.cached_template_path
+            if cached_path:
+                usb_template = str(cached_path)
+            else:
+                return
+
+        try:
+            overlay, boxes = TemplateLoader.load(usb_template, use_cache=True)
+            if overlay and boxes:
+                self.cached_usb_template = {
+                    "path": usb_template,
+                    "name": os.path.basename(usb_template),
+                    "overlay": overlay,
+                    "boxes": boxes
+                }
+                self._usb_stick_template = self.cached_usb_template
+                self._persist_template_to_cache(usb_template)
+                logger.info(f"📦 Template bei Stick-Wiedereinstecken geladen: {os.path.basename(usb_template)}")
+
+                # StartScreen aktualisieren wenn sichtbar
+                if self.current_screen_name == "start" and hasattr(self.current_screen, "on_show"):
+                    self.current_screen.on_show()
+        except Exception as e:
+            logger.warning(f"Template-Reload bei Stick-Wiedereinstecken fehlgeschlagen: {e}")
+
+    def _persist_template_to_cache(self, template_path: str):
+        """Kopiert eine Template-ZIP in den lokalen Cache (.booking_cache/).
+
+        Wird aufgerufen von: _execute_event_change, _load_settings_from_usb_immediately,
+        und on_show im StartScreen. Stellt sicher dass cached_template.zip IMMER
+        existiert wenn ein Template vom USB geladen wurde.
+        """
+        import shutil
+        try:
+            from src.storage.booking import CACHE_DIR, TEMPLATE_CACHE_FILE
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(template_path, TEMPLATE_CACHE_FILE)
+            logger.info(f"📦 Template auf Disk gespeichert: {TEMPLATE_CACHE_FILE}")
+        except Exception as e:
+            logger.warning(f"Template konnte nicht auf Disk gecached werden: {e}")
 
     def _init_default_printer(self):
         """Setzt den Standard-Drucker falls keiner konfiguriert ist"""
@@ -851,6 +967,10 @@ class PhotoboothApp:
                 self._was_usb_available = True
                 # Nur bei gleichem Event synchronisieren (kein neues Event erkannt)
                 if not new_booking:
+                    # Template wiederherstellen wenn es aus dem Memory verloren ging
+                    # (z.B. nach Neustart ohne USB, dann Stick wieder eingesteckt)
+                    if not self.cached_usb_template and self.booking_manager.is_loaded:
+                        self._reload_template_from_usb(usb_root)
                     self._offer_sync_dialog()
         elif not is_available:
             if hasattr(self, '_was_usb_available') and self._was_usb_available:
@@ -1748,7 +1868,7 @@ class PhotoboothApp:
         # 6. Template in Config eintragen
         self.booking_manager.apply_cached_template_to_config(self.config)
 
-        # 7. USB-Template laden (für Systemtest)
+        # 7. USB-Template laden und SOFORT auf Disk persistieren
         from src.config.config import find_usb_template
         usb_template = find_usb_template(include_cache=False)
         if usb_template:
@@ -1765,6 +1885,9 @@ class PhotoboothApp:
                 self.template_boxes = boxes
                 self.overlay_image = overlay
                 logger.info(f"Template geladen: {usb_template} ({len(boxes)} Slots)")
+
+                # Template sofort auf Disk cachen (nicht erst bei on_show warten!)
+                self._persist_template_to_cache(usb_template)
 
         # 8. Neues Statistik-Event
         self._start_statistics_event(usb_root)

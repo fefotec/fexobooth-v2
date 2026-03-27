@@ -81,7 +81,8 @@ Name: "{app}\BILDER"
 Name: "{app}\BILDER\Prints"
 Name: "{app}\BILDER\Single"
 Name: "{app}\logs"
-Name: "{app}\.booking_cache"
+; .booking_cache wird NICHT vorab erstellt — entsteht erst im Produktionsbetrieb
+; wenn ein USB-Stick mit Event-Daten eingesteckt wird
 
 [Icons]
 ; Startmenü-Einträge
@@ -171,12 +172,15 @@ Type: files; Name: "{app}\fexobooth_statistics.json"
 Type: files; Name: "{app}\printer_lifetime.json"
 Type: files; Name: "{app}\_internal\fexobooth_statistics.json"
 Type: files; Name: "{app}\_internal\printer_lifetime.json"
+; Booking-Cache an BEIDEN möglichen Pfaden löschen (App-Root UND PyInstaller _internal)
 Type: filesandordirs; Name: "{app}\.booking_cache"
+Type: filesandordirs; Name: "{app}\_internal\.booking_cache"
 
 [UninstallDelete]
 ; Lösche Log-Dateien bei Deinstallation
 Type: filesandordirs; Name: "{app}\logs"
 Type: filesandordirs; Name: "{app}\.booking_cache"
+Type: filesandordirs; Name: "{app}\_internal\.booking_cache"
 Type: files; Name: "{app}\fexobooth_statistics.json"
 Type: files; Name: "{app}\printer_lifetime.json"
 Type: files; Name: "{app}\_internal\fexobooth_statistics.json"

@@ -341,20 +341,30 @@ class BookingManager:
             return False
     
     def _cache_template_from_usb(self, usb_root: Path) -> bool:
-        """Sucht und cached Template-ZIP vom USB"""
-        # Mögliche Template-Pfade
-        template_paths = [
-            usb_root / "template.zip",
-            usb_root / "Template.zip",
-            usb_root / "TEMPLATE.zip",
-        ]
-        
-        for path in template_paths:
-            if path.exists():
-                return self._cache_template(path)
-        
-        logger.debug("Kein Template-ZIP auf USB gefunden")
-        return False
+        """Sucht und cached Template-ZIP vom USB.
+
+        Sucht nach JEDER gültigen Template-ZIP im Root des USB-Sticks,
+        nicht nur nach 'template.zip'. Verwendet die gleiche Validierung
+        wie find_usb_template() in config.py.
+        """
+        try:
+            zip_files = list(usb_root.glob("*.zip"))
+            if not zip_files:
+                logger.debug("Keine ZIP-Dateien auf USB gefunden")
+                return False
+
+            from src.config.config import _is_valid_template_zip
+
+            for zip_path in zip_files:
+                if _is_valid_template_zip(str(zip_path)):
+                    return self._cache_template(zip_path)
+
+            logger.debug("Keine gültige Template-ZIP auf USB gefunden")
+            return False
+
+        except Exception as e:
+            logger.warning(f"Template-Suche auf USB fehlgeschlagen: {e}")
+            return False
     
     def get_template_path_for_config(self) -> Optional[str]:
         """Gibt den Pfad zum Template zurück (Cache oder USB)

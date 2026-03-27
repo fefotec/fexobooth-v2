@@ -4,6 +4,28 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-03-27
+
+### Bugfix: Template-Persistenz nach Neustart ohne USB-Stick (Regression)
+- **Bug:** Nach App-Neustart ohne USB-Stick wurde das Default-Template angezeigt statt dem gecachten Template der letzten Buchung. Mehrere Ursachen:
+  1. `cached_usb_template` wurde beim App-Start nie aus dem Cache geladen (erst in `on_show()`)
+  2. `_cache_template_from_usb` im BookingManager suchte nur nach Dateien namens `template.zip` — alle anderen ZIP-Namen wurden ignoriert
+  3. `_execute_event_change` setzte `_usb_stick_template` VOR `on_show()` → `on_show()` erkannte das Template als "unverändert" und übersprang `_persist_template_to_disk`
+  4. Beim Wiedereinstecken des gleichen Sticks wurde das Template nicht in Memory restauriert
+- **Fixes:**
+  - `_restore_cached_template()` — lädt `cached_template.zip` VOR UI-Erstellung
+  - `_cache_template_from_usb()` — sucht jetzt JEDE gültige Template-ZIP (nicht nur `template.zip`)
+  - `_persist_template_to_cache()` — zentrale Methode, wird in `_execute_event_change` und `_load_settings_from_usb_immediately` aufgerufen
+  - `_reload_template_from_usb()` — stellt Template bei Stick-Wiedereinstecken sofort wieder her
+- **Betroffen:** `src/app.py`, `src/storage/booking.py`
+
+### Fix: Installer — Cached Template überlebt keine Neuinstallation mehr
+- **Bug:** `[InstallDelete]` löschte nur `{app}\.booking_cache`, aber der tatsächliche Cache liegt im PyInstaller-Build unter `{app}\_internal\.booking_cache\` — alte Templates überlebten Neuinstallationen.
+- **Fix:** `_internal\.booking_cache` zu `[InstallDelete]` und `[UninstallDelete]` hinzugefügt. `.booking_cache` aus `[Dirs]` entfernt (wird erst im Produktionsbetrieb vom Code erstellt).
+- **Betroffen:** `installer.iss`
+
+---
+
 ## 2026-03-26
 
 ### Bugfix: Installer löscht jetzt Statistiken und Druckerzähler bei Neuinstallation
