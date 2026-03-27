@@ -263,7 +263,7 @@ class WebcamManager(CameraManager):
             return -1
 
         internal_keywords = ["integrated", "internal", "ir camera", "infrarot",
-                             "front camera", "rear camera", "built-in"]
+                             "front camera", "rear camera", "built-in", "avstream"]
 
         # Priorität 1: Logitech
         for cam in cameras:

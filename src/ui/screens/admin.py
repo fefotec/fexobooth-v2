@@ -1657,15 +1657,27 @@ class AdminDialog(ctk.CTkToplevel):
                 logger.warning(f"Canon Kamera-Suche Fehler: {e}")
         else:
             # Webcams via OpenCV + echte Gerätenamen
+            # Interne Kameras und Ghost-Einträge werden ausgefiltert
             try:
                 from src.camera.webcam import WebcamManager
                 webcams = WebcamManager.list_cameras()
+                internal_keywords = ["integrated", "internal", "ir camera", "infrarot",
+                                     "front camera", "rear camera", "built-in", "avstream"]
                 for cam in webcams:
-                    name = cam.get("name", f"Kamera {cam['index']}")
+                    name = cam.get("name", "")
+                    name_lower = name.lower()
+                    # Interne Kameras ausblenden
+                    if any(kw in name_lower for kw in internal_keywords):
+                        logger.debug(f"Kamera gefiltert (intern): [{cam['index']}] {name}")
+                        continue
+                    # Ghost-Einträge ausblenden (kein WMI-Name → "Kamera N")
+                    if name_lower == f"kamera {cam['index']}":
+                        logger.debug(f"Kamera gefiltert (Ghost): [{cam['index']}] {name}")
+                        continue
                     w = cam.get("width", 0)
                     h = cam.get("height", 0)
                     cameras.append(f"[{cam['index']}] {name} ({w}x{h})")
-                logger.info(f"Webcams gefunden: {len(webcams)}")
+                logger.info(f"Webcams gefunden: {len(webcams)} gesamt, {len(cameras)} extern")
             except Exception as e:
                 logger.warning(f"Webcam-Suche Fehler: {e}")
 
