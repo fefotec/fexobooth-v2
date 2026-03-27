@@ -81,6 +81,21 @@ class PhotoboothApp:
         camera_type = config.get("camera_type", "webcam")
         self.camera_manager = get_camera_manager(camera_type)
         logger.info(f"Kamera-Typ: {camera_type} (Canon verfügbar: {CANON_AVAILABLE})")
+
+        # Webcam: Automatisch beste Kamera wählen (Logitech vor interner Kamera)
+        if camera_type == "webcam":
+            try:
+                from src.camera.webcam import WebcamManager
+                available = WebcamManager.list_cameras()
+                if available:
+                    best_idx = WebcamManager.find_best_camera(available)
+                    current_idx = config.get("camera_index", 0)
+                    if best_idx != current_idx:
+                        best_name = next((c["name"] for c in available if c["index"] == best_idx), "?")
+                        logger.info(f"Kamera Auto-Auswahl: [{best_idx}] {best_name} (statt [{current_idx}])")
+                        config["camera_index"] = best_idx
+            except Exception as e:
+                logger.debug(f"Kamera Auto-Auswahl fehlgeschlagen: {e}")
         self.usb_manager = get_shared_usb_manager()
         self.booking_manager = get_booking_manager()
         self.statistics = get_statistics_manager()
@@ -776,6 +791,7 @@ class PhotoboothApp:
             pady=5
         )
         self.power_status.pack(side="right", padx=3)
+        self._power_blink_state = False
 
         return bar
     
@@ -1491,7 +1507,7 @@ class PhotoboothApp:
             self.root.after(15000, self._check_camera_status)
 
     def _check_power_status(self):
-        """Prüft Stromversorgung - Grün=Netzbetrieb, Orange=Akku"""
+        """Prüft Stromversorgung - Grün=Netzbetrieb, BLINKEND=kein Strom"""
         try:
             import ctypes
 
@@ -1508,28 +1524,35 @@ class PhotoboothApp:
             status = SYSTEM_POWER_STATUS()
             ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(status))
 
-            percent = status.BatteryLifePercent
             on_ac = status.ACLineStatus == 1
 
             if on_ac:
+                self._power_blink_state = False
                 self.power_status.configure(
                     text="⚡",
                     text_color=COLORS["success"],
                     fg_color=COLORS["bg_light"]
                 )
+                self.root.after(10000, self._check_power_status)
             else:
-                # Akku-Modus: Prozent anzeigen
-                pct_text = f" {percent}%" if 0 <= percent <= 100 else ""
-                self.power_status.configure(
-                    text=f"⚡{pct_text}",
-                    text_color="#ff8c00",  # Orange
-                    fg_color=COLORS["bg_light"]
-                )
-        except Exception:
-            pass  # Kein Akku-Info verfügbar (Desktop-PC etc.)
+                # Kein Strom: Blinkend rot/gelb
+                self._power_blink_state = not self._power_blink_state
+                if self._power_blink_state:
+                    self.power_status.configure(
+                        text="⚡",
+                        text_color="#ffffff",
+                        fg_color="#ff0000"
+                    )
+                else:
+                    self.power_status.configure(
+                        text="⚡",
+                        text_color="#000000",
+                        fg_color="#ffcc00"
+                    )
+                self.root.after(1500, self._check_power_status)
 
-        # Alle 10 Sekunden prüfen (Stromstatus ändert sich selten)
-        self.root.after(10000, self._check_power_status)
+        except Exception:
+            self.root.after(30000, self._check_power_status)
 
     def show_screen(self, screen_name: str, **kwargs):
         """Wechselt zu einem Screen"""

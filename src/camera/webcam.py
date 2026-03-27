@@ -186,18 +186,92 @@ class WebcamManager(CameraManager):
         return self._is_initialized
     
     @staticmethod
+    def _get_device_names() -> list:
+        """Ermittelt echte Webcam-Gerätenamen via WMI (Windows)
+
+        Returns:
+            Liste von Gerätenamen in der Reihenfolge wie sie im System registriert sind.
+            Leere Liste wenn Abfrage fehlschlägt.
+        """
+        try:
+            import subprocess
+            # PnP-Geräte der Klassen Camera und Image abfragen
+            result = subprocess.run(
+                ['powershell', '-NoProfile', '-Command',
+                 'Get-PnpDevice -Class Camera,Image -Status OK '
+                 '| Sort-Object InstanceId '
+                 '| Select-Object -ExpandProperty FriendlyName'],
+                capture_output=True, text=True, timeout=5,
+                creationflags=0x08000000  # CREATE_NO_WINDOW
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                names = [n.strip() for n in result.stdout.strip().split('\n') if n.strip()]
+                logger.debug(f"WMI Kamera-Namen: {names}")
+                return names
+        except Exception as e:
+            logger.debug(f"WMI Kamera-Abfrage fehlgeschlagen: {e}")
+        return []
+
+    @staticmethod
     def list_cameras(max_cameras: int = 5) -> list:
-        """Listet verfügbare Kameras auf"""
+        """Listet verfügbare Kameras mit echten Gerätenamen auf"""
+        # Echte Gerätenamen holen (Best-Effort)
+        device_names = WebcamManager._get_device_names()
+
         cameras = []
-        
         for i in range(max_cameras):
             cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
             if cap.isOpened():
+                w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                cap.release()
+
+                # Name zuordnen: WMI-Liste matcht üblicherweise die DirectShow-Reihenfolge
+                name = device_names[len(cameras)] if len(cameras) < len(device_names) else ""
+                if not name:
+                    name = f"Kamera {i}"
+
                 cameras.append({
                     "index": i,
-                    "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                    "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    "name": name,
+                    "width": w,
+                    "height": h
                 })
-                cap.release()
-        
+
         return cameras
+
+    @staticmethod
+    def find_best_camera(cameras: list) -> int:
+        """Findet die beste Webcam (externe wie Logitech bevorzugt)
+
+        Priorisierung:
+        1. Logitech Kameras (bekannt gut für Fotoboxen)
+        2. Andere externe USB-Kameras (nicht 'Integrated', nicht 'Internal')
+        3. Erste verfügbare Kamera
+
+        Args:
+            cameras: Liste von list_cameras() Ergebnis
+
+        Returns:
+            Kamera-Index der besten Kamera, oder 0 als Fallback
+        """
+        if not cameras:
+            return 0
+
+        # Priorität 1: Logitech
+        for cam in cameras:
+            if "logitech" in cam.get("name", "").lower():
+                logger.info(f"Logitech Kamera bevorzugt: [{cam['index']}] {cam['name']}")
+                return cam["index"]
+
+        # Priorität 2: Externe Kamera (nicht intern/integriert)
+        internal_keywords = ["integrated", "internal", "ir camera", "infrarot",
+                             "front camera", "rear camera", "built-in"]
+        for cam in cameras:
+            name_lower = cam.get("name", "").lower()
+            if not any(kw in name_lower for kw in internal_keywords) and name_lower != f"kamera {cam['index']}":
+                logger.info(f"Externe Kamera bevorzugt: [{cam['index']}] {cam['name']}")
+                return cam["index"]
+
+        # Fallback: Erste Kamera
+        return cameras[0]["index"]

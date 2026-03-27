@@ -2,7 +2,7 @@
 ; Erstellt einen professionellen Windows-Installer
 
 #define MyAppName "FexoBooth"
-#define MyAppVersion "2.0"
+#define MyAppVersion "2.1"
 #define MyAppPublisher "FexoBox"
 #define MyAppURL "https://github.com/fefotec/fexobooth-v2"
 #define MyAppExeName "FexoBooth.exe"
@@ -165,7 +165,19 @@ begin
   end;
 end;
 
+[InstallDelete]
+; Bei Neuinstallation: Statistiken und Druckerzähler zurücksetzen (sauberer Start)
+Type: files; Name: "{app}\fexobooth_statistics.json"
+Type: files; Name: "{app}\printer_lifetime.json"
+Type: files; Name: "{app}\_internal\fexobooth_statistics.json"
+Type: files; Name: "{app}\_internal\printer_lifetime.json"
+Type: filesandordirs; Name: "{app}\.booking_cache"
+
 [UninstallDelete]
 ; Lösche Log-Dateien bei Deinstallation
 Type: filesandordirs; Name: "{app}\logs"
 Type: filesandordirs; Name: "{app}\.booking_cache"
+Type: files; Name: "{app}\fexobooth_statistics.json"
+Type: files; Name: "{app}\printer_lifetime.json"
+Type: files; Name: "{app}\_internal\fexobooth_statistics.json"
+Type: files; Name: "{app}\_internal\printer_lifetime.json"

@@ -4,6 +4,47 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-03-26
+
+### Bugfix: Installer löscht jetzt Statistiken und Druckerzähler bei Neuinstallation
+- **Bug:** Bei Neuinstallation via .exe blieben alte `fexobooth_statistics.json` und `printer_lifetime.json` bestehen → Events und Druckerzähler nicht bei 0
+- **Fix:** `[InstallDelete]` Sektion in `installer.iss` ergänzt — löscht Statistik- und Lifetime-Dateien sowohl im App-Root als auch in `_internal/` vor der Installation. Auch `[UninstallDelete]` um diese Dateien erweitert
+- **Betroffen:** `installer.iss`
+
+### Bugfix: PIN-Eingabe für Drucker-Zähler-Reset funktioniert jetzt
+- **Bug:** Der PIN-Dialog zum Zurücksetzen des Druckerzählers im Admin-Panel hatte keinen Numpad → auf dem Tablet ohne physische Tastatur war keine Eingabe möglich
+- **Fix:** Virtuellen Numpad (0-9, ⌫, ✓) zum Reset-Dialog hinzugefügt, identisch zum Haupt-PIN-Dialog. Auto-Submit bei 4 Zeichen, Tastatur-Support über KeyRelease
+- **Betroffen:** `src/ui/screens/admin.py` (`_reset_printer_lifetime`)
+
+### Feature: Testdruck-Button im Admin-Panel
+- **Neu:** Im Druck-Tab gibt es jetzt einen "Testdruck starten" Button
+- **Funktion:** Lädt das aktuelle Template, erzeugt farbige Platzhalter-Bilder mit "TEST 1/2/3..." Text, rendert das Template und druckt es über GDI — ohne dass vorher Fotos gemacht werden müssen
+- **Fallback:** Wenn kein Template konfiguriert ist, wird das Default-Template verwendet
+- **Betroffen:** `src/ui/screens/admin.py` (`_create_print_tab`, `_execute_test_print`)
+
+### Fix: NOCHMAL-Button vom Final-Screen entfernt
+- **Bug:** Auf dem Druck-Screen konnte man "NOCHMAL" drücken und kam zurück zum Start — unerwünscht
+- **Fix:** Button und `_on_redo()` Methode komplett entfernt. User kann nur noch drucken oder warten bis Auto-Return
+- **Betroffen:** `src/ui/screens/final.py`
+
+### Feature: Strom-Symbol blinkt wenn kein Netzteil angeschlossen
+- **Vorher:** Bei Akkubetrieb wurde nur ein oranges ⚡-Symbol angezeigt — leicht zu übersehen
+- **Nachher:** Ohne Strom blinkt ⚡ rot/gelb abwechselnd (1,5s). Mit Strom einfach grüner Blitz
+- **Betroffen:** `src/app.py` (`_check_power_status`)
+
+### Feature: Echte Kamera-Gerätenamen + Logitech-Priorisierung
+- **Vorher:** Kamera-Dropdown zeigte nur "Webcam 0", "Webcam 1" etc. — kein Unterschied zwischen Logitech und interner Kamera erkennbar
+- **Nachher:** Echte Gerätenamen via WMI/PowerShell (z.B. "Logitech C920", "Integrated Webcam") mit Auflösung
+- **Auto-Auswahl:** Beim App-Start wird automatisch die beste Kamera gewählt: Logitech > externe USB-Kamera > interne Kamera. Nur wenn camera_type "webcam" ist (nicht bei DSLR)
+- **Betroffen:** `src/camera/webcam.py` (`_get_device_names`, `list_cameras`, `find_best_camera`), `src/ui/screens/admin.py` (`_get_available_cameras`), `src/app.py` (Startup)
+
+### Fix: Druck-Zoom jetzt zentriert statt oben-links
+- **Bug:** Beim Erhöhen des Zoom-Werts dehnte sich das Druckbild nur nach rechts und unten aus → manuelles Nachkorrigieren mit Offset X/Y nötig
+- **Fix:** Zoom-Offset wird jetzt automatisch so berechnet, dass sich das Bild gleichmäßig nach allen Seiten ausdehnt (zentrierter Zoom). Der manuelle Offset wirkt zusätzlich zur Zentrierung
+- **Betroffen:** `src/ui/screens/final.py` (`_print_image`), `src/ui/dialogs/system_test.py` (`_print_via_gdi`), `src/ui/screens/admin.py` (Testdruck)
+
+---
+
 ## 2026-03-18
 
 ### USB-Sync Dialog: Kommt jetzt zuverlässig bei Stick-Wiedereinstecken

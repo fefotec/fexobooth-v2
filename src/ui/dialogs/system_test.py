@@ -505,6 +505,13 @@ class SystemTestDialog(ctk.CTkToplevel):
             top = (new_h - base_height) // 2
             img = img.crop((0, top, base_width, top + base_height))
 
+        # Zoom zentriert: Offset so berechnen, dass sich das Bild
+        # gleichmäßig nach allen Seiten ausdehnt statt nur nach rechts-unten
+        center_offset_x = -int((1772 * (zoom - 1)) / 2)
+        center_offset_y = -int((1181 * (zoom - 1)) / 2)
+        draw_x = offset_x + center_offset_x
+        draw_y = offset_y + center_offset_y
+
         try:
             hDC = win32ui.CreateDC()
             hDC.CreatePrinterDC(printer_name)
@@ -514,7 +521,7 @@ class SystemTestDialog(ctk.CTkToplevel):
             dib = ImageWin.Dib(img)
             dib.draw(
                 hDC.GetHandleOutput(),
-                (offset_x, offset_y, offset_x + base_width, offset_y + base_height)
+                (draw_x, draw_y, draw_x + base_width, draw_y + base_height)
             )
 
             hDC.EndPage()

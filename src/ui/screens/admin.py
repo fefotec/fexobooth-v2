@@ -1215,8 +1215,222 @@ class AdminDialog(ctk.CTkToplevel):
         ).pack(padx=15, anchor="w")
 
         ctk.CTkLabel(preview_frame, text="").pack(pady=3)  # Spacer
-    
-    def _create_print_slider(self, parent, label: str, value: int, 
+
+        # Testdruck-Button
+        test_frame = ctk.CTkFrame(scroll, fg_color=COLORS["bg_card"], corner_radius=10)
+        test_frame.pack(fill="x", pady=10)
+
+        ctk.CTkLabel(
+            test_frame,
+            text="🧪 Testdruck",
+            font=FONTS["body_bold"],
+            text_color=COLORS["text_primary"]
+        ).pack(pady=(10, 5))
+
+        ctk.CTkLabel(
+            test_frame,
+            text="Druckt das aktuelle Template mit Platzhalter-Bildern.\nBenötigt keine Fotos.",
+            font=FONTS["tiny"],
+            text_color=COLORS["text_muted"],
+            justify="center"
+        ).pack(pady=(0, 8))
+
+        self._test_print_status = ctk.CTkLabel(
+            test_frame, text="", font=FONTS["tiny"], text_color=COLORS["text_muted"]
+        )
+        self._test_print_status.pack()
+
+        ctk.CTkButton(
+            test_frame,
+            text="Testdruck starten",
+            font=FONTS["button"],
+            width=200,
+            height=40,
+            fg_color=COLORS["primary"],
+            hover_color=COLORS["primary_hover"],
+            corner_radius=SIZES["corner_radius"],
+            command=self._execute_test_print
+        ).pack(pady=(5, 12))
+
+    def _execute_test_print(self):
+        """Führt einen Testdruck mit Platzhalter-Bildern aus"""
+        self._test_print_status.configure(
+            text="Testdruck wird vorbereitet...", text_color=COLORS["info"]
+        )
+        self.update_idletasks()
+
+        def do_print():
+            try:
+                from PIL import Image, ImageDraw, ImageFont
+                from src.templates.renderer import TemplateRenderer
+                from src.templates.loader import TemplateLoader
+                import tempfile
+                from pathlib import Path
+
+                # Template laden (aktives Template oder Default)
+                app = self.parent_window._photobooth_app if hasattr(self.parent_window, '_photobooth_app') else None
+                template_path = None
+                overlay = None
+                boxes = []
+
+                # 1. Aktives Template aus der App
+                if app and hasattr(app, 'template_path') and app.template_path:
+                    template_path = app.template_path
+                # 2. Config-Template
+                if not template_path:
+                    paths = self.config_data.get("template_paths", {})
+                    template_path = paths.get("template1", "")
+
+                if template_path and os.path.isfile(template_path):
+                    overlay, boxes = TemplateLoader.load(template_path, use_cache=False)
+
+                if not boxes:
+                    # Fallback: Default-Template
+                    from src.templates.default import get_default_template_path
+                    default_path = get_default_template_path()
+                    if default_path:
+                        overlay, boxes = TemplateLoader.load(default_path, use_cache=False)
+
+                if not boxes:
+                    self.after(0, lambda: self._test_print_status.configure(
+                        text="Kein Template gefunden!", text_color=COLORS["error"]
+                    ))
+                    return
+
+                # Platzhalter-Bilder erzeugen (grau mit "TEST" Text)
+                test_photos = []
+                colors = ["#4a90d9", "#d94a4a", "#4ad98a", "#d9c74a", "#9b4ad9", "#d97a4a"]
+                for i in range(len(boxes)):
+                    box = boxes[i]["box"]
+                    w = box[2] - box[0]
+                    h = box[3] - box[1]
+                    img = Image.new("RGB", (w, h), colors[i % len(colors)])
+                    draw = ImageDraw.Draw(img)
+                    # "TEST" Text zentriert zeichnen
+                    text = f"TEST {i+1}"
+                    try:
+                        font = ImageFont.truetype("segoeui.ttf", max(30, h // 6))
+                    except Exception:
+                        font = ImageFont.load_default()
+                    bbox = draw.textbbox((0, 0), text, font=font)
+                    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                    draw.text(((w - tw) // 2, (h - th) // 2), text, fill="white", font=font)
+                    test_photos.append(img)
+
+                # Template rendern
+                renderer = TemplateRenderer()
+                result = renderer.render(test_photos, boxes, overlay)
+
+                # Temporär speichern
+                temp_path = Path(tempfile.gettempdir()) / "fexobooth_testprint.jpg"
+                result_rgb = result.convert("RGB")
+                result_rgb.save(str(temp_path), "JPEG", quality=95)
+
+                self.after(0, lambda: self._test_print_status.configure(
+                    text="Wird gedruckt...", text_color=COLORS["info"]
+                ))
+
+                # GDI-Druck (gleiche Logik wie final.py)
+                import win32print
+                import win32ui
+                from PIL import ImageWin
+
+                # Drucker-Name: aktueller Wert aus Dropdown
+                printer_name = self.printer_dropdown.get() if hasattr(self, 'printer_dropdown') else ""
+                if printer_name.startswith("⭐ "):
+                    printer_name = printer_name[2:].replace(" (Standard)", "")
+                if not printer_name:
+                    printer_name = win32print.GetDefaultPrinter()
+
+                available = [p[2] for p in win32print.EnumPrinters(
+                    win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
+                )]
+                if printer_name not in available:
+                    self.after(0, lambda: self._test_print_status.configure(
+                        text=f"Drucker '{printer_name}' nicht gefunden!",
+                        text_color=COLORS["error"]
+                    ))
+                    return
+
+                adjustment = self.config_data.get("print_adjustment", {})
+                offset_x = adjustment.get("offset_x", 0)
+                offset_y = adjustment.get("offset_y", 0)
+                zoom = adjustment.get("zoom", 100) / 100
+
+                img = Image.open(temp_path)
+                base_width = int(1772 * zoom)
+                base_height = int(1181 * zoom)
+
+                img_ratio = img.width / img.height
+                target_ratio = base_width / base_height
+                if img_ratio > target_ratio:
+                    new_h = base_height
+                    new_w = int(new_h * img_ratio)
+                    img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                    left = (new_w - base_width) // 2
+                    img = img.crop((left, 0, left + base_width, base_height))
+                else:
+                    new_w = base_width
+                    new_h = int(new_w / img_ratio)
+                    img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                    top = (new_h - base_height) // 2
+                    img = img.crop((0, top, base_width, top + base_height))
+
+                # Zoom zentriert
+                center_offset_x = -int((1772 * (zoom - 1)) / 2)
+                center_offset_y = -int((1181 * (zoom - 1)) / 2)
+                draw_x = offset_x + center_offset_x
+                draw_y = offset_y + center_offset_y
+
+                hDC = win32ui.CreateDC()
+                hDC.CreatePrinterDC(printer_name)
+                hDC.StartDoc("Fexobooth Testdruck")
+                hDC.StartPage()
+                dib = ImageWin.Dib(img)
+                dib.draw(hDC.GetHandleOutput(),
+                         (draw_x, draw_y, draw_x + base_width, draw_y + base_height))
+                hDC.EndPage()
+                hDC.EndDoc()
+                hDC.DeleteDC()
+
+                # Aufräumen
+                try:
+                    temp_path.unlink()
+                except Exception:
+                    pass
+
+                # Lifetime-Zähler hochzählen
+                from src.storage.printer_lifetime import get_printer_lifetime
+                get_printer_lifetime().increment()
+
+                self.after(0, lambda: self._test_print_status.configure(
+                    text=f"Testdruck gesendet an '{printer_name}'",
+                    text_color=COLORS["success"]
+                ))
+                logger.info(f"Testdruck gesendet an '{printer_name}'")
+
+            except ImportError as e:
+                self.after(0, lambda: self._test_print_status.configure(
+                    text="Druck nur unter Windows verfügbar",
+                    text_color=COLORS["warning"]
+                ))
+            except Exception as e:
+                logger.error(f"Testdruck Fehler: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                msg = str(e)
+                if "1801" in msg:
+                    msg = "Drucker nicht erreichbar!"
+                elif "offline" in msg.lower():
+                    msg = "Drucker ist offline!"
+                self.after(0, lambda m=msg: self._test_print_status.configure(
+                    text=f"Fehler: {m}", text_color=COLORS["error"]
+                ))
+
+        thread = threading.Thread(target=do_print, daemon=True)
+        thread.start()
+
+    def _create_print_slider(self, parent, label: str, value: int,
                               min_val: int, max_val: int, suffix: str) -> ctk.CTkSlider:
         """Slider für Druck-Einstellungen mit Wertanzeige"""
         frame = ctk.CTkFrame(parent, fg_color="transparent")
@@ -1421,16 +1635,16 @@ class AdminDialog(ctk.CTkToplevel):
         ).pack(pady=(5, 10))
 
     def _get_available_cameras(self) -> List[str]:
-        """Ermittelt verfügbare Kameras mit Namen"""
+        """Ermittelt verfügbare Kameras mit echten Gerätenamen"""
         cameras = []
-        
+
         # Prüfen welcher Kamera-Typ ausgewählt ist
         camera_type = "webcam"
         if hasattr(self, 'camera_type_dropdown'):
             camera_type = self.camera_type_dropdown.get()
         else:
             camera_type = self.config_data.get("camera_type", "webcam")
-        
+
         if camera_type == "canon":
             # Canon Kameras via EDSDK
             try:
@@ -1442,23 +1656,22 @@ class AdminDialog(ctk.CTkToplevel):
             except Exception as e:
                 logger.warning(f"Canon Kamera-Suche Fehler: {e}")
         else:
-            # Webcams via OpenCV
+            # Webcams via OpenCV + echte Gerätenamen
             try:
-                import cv2
-                for i in range(5):
-                    cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
-                    if cap.isOpened():
-                        # Standard-Auflösung anzeigen (wird für Preview verwendet)
-                        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                        cameras.append(f"[{i}] Webcam {i}")
-                        cap.release()
+                from src.camera.webcam import WebcamManager
+                webcams = WebcamManager.list_cameras()
+                for cam in webcams:
+                    name = cam.get("name", f"Kamera {cam['index']}")
+                    w = cam.get("width", 0)
+                    h = cam.get("height", 0)
+                    cameras.append(f"[{cam['index']}] {name} ({w}x{h})")
+                logger.info(f"Webcams gefunden: {len(webcams)}")
             except Exception as e:
                 logger.warning(f"Webcam-Suche Fehler: {e}")
-        
+
         if not cameras:
             cameras = ["[0] Standard-Kamera"]
-        
+
         return cameras
     
     def _on_camera_type_change(self, choice):
@@ -2022,7 +2235,7 @@ class AdminDialog(ctk.CTkToplevel):
         dialog.configure(fg_color=COLORS["bg_dark"])
         dialog.transient(self)
 
-        dialog_w, dialog_h = 340, 220
+        dialog_w, dialog_h = 340, 420
         screen_w = self.winfo_screenwidth()
         screen_h = self.winfo_screenheight()
         x = (screen_w - dialog_w) // 2
@@ -2055,7 +2268,7 @@ class AdminDialog(ctk.CTkToplevel):
             fg_color=COLORS["bg_dark"], border_color=COLORS["border_light"],
             corner_radius=SIZES["corner_radius"]
         )
-        pin_entry.pack(pady=(0, 5))
+        pin_entry.pack(pady=(0, 3))
         pin_entry.focus()
 
         error_label = ctk.CTkLabel(
@@ -2079,22 +2292,58 @@ class AdminDialog(ctk.CTkToplevel):
                 pin_entry.configure(border_color=COLORS["error"])
                 dialog.after(600, lambda: pin_entry.configure(border_color=COLORS["border_light"]))
 
+        def numpad_press(key):
+            if key == "⌫":
+                current = pin_entry.get()
+                pin_entry.delete(0, "end")
+                pin_entry.insert(0, current[:-1])
+            elif key == "✓":
+                do_reset()
+            else:
+                pin_entry.insert("end", key)
+                if len(pin_entry.get()) >= 4:
+                    dialog.after(100, do_reset)
+
         pin_entry.bind("<Return>", lambda e: do_reset())
+        pin_entry.bind("<KeyRelease>", lambda e: do_reset() if len(pin_entry.get()) >= 4 else None)
 
-        btn_frame = ctk.CTkFrame(content, fg_color="transparent")
-        btn_frame.pack(pady=(5, 15))
+        # Numpad für Touch-Eingabe (wie beim Haupt-PIN-Dialog)
+        btn_size = 56
+        btn_font_size = 18
+        btn_pad = 3
 
+        numpad_frame = ctk.CTkFrame(content, fg_color="transparent")
+        numpad_frame.pack(pady=6)
+
+        buttons = [
+            ["1", "2", "3"],
+            ["4", "5", "6"],
+            ["7", "8", "9"],
+            ["⌫", "0", "✓"]
+        ]
+
+        for row in buttons:
+            row_frame = ctk.CTkFrame(numpad_frame, fg_color="transparent")
+            row_frame.pack()
+            for num in row:
+                btn = ctk.CTkButton(
+                    row_frame, text=num,
+                    width=btn_size, height=btn_size,
+                    font=("Segoe UI", btn_font_size),
+                    fg_color=COLORS["bg_light"] if num.isdigit() else COLORS["bg_card"],
+                    hover_color=COLORS["bg_card"] if num.isdigit() else COLORS["primary_dark"],
+                    corner_radius=SIZES["corner_radius_small"],
+                    command=lambda n=num: numpad_press(n)
+                )
+                btn.pack(side="left", padx=btn_pad, pady=btn_pad)
+
+        # Abbrechen-Button
         ctk.CTkButton(
-            btn_frame, text="Abbrechen", width=100, height=32,
-            font=FONTS["small"], fg_color=COLORS["bg_light"],
-            hover_color=COLORS["bg_card"], command=dialog.destroy
-        ).pack(side="left", padx=5)
-
-        ctk.CTkButton(
-            btn_frame, text="Reset", width=100, height=32,
-            font=FONTS["small"], fg_color=COLORS["error"],
-            hover_color="#ff5555", command=do_reset
-        ).pack(side="left", padx=5)
+            content, text="Abbrechen",
+            font=FONTS["small"], width=120, height=30,
+            fg_color="transparent", hover_color=COLORS["bg_light"],
+            text_color=COLORS["text_muted"], command=dialog.destroy
+        ).pack(pady=(6, 12))
 
     def _show_message(self, text: str):
         """Zeigt eine kurze Nachricht"""

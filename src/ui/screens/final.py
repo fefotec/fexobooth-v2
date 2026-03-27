@@ -72,21 +72,6 @@ class FinalScreen(ctk.CTkFrame):
         btn_frame = ctk.CTkFrame(bar_inner, fg_color="transparent")
         btn_frame.pack(side="bottom", fill="x", pady=(0, 2))
 
-        # NOCHMAL Button (links)
-        self.redo_btn = ctk.CTkButton(
-            btn_frame,
-            text=self.config.get("ui_texts", {}).get("redo", "NOCHMAL"),
-            font=("Segoe UI", 18, "bold"),
-            width=160,
-            height=50,
-            fg_color=COLORS["bg_light"],
-            hover_color=COLORS["bg_card"],
-            text_color=COLORS["text_primary"],
-            corner_radius=12,
-            command=self._on_redo
-        )
-        self.redo_btn.pack(side="left", padx=(10, 0))
-
         # DRUCKEN Button (mitte, prominent) - nur wenn Drucken aktiviert
         if self.config.get("print_enabled", True):
             self.print_btn = ctk.CTkButton(
@@ -172,13 +157,6 @@ class FinalScreen(ctk.CTkFrame):
         )
 
         self.after(100, self._update_countdown)
-
-    def _on_redo(self):
-        """Nochmal gedrückt - neue Session"""
-        logger.info("Redo - neue Session")
-        self.is_active = False
-        self.app.reset_session()
-        self.app.play_video("video_end", "start")
 
     def _on_print(self):
         """Drucken gedrückt"""
@@ -378,7 +356,15 @@ class FinalScreen(ctk.CTkFrame):
                 top = (new_h - base_height) // 2
                 img = img.crop((0, top, base_width, top + base_height))
 
-            logger.info(f"Bild skaliert auf: {img.size} (Zoom: {int(zoom*100)}%)")
+            # Zoom zentriert: Offset so berechnen, dass sich das Bild
+            # gleichmäßig nach allen Seiten ausdehnt statt nur nach rechts-unten
+            center_offset_x = -int((1772 * (zoom - 1)) / 2)
+            center_offset_y = -int((1181 * (zoom - 1)) / 2)
+            draw_x = offset_x + center_offset_x
+            draw_y = offset_y + center_offset_y
+
+            logger.info(f"Bild skaliert auf: {img.size} (Zoom: {int(zoom*100)}%, "
+                        f"Zentrierung: {center_offset_x},{center_offset_y})")
 
             hDC = win32ui.CreateDC()
             hDC.CreatePrinterDC(printer_name)
@@ -389,7 +375,7 @@ class FinalScreen(ctk.CTkFrame):
             dib = ImageWin.Dib(img)
             dib.draw(
                 hDC.GetHandleOutput(),
-                (offset_x, offset_y, offset_x + base_width, offset_y + base_height)
+                (draw_x, draw_y, draw_x + base_width, draw_y + base_height)
             )
 
             hDC.EndPage()
