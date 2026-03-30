@@ -1352,10 +1352,10 @@ class AdminDialog(ctk.CTkToplevel):
                     ))
                     return
 
-                adjustment = self.config_data.get("print_adjustment", {})
-                offset_x = adjustment.get("offset_x", 0)
-                offset_y = adjustment.get("offset_y", 0)
-                zoom = adjustment.get("zoom", 100) / 100
+                # Aktuelle Slider-Werte nehmen (nicht config_data — die sind erst nach Speichern aktuell!)
+                offset_x = int(self.offset_x_slider.get())
+                offset_y = int(self.offset_y_slider.get())
+                zoom = int(self.zoom_slider.get()) / 100
 
                 img = Image.open(temp_path)
                 base_width = int(1772 * zoom)
