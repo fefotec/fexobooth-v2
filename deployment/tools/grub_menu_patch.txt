@@ -25,15 +25,15 @@
 set default="0"
 set timeout="10"
 
-menuentry "FexoBooth IMAGE ERSTELLEN (Referenz-Tablet abbilden)" --id fexobooth-capture {
-  search --set -f /live/vmlinuz
-  linux /live/vmlinuz boot=live union=overlay username=user config quiet noswap edd=on i915.modeset=1 locales="de_DE.UTF-8" keyboard-layouts="de" ocs_live_run="/run/live/medium/live/custom-ocs/custom-ocs-capture" ocs_live_extra_param="" ocs_live_batch="no" ip= net.ifnames=0 nosplash noprompt
-  initrd /live/initrd.img
-}
-
 menuentry "FexoBooth IMAGE AUFSPIELEN (Tablet klonen)" --id fexobooth-deploy {
   search --set -f /live/vmlinuz
   linux /live/vmlinuz boot=live union=overlay username=user config quiet noswap edd=on i915.modeset=1 locales="de_DE.UTF-8" keyboard-layouts="de" ocs_live_run="/run/live/medium/live/custom-ocs/custom-ocs-deploy" ocs_live_extra_param="" ocs_live_batch="no" ip= net.ifnames=0 nosplash noprompt
+  initrd /live/initrd.img
+}
+
+menuentry "FexoBooth IMAGE ERSTELLEN (Referenz-Tablet abbilden)" --id fexobooth-capture {
+  search --set -f /live/vmlinuz
+  linux /live/vmlinuz boot=live union=overlay username=user config quiet noswap edd=on i915.modeset=1 locales="de_DE.UTF-8" keyboard-layouts="de" ocs_live_run="/run/live/medium/live/custom-ocs/custom-ocs-capture" ocs_live_extra_param="" ocs_live_batch="no" ip= net.ifnames=0 nosplash noprompt
   initrd /live/initrd.img
 }
 

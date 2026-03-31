@@ -280,7 +280,7 @@ if errorlevel 2 (
 
 echo.
 echo [3/8] Partitioniere USB-Stick...
-echo   Partition 1: 40 GB FAT32 (FEXOBOOT - Clonezilla + Image)
+echo   Partition 1: 32 GB FAT32 (FEXOBOOT - Clonezilla + Image)
 echo   Partition 2: Rest   NTFS (FEXODATEN - Deployment + Tools)
 echo.
 
@@ -289,7 +289,7 @@ set "DISKPART_SCRIPT=%TEMP%\fexo_diskpart.txt"
 (
 echo select disk %DISK_NUM%
 echo clean
-echo create partition primary size=40960
+echo create partition primary size=32768
 echo format fs=fat32 label=FEXOBOOT quick
 echo assign
 echo active
@@ -548,7 +548,7 @@ echo ===================================================
 echo    USB-STICK FERTIG!
 echo ===================================================
 echo.
-echo  %BOOT_DRIVE%:  FEXOBOOT (20 GB, FAT32)
+echo  %BOOT_DRIVE%:  FEXOBOOT (32 GB, FAT32)
 echo     Clonezilla Live (bootfaehig)
 echo     FexoBooth Klon-Scripts
 echo     Image-Speicher (fuer ~8-12 GB)
