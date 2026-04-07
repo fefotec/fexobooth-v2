@@ -358,21 +358,75 @@ echo [OK] Delivery Optimization Cache geleert
 powershell -NoProfile -Command "Get-WinEvent -ListLog * -Force -ErrorAction SilentlyContinue | ForEach-Object { try { [System.Diagnostics.Eventing.Reader.EventLogSession]::GlobalSession.ClearLog($_.LogName) } catch {} }" >nul 2>&1
 echo [OK] Windows Event-Logs geleert
 
-:: Disk Cleanup automatisch (sagent Profile 100 = alles)
-echo [INFO] Starte Datentraegerbereinigung...
-:: Setze alle Cleanup-Flags
-reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\Temporary Files" /v StateFlags0100 /t REG_DWORD /d 2 /f >nul 2>&1
-reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\Temporary Setup Files" /v StateFlags0100 /t REG_DWORD /d 2 /f >nul 2>&1
-reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\Old ChkDsk Files" /v StateFlags0100 /t REG_DWORD /d 2 /f >nul 2>&1
-reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\Setup Log Files" /v StateFlags0100 /t REG_DWORD /d 2 /f >nul 2>&1
-reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\System error memory dump files" /v StateFlags0100 /t REG_DWORD /d 2 /f >nul 2>&1
-reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\System error minidump files" /v StateFlags0100 /t REG_DWORD /d 2 /f >nul 2>&1
-reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\Windows Error Reporting Archive Files" /v StateFlags0100 /t REG_DWORD /d 2 /f >nul 2>&1
-reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\Windows Error Reporting Queue Files" /v StateFlags0100 /t REG_DWORD /d 2 /f >nul 2>&1
-reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\Update Cleanup" /v StateFlags0100 /t REG_DWORD /d 2 /f >nul 2>&1
-reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches\Windows Defender" /v StateFlags0100 /t REG_DWORD /d 2 /f >nul 2>&1
-cleanmgr /sagerun:100 >nul 2>&1
-echo [OK] Datentraegerbereinigung ausgefuehrt
+:: Datentraegerbereinigung DEAKTIVIERT - cleanmgr haengt sich auf
+:: Atom-Tablets wenn Defender deaktiviert ist (bleibt endlos bei
+:: "Microsoft Defender Antivirus" stehen). Die manuellen Temp-Loeschungen
+:: oben erledigen das Gleiche zuverlaessiger.
+echo [INFO] Datentraegerbereinigung uebersprungen (haengt auf Atom-Tablets)
+
+echo.
+
+:: ═══════════════════════════════════════════════
+::  TEIL 5: WLAN-ADAPTER FUER KLONEN VORBEREITEN
+:: ═══════════════════════════════════════════════
+
+echo ---------------------------------------------------
+echo  TEIL 5: WLAN-Adapter fuer Klonen vorbereiten
+echo ---------------------------------------------------
+echo.
+
+:: Problem: RTL8723BS haengt am SDIO-Bus mit Connected Standby.
+:: Wenn der Chip beim Image-Erstellen im Schlafmodus ist, wacht
+:: er auf manchen Tablets nach dem Klonen nicht mehr auf.
+:: Loesung: Energieverwaltung deaktivieren und Adapter sauber neustarten.
+
+:: WLAN Energieverwaltung deaktivieren (Adapter darf nicht schlafen)
+powershell -NoProfile -Command "$k = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}'; Get-ChildItem $k -EA SilentlyContinue | ForEach-Object { if ((Get-ItemProperty $_.PSPath -EA SilentlyContinue).DriverDesc -match 'Wireless|WiFi|WLAN|802\.11') { Set-ItemProperty $_.PSPath -Name 'PnPCapabilities' -Value 24 -Type DWord -EA SilentlyContinue; Write-Host '[OK] Energieverwaltung fuer WLAN deaktiviert' } }"
+
+:: WLAN-Adapter deaktivieren und wieder aktivieren (sauberer Zustand)
+powershell -NoProfile -Command "$dev = Get-PnpDevice -Class Net -EA SilentlyContinue | Where-Object { $_.FriendlyName -match 'Wireless|WiFi|WLAN|802\.11' }; if ($dev) { Disable-PnpDevice -InstanceId $dev.InstanceId -Confirm:$false -EA SilentlyContinue; Start-Sleep 2; Enable-PnpDevice -InstanceId $dev.InstanceId -Confirm:$false -EA SilentlyContinue; Start-Sleep 3; Write-Host \"[OK] WLAN-Adapter neugestartet (Status: $((Get-PnpDevice -InstanceId $dev.InstanceId).Status))\" } else { Write-Host '[INFO] Kein WLAN-Adapter gefunden' }"
+
+:: Erstelle ein Startup-Script das nach dem Klonen den WLAN-Treiber repariert
+:: Laeuft einmalig beim ersten Windows-Start nach dem Image-Aufspielen
+:: WICHTIG: Niemals pnputil /remove-device verwenden! Das killt den SDIO-Adapter.
+:: Stattdessen: SD-Hostcontroller neustarten + echtes Herunterfahren.
+echo Erstelle WLAN-Reparatur fuer ersten Start nach Klonen...
+set "STARTUP_SCRIPT=C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup\fexobooth_wlan_repair.bat"
+
+(
+echo @echo off
+echo :: FexoBooth WLAN Auto-Reparatur nach Klonen
+echo :: Dieses Script loescht sich nach dem ersten Lauf selbst
+echo chcp 65001 ^>nul
+echo net session ^>nul 2^>^&1
+echo if errorlevel 1 goto :cleanup
+echo.
+echo :: WlanSvc sicherstellen
+echo sc config WlanSvc start=auto ^>nul 2^>^&1
+echo sc start WlanSvc ^>nul 2^>^&1
+echo timeout /t 3 ^>nul
+echo.
+echo :: Pruefen ob WLAN funktioniert
+echo netsh wlan show interfaces 2^>nul ^| findstr /C:"Zustand" /C:"State" ^>nul 2^>^&1
+echo if not errorlevel 1 goto :cleanup
+echo.
+echo :: WLAN funktioniert nicht - SD-Hostcontroller neustarten
+echo pnputil /restart-device "ACPI\80860F14\1" ^>nul 2^>^&1
+echo pnputil /restart-device "ACPI\80860F14\2" ^>nul 2^>^&1
+echo pnputil /restart-device "ACPI\80860F14\3" ^>nul 2^>^&1
+echo timeout /t 5 ^>nul
+echo netsh interface set interface "WLAN" admin=enable ^>nul 2^>^&1
+echo.
+echo :: Nochmal pruefen - wenn immer noch kaputt: Herunterfahren erzwingen
+echo netsh wlan show interfaces 2^>nul ^| findstr /C:"Zustand" /C:"State" ^>nul 2^>^&1
+echo if errorlevel 1 shutdown /s /f /t 30 /c "WLAN-Reparatur: Herunterfahren noetig (SDIO). Bitte danach wieder einschalten."
+echo.
+echo :cleanup
+echo :: Script loescht sich selbst nach einmaligem Lauf
+echo del "%%~f0" ^>nul 2^>^&1
+) > "%STARTUP_SCRIPT%"
+
+echo [OK] WLAN Auto-Reparatur fuer ersten Start eingerichtet
 
 echo.
 
@@ -391,11 +445,13 @@ echo   [3] Visuelle Effekte auf Performance gesetzt
 echo   [4] Energiesparmodus + Ruhezustand deaktiviert
 echo   [5] FexoBooth Bilder/Logs/Caches geleert
 echo   [6] Windows Temp-Dateien bereinigt
+echo   [7] WLAN-Adapter fuer Klonen vorbereitet
 echo.
 echo NAECHSTE SCHRITTE:
-echo   1. Neustart durchfuehren
-echo   2. post_install_check.bat ausfuehren
-echo   3. Clonezilla-Image erstellen
+echo   1. HERUNTERFAHREN (NICHT Neustart! SDIO braucht echten Power-Cycle)
+echo   2. Wieder einschalten (Power-Button)
+echo   3. post_install_check.bat ausfuehren
+echo   4. Clonezilla-Image erstellen
 echo.
 
 pause

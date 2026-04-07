@@ -7,7 +7,7 @@ DEFAULT_CONFIG = {
     # Timing
     "countdown_time": 5,
     "single_display_time": 2,
-    "final_time": 10,
+    "final_time": 20,
     "flash_duration": 300,  # Auslöse-Bild Dauer in Millisekunden
     
     # Modi
