@@ -6,6 +6,23 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-04-23
 
+### Updater: Repo war privat, Fehler-Logging ergänzt (v2.2.1)
+
+**Problem:** Der Update-Button im Service-Menü zeigte auf allen Tablets "Keine Internetverbindung" – obwohl Browser-Internet funktionierte. Das GitHub-Repo `fefotec/fexobooth-v2` war auf **private** gesetzt. Unauthentifizierte API-Calls auf private Repos liefern **HTTP 404** (GitHub-Security-Feature, versteckt Existenz privater Repos). Der Code in [src/updater.py](src/updater.py) wrapped `URLError` (dessen Subklasse `HTTPError` ist) generisch in `ConnectionError` → UI zeigt "Keine Internetverbindung". Das heißt: **der OTA-Update-Mechanismus hat seit v2.0.0 nie funktioniert.**
+
+**Zusätzliches Problem:** Der Service-Dialog-Handler ([src/ui/screens/service.py:_check_update](src/ui/screens/service.py)) schluckte die Exception komplett ohne Logging. Das Log zeigte nur "Prüfe auf Updates..." und dann nichts mehr — Fehlerdiagnose unmöglich.
+
+**Fix:**
+1. Repo auf **public** umgestellt (`gh repo edit --visibility public`). Sicherheits-Check vorher: keine committeten Secrets, nur ein hartkodiertes Hotspot-Default-Passwort (für den Galerie-Hotspot der Box, Kunden sehen es sowieso).
+2. `updater.check_for_update()` unterscheidet jetzt explizit `HTTPError` (liefert `ValueError` mit exaktem Status-Code) von `URLError` (liefert `ConnectionError`). Beide loggen mit `exc_info=True`.
+3. `service._check_update()` loggt die Exception vor dem UI-Dialog.
+
+**Verifikation:** `curl https://api.github.com/repos/fefotec/fexobooth-v2/releases/latest` (ohne Auth) liefert jetzt v2.2.0-Metadaten. `urlopen()` im PyInstaller-Build sollte jetzt ebenfalls durchkommen.
+
+**Betroffen:** `src/updater.py`, `src/ui/screens/service.py`, `src/__init__.py` (2.2.0 → 2.2.1)
+
+---
+
 ### Auto-Update im Firmen-WLAN
 
 **Idee:** Wenn eine Fotobox in der Firma eingeschaltet wird (z.B. vor einer Vermietung zum Bild-Ziehen), soll sie sich still aktualisieren. Beim Kunden besteht nie eine Internetverbindung, also kann dort niemals versehentlich ein Update laufen.

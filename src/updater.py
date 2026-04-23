@@ -24,7 +24,7 @@ import tempfile
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.request import urlopen, Request
-from urllib.error import URLError
+from urllib.error import URLError, HTTPError
 
 from src.utils.logging import get_logger
 
@@ -112,9 +112,18 @@ def check_for_update() -> Optional[dict]:
     try:
         with urlopen(req, timeout=HTTP_TIMEOUT) as response:
             data = json.loads(response.read().decode("utf-8"))
+    except HTTPError as e:
+        # HTTP-Fehler (404, 403, 500…) — nicht einfach als "kein Internet" verkaufen.
+        # 404 auf privaten Repos ohne Auth war historisch die Ursache für falsche
+        # "Keine Internetverbindung"-Meldungen. Deshalb hier exakte Details loggen.
+        logger.error(f"GitHub API HTTP {e.code}: {e.reason} (URL: {GITHUB_API_URL})", exc_info=True)
+        raise ValueError(f"GitHub API HTTP {e.code}: {e.reason}")
     except URLError as e:
+        # Echter Netzwerkfehler: kein DNS, kein Route, SSL-Fehler, Timeout
+        logger.error(f"GitHub nicht erreichbar: {e}", exc_info=True)
         raise ConnectionError(f"GitHub nicht erreichbar: {e}")
     except Exception as e:
+        logger.error(f"API-Fehler beim Update-Check: {e}", exc_info=True)
         raise ValueError(f"API-Fehler: {e}")
 
     # Release-Tag parsen

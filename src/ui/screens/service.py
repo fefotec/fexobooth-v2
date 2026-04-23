@@ -564,14 +564,17 @@ class ServiceDialog(ctk.CTkToplevel):
                 from src.updater import check_for_update
                 release = check_for_update()
             except ConnectionError as e:
+                logger.error(f"Update-Check: Verbindung fehlgeschlagen: {e}", exc_info=True)
                 self.after(0, lambda: self._show_result(
                     f"Keine Internetverbindung.\nBitte WLAN verbinden und erneut versuchen.",
                     "error"
                 ))
                 return
             except Exception as e:
+                logger.error(f"Update-Check fehlgeschlagen: {e}", exc_info=True)
+                err_msg = str(e)
                 self.after(0, lambda: self._show_result(
-                    f"Update-Prüfung fehlgeschlagen:\n{e}",
+                    f"Update-Prüfung fehlgeschlagen:\n{err_msg}",
                     "error"
                 ))
                 return
