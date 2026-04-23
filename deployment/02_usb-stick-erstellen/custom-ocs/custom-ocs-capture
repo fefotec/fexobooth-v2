@@ -7,35 +7,90 @@
 # wenn "IMAGE ERSTELLEN" im Bootmenue gewaehlt wird.
 #
 # Unterstuetzt: eMMC, NVMe, SATA (beliebiges Lenovo-Modell)
+#
+# Features:
+# - Schreibt alles in ein Log auf FEXODATEN (ueberlebt Reboot)
+# - Bei Fehler: Log bleibt erhalten, Fehler wird gross angezeigt
 # ============================================
 
-echo ""
-echo "============================================"
-echo "  FexoBooth - IMAGE ERSTELLEN"
-echo "============================================"
-echo ""
+# --- Globale Variablen fuer Logging ---
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+LOG_DIR=""
+LOG_FILE=""
+CAPTURE_STATUS="UNBEKANNT"
+ERROR_MESSAGE=""
 
-# --- Image auf FEXODATEN (NTFS) speichern ---
-# FEXOBOOT (FAT32) ist zu klein fuer grosse Images,
-# daher wird die NTFS-Datenpartition verwendet.
+# --- Frueh: FEXODATEN mounten (fuer Log-Verzeichnis + Image-Speicher) ---
 NTFS_PART=$(blkid -t LABEL=FEXODATEN -o device 2>/dev/null | head -1)
 if [ -n "$NTFS_PART" ]; then
-    echo "FEXODATEN gefunden: $NTFS_PART"
     umount /home/partimag 2>/dev/null
     mkdir -p /home/partimag
-    mount $NTFS_PART /home/partimag
-    if [ $? -eq 0 ]; then
-        echo "[OK] Image wird auf FEXODATEN gespeichert"
-    else
-        echo "WARNUNG: FEXODATEN konnte nicht gemountet werden, nutze Standard-Speicher"
-    fi
-else
-    echo "FEXODATEN nicht gefunden, nutze Standard-Speicher (FEXOBOOT)"
+    mount "$NTFS_PART" /home/partimag 2>/dev/null
 fi
-echo ""
 
+# Log-Verzeichnis auf FEXODATEN anlegen (selbe Logik wie Deploy)
+if mountpoint -q /home/partimag; then
+    LOG_DIR="/home/partimag/capture-logs"
+    mkdir -p "$LOG_DIR" 2>/dev/null
+    LOG_FILE="$LOG_DIR/capture-${TIMESTAMP}.log"
+    touch "$LOG_FILE" 2>/dev/null
+fi
+
+if [ -z "$LOG_FILE" ] || [ ! -w "$LOG_FILE" ]; then
+    LOG_FILE="/tmp/capture-${TIMESTAMP}.log"
+    touch "$LOG_FILE"
+    echo "WARNUNG: Log nur im RAM - geht bei Reboot verloren!" | tee -a "$LOG_FILE"
+fi
+
+# ============================================
+# Logging-Helfer
+# ============================================
+log() {
+    echo "$@" | tee -a "$LOG_FILE"
+}
+
+log_section() {
+    log ""
+    log "============================================"
+    log "  $*"
+    log "============================================"
+}
+
+# Trap: Bei Exit Status-Info ans Log
+cleanup() {
+    log ""
+    log "============================================"
+    log "  CAPTURE STATUS: $CAPTURE_STATUS"
+    log "  Zeit: $(date)"
+    if [ -n "$ERROR_MESSAGE" ]; then
+        log "  Fehler: $ERROR_MESSAGE"
+    fi
+    log "  Log: $LOG_FILE"
+    log "============================================"
+    sync
+}
+trap cleanup EXIT
+
+# ============================================
+# START
+# ============================================
+log_section "FexoBooth - IMAGE ERSTELLEN"
+log "Zeit: $(date)"
+log "Log-Datei: $LOG_FILE"
+log ""
+
+# --- FEXODATEN Status ausgeben ---
+if mountpoint -q /home/partimag; then
+    log "[OK] FEXODATEN gemountet nach /home/partimag ($NTFS_PART)"
+    log "     Image wird auf FEXODATEN gespeichert"
+else
+    log "WARNUNG: FEXODATEN konnte nicht gemountet werden, nutze Standard-Speicher"
+fi
+log ""
+
+# ============================================
 # Auto-detect Quell-Disk
-# USB-Stick ermitteln (wo Clonezilla + Image drauf sind)
+# ============================================
 USB_DISK=""
 for mnt in /run/live/medium /home/partimag; do
     DEV=$(mount | grep " $mnt " | awk '{print $1}')
@@ -46,15 +101,14 @@ for mnt in /run/live/medium /home/partimag; do
         fi
     fi
 done
-echo "USB-Stick erkannt als: /dev/$USB_DISK"
+log "USB-Stick erkannt als: /dev/$USB_DISK"
 
-# Alle echten Disks durchsuchen (USB-Stick ausschliessen)
 TARGET_DISK=""
 for dev in /dev/mmcblk[0-9] /dev/mmcblk[0-9][0-9] /dev/nvme[0-9]n[0-9] /dev/sd[a-z]; do
     if [ -b "$dev" ]; then
         DEVNAME=$(basename "$dev")
         if [ "$DEVNAME" = "$USB_DISK" ]; then
-            echo "Ueberspringe USB-Stick: /dev/$DEVNAME"
+            log "Ueberspringe USB-Stick: /dev/$DEVNAME"
             continue
         fi
         case "$DEVNAME" in
@@ -65,68 +119,118 @@ for dev in /dev/mmcblk[0-9] /dev/mmcblk[0-9][0-9] /dev/nvme[0-9]n[0-9] /dev/sd[a
             continue
         fi
         TARGET_DISK="$DEVNAME"
-        echo "Quelle gefunden: /dev/$TARGET_DISK"
+        log "Quelle gefunden: /dev/$TARGET_DISK"
         break
     fi
 done
 
 if [ -z "$TARGET_DISK" ]; then
-    echo ""
-    echo "FEHLER: Keine Festplatte/eMMC gefunden!"
-    echo ""
-    echo "USB-Stick war: /dev/$USB_DISK"
-    echo ""
-    echo "Alle erkannten Block-Geraete:"
-    lsblk -d -o NAME,SIZE,TYPE,MODEL,TRAN
-    echo ""
-    echo "Alle Mount-Punkte:"
-    mount | grep -E "^/dev/"
-    echo ""
+    CAPTURE_STATUS="FEHLER"
+    ERROR_MESSAGE="Keine Festplatte/eMMC gefunden"
+    log ""
+    log "FEHLER: Keine Festplatte/eMMC gefunden!"
+    log ""
+    log "USB-Stick war: /dev/$USB_DISK"
+    log ""
+    log "Alle erkannten Block-Geraete:"
+    lsblk -d -o NAME,SIZE,TYPE,MODEL,TRAN 2>&1 | tee -a "$LOG_FILE"
+    log ""
+    log "Alle Mount-Punkte:"
+    mount | grep -E "^/dev/" 2>&1 | tee -a "$LOG_FILE"
+    log ""
+    echo "############################################"
+    echo "#                                          #"
+    echo "#   FEHLER - siehe Log auf USB-Stick!     #"
+    echo "#   Pfad: FEXODATEN/capture-logs/         #"
+    echo "#                                          #"
+    echo "############################################"
     read -p "Druecke Enter zum Neustarten..." dummy
     reboot
 fi
 
+# ============================================
 # Image-Name mit Datum
+# ============================================
 IMAGE_NAME="fexobooth-image-$(date +%Y%m%d)"
 
-echo ""
-echo "Festplatte:  /dev/$TARGET_DISK"
-echo "Image-Name:  $IMAGE_NAME"
-echo ""
+log ""
+log "Festplatte:  /dev/$TARGET_DISK"
+log "Image-Name:  $IMAGE_NAME"
+log ""
 
-# Disk-Info anzeigen
-echo "Disk-Informationen:"
-lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL /dev/$TARGET_DISK
-echo ""
+# Disk-Info dokumentieren (wichtig fuer spaetere Disk-Too-Small-Analyse)
+log "Quell-Disk Details:"
+lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL /dev/$TARGET_DISK 2>&1 | tee -a "$LOG_FILE"
+log ""
+log "Sektoren (Quell-Disk):"
+blockdev --getsz /dev/$TARGET_DISK 2>&1 | tee -a "$LOG_FILE" || true
+log "Groesse in Bytes (Quell-Disk):"
+blockdev --getsize64 /dev/$TARGET_DISK 2>&1 | tee -a "$LOG_FILE" || true
+log ""
 
-# Speicherplatz anzeigen
-echo "Verfuegbarer Speicher fuer Image:"
-df -h /home/partimag | tail -1
-echo ""
+log "Verfuegbarer Speicher fuer Image:"
+df -h /home/partimag 2>&1 | tail -1 | tee -a "$LOG_FILE"
+log ""
 
-# Bestaetigung
-echo "============================================"
-echo "  Das Image wird jetzt erstellt."
-echo "  Dies dauert ca. 15-30 Minuten."
-echo "============================================"
-echo ""
+log_section "Das Image wird jetzt erstellt (ca. 15-30 Minuten)"
 
+# ============================================
 # Clonezilla savedisk ausfuehren
+# ============================================
 # -q2       = Partclone verwenden (schneller, zuverlaessiger)
-# -c        = Bestaetigung anfordern
+# -batch    = Keine Bestaetigung (Auswahl erfolgt im GRUB-Menue)
 # -j2       = Clone-Info im Image speichern
 # -z5       = zstd Kompression (bestes Verhaeltnis/Geschwindigkeit)
 # -i 4096   = Maximale Fragmentgroesse 4 GB
 # -sfsck    = Dateisystem-Check ueberspringen (schneller)
 # -senc     = Verschluesselung ueberspringen
-# -p reboot = Nach Abschluss neustarten
+# -p true   = ocs-sr beenden ohne eigenen Dialog (wir rebooten selbst)
 /usr/sbin/ocs-sr \
     -q2 \
-    -c \
+    -batch \
     -j2 \
     -z5 \
     -i 4096 \
     -sfsck \
     -senc \
-    -p reboot \
-    savedisk "$IMAGE_NAME" "$TARGET_DISK"
+    -p true \
+    savedisk "$IMAGE_NAME" "$TARGET_DISK" 2>&1 | tee -a "$LOG_FILE"
+
+OCS_EXIT=${PIPESTATUS[0]}
+log ""
+log "ocs-sr Exit-Code: $OCS_EXIT"
+log ""
+
+if [ "$OCS_EXIT" -ne 0 ]; then
+    CAPTURE_STATUS="FEHLER"
+    ERROR_MESSAGE="ocs-sr savedisk schlug fehl (Exit-Code $OCS_EXIT)"
+    log "FEHLER: ocs-sr savedisk ist fehlgeschlagen!"
+    echo ""
+    echo "############################################"
+    echo "#                                          #"
+    echo "#   FEHLER beim Image erstellen!           #"
+    echo "#                                          #"
+    echo "#   Log auf USB-Stick unter:               #"
+    echo "#   FEXODATEN/capture-logs/                #"
+    echo "#                                          #"
+    echo "#   Datei: capture-${TIMESTAMP}.log        "
+    echo "#                                          #"
+    echo "############################################"
+    echo ""
+    read -p "Druecke Enter zum Neustarten..." dummy
+    reboot
+fi
+
+CAPTURE_STATUS="ERFOLG"
+log_section "FERTIG! Image gespeichert als $IMAGE_NAME"
+echo ""
+echo "############################################"
+echo "#                                          #"
+echo "#   IMAGE ERFOLGREICH ERSTELLT!            #"
+echo "#                                          #"
+echo "#   Tablet startet in 5 Sekunden neu.      #"
+echo "#                                          #"
+echo "############################################"
+echo ""
+sleep 5
+reboot

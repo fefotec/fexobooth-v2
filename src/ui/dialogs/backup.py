@@ -224,12 +224,48 @@ class FexosafeBackupDialog(ctk.CTkToplevel):
         thread = threading.Thread(target=self._run_backup, daemon=True)
         thread.start()
 
+    def _get_last_event_id(self) -> str:
+        """Ermittelt die Buchungs-ID (Event-ID) für den Zielordner.
+
+        Reihenfolge: aktive Buchung → aktuelle Statistik → letzte Historie →
+        Fallback Datum.
+        """
+        # 1. Aktive Buchung
+        try:
+            if self.app.booking_manager.is_loaded:
+                return self.app.booking_manager.booking_id
+        except Exception as e:
+            logger.debug(f"Event-ID aus booking_manager fehlgeschlagen: {e}")
+
+        # 2. Statistik (laufend oder letzte Historie)
+        try:
+            from src.storage.statistics import get_statistics_manager
+            stats = get_statistics_manager()
+            if stats.current and stats.current.booking_id:
+                return stats.current.booking_id
+
+            all_stats = stats.get_all_stats()
+            if all_stats:
+                last = all_stats[-1]
+                bid = last.get("booking_id", "")
+                if bid:
+                    return bid
+        except Exception as e:
+            logger.debug(f"Event-ID aus Statistik fehlgeschlagen: {e}")
+
+        # 3. Fallback: Datum
+        from datetime import datetime
+        return datetime.now().strftime("%Y%m%d_%H%M")
+
     def _run_backup(self):
         """Kopiert alle Bilder auf FEXOSAFE (Background-Thread)"""
         fexosafe_root = Path(self.fexosafe_drive)
-        bilder_dest = fexosafe_root / "BILDER"
+        event_id = self._get_last_event_id() or "unbekannt"
+        bilder_dest = fexosafe_root / event_id
         singles_dest = bilder_dest / "Single"
         prints_dest = bilder_dest / "Prints"
+
+        logger.info(f"FEXOSAFE Backup-Ziel: {bilder_dest}")
 
         try:
             singles_dest.mkdir(parents=True, exist_ok=True)

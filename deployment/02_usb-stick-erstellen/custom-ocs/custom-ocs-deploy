@@ -7,138 +7,541 @@
 # wenn "IMAGE AUFSPIELEN" im Bootmenue gewaehlt wird.
 #
 # ACHTUNG: Ueberschreibt ALLE Daten auf dem Tablet!
+#
+# Features:
+# - Schreibt alles in ein Log auf FEXODATEN (ueberlebt Reboot)
+# - AUTO-IMAGE-SELECTION: Sucht unter mehreren Images auf dem Stick
+#   automatisch das groesste das auf die Ziel-Disk passt.
+#   So koennen 32 GB und 64 GB Tablets mit demselben Stick geklont
+#   werden - einfach beide Images auf FEXODATEN ablegen.
+# - Pre-Flight Check VOR Pre-Wipe: bricht ab wenn kein Image passt
+#   (Tablet bleibt unveraendert, kein Bricking moeglich)
+# - Pre-Wipe der Ziel-Disk (entfernt OEM/Recovery/ebackup-Partitionen)
+# - Ignoriert Disk-Size-Check (-icds) fuer minimal abweichende Sektoren
+# - Erstellt Partitionen proportional (-k1)
+# - Expandiert C-Partition automatisch auf die volle Disk-Groesse
+# - Bei Fehler: Log bleibt erhalten, Fehler wird gross angezeigt
 # ============================================
 
-echo ""
-echo "============================================"
-echo "  FexoBooth - IMAGE AUFSPIELEN"
-echo "============================================"
-echo ""
+# --- Globale Variablen fuer Logging ---
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+LOG_DIR=""
+LOG_FILE=""
+DEPLOY_STATUS="UNBEKANNT"
+ERROR_MESSAGE=""
 
-# --- FEXODATEN (NTFS) mounten ---
-# Das Image liegt auf der NTFS-Datenpartition,
-# nicht auf der FAT32-Bootpartition.
+# --- Frueh: FEXODATEN mounten (fuer Log-Verzeichnis) ---
 NTFS_PART=$(blkid -t LABEL=FEXODATEN -o device 2>/dev/null | head -1)
 if [ -n "$NTFS_PART" ]; then
-    echo "FEXODATEN gefunden: $NTFS_PART"
     umount /home/partimag 2>/dev/null
     mkdir -p /home/partimag
-    mount $NTFS_PART /home/partimag
-    if [ $? -eq 0 ]; then
-        echo "[OK] FEXODATEN gemountet nach /home/partimag"
-    else
-        echo "WARNUNG: FEXODATEN konnte nicht gemountet werden!"
+    mount "$NTFS_PART" /home/partimag 2>/dev/null
+fi
+
+# Log-Verzeichnis auf FEXODATEN anlegen
+if mountpoint -q /home/partimag; then
+    LOG_DIR="/home/partimag/deploy-logs"
+    mkdir -p "$LOG_DIR" 2>/dev/null
+    LOG_FILE="$LOG_DIR/deploy-${TIMESTAMP}.log"
+    touch "$LOG_FILE" 2>/dev/null
+fi
+
+# Falls FEXODATEN nicht verfuegbar: Fallback ins RAM
+if [ -z "$LOG_FILE" ] || [ ! -w "$LOG_FILE" ]; then
+    LOG_FILE="/tmp/deploy-${TIMESTAMP}.log"
+    touch "$LOG_FILE"
+    echo "WARNUNG: Log nur im RAM - geht bei Reboot verloren!" | tee -a "$LOG_FILE"
+fi
+
+# ============================================
+# Logging-Helfer
+# ============================================
+log() {
+    echo "$@" | tee -a "$LOG_FILE"
+}
+
+log_section() {
+    log ""
+    log "============================================"
+    log "  $*"
+    log "============================================"
+}
+
+# Trap: Bei jedem Exit Status-Info ans Log anhaengen
+cleanup() {
+    log ""
+    log "============================================"
+    log "  DEPLOY STATUS: $DEPLOY_STATUS"
+    log "  Zeit: $(date)"
+    if [ -n "$ERROR_MESSAGE" ]; then
+        log "  Fehler: $ERROR_MESSAGE"
     fi
+    log "  Log: $LOG_FILE"
+    log "============================================"
+    sync
+}
+trap cleanup EXIT
+
+# ============================================
+# Helfer: Image-Sektorzahl aus Metadaten lesen
+# ============================================
+# WICHTIG: Wir nutzen die BENOETIGTE Groesse, nicht die Disk-Groesse!
+#
+# Im Image gibt es zwei relevante Groessen:
+#   A) last-lba: Ende der Original-Disk (z.B. 122 Mio fuer 64 GB Tablet)
+#   B) Ende der LETZTEN Partition: start + size der letzten Partition
+#
+# Wenn auf dem Master C kleiner als die Disk ist (z.B. Master hat 58 GB
+# Disk aber nur 27 GB C durch Shrink), ist die benoetigte Groesse nur
+# Ende der letzten Partition + Backup-GPT-Overhead.
+#
+# Diese benoetigte Groesse ist die richtige Basis fuer den Pre-Flight
+# Check - nicht die Original-Disk-Groesse.
+#
+# Return: Zahl in Sektoren (End-Position der letzten Partition + 2048)
+#         oder "" bei Fehler
+get_image_sectors() {
+    local image_dir="$1"
+    local pt_file=$(ls "$image_dir"/*-pt.sf 2>/dev/null | head -1)
+
+    if [ -z "$pt_file" ] || [ ! -f "$pt_file" ]; then
+        echo ""
+        return
+    fi
+
+    # Parse sfdisk-Format:
+    # /dev/mmcblk0p1 : start=2048, size=532480, type=...
+    # Wir brauchen von der LETZTEN Partition: start + size
+    # awk: gehe alle Partition-Zeilen durch, berechne start+size,
+    #      behalte das Maximum
+    local max_end=$(awk '
+        /^\/dev\// {
+            start = 0
+            size = 0
+            for (i = 1; i <= NF; i++) {
+                if ($i ~ /^start=/) {
+                    sub(/^start=/, "", $i)
+                    sub(/,$/, "", $i)
+                    start = $i + 0
+                }
+                if ($i ~ /^size=/) {
+                    sub(/^size=/, "", $i)
+                    sub(/,$/, "", $i)
+                    size = $i + 0
+                }
+            }
+            end = start + size
+            if (end > max_end) max_end = end
+        }
+        END { print max_end }
+    ' "$pt_file")
+
+    if [ -z "$max_end" ] || [ "$max_end" = "0" ]; then
+        # Fallback: last-lba der Original-Disk (ungenauer)
+        local last_lba=$(grep "^last-lba:" "$pt_file" | awk '{print $2}')
+        if [ -n "$last_lba" ]; then
+            echo $((last_lba + 34))
+        else
+            echo ""
+        fi
+        return
+    fi
+
+    # +2048 Sektoren Sicherheits-Puffer fuer Backup-GPT + Alignment
+    echo $((max_end + 2048))
+}
+
+# ============================================
+# START
+# ============================================
+log_section "FexoBooth - IMAGE AUFSPIELEN"
+log "Zeit: $(date)"
+log "Log-Datei: $LOG_FILE"
+log ""
+
+# --- FEXODATEN Status ---
+if mountpoint -q /home/partimag; then
+    log "[OK] FEXODATEN gemountet nach /home/partimag ($NTFS_PART)"
 else
-    echo "FEXODATEN nicht gefunden, nutze Standard-Speicher (FEXOBOOT)"
+    log "WARNUNG: FEXODATEN konnte nicht gemountet werden!"
 fi
-echo ""
+log ""
 
-# Image auf dem USB-Stick finden
-IMAGE_DIR=""
-IMAGE_NAME=""
-
-for dir in /home/partimag/fexobooth-image-*; do
-    if [ -d "$dir" ]; then
-        IMAGE_DIR="$dir"
-        IMAGE_NAME=$(basename "$dir")
-    fi
-done
-
-if [ -z "$IMAGE_NAME" ]; then
-    echo "FEHLER: Kein FexoBooth-Image auf dem USB-Stick gefunden!"
-    echo ""
-    echo "Inhalt von /home/partimag/:"
-    ls -la /home/partimag/ 2>/dev/null || echo "(leer)"
-    echo ""
-    echo "Bitte zuerst ein Image erstellen (Capture-Modus)."
-    echo ""
-    read -p "Druecke Enter zum Neustarten..." dummy
-    reboot
-fi
-
-echo "Image gefunden: $IMAGE_NAME"
-echo ""
-
-# Auto-detect Ziel-Disk
-# USB-Stick ermitteln (wo Clonezilla + Image drauf sind)
+# ============================================
+# USB-Stick ermitteln (muessen wir kennen um ihn nicht als Ziel zu nehmen)
+# ============================================
 USB_DISK=""
 for mnt in /run/live/medium /home/partimag; do
     DEV=$(mount | grep " $mnt " | awk '{print $1}')
     if [ -n "$DEV" ]; then
-        # Partition zu Disk aufloesen (sda1->sda, nvme0n1p1->nvme0n1)
         DISK=$(lsblk -no PKNAME "$DEV" 2>/dev/null | head -1)
         if [ -n "$DISK" ]; then
             USB_DISK="$DISK"
         fi
     fi
 done
-echo "USB-Stick erkannt als: /dev/$USB_DISK"
+log "USB-Stick erkannt als: /dev/$USB_DISK"
+log ""
 
-# Alle echten Disks durchsuchen (USB-Stick ausschliessen)
+# ============================================
+# Ziel-Disk ermitteln
+# ============================================
 TARGET_DISK=""
 for dev in /dev/mmcblk[0-9] /dev/mmcblk[0-9][0-9] /dev/nvme[0-9]n[0-9] /dev/sd[a-z]; do
     if [ -b "$dev" ]; then
         DEVNAME=$(basename "$dev")
-        # USB-Stick ueberspringen
         if [ "$DEVNAME" = "$USB_DISK" ]; then
-            echo "Ueberspringe USB-Stick: /dev/$DEVNAME"
+            log "Ueberspringe USB-Stick: /dev/$DEVNAME"
             continue
         fi
-        # mmcblk0bootX sind keine echten Disks
         case "$DEVNAME" in
             mmcblk*boot*) continue ;;
         esac
-        # Loop-Devices ueberspringen
         TYPE=$(lsblk -no TYPE "$dev" 2>/dev/null | head -1)
         if [ "$TYPE" != "disk" ]; then
             continue
         fi
         TARGET_DISK="$DEVNAME"
-        echo "Ziel gefunden: /dev/$TARGET_DISK"
+        log "Ziel gefunden: /dev/$TARGET_DISK"
         break
     fi
 done
 
 if [ -z "$TARGET_DISK" ]; then
+    DEPLOY_STATUS="FEHLER"
+    ERROR_MESSAGE="Keine Ziel-Festplatte gefunden"
+    log ""
+    log "FEHLER: Keine Ziel-Festplatte gefunden!"
+    log "USB-Stick war: /dev/$USB_DISK"
+    log ""
+    log "Alle erkannten Block-Geraete:"
+    lsblk -d -o NAME,SIZE,TYPE,MODEL,TRAN 2>&1 | tee -a "$LOG_FILE"
     echo ""
-    echo "FEHLER: Keine Ziel-Festplatte gefunden!"
-    echo ""
-    echo "USB-Stick war: /dev/$USB_DISK"
-    echo ""
-    echo "Alle erkannten Block-Geraete:"
-    lsblk -d -o NAME,SIZE,TYPE,MODEL,TRAN
-    echo ""
-    echo "Alle Mount-Punkte:"
-    mount | grep -E "^/dev/"
+    echo "############################################"
+    echo "#                                          #"
+    echo "#   FEHLER - siehe Log auf USB-Stick!     #"
+    echo "#   Pfad: FEXODATEN/deploy-logs/          #"
+    echo "#                                          #"
+    echo "############################################"
     echo ""
     read -p "Druecke Enter zum Neustarten..." dummy
     reboot
 fi
 
-echo "Ziel-Disk: /dev/$TARGET_DISK"
-echo ""
+log "Ziel-Disk: /dev/$TARGET_DISK"
+log ""
 
-# Disk-Info anzeigen
-echo "Ziel-Disk Informationen:"
-lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL /dev/$TARGET_DISK
-echo ""
+# Disk-Info fuer Log dokumentieren
+log "Ziel-Disk Details (VOR Pre-Wipe):"
+lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL /dev/$TARGET_DISK 2>&1 | tee -a "$LOG_FILE"
+log ""
+TARGET_SECTORS=$(blockdev --getsz /dev/$TARGET_DISK 2>/dev/null)
+TARGET_BYTES=$(blockdev --getsize64 /dev/$TARGET_DISK 2>/dev/null)
+TARGET_GB=$((TARGET_SECTORS * 512 / 1024 / 1024 / 1024))
+log "Sektoren (Ziel-Disk):   $TARGET_SECTORS"
+log "Groesse in Bytes:       $TARGET_BYTES"
+log "Groesse in GB:          ~${TARGET_GB} GB"
+log ""
 
-echo "============================================"
-echo "  ACHTUNG: ALLE Daten auf /dev/$TARGET_DISK"
-echo "  werden UNWIDERRUFLICH ueberschrieben!"
-echo ""
-echo "  Image: $IMAGE_NAME"
-echo "  Dauer: ca. 15-20 Minuten"
-echo "============================================"
-echo ""
+# ============================================
+# AUTO-IMAGE-SELECTION
+# ============================================
+# Scannt alle Images auf FEXODATEN, ermittelt deren Original-
+# Disk-Groesse und waehlt automatisch das GROESSTE das auf die
+# Ziel-Disk passt (mit 5% Toleranz).
+#
+# Beispiel: Ziel-Tablet hat 31 GB, auf dem Stick liegen:
+#   - fexobooth-image-20260420 (62 GB) -> zu gross, uebersprungen
+#   - fexobooth-image-32gb-20260422 (30 GB) -> passt! wird gewaehlt
+log_section "AUTO-IMAGE-SELECTION: Passendes Image fuer ~${TARGET_GB} GB Tablet suchen"
 
+# Alle Image-Ordner scannen
+# Wir erstellen eine Liste: "sektoren|name" pro gefundenem Image
+ALL_IMAGES=""
+IMAGE_COUNT=0
+
+for dir in /home/partimag/fexobooth-image-*; do
+    if [ -d "$dir" ]; then
+        IMAGE_COUNT=$((IMAGE_COUNT + 1))
+        local_name=$(basename "$dir")
+        local_sectors=$(get_image_sectors "$dir")
+
+        if [ -n "$local_sectors" ]; then
+            local_gb=$((local_sectors * 512 / 1024 / 1024 / 1024))
+            log "  [$IMAGE_COUNT] $local_name -> ${local_sectors} Sektoren (~${local_gb} GB)"
+            ALL_IMAGES="${ALL_IMAGES}${local_sectors}|${dir}|${local_name}
+"
+        else
+            log "  [$IMAGE_COUNT] $local_name -> WARNUNG: Sektorzahl nicht ermittelbar (uebersprungen)"
+        fi
+    fi
+done
+
+if [ "$IMAGE_COUNT" -eq 0 ]; then
+    DEPLOY_STATUS="FEHLER"
+    ERROR_MESSAGE="Kein FexoBooth-Image auf dem USB-Stick gefunden"
+    log ""
+    log "FEHLER: Kein FexoBooth-Image auf dem USB-Stick gefunden!"
+    log ""
+    log "Inhalt von /home/partimag/:"
+    ls -la /home/partimag/ 2>&1 | tee -a "$LOG_FILE"
+    echo ""
+    echo "############################################"
+    echo "#                                          #"
+    echo "#   KEIN IMAGE GEFUNDEN!                   #"
+    echo "#                                          #"
+    echo "#   Bitte zuerst ein Image erstellen       #"
+    echo "#   (Capture-Modus).                       #"
+    echo "#                                          #"
+    echo "############################################"
+    echo ""
+    read -p "Druecke Enter zum Neustarten..." dummy
+    reboot
+fi
+
+log ""
+
+# Passendes Image waehlen: 5% Toleranz, groesstes das reinpasst
+# Algorithmus:
+#   1. Filter: Images mit Sektorzahl <= 105% der Ziel-Sektorzahl
+#      (105% weil bei kleinen Differenzen -icds das regelt)
+#   2. Sortiere absteigend nach Sektorzahl
+#   3. Nimm das erste (groesste)
+MAX_ACCEPTABLE=$((TARGET_SECTORS * 105 / 100))
+
+IMAGE_DIR=""
+IMAGE_NAME=""
+IMAGE_SECTORS=""
+
+# sort -rn sortiert numerisch absteigend, awk filtert und picked first
+SELECTED=$(echo "$ALL_IMAGES" | grep -v "^$" | awk -F'|' -v max="$MAX_ACCEPTABLE" '$1 <= max {print $0}' | sort -t'|' -k1 -rn | head -1)
+
+if [ -n "$SELECTED" ]; then
+    IMAGE_SECTORS=$(echo "$SELECTED" | awk -F'|' '{print $1}')
+    IMAGE_DIR=$(echo "$SELECTED" | awk -F'|' '{print $2}')
+    IMAGE_NAME=$(echo "$SELECTED" | awk -F'|' '{print $3}')
+    IMAGE_GB=$((IMAGE_SECTORS * 512 / 1024 / 1024 / 1024))
+    log "[OK] Gewaehltes Image: $IMAGE_NAME (~${IMAGE_GB} GB)"
+else
+    # KEIN passendes Image gefunden -> ABBRUCH vor Pre-Wipe
+    # Kleinstes Image zur Info ermitteln
+    SMALLEST=$(echo "$ALL_IMAGES" | grep -v "^$" | sort -t'|' -k1 -n | head -1)
+    SMALLEST_SECTORS=$(echo "$SMALLEST" | awk -F'|' '{print $1}')
+    SMALLEST_GB=$((SMALLEST_SECTORS * 512 / 1024 / 1024 / 1024))
+
+    DEPLOY_STATUS="ABGEBROCHEN_VOR_WIPE"
+    ERROR_MESSAGE="Kein Image passt auf ${TARGET_GB}GB Tablet (kleinstes Image: ${SMALLEST_GB}GB)"
+
+    log ""
+    log "############################################"
+    log "  ABBRUCH: KEIN PASSENDES IMAGE!"
+    log "############################################"
+    log ""
+    log "  Ziel-Tablet hat ~${TARGET_GB} GB"
+    log "  Kleinstes Image auf dem Stick: ~${SMALLEST_GB} GB"
+    log ""
+    log "  TABLET BLEIBT UNVERAENDERT - kein Pre-Wipe!"
+    log ""
+    log "  LOESUNG: Image fuer ${TARGET_GB} GB Tablets erstellen"
+    log "    - Referenz-Tablet mit <= ${TARGET_GB} GB verwenden"
+    log "    - Oder: C auf Referenz-Tablet auf ~$((TARGET_GB - 3)) GB schrumpfen"
+    log "    - Dann neu capturen (Capture-Modus)"
+    log "    - Image auf diesen Stick dazulegen, dann neu deployen"
+    log ""
+
+    echo ""
+    echo "############################################"
+    echo "#                                          #"
+    echo "#   ABBRUCH: KEIN PASSENDES IMAGE!         #"
+    echo "#                                          #"
+    echo "#   Tablet:          ~${TARGET_GB} GB"
+    echo "#   Kleinstes Image: ~${SMALLEST_GB} GB"
+    echo "#                                          #"
+    echo "#   Tablet bleibt UNVERAENDERT.            #"
+    echo "#   (Pre-Wipe wurde NICHT ausgefuehrt!)    #"
+    echo "#                                          #"
+    echo "#   Fuer ${TARGET_GB} GB Tablets muss ein eigenes"
+    echo "#   (kleineres) Image erstellt werden.     #"
+    echo "#                                          #"
+    echo "############################################"
+    echo ""
+    read -p "Druecke Enter zum Neustarten..." dummy
+    reboot
+fi
+
+log ""
+
+# ============================================
+# Pre-Wipe: Partitionstabelle auf Ziel-Disk entfernen
+# ============================================
+# Entfernt OEM-/Recovery-/ebackup-Partitionen, GPT-Schutzstrukturen,
+# alte Boot-Signaturen. ocs-sr restoredisk ueberschreibt danach
+# eine "jungfraeuliche" Disk, das ist deutlich zuverlaessiger.
+log_section "PRE-WIPE: Partitionstabelle auf /dev/$TARGET_DISK entfernen"
+
+# Alle moeglichen Partitionen des Ziels un-mounten (safety)
+for part in $(lsblk -lno NAME /dev/$TARGET_DISK 2>/dev/null | tail -n +2); do
+    umount "/dev/$part" 2>/dev/null
+done
+
+# sgdisk --zap-all: loescht GPT + MBR + Backup-GPT
+if command -v sgdisk >/dev/null 2>&1; then
+    log "Fuehre aus: sgdisk --zap-all /dev/$TARGET_DISK"
+    sgdisk --zap-all /dev/$TARGET_DISK 2>&1 | tee -a "$LOG_FILE"
+else
+    log "sgdisk nicht verfuegbar - ueberspringe GPT-Wipe"
+fi
+
+# wipefs -a: loescht verbleibende Filesystem-Signaturen
+if command -v wipefs >/dev/null 2>&1; then
+    log "Fuehre aus: wipefs -a /dev/$TARGET_DISK"
+    wipefs -a /dev/$TARGET_DISK 2>&1 | tee -a "$LOG_FILE"
+fi
+
+# Sicherheits-Puffer: erste 10 MB mit Nullen ueberschreiben
+log "Fuehre aus: dd if=/dev/zero of=/dev/$TARGET_DISK bs=1M count=10"
+dd if=/dev/zero of=/dev/$TARGET_DISK bs=1M count=10 conv=fsync 2>&1 | tee -a "$LOG_FILE"
+
+# Kernel soll neue (leere) Partitionstabelle einlesen
+partprobe /dev/$TARGET_DISK 2>&1 | tee -a "$LOG_FILE" || true
+sleep 2
+
+log ""
+log "[OK] Pre-Wipe abgeschlossen"
+log ""
+log "Ziel-Disk Details (NACH Pre-Wipe):"
+lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL /dev/$TARGET_DISK 2>&1 | tee -a "$LOG_FILE"
+log ""
+
+# ============================================
 # Clonezilla restoredisk ausfuehren
-# -e1 auto  = Partitionstabelle aus Image uebernehmen
-# -c        = Bestaetigung anfordern (Sicherheit!)
-# -p reboot = Nach Abschluss neustarten
+# ============================================
+# Flags:
+#   -e1 auto  = Partitionstabelle aus Image uebernehmen (1:1)
+#   -icds     = Ignore Check Disk Size: akzeptiert Ziel-Disk die
+#               kleiner ist als die Original-Image-Disk.
+#               Wir haben bereits im Pre-Flight geprueft dass die
+#               tatsaechlich benoetigte Groesse (Ende der letzten
+#               Partition) in die Ziel-Disk passt.
+#   -batch    = Keine Bestaetigung
+#   -p true   = ocs-sr beenden ohne eigenen Dialog
+#
+# WICHTIG: KEIN -k1 mehr! Das hat frueher die Partitionen
+# proportional geschrumpft (z.B. 27 GB C auf 13 GB), was dann
+# die NTFS-Daten nicht mehr reinpassen liess und zum
+# "target seek ERROR" fuehrte. Stattdessen: Original-
+# Partitionstabelle 1:1 uebernehmen, Post-Expand macht C auf
+# groesseren Ziel-Disks danach voll.
+log_section "CLONEZILLA RESTORE: $IMAGE_NAME auf /dev/$TARGET_DISK"
+log "Dauer: ca. 15-20 Minuten"
+log ""
+
 /usr/sbin/ocs-sr \
     -e1 auto \
-    -c \
-    -p reboot \
-    restoredisk "$IMAGE_NAME" "$TARGET_DISK"
+    -icds \
+    -batch \
+    -p true \
+    restoredisk "$IMAGE_NAME" "$TARGET_DISK" 2>&1 | tee -a "$LOG_FILE"
+
+OCS_EXIT=${PIPESTATUS[0]}
+log ""
+log "ocs-sr Exit-Code: $OCS_EXIT"
+log ""
+
+if [ "$OCS_EXIT" -ne 0 ]; then
+    DEPLOY_STATUS="FEHLER"
+    ERROR_MESSAGE="ocs-sr restoredisk schlug fehl (Exit-Code $OCS_EXIT)"
+    log "FEHLER: ocs-sr restoredisk ist fehlgeschlagen!"
+    echo ""
+    echo "############################################"
+    echo "#                                          #"
+    echo "#   FEHLER beim Image aufspielen!          #"
+    echo "#                                          #"
+    echo "#   Log auf USB-Stick unter:               #"
+    echo "#   FEXODATEN/deploy-logs/                 #"
+    echo "#                                          #"
+    echo "#   Datei: deploy-${TIMESTAMP}.log         "
+    echo "#                                          #"
+    echo "############################################"
+    echo ""
+    read -p "Druecke Enter zum Neustarten..." dummy
+    reboot
+fi
+
+log "[OK] Image erfolgreich aufgespielt"
+log ""
+
+# ============================================
+# Post-Expand: C-Partition auf volle Disk-Groesse strecken
+# ============================================
+log_section "POST-EXPAND: C-Partition auf volle Groesse strecken"
+
+partprobe /dev/$TARGET_DISK 2>&1 | tee -a "$LOG_FILE" || true
+sleep 2
+
+log "Partitionstabelle nach Restore:"
+parted /dev/$TARGET_DISK print 2>&1 | tee -a "$LOG_FILE" || true
+log ""
+
+# Groesste NTFS-Partition finden (das ist C:)
+C_PART=$(lsblk -bln -o NAME,SIZE,FSTYPE /dev/$TARGET_DISK 2>/dev/null | \
+         awk '$3=="ntfs" {print $2" "$1}' | \
+         sort -rn | head -1 | awk '{print $2}')
+
+if [ -z "$C_PART" ]; then
+    log "WARNUNG: Keine NTFS-Partition gefunden - Post-Expand uebersprungen"
+    log "(Bild wurde aufgespielt, Windows sollte aber trotzdem booten)"
+else
+    log "Groesste NTFS-Partition: /dev/$C_PART"
+    PART_NUM=$(echo "$C_PART" | grep -oE '[0-9]+$')
+    log "Partition-Nummer: $PART_NUM"
+
+    if [ -n "$PART_NUM" ]; then
+        log "parted: resizepart $PART_NUM 100%"
+        parted --script /dev/$TARGET_DISK resizepart $PART_NUM 100% 2>&1 | tee -a "$LOG_FILE"
+        PARTED_EXIT=${PIPESTATUS[0]}
+
+        partprobe /dev/$TARGET_DISK 2>&1 | tee -a "$LOG_FILE" || true
+        sleep 2
+
+        if [ "$PARTED_EXIT" -eq 0 ]; then
+            log "ntfsresize: Dateisystem auf volle Partition ausdehnen"
+            ntfsresize --force --force --no-progress-bar /dev/$C_PART 2>&1 | tee -a "$LOG_FILE"
+            NTFS_EXIT=${PIPESTATUS[0]}
+
+            if [ "$NTFS_EXIT" -eq 0 ]; then
+                log "[OK] C-Partition erfolgreich auf volle Groesse erweitert"
+            else
+                log "WARNUNG: ntfsresize Exit-Code $NTFS_EXIT"
+                log "(Windows repariert sich beim ersten Boot meist selbst)"
+            fi
+        else
+            log "WARNUNG: parted resizepart schlug fehl (Exit $PARTED_EXIT)"
+        fi
+    fi
+fi
+
+log ""
+log "Finale Partitionstabelle:"
+lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL /dev/$TARGET_DISK 2>&1 | tee -a "$LOG_FILE"
+log ""
+
+# ============================================
+# ERFOLG
+# ============================================
+DEPLOY_STATUS="ERFOLG"
+log_section "FERTIG! Tablet wird neu gestartet..."
+log ""
+echo ""
+echo "############################################"
+echo "#                                          #"
+echo "#   IMAGE ERFOLGREICH AUFGESPIELT!         #"
+echo "#                                          #"
+echo "#   Image: $IMAGE_NAME"
+echo "#                                          #"
+echo "#   Tablet startet in 5 Sekunden neu.      #"
+echo "#                                          #"
+echo "############################################"
+echo ""
+sleep 5
+reboot

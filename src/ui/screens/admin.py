@@ -1161,9 +1161,27 @@ class AdminDialog(ctk.CTkToplevel):
             button_color=COLORS["primary"],
             button_hover_color=COLORS["primary_hover"]
         )
-        if current_printer and current_printer in printers:
-            self.printer_dropdown.set(current_printer)
-        elif printers:
+        # Drucker im Dropdown vorauswählen (auch bei USB-Port-Kopien)
+        matched_in_dropdown = False
+        if current_printer:
+            if current_printer in printers:
+                self.printer_dropdown.set(current_printer)
+                matched_in_dropdown = True
+            else:
+                # Fuzzy-Match: Kopie-Suffixe ignorieren
+                from src.printer import find_matching_printer
+                clean_printers = [p.replace("⭐ ", "").replace(" (Standard)", "") for p in printers]
+                matched = find_matching_printer(current_printer, clean_printers)
+                if matched:
+                    # Finde den Original-Eintrag im Dropdown (mit ⭐ Prefix)
+                    for p in printers:
+                        clean_p = p.replace("⭐ ", "").replace(" (Standard)", "")
+                        if clean_p == matched:
+                            self.printer_dropdown.set(p)
+                            matched_in_dropdown = True
+                            logger.info(f"Drucker-Kopie im Dropdown erkannt: '{current_printer}' → '{p}'")
+                            break
+        if not matched_in_dropdown and printers:
             self.printer_dropdown.set(printers[0])
         self.printer_dropdown.pack(anchor="w", pady=(0, 15))
         

@@ -476,7 +476,13 @@ class SystemTestDialog(ctk.CTkToplevel):
         )]
 
         if printer_name not in available:
-            raise Exception(f"Drucker '{printer_name}' nicht gefunden")
+            # Fuzzy-Match: Drucker-Kopien erkennen (anderer USB-Port)
+            from src.printer import find_matching_printer
+            matched = find_matching_printer(printer_name, available)
+            if matched:
+                printer_name = matched
+            else:
+                raise Exception(f"Drucker '{printer_name}' nicht gefunden")
 
         adjustment = self.app.config.get("print_adjustment", {})
         offset_x = adjustment.get("offset_x", 0)

@@ -81,4 +81,14 @@ DEFAULT_CONFIG = {
     
     # Developer Mode
     "developer_mode": False,  # Aktiviert: Logging, CPU/RAM Anzeige
+
+    # Auto-Update (nur im Firmen-WLAN mit Internet)
+    "auto_update_enabled": True,
+    "company_wifi_ssids": [
+        "fexon WLAN",
+        "fexon_Buero_WLAN2",
+        "fexon_Buero_WLAN2_5GHZ",
+        "fexon Gast-WLAN",
+        "fexon_outdoor",
+    ],
 }

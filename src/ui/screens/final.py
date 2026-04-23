@@ -317,13 +317,19 @@ class FinalScreen(ctk.CTkFrame):
             )]
 
             if printer_name not in available_printers:
-                logger.error(f"Drucker nicht gefunden: '{printer_name}'")
-                logger.info(f"Verfügbare Drucker: {available_printers}")
-                self.print_info.configure(
-                    text=f"Drucker '{printer_name}' nicht gefunden!",
-                    text_color=COLORS["error"]
-                )
-                return
+                # Fuzzy-Match: Drucker-Kopien erkennen (anderer USB-Port)
+                from src.printer import find_matching_printer
+                matched = find_matching_printer(printer_name, available_printers)
+                if matched:
+                    printer_name = matched
+                else:
+                    logger.error(f"Drucker nicht gefunden: '{printer_name}'")
+                    logger.info(f"Verfügbare Drucker: {available_printers}")
+                    self.print_info.configure(
+                        text=f"Drucker '{printer_name}' nicht gefunden!",
+                        text_color=COLORS["error"]
+                    )
+                    return
 
             logger.info(f"Drucke auf: {printer_name}")
             logger.info(f"Bild: {image_path}")

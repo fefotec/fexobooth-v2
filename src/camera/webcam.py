@@ -186,31 +186,136 @@ class WebcamManager(CameraManager):
         return self._is_initialized
     
     @staticmethod
-    def _get_device_names() -> list:
-        """Ermittelt echte Webcam-Gerätenamen via WMI (Windows)
+    def _get_dshow_device_names() -> list:
+        """Ermittelt Webcam-Gerätenamen direkt via DirectShow COM-API.
+
+        Nutzt C#/.NET Interop um die DirectShow-Enumeration aufzurufen.
+        Die Reihenfolge entspricht EXAKT der OpenCV CAP_DSHOW Reihenfolge,
+        da beide dieselbe COM-API (ICreateDevEnum) verwenden.
 
         Returns:
-            Liste von Gerätenamen in der Reihenfolge wie sie im System registriert sind.
+            Liste von Gerätenamen in DirectShow-Reihenfolge.
             Leere Liste wenn Abfrage fehlschlägt.
         """
         try:
             import subprocess
-            # PnP-Geräte der Klassen Camera und Image abfragen
+            # C# DirectShow-Enumeration via PowerShell Add-Type
+            # Nutzt dieselbe COM-API wie OpenCV CAP_DSHOW
+            csharp_code = r'''
+using System;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Collections.Generic;
+public class DShowEnum {
+    [ComImport, Guid("62BE5D10-60EB-11d0-BD3B-00A0C911CE86")]
+    class SystemDeviceEnum {}
+    [ComImport, Guid("29840822-5B84-11D0-BD3B-00A0C911CE86"),
+     InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface ICreateDevEnum {
+        [PreserveSig] int CreateClassEnumerator(
+            [In] ref Guid type, [Out] out IEnumMoniker enumMoniker, [In] int flags);
+    }
+    [ComImport, Guid("55272A00-42CB-11CE-8135-00AA004BB851"),
+     InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IPropertyBag {
+        [PreserveSig] int Read(
+            [In, MarshalAs(UnmanagedType.LPWStr)] string name,
+            [In, Out] ref object val, [In] IntPtr errorLog);
+        [PreserveSig] int Write(
+            [In, MarshalAs(UnmanagedType.LPWStr)] string name, [In] ref object val);
+    }
+    public static string[] GetVideoDevices() {
+        var names = new List<string>();
+        try {
+            var devEnum = (ICreateDevEnum)new SystemDeviceEnum();
+            IEnumMoniker enumMon;
+            var cat = new Guid("860BB310-5D01-11D0-BD3B-00A0C911CE86");
+            if (devEnum.CreateClassEnumerator(ref cat, out enumMon, 0) == 0 && enumMon != null) {
+                var mon = new IMoniker[1];
+                while (enumMon.Next(1, mon, IntPtr.Zero) == 0) {
+                    try {
+                        Guid iid = typeof(IPropertyBag).GUID;
+                        object bagObj;
+                        mon[0].BindToStorage(null, null, ref iid, out bagObj);
+                        var bag = (IPropertyBag)bagObj;
+                        object nameVal = "";
+                        bag.Read("FriendlyName", ref nameVal, IntPtr.Zero);
+                        names.Add(nameVal != null ? nameVal.ToString() : "");
+                        Marshal.ReleaseComObject(bagObj);
+                    } catch {} finally { Marshal.ReleaseComObject(mon[0]); }
+                }
+                Marshal.ReleaseComObject(enumMon);
+            }
+        } catch {}
+        return names.ToArray();
+    }
+}
+'''
+            ps_command = (
+                f'Add-Type -TypeDefinition @"\n{csharp_code}\n"@ -Language CSharp; '
+                '[DShowEnum]::GetVideoDevices() | ForEach-Object { $_ }'
+            )
+            result = subprocess.run(
+                ['powershell', '-NoProfile', '-Command', ps_command],
+                capture_output=True, text=True, timeout=10,
+                creationflags=0x08000000  # CREATE_NO_WINDOW
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                names = [n.strip() for n in result.stdout.strip().split('\n') if n.strip()]
+                logger.info(f"DirectShow Kamera-Namen (korrekte Reihenfolge): {names}")
+                return names
+            else:
+                if result.stderr:
+                    logger.debug(f"DirectShow-Enumeration stderr: {result.stderr[:200]}")
+        except Exception as e:
+            logger.debug(f"DirectShow-Enumeration fehlgeschlagen: {e}")
+        return []
+
+    @staticmethod
+    def _get_pnp_device_names() -> list:
+        """Fallback: Ermittelt Webcam-Gerätenamen via PnP/WMI (Windows)
+
+        ACHTUNG: Die Reihenfolge stimmt NICHT zuverlässig mit DirectShow überein!
+        Nur als Fallback verwenden wenn _get_dshow_device_names() fehlschlägt.
+
+        Returns:
+            Liste von Gerätenamen (Reihenfolge kann von DirectShow abweichen!)
+        """
+        try:
+            import subprocess
             result = subprocess.run(
                 ['powershell', '-NoProfile', '-Command',
                  'Get-PnpDevice -Class Camera,Image -Status OK '
-                 '| Sort-Object InstanceId '
                  '| Select-Object -ExpandProperty FriendlyName'],
                 capture_output=True, text=True, timeout=5,
                 creationflags=0x08000000  # CREATE_NO_WINDOW
             )
             if result.returncode == 0 and result.stdout.strip():
                 names = [n.strip() for n in result.stdout.strip().split('\n') if n.strip()]
-                logger.debug(f"WMI Kamera-Namen: {names}")
+                logger.debug(f"PnP Kamera-Namen (Fallback, Reihenfolge unsicher): {names}")
                 return names
         except Exception as e:
-            logger.debug(f"WMI Kamera-Abfrage fehlgeschlagen: {e}")
+            logger.debug(f"PnP Kamera-Abfrage fehlgeschlagen: {e}")
         return []
+
+    @staticmethod
+    def _get_device_names() -> list:
+        """Ermittelt Webcam-Gerätenamen in DirectShow-Reihenfolge.
+
+        Primär: DirectShow COM-API (exakte Reihenfolge wie OpenCV)
+        Fallback: PnP-Geräte (Reihenfolge kann abweichen!)
+
+        Returns:
+            Liste von Gerätenamen, bestmöglich in DirectShow-Reihenfolge.
+        """
+        # Primär: DirectShow-Enumeration (korrekte Reihenfolge)
+        names = WebcamManager._get_dshow_device_names()
+        if names:
+            return names
+
+        # Fallback: PnP (Reihenfolge kann abweichen!)
+        logger.warning("DirectShow-Enumeration fehlgeschlagen, nutze PnP-Fallback")
+        return WebcamManager._get_pnp_device_names()
 
     @staticmethod
     def list_cameras(max_cameras: int = 5) -> list:

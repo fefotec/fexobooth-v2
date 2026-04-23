@@ -31,6 +31,10 @@ _Aktuell keine niedrig priorisierten Aufgaben_
 
 ## Erledigt ✅
 
+### 2026-04-23
+- [x] Auto-Update im Firmen-WLAN (SSID-Whitelist + Internet-Check, still im Background)
+- [x] FEXOSAFE-Backup mit Buchungs-ID als Überordner
+
 ### 2026-03-18
 - [x] USB-Sync Dialog kommt nicht bei Stick-Wiedereinstecken (gleicher Event) — behoben
 - [x] `_offer_sync_dialog`: try/except im Thread, Fallback auf pending_count, Logging

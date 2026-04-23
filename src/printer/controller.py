@@ -24,7 +24,30 @@ class PrinterController:
         self._reset_in_progress = False
 
     def update_printer_name(self, name: str):
-        """Aktualisiert den Druckernamen"""
+        """Aktualisiert den Druckernamen.
+
+        Erkennt automatisch Drucker-Kopien (anderer USB-Port):
+        'Canon SELPHY CP1000' matcht auch 'Canon SELPHY CP1000 (Kopie 1)'
+        """
+        if not name:
+            self.printer_name = name
+            return
+
+        # Prüfen ob der Name exakt existiert
+        try:
+            import win32print
+            available = [p[2] for p in win32print.EnumPrinters(
+                win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
+            )]
+            if name not in available:
+                from src.printer import find_matching_printer
+                matched = find_matching_printer(name, available)
+                if matched:
+                    self.printer_name = matched
+                    return
+        except Exception:
+            pass
+
         self.printer_name = name
 
     @property

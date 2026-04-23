@@ -225,6 +225,18 @@ class PhotoboothApp:
             self._start_statistics_event()
             logger.info("📊 Statistik gestartet (ohne USB)")
 
+        # Auto-Update: Nur im Firmen-WLAN mit Internet. Beim Kunden passiert nichts.
+        # Läuft als Background-Thread mit 15s Verzögerung, damit App erst sauber hochfährt.
+        if self.config.get("auto_update_enabled", True):
+            try:
+                from src.company_network import check_and_auto_update
+                check_and_auto_update(
+                    whitelist=self.config.get("company_wifi_ssids", []),
+                    delay_seconds=15.0,
+                )
+            except Exception as e:
+                logger.debug(f"Auto-Update-Trigger fehlgeschlagen: {e}")
+
         logger.info("PhotoboothApp initialisiert")
 
     def _record_boot_drives(self):

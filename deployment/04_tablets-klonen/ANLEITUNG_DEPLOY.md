@@ -117,6 +117,33 @@ So behaltst du den Ueberblick welche Tablets schon geklont sind.
 
 ---
 
+## Log-Dateien bei Problemen
+
+**Alle Deploy-Vorgaenge werden automatisch geloggt!**
+
+Die Log-Dateien liegen auf dem USB-Stick auf der Partition **FEXODATEN**:
+
+```
+FEXODATEN:\deploy-logs\deploy-YYYYMMDD-HHMMSS.log
+```
+
+Jeder Klon-Versuch erzeugt eine eigene Datei mit Zeitstempel. Die Logs enthalten:
+- Erkannte USB- und Ziel-Disk
+- Ziel-Disk Groesse in Sektoren und Bytes (wichtig bei "Disk too small"!)
+- Komplette Clonezilla-Ausgabe inkl. Fehlermeldungen
+- Exit-Code von `ocs-sr`
+- Status (ERFOLG / FEHLER) am Ende
+
+**Wenn ein Tablet nicht bootet oder der Klon fehlschlaegt:**
+1. USB-Stick ins Windows am PC stecken
+2. FEXODATEN-Laufwerk oeffnen
+3. `deploy-logs\` Ordner → neueste Datei ansehen (Texteditor)
+4. Am Ende der Datei steht der Status und der Fehler
+
+Fuer das Capture (Image-Erstellen) gibt es das gleiche System unter `FEXODATEN:\capture-logs\`.
+
+---
+
 ## Haeufige Probleme
 
 **"Kein FexoBooth-Image gefunden":**
@@ -125,12 +152,17 @@ So behaltst du den Ueberblick welche Tablets schon geklont sind.
 - Richtigen USB-Stick eingesteckt?
 
 **Restore bricht ab mit "Disk too small":**
-- Das Ziel-Tablet hat eine kleinere eMMC als das Referenz-Tablet
-- Loesung: Referenz-Tablet mit kleinstmoeglicher eMMC verwenden (32 GB)
+- Das Script hat drei Automatismen gegen dieses Problem:
+  1. **Pre-Wipe** entfernt OEM-/Recovery-/ebackup-Partitionen vor dem Restore
+  2. **`-icds` Flag** ignoriert minimale Groessenunterschiede der eMMC
+  3. **Post-Expand** streckt C nach dem Restore auf volle Disk-Groesse
+- **Wenn es trotzdem fehlschlaegt**: Log in `FEXODATEN:\deploy-logs\` oeffnen. Dort steht die exakte Sektorzahl von Quelle und Ziel. Falls das Ziel wirklich deutlich kleiner ist (nicht nur wenige Sektoren): Referenz-Tablet mit **kleinstmoeglicher eMMC** (32 GB) verwenden und Image neu capturen
+- Nach Schritt 1 der Automatismen (Pre-Wipe) werden bestehende Partitionen auf dem Ziel-Tablet **unwiderruflich geloescht** - das ist gewollt. Auch "ebackup"-/Recovery-Partitionen von Lenovo sind danach weg und C nutzt nach Post-Expand die volle Disk-Groesse.
 
 **Tablet startet nach Restore nicht:**
 - Nochmal vom USB booten und Image nochmal aufspielen
 - BIOS Boot-Reihenfolge pruefen (eMMC/Windows Boot Manager an erster Stelle)
+- Log pruefen: Wenn Post-Expand eine Warnung geworfen hat, repariert Windows sich meist beim ersten Boot selbst (chkdsk automatisch)
 
 **FexoBooth startet nicht automatisch nach dem Klonen:**
 - Das ist selten aber moeglich wenn Windows den Autostart-Pfad anders behandelt
@@ -139,3 +171,8 @@ So behaltst du den Ueberblick welche Tablets schon geklont sind.
 **USB-Stick wird sehr langsam:**
 - USB 2.0 Sticks sind deutlich langsamer als USB 3.0
 - Kein Problem, dauert nur laenger (~30 statt ~15 Minuten)
+
+**Clonezilla landet am Ende in einem "Choose mode"-Menue (poweroff/reboot/cmd/...):**
+- Bedeutet: `ocs-sr` wurde unterbrochen oder das eigene Script hat das Reboot-Kommando nicht erreicht
+- Log in `FEXODATEN:\deploy-logs\` zeigt den Grund
+- Im Notfall `reboot` waehlen und das Log am PC auslesen

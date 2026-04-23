@@ -180,12 +180,37 @@ class StartScreen(ctk.CTkFrame):
         """Erstellt die UI mit pack()-Layout - responsive Design"""
         self.qr_label: Optional[ctk.CTkLabel] = None
 
-        # Galerie-Banner ZUERST (unten) - damit es Platz reserviert
+        # Galerie-Banner ZUERST (unten) - reserviert Platz
         banner_pady = (0, 5) if self._is_small else (0, 8)
         self.gallery_banner = ctk.CTkFrame(self, fg_color="transparent")
         self.gallery_banner.pack(side="bottom", fill="x", pady=banner_pady)
 
-        # Zentrierter Hauptcontainer (nimmt restlichen Platz)
+        # Start-Button DIREKT ueber Galerie-Banner packen (nicht im inner_frame!)
+        # So kann er nicht vom zentrierten Inhalt verdeckt werden wenn die
+        # Galerie aktiv ist und der inner_frame zu gross wird.
+        btn_font_size = 22 if self._is_small else 28
+        btn_width = 220 if self._is_small else 280
+        btn_height = 55 if self._is_small else 70
+        btn_corner = 28 if self._is_small else 35
+        self.start_btn = ctk.CTkButton(
+            self,
+            text=f"▶  {self.config.get('ui_texts', {}).get('start', 'START')}",
+            font=("Segoe UI", btn_font_size, "bold"),
+            width=btn_width,
+            height=btn_height,
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["bg_card"],
+            text_color=COLORS["text_muted"],
+            corner_radius=btn_corner,
+            border_width=2 if self._is_small else 3,
+            border_color=COLORS["border"],
+            state="disabled",
+            command=self._on_start
+        )
+        btn_bottom_pad = (5, 8) if self._is_small else (10, 12)
+        self.start_btn.pack(side="bottom", pady=btn_bottom_pad)
+
+        # Zentrierter Hauptcontainer (nimmt restlichen Platz zwischen Top und Button)
         center_frame = ctk.CTkFrame(self, fg_color="transparent")
         center_frame.pack(expand=True, fill="both")
 
@@ -216,28 +241,6 @@ class StartScreen(ctk.CTkFrame):
         # Karten-Container
         self.cards_frame = ctk.CTkFrame(inner_frame, fg_color="transparent")
         self.cards_frame.pack()
-
-        # Start-Button (groß und auffällig, unter den Karten) - responsive
-        btn_font_size = 22 if self._is_small else 28
-        btn_width = 220 if self._is_small else 280
-        btn_height = 55 if self._is_small else 70
-        btn_corner = 28 if self._is_small else 35
-        self.start_btn = ctk.CTkButton(
-            inner_frame,
-            text=f"▶  {self.config.get('ui_texts', {}).get('start', 'START')}",
-            font=("Segoe UI", btn_font_size, "bold"),
-            width=btn_width,
-            height=btn_height,
-            fg_color=COLORS["bg_light"],
-            hover_color=COLORS["bg_card"],
-            text_color=COLORS["text_muted"],
-            corner_radius=btn_corner,
-            border_width=2 if self._is_small else 3,
-            border_color=COLORS["border"],
-            state="disabled",
-            command=self._on_start
-        )
-        self.start_btn.pack(pady=(15 if self._is_small else 25, 0))
 
         # Loading-Overlay (wird über allem angezeigt während VLC lädt)
         self._loading_overlay = None

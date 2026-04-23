@@ -6,6 +6,16 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### DirectShow-Enumeration: PnP-Reihenfolge ≠ OpenCV-Reihenfolge
+
+| | |
+|---|---|
+| **Problem** | `Get-PnpDevice -Class Camera,Image | Sort-Object InstanceId` liefert Kameranamen in einer Reihenfolge (PCI/Intel vor USB/Logitech), die NICHT der OpenCV `CAP_DSHOW` Enumeration entspricht. Dadurch wurde Index 0 der falsche Name zugeordnet → App benutzte interne Kamera statt Logitech |
+| **Ursache** | PnP-InstanceIds sortieren alphabetisch (PCI\... < USB\...), DirectShow nutzt aber die COM-Enumeration über `ICreateDevEnum::CreateClassEnumerator(CLSID_VideoInputDeviceCategory)` mit eigener Reihenfolge |
+| **Entscheidung** | DirectShow-Geräte direkt via C#/.NET COM-Interop abfragen (`Add-Type` in PowerShell). Nutzt exakt dieselbe API wie OpenCV intern. PnP-Abfrage (ohne Sort) als Fallback |
+| **Alternativen** | ffmpeg `-list_devices` (nicht garantiert installiert), `comtypes` Python-Paket (neue Dependency), Resolution-Fingerprinting (fragil) |
+| **Merke** | NIE annehmen dass PnP/WMI Gerätereihenfolge = DirectShow/OpenCV Reihenfolge. Immer dieselbe Enumeration-API nutzen wie das Framework das die Geräte öffnet |
+
 ### CTkImage DPI-Skalierung: winfo_width() vs CTkImage.size
 
 **Problem:** `winfo_width()`/`winfo_height()` geben **Tk-Pixel** zurück, `CTkImage(size=...)` erwartet aber **logische (DPI-unabhängige) Pixel**. Bei 125% DPI-Skalierung (Lenovo Miix 310: 1280x800 physisch, 1024x640 logisch) waren alle Bilder 25% zu groß → Template im LiveView abgeschnitten.
@@ -293,6 +303,26 @@ Betrifft: `_display_preview()`, `_build_flash_cache()`, `_show_main_preview()`, 
 ---
 
 ## Lessons Learned
+
+### Hotspot: Tethering API braucht mindestens EIN gespeichertes WLAN-Profil
+
+| | |
+|---|---|
+| **Problem** | Auf frisch geklonten Tablets startete der WLAN-Hotspot nicht, `NetworkOperatorTetheringManager.CreateFromConnectionProfile()` gab immer `null` zurueck. In der Windows-UI kam die Meldung "PC hat keine Ethernet-/WLAN-/Datenverbindung". Sobald die Box sich einmal mit irgendeinem WLAN verbunden hatte (auch ohne Internet) funktionierte der Hotspot ab da dauerhaft - selbst nach Disconnect |
+| **Ursache** | Die Tethering-API benoetigt mindestens EIN gespeichertes WLAN-Profil als "Ankerpunkt" fuer `CreateFromConnectionProfile()`. Frisch geklonte Tablets haben nach dem Clonezilla-Restore keine Profile. `GetConnectionProfiles()` gibt eine leere Liste zurueck, `GetInternetConnectionProfile()` gibt null - die API findet nichts zum anhaengen. Beim Realtek RTL8723BS ist zusaetzlich Hosted Network explizit "Nein", d.h. auch der `netsh wlan hostednetwork`-Fallback greift nicht |
+| **Entscheidung** | `_ensure_wlan_profile_exists()` in [src/gallery/hotspot.py](src/gallery/hotspot.py) vor jedem `start_hotspot()` aufrufen. Prueft via `netsh wlan show profiles` ob mind. ein Profil existiert, falls nicht wird ein offenes, nicht-auto-verbindendes Dummy-Profil (`FexoBoothDummy`) via `netsh wlan add profile` angelegt. Passiert einmal pro Tablet, ist danach persistent |
+| **Alternativen** | (1) Dummy-Profil im Referenz-Tablet speichern und mit ins Image einbacken → ueberlebt Image-Restore nicht zuverlaessig. (2) Via `netsh wlan connect` + sofortiges Disconnect ein aktives Profil erzeugen → unzuverlaessig wenn SSID nicht scant. (3) `setup_hotspot.ps1` manuell einmal laufen lassen → vergisst man bei 200 Tablets |
+| **Merke** | Windows-Tethering-API ist nicht "state-less". Sie brauchen gespeicherte Profile als Referenz, selbst wenn der Hotspot gar nichts mit einem Client-WLAN zu tun haben soll. Diagnose: `GetConnectionProfiles()` liefert `[]` = kein Profil gespeichert → Tethering unmoeglich. Fix: ein leeres Dummy-Profil reicht |
+
+### Deployment: Clonezilla "Disk too small" + ebackup/Recovery-Partitionen auf Lenovos
+
+| | |
+|---|---|
+| **Problem** | Einige Lenovo-Tablets brechen beim `ocs-sr restoredisk` mit "Disk too small" ab. Betroffen sind Tablets mit OEM-Recovery-/"ebackup"-Partitionen ODER Tablets deren eMMC minimal weniger Sektoren hat als die Referenz-Disk (Herstellerchargen variieren um wenige MB). Ohne Logging war nicht erkennbar WAS genau schief ging - der User landete nur im Clonezilla "Choose mode"-Menue |
+| **Ursache** | 1) `ocs-sr restoredisk` vergleicht Image-Disk-Groesse sektorgenau mit Ziel-Disk. Schon wenige fehlende Sektoren = Abbruch. 2) OEM-GPT-Schutzstrukturen (Recovery-Partitionen) koennen die Neuanlage der Partitionstabelle blockieren. 3) Das alte Script hatte KEIN Logging - Fehler verschwanden beim Reboot |
+| **Entscheidung** | Dreistufige Absicherung in `custom-ocs-deploy`: (1) **Pre-Wipe**: `sgdisk --zap-all` + `wipefs -a` + `dd` 10 MB Nullen → totale Disk, jungfraeulich. (2) **ocs-sr Flags** `-icds` (ignore check disk size) + `-k1` (proportionale Partitionen). (3) **Post-Expand**: `parted resizepart 100%` + `ntfsresize` strecken C automatisch auf volle Disk-Groesse nach Restore. Plus: **Log-File auf FEXODATEN** (`/deploy-logs/deploy-YYYYMMDD-HHMMSS.log`) mit `tee`, ueberlebt Reboot, enthaelt vollstaendige ocs-sr Ausgabe + Disk-Infos VOR und NACH Pre-Wipe |
+| **Alternativen** | Referenz-Tablet neu mit kleinerem C capturen (aufwaendig, manuell), `dd` statt ocs-sr (viel langsamer, komprimiert nicht), WinPE-basiertes Custom-Tool (Over-Engineering fuer 200 Tablets) |
+| **Merke** | Clonezilla-Deploy-Scripts IMMER mit `2>&1 \| tee -a "$LOG_FILE"` auf einer persistenten Partition loggen - ohne Log kein Debugging. `trap cleanup EXIT` fuer garantierte Status-Zeile am Ende. Und: OEM-Recovery-Partitionen gehoeren vor dem Restore zwingend via `sgdisk --zap-all` entfernt, auch wenn `-e1 auto` das theoretisch erledigen sollte |
 
 ### Video: OpenCV Default-Backend kann H.264 nicht decodieren
 

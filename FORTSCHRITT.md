@@ -4,6 +4,139 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-04-23
+
+### Auto-Update im Firmen-WLAN
+
+**Idee:** Wenn eine Fotobox in der Firma eingeschaltet wird (z.B. vor einer Vermietung zum Bild-Ziehen), soll sie sich still aktualisieren. Beim Kunden besteht nie eine Internetverbindung, also kann dort niemals versehentlich ein Update laufen.
+
+**Umsetzung:**
+- Neue Datei [src/company_network.py](src/company_network.py) mit zwei Funktionen: `get_active_ssid()` (liest aktive WLAN-SSID via `netsh wlan show interfaces`) und `check_and_auto_update()` (Background-Thread, prüft SSID gegen Whitelist, bei Match triggert `updater.check_for_update()`).
+- Firmen-SSIDs als Default in [src/config/defaults.py](src/config/defaults.py): `fexon WLAN`, `fexon_Buero_WLAN2`, `fexon_Buero_WLAN2_5GHZ`, `fexon Gast-WLAN`, `fexon_outdoor` (Whitelist, nicht Präfix-Match — robuster gegen zufällige Kunden-WLANs mit "fexon" im Namen).
+- Trigger in [src/app.py](src/app.py) am Ende von `__init__`, 15s Verzögerung nach Start, als Daemon-Thread.
+- Ohne Internet wird der `ConnectionError` aus `check_for_update()` still geschluckt → beim Kunden passiert nichts.
+
+**Warum SSID + Internet-Check statt nur Internet:** Ein Kunde könnte theoretisch ein offenes WLAN oder einen Hotspot mit Internet haben. Mit dem SSID-Check ist das doppelt abgesichert: Box muss (1) in einem der fexon-WLANs sein UND (2) Internet haben.
+
+**Version:** Bump auf `2.2.0` — erstes Feature-Release seit 2.1.1.
+
+**Betroffen:** `src/company_network.py` (neu), `src/app.py`, `src/config/defaults.py`, `src/__init__.py`
+
+---
+
+### FEXOSAFE-Backup: Überordner = Buchungs-ID (Event-ID)
+
+**Problem:** Der FEXOSAFE-Auto-Backup-Dialog (poppt auf, sobald ein FEXOSAFE-Stick eingesteckt wird) kopierte alle Bilder nach `USB:\BILDER\Single` bzw. `\Prints` – ohne Unterscheidung nach Buchung. Wurde derselbe Stick für mehrere Events genutzt, landeten alle Bilder zusammen im selben `BILDER/`-Ordner. Der Service-Menü-Backup (PIN 6588) machte es korrekt mit Event-ID als Überordner, der Auto-Dialog aber nicht.
+
+**Fix in [src/ui/dialogs/backup.py](src/ui/dialogs/backup.py):** Neue Methode `_get_last_event_id()` (Logik analog zu `service.py:_get_last_event_id`): aktive Buchung → aktuelle Statistik → letzte Historie → Datum-Fallback. In `_run_backup()` wird der Zielpfad jetzt zu `fexosafe_root / event_id / {Single|Prints}` statt `fexosafe_root / "BILDER" / {Single|Prints}`.
+
+**Betroffen:** `src/ui/dialogs/backup.py`
+
+---
+
+## 2026-04-22
+
+### Deployment: Pre-Flight-Check verhindert Bricken kleinerer Tablets
+
+**Problem:** Zwei Tablets wurden beim Image-Aufspielen unbrauchbar gemacht. Beide waren **32 GB Lenovo Miix 310** (Modell `MMC DF4032`), das Image stammt aber von einem **64 GB Tablet** (`MMC DF4064`). Mit `-icds -k1` versucht Clonezilla die Partitionen proportional zu schrumpfen - aber die NTFS-Daten (34,7 GB belegt) passen physisch nicht in die ~28 GB die nach EFI+MSR auf einem 32 GB Tablet uebrig bleiben. Restore stirbt mitten im NTFS-Schreiben mit `target seek ERROR: Invalid argument`. Der vorherige Pre-Wipe hat aber bereits die alte Partitionstabelle zerstoert -> Tablet hat halbe NTFS-Daten und keine bootbare Struktur mehr.
+
+**Fix in [custom-ocs-deploy](deployment/02_usb-stick-erstellen/custom-ocs/custom-ocs-deploy):** Neuer **Pre-Flight Check VOR dem Pre-Wipe**:
+- Liest die Original-Disk-Sektorzahl aus den Image-Metadaten (`<disk>-pt.sf`, Feld `last-lba`)
+- Vergleicht mit Ziel-Disk-Sektorzahl
+- Toleranz 5% (deckt eMMC-Chargen-Variationen ab, z.B. 8 MB Differenz zwischen 64 GB Tablets)
+- Bei Ziel < 95% der Image-Groesse: **ABBRUCH bevor Pre-Wipe gestartet wird**
+- Tablet bleibt unveraendert, klare Fehlermeldung mit Image- und Ziel-GB
+- Log enthaelt Hinweis "Vermutlich 32 GB Tablet, Image von 64 GB Tablet"
+
+**Betroffen:** `deployment/02_usb-stick-erstellen/custom-ocs/custom-ocs-deploy`
+
+**Wichtig:** Tablets die aktuell in der Sammlung sind muessen vorher nach Disk-Groesse sortiert werden (`MMC DF4032` = 32 GB, `MMC DF4064` = 64 GB). Fuer 32 GB Tablets braucht es entweder ein separates Image oder das Referenz-Image mit C < 25 GB neu capturen.
+
+---
+
+## 2026-04-20
+
+### Hotspot: Auto-Dummy-Profil fuer frisch geklonte Tablets
+
+**Problem:** Nach dem Deployment starteten einige Tablets den Hotspot nicht. Die App-Logs zeigten `Tethering API fehlgeschlagen: NO_PROFILE`. Die Diagnose ergab: `NetworkOperatorTetheringManager.CreateFromConnectionProfile()` gibt `null` zurueck solange das Tablet kein einziges gespeichertes WLAN-Profil hat. Sobald sich das Tablet einmal mit einem beliebigen WLAN verbunden hatte (auch ohne Internet), lief der Hotspot ab da dauerhaft - inklusive Disconnect.
+
+**Fix:** Neue Funktion `_ensure_wlan_profile_exists()` in [src/gallery/hotspot.py](src/gallery/hotspot.py) wird vor jedem `start_hotspot()` aufgerufen:
+- Prueft via `netsh wlan show profiles` ob mind. ein Profil existiert
+- Falls nicht: legt offenes, nicht-auto-verbindendes Dummy-Profil "FexoBoothDummy" via `netsh wlan add profile` an (aus Inline-XML, kein File-Dependency)
+- Passiert genau EINMAL pro Tablet, ist danach persistent
+
+Zusaetzlich in `start_hotspot()`: Die Erfolgs-Bedingung ignoriert explizit den `NO_PROFILE`-Status, damit der Fallback-Pfad nicht faelschlicherweise als Erfolg gewertet wird.
+
+**Betroffen:** `src/gallery/hotspot.py`
+
+**Wichtig:** Auf bereits deployte Tablets greift der Fix sofort nach dem OTA-Update - kein Handanlegen noetig. Auf diesen Tablets wird beim naechsten Hotspot-Start einmalig das Dummy-Profil angelegt, danach geht alles.
+
+---
+
+### UI: Start-Button wird vom Galerie-Banner abgeschnitten
+
+**Problem:** Bei aktivierter Galerie wurde der START-Button auf dem Start-Screen vom Galerie-Banner ueberlappt. Ursache: Der Start-Button war im `inner_frame` gepackt, der mit `place(rely=0.5, anchor="center")` zentriert wird. Wenn der Inhalt (Titel + Untertitel + Template-Karten + Button) hoeher als das verfuegbare `center_frame` ist, schaut er oben und unten drueber raus - unten in den Galerie-Banner rein.
+
+**Fix in [src/ui/screens/start.py](src/ui/screens/start.py):** Start-Button aus `inner_frame` rausgeloest und direkt ueber dem `gallery_banner` per `pack(side="bottom")` platziert. Der Button kann so nicht mehr vom zentrierten Inhalt verdeckt werden, der zentrierte Bereich schrumpft bei Bedarf.
+
+**Betroffen:** `src/ui/screens/start.py`
+
+---
+
+### Setup: Hotspot-Diagnose- und Auto-Fix-Script
+
+**Problem:** Auf einzelnen (aus dem gleichen Image geklonten) Tablets startet der WLAN-Hotspot nicht. Die Windows-UI zeigt "Ein mobiler Hotspot kann nicht eingerichtet werden, weil Ihr PC keine Ethernet-, WLAN- oder Datenverbindung aufweist." Das ist der Standard-Offline-Fehler und tritt auch bei funktionierenden Boxen auf - das eigentliche Problem liegt tiefer (Treiber-Zustand, ICS-Dienst, Power-Management, Hosted-Network-Support).
+
+**Lösung:** Neues Script [setup/diagnose_hotspot.bat](setup/diagnose_hotspot.bat) (+ `diagnose_hotspot.ps1`):
+- Sammelt alle relevanten Infos in ein Log auf dem Desktop (+ FEXODATEN-Stick falls eingesteckt): System-Info, alle Netzwerk-Adapter (inkl. hidden), `netsh wlan show interfaces/drivers`, Hosted-Network-Support, Status von WlanSvc/SharedAccess/icssvc, aktuelle Connection Profiles
+- Auto-Fixes: Services starten, Power-Management am WLAN-Adapter deaktivieren, WLAN-Adapter re-enablen, Hosted Network neu konfigurieren, Tethering API als Fallback mit allen Profilen durchprobieren
+- Klares Ergebnis am Ende: LAEUFT / LAEUFT NICHT + konkrete nächste Schritte
+
+**Betroffen:** `setup/diagnose_hotspot.bat` (neu), `setup/diagnose_hotspot.ps1` (neu)
+
+---
+
+### Deployment: Clonezilla-Scripts mit Auto-Fixes + persistentem Logging
+
+**Problem:** Beim Aufspielen des Images auf Ziel-Tablets brach Clonezilla bei einigen Lenovos mit "Disk too small" ab. Ursachen waren OEM-Recovery-/"ebackup"-Partitionen auf dem Ziel sowie minimal abweichende Sektorzahlen der eMMC zwischen Herstellerchargen. Ohne Logging war der Fehler nicht nachvollziehbar - das Tablet landete nur stumm im Clonezilla "Choose mode"-Menue.
+
+**Lösung - drei Bausteine:**
+
+1. **Persistentes Logging in [custom-ocs-deploy](deployment/02_usb-stick-erstellen/custom-ocs/custom-ocs-deploy) und [custom-ocs-capture](deployment/02_usb-stick-erstellen/custom-ocs/custom-ocs-capture):**
+   - Gesamte Script- und `ocs-sr`-Ausgabe via `tee` nach `FEXODATEN:\deploy-logs\deploy-YYYYMMDD-HHMMSS.log` (bzw. `capture-logs/` fuer Capture) schreiben
+   - Log ueberlebt Reboot → kann am PC im Texteditor gelesen werden
+   - `trap cleanup EXIT` garantiert eine Status-Zeile am Ende (ERFOLG / FEHLER + Fehlermeldung)
+   - Bei Fehler: grosser ASCII-Banner auf dem Bildschirm mit Log-Pfad + Wartet auf Enter
+
+2. **Auto-Fixes gegen "Disk too small" im Deploy-Script:**
+   - **Pre-Wipe**: `sgdisk --zap-all` + `wipefs -a` + `dd` 10 MB Nullen vor dem Restore entfernt alle OEM-GPT-Strukturen und Recovery-Partitionen
+   - **`ocs-sr` Flags erweitert**: `-icds` (ignore check disk size) + `-k1` (proportionale Partitionen) statt nur `-e1 auto`
+   - **Post-Expand**: `parted resizepart 100%` + `ntfsresize` streckt die C-Partition nach dem Restore automatisch auf die volle Disk-Groesse - egal wie gross C im Image war
+
+3. **Dokumentation:**
+   - [deployment/04_tablets-klonen/ANLEITUNG_DEPLOY.md](deployment/04_tablets-klonen/ANLEITUNG_DEPLOY.md) → neuer Abschnitt "Log-Dateien bei Problemen" + erweitertes Troubleshooting
+   - [ERKENNTNISSE.md](ERKENNTNISSE.md) → Lessons-Learned Eintrag "Deployment: Clonezilla 'Disk too small' + ebackup/Recovery-Partitionen auf Lenovos"
+
+**Betroffen:** `deployment/02_usb-stick-erstellen/custom-ocs/custom-ocs-deploy`, `deployment/02_usb-stick-erstellen/custom-ocs/custom-ocs-capture`, `deployment/04_tablets-klonen/ANLEITUNG_DEPLOY.md`, `ERKENNTNISSE.md`
+
+**Wichtig:** Die `custom-ocs-*` Scripts liegen im Projekt-Repo, werden aber beim Ausfuehren vom **USB-Stick** gestartet. Nach diesen Aenderungen muss der USB-Stick neu erstellt werden (`deployment/02_usb-stick-erstellen/prepare_usb_stick.bat` ausfuehren), damit die neuen Scripts auf dem Stick landen.
+
+---
+
+## 2026-04-10
+
+### Bugfix: Drucker wird nicht erkannt wenn an anderem USB-Port
+- **Bug:** Canon SELPHY wird von Windows als Kopie registriert wenn er an einem anderen USB-Port angeschlossen wird (z.B. "Canon SELPHY CP1000 (Kopie 1)"). Der in der Config gespeicherte Name "Canon SELPHY CP1000" matcht dann nicht mehr → "DRUCKER FEHLT!"
+- **Fix:** Neue `find_matching_printer()` Funktion in `src/printer/__init__.py` die den Basis-Druckernamen vergleicht und "(Kopie N)"/"(Copy N)"-Suffixe ignoriert. Eingebaut an allen Stellen: Druckvorgang (final.py), Drucker-Status-Check (controller.py), Admin-Dropdown (admin.py), System-Test (system_test.py)
+- **Betroffen:** `src/printer/__init__.py` (neu), `src/printer/controller.py`, `src/ui/screens/final.py`, `src/ui/screens/admin.py`, `src/ui/dialogs/system_test.py`
+
+### Bugfix: Falsche Kamera benutzt trotz korrekter Auswahl in der UI
+- **Bug:** Obwohl im Admin-Panel und Auto-Auswahl nur die Logitech C922 angezeigt wurde, benutzte die App tatsächlich die interne Intel AVStream Camera des Tablets. Ursache: `_get_device_names()` sortierte PnP-Geräte nach `InstanceId` (PCI vor USB), aber OpenCV/DirectShow enumiert in anderer Reihenfolge → Name-zu-Index Mapping war vertauscht
+- **Fix:** Neue `_get_dshow_device_names()` Methode nutzt C#/.NET DirectShow COM-Interop (`ICreateDevEnum`, `IEnumMoniker`, `IPropertyBag`) via PowerShell `Add-Type`. Liefert Kameranamen exakt in der OpenCV `CAP_DSHOW` Reihenfolge. Alte PnP-Abfrage bleibt als Fallback (ohne `Sort-Object`)
+- **Betroffen:** `src/camera/webcam.py`
+
+---
+
 ## 2026-03-27
 
 ### Bugfix: Template-Persistenz nach Neustart ohne USB-Stick (Regression)

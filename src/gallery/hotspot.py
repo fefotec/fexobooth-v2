@@ -223,6 +223,111 @@ def _is_hostednetwork_supported() -> bool:
 
 
 # ─────────────────────────────────────────────
+# Dummy-WLAN-Profil sicherstellen
+# ─────────────────────────────────────────────
+# Ohne mind. ein gespeichertes WLAN-Profil schlaegt
+# NetworkOperatorTetheringManager.CreateFromConnectionProfile()
+# fehl - auch wenn die Box nie Internet haben wird. Ein
+# offenes, nicht-auto-verbindendes Dummy-Profil reicht damit
+# die Windows-API einen Ankerpunkt hat.
+
+_DUMMY_PROFILE_NAME = "FexoBoothDummy"
+_DUMMY_PROFILE_XML = '''<?xml version="1.0"?>
+<WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">
+    <name>FexoBoothDummy</name>
+    <SSIDConfig>
+        <SSID>
+            <name>FexoBoothDummy</name>
+        </SSID>
+    </SSIDConfig>
+    <connectionType>ESS</connectionType>
+    <connectionMode>manual</connectionMode>
+    <MSM>
+        <security>
+            <authEncryption>
+                <authentication>open</authentication>
+                <encryption>none</encryption>
+                <useOneX>false</useOneX>
+            </authEncryption>
+        </security>
+    </MSM>
+</WLANProfile>
+'''
+
+
+def _ensure_wlan_profile_exists() -> bool:
+    """Legt einmalig ein Dummy-WLAN-Profil an wenn noch keines existiert.
+
+    Auf frisch geklonten Tablets gibt es keine gespeicherten WLAN-Profile
+    -> NetworkOperatorTetheringManager.CreateFromConnectionProfile() findet
+    keinen Ankerpunkt und gibt immer null zurueck. Ein einmal gespeichertes
+    offenes Profil (muss nie verbinden) reicht damit die Tethering-API
+    dauerhaft funktioniert.
+
+    Returns:
+        True wenn mindestens ein Profil vorhanden ist (schon oder neu angelegt)
+    """
+    if sys.platform != "win32":
+        return False
+
+    # Pruefen welche Profile bereits existieren
+    success, output = _run_netsh(["wlan", "show", "profiles"])
+    if not success:
+        logger.warning("netsh wlan show profiles fehlgeschlagen")
+        return False
+
+    # "Alle Benutzerprofile" (de) / "All User Profile" (en) gefolgt von SSID
+    # Wenn mind. ein Profil drin ist, tauchen Zeilen wie ":  SSID_NAME" auf
+    # unter der "Benutzerprofile" / "User profiles" Sektion
+    has_profile = False
+    for line in output.splitlines():
+        stripped = line.strip()
+        # Nur Zeilen die ein Profil beschreiben (mit Doppelpunkt und Inhalt)
+        if ": " in stripped and not stripped.startswith("Schnittstelle") \
+           and not stripped.startswith("Interface") \
+           and not stripped.startswith("Gruppenrichtlinie") \
+           and not stripped.startswith("Group policy"):
+            # Zeile wie "Alle Benutzerprofile     : fexon_Buero_WLAN2"
+            _, value = stripped.split(": ", 1)
+            if value.strip():
+                has_profile = True
+                break
+
+    if has_profile:
+        logger.debug("WLAN-Profil bereits vorhanden - kein Dummy noetig")
+        return True
+
+    logger.info("Kein WLAN-Profil gefunden - lege Dummy-Profil an")
+
+    # XML in Temp-Datei schreiben
+    import tempfile
+    import os
+    try:
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".xml", delete=False, encoding="utf-8")
+        tmp.write(_DUMMY_PROFILE_XML)
+        tmp.close()
+        xml_path = tmp.name
+    except Exception as e:
+        logger.error(f"Konnte Dummy-Profil-XML nicht erstellen: {e}")
+        return False
+
+    try:
+        # Dummy-Profil hinzufuegen (user=current verhindert Group-Policy-Eingriff)
+        success, output = _run_netsh(["wlan", "add", "profile", f"filename={xml_path}", "user=current"])
+        if success:
+            logger.info(f"Dummy-WLAN-Profil '{_DUMMY_PROFILE_NAME}' angelegt")
+            return True
+        else:
+            logger.error(f"netsh wlan add profile fehlgeschlagen: {output}")
+            return False
+    finally:
+        try:
+            os.unlink(xml_path)
+        except Exception:
+            pass
+
+
+# ─────────────────────────────────────────────
 # Oeffentliche API
 # ─────────────────────────────────────────────
 
@@ -245,6 +350,11 @@ def start_hotspot(ssid: str = "", password: str = "") -> bool:
     ssid = ssid or _DEFAULT_SSID
     password = password or _DEFAULT_PASSWORD
 
+    # ── Pre-Step: Dummy-WLAN-Profil sicherstellen ──
+    # Ohne mind. ein gespeichertes Profil findet die Tethering API nichts.
+    # Passiert auf frisch geklonten Tablets (sonst nur "NO_PROFILE").
+    _ensure_wlan_profile_exists()
+
     # ── Methode 1: Tethering API (mit allen Profilen) ──
     logger.info("Starte Hotspot (Tethering API)...")
     success, output = _run_powershell(_START_TETHERING_PS)
@@ -253,7 +363,7 @@ def start_hotspot(ssid: str = "", password: str = "") -> bool:
         logger.info("Hotspot war bereits aktiv (Tethering)")
         _active_method = "tethering"
         return True
-    elif output == "Success" or (success and "Error" not in output):
+    elif output == "Success" or (success and "Error" not in output and output != "NO_PROFILE"):
         logger.info("Hotspot erfolgreich gestartet (Tethering)")
         _active_method = "tethering"
         return True
