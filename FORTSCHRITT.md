@@ -6,6 +6,20 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-04-23
 
+### Update-UI: Progress-Dialog + Orphan-Cleanup (v2.2.2)
+
+**Problem:** Nach Klick auf "Jetzt updaten" sah der User nichts mehr. Der ServiceDialog hat kein `-topmost` gesetzt ([src/ui/screens/service.py:47](src/ui/screens/service.py#L47)), während der Confirm-Dialog es hatte. Sobald `confirm.destroy()` den Bestätigungsdialog zerstörte, fiel der ServiceDialog im Z-Stack zurück — die Kiosk-Haupt-App (ebenfalls Fullscreen-Overlay) überlagerte ihn. Der Download lief im Background-Thread brav weiter, aber die Progress-Bar (nur 12 px hoch) war hinter der Haupt-App versteckt. User denkt "abgestürzt", startet neu → Download verloren, Fragmente in `%TEMP%`.
+
+**Fix 1 — Dedizierter Progress-Dialog:** Neues Modul [src/ui/dialogs/update_progress.py](src/ui/dialogs/update_progress.py) analog zu `FexosafeBackupDialog`. Fullscreen-Overlay mit `attributes("-topmost", True)`, 28 px hohe Progress-Bar, MB-Zähler (`52.3 / 143.4 MB`), Prozent-Anzeige und klarem Phasen-Text. `service._execute_update()` öffnet jetzt diesen Dialog (nach `self.withdraw()` des ServiceDialog) statt die Inline-Progressbar zu nutzen.
+
+**Fix 2 — Orphan-Cleanup:** Neue Funktion `updater.cleanup_orphan_downloads(max_age_hours=1.0)`, beim App-Start aufgerufen. Löscht `%TEMP%\fexobooth_update.zip`, `%TEMP%\fexobooth_update_extract\`, `%TEMP%\fexobooth_updater.bat` wenn älter als 1 h. Verhindert zugemüllte Tablets bei abgebrochenen Updates. 1 h Mindestalter schützt laufende Downloads.
+
+**Zusätzlich:** `src.ui.dialogs.update_progress` und `src.company_network` explizit in `fexobooth.spec` als hidden imports eingetragen — nicht strikt nötig (PyInstaller findet direkte Imports), aber robuster gegen spätere Refactorings.
+
+**Betroffen:** `src/ui/dialogs/update_progress.py` (neu), `src/ui/screens/service.py`, `src/updater.py`, `src/app.py`, `src/__init__.py`, `fexobooth.spec`
+
+---
+
 ### Updater: Repo war privat, Fehler-Logging ergänzt (v2.2.1)
 
 **Problem:** Der Update-Button im Service-Menü zeigte auf allen Tablets "Keine Internetverbindung" – obwohl Browser-Internet funktionierte. Das GitHub-Repo `fefotec/fexobooth-v2` war auf **private** gesetzt. Unauthentifizierte API-Calls auf private Repos liefern **HTTP 404** (GitHub-Security-Feature, versteckt Existenz privater Repos). Der Code in [src/updater.py](src/updater.py) wrapped `URLError` (dessen Subklasse `HTTPError` ist) generisch in `ConnectionError` → UI zeigt "Keine Internetverbindung". Das heißt: **der OTA-Update-Mechanismus hat seit v2.0.0 nie funktioniert.**

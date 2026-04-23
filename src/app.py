@@ -225,6 +225,16 @@ class PhotoboothApp:
             self._start_statistics_event()
             logger.info("📊 Statistik gestartet (ohne USB)")
 
+        # Orphan-Cleanup: Reste von abgebrochenen Updates aus %TEMP% löschen.
+        # Verhindert dass Tablets sich mit ~150 MB ZIP-Dateien zumüllen.
+        try:
+            from src.updater import cleanup_orphan_downloads
+            cleaned = cleanup_orphan_downloads(max_age_hours=1.0)
+            if cleaned > 0:
+                logger.info(f"Update-Orphan-Cleanup: {cleaned} Reste entfernt")
+        except Exception as e:
+            logger.debug(f"Orphan-Cleanup fehlgeschlagen: {e}")
+
         # Auto-Update: Nur im Firmen-WLAN mit Internet. Beim Kunden passiert nichts.
         # Läuft als Background-Thread mit 15s Verzögerung, damit App erst sauber hochfährt.
         if self.config.get("auto_update_enabled", True):

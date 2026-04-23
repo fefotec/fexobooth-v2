@@ -48,6 +48,57 @@ def _get_install_dir() -> Path:
         return Path(__file__).parent.parent
 
 
+def cleanup_orphan_downloads(max_age_hours: float = 1.0) -> int:
+    """Räumt nicht-abgeschlossene Update-Downloads aus %TEMP% auf.
+
+    Wird beim App-Start aufgerufen. Wenn ein Update vorher abgebrochen wurde
+    (Stromausfall, Prozess-Kill), bleiben ggf. eine ~150 MB ZIP-Datei und ein
+    Extract-Verzeichnis in %TEMP% liegen. Windows räumt das nur bei manueller
+    Datenträgerbereinigung auf → Tablets würden sich zumüllen.
+
+    Wir löschen alles was älter als `max_age_hours` Stunden ist — damit ein
+    gerade laufender Update-Download nicht versehentlich weggeputzt wird.
+
+    Returns:
+        Anzahl gelöschter Einträge (Dateien + Verzeichnisse)
+    """
+    import shutil
+    import time
+
+    temp_dir = Path(tempfile.gettempdir())
+    now = time.time()
+    max_age_sec = max_age_hours * 3600
+    cleaned = 0
+
+    # Targets: ZIP, Extract-Dir, BAT-Script
+    candidates = [
+        temp_dir / "fexobooth_update.zip",
+        temp_dir / "fexobooth_update_extract",
+        temp_dir / "fexobooth_updater.bat",
+    ]
+
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            age = now - path.stat().st_mtime
+            if age < max_age_sec:
+                logger.debug(f"Orphan-Cleanup: {path.name} zu jung ({age/60:.0f} min) — übersprungen")
+                continue
+
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                path.unlink()
+
+            logger.info(f"Orphan-Cleanup: {path.name} entfernt (Alter: {age/3600:.1f} h)")
+            cleaned += 1
+        except Exception as e:
+            logger.warning(f"Orphan-Cleanup: {path.name} konnte nicht entfernt werden: {e}")
+
+    return cleaned
+
+
 def _parse_version(version_str: str) -> tuple:
     """Parst Version-String zu vergleichbarem Tuple
 

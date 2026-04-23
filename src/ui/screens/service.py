@@ -668,52 +668,34 @@ class ServiceDialog(ctk.CTkToplevel):
         ).pack(side="left", padx=10)
 
     def _execute_update(self, release: dict):
-        """Lädt Update herunter und startet Installation"""
-        self._show_progress("Lade Update herunter...", 0.0)
+        """Öffnet einen Fullscreen-Progress-Dialog und startet Download + Install.
 
-        def do_download():
-            try:
-                from src.updater import download_update, apply_update_and_restart
+        Der Progress-Dialog hat `-topmost` und ist damit auch im Kiosk-Modus
+        garantiert sichtbar (ServiceDialog fiel sonst hinter die Haupt-App
+        zurück sobald der Confirm-Dialog zerstört wurde).
+        """
+        from src.ui.dialogs.update_progress import UpdateProgressDialog
 
-                # Download mit Fortschritts-Callback
-                def on_progress(progress, text):
-                    self.after(0, lambda t=text, p=progress:
-                               self._update_progress(t, p))
-
-                zip_path = download_update(
-                    release["download_url"],
-                    progress_callback=on_progress
-                )
-
-                # Update-Script erstellen und starten
-                self.after(0, lambda: self._update_progress(
-                    "Starte Update-Installation...", 1.0
-                ))
-
-                apply_update_and_restart(zip_path)
-
-                # App beenden (nach kurzer Verzögerung für UI-Update)
-                self.after(500, self._quit_for_update)
-
-            except Exception as e:
-                self.after(0, lambda: self._show_result(
-                    f"Update fehlgeschlagen:\n{e}",
-                    "error"
-                ))
-
-        thread = threading.Thread(target=do_download, daemon=True)
-        thread.start()
-
-    def _quit_for_update(self):
-        """Beendet die App für das Update"""
-        logger.info("App wird für Update beendet...")
+        # ServiceDialog verstecken damit Progress-Dialog freie Sicht hat
         try:
             self.grab_release()
-            self.destroy()
+            self.withdraw()
         except Exception:
             pass
-        # App sauber beenden
-        self.app.quit()
+
+        # Progress-Dialog als neuer Fullscreen-Overlay
+        # Kein on_done-Callback: Bei Erfolg beendet sich die App sowieso,
+        # bei Fehler schließt der User den Dialog und landet wieder im Menü
+        def on_done():
+            try:
+                self.deiconify()
+                self.lift()
+                self.focus_force()
+                self.grab_set()
+            except Exception:
+                pass
+
+        UpdateProgressDialog(self, self.app, release, on_done=on_done)
 
     # ========== UI-Helpers ==========
 

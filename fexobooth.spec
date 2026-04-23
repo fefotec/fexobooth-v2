@@ -172,6 +172,8 @@ a = Analysis(
         "src.ui.dialogs.system_test",
         "src.ui.dialogs.event_change",
         "src.ui.dialogs.backup",
+        "src.ui.dialogs.update_progress",
+        "src.company_network",
         "src.templates",
         "src.templates.loader",
         "src.templates.renderer",
