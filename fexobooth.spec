@@ -118,6 +118,14 @@ ctk_datas, ctk_binaries, ctk_hiddenimports = collect_all("customtkinter")
 datas += ctk_datas
 binaries += ctk_binaries
 
+# certifi: CA-Bundle für OTA-Update via HTTPS.
+# Ohne das mitgepackte cacert.pem schlägt urllib mit
+# "SSL: CERTIFICATE_VERIFY_FAILED — unable to get local issuer certificate"
+# fehl, sobald die EXE im PyInstaller-Build läuft.
+certifi_datas, certifi_binaries, certifi_hiddenimports = collect_all("certifi")
+datas += certifi_datas
+binaries += certifi_binaries
+
 # ─────────────────────────────────────────────
 # Analysis
 # ─────────────────────────────────────────────
@@ -139,6 +147,8 @@ a = Analysis(
         "qrcode",
         "qrcode.image.svg",
         "cryptography",
+        "certifi",
+        "ssl",
         "win32print",
         "win32api",
         "win32timezone",
@@ -191,7 +201,7 @@ a = Analysis(
         "src.updater",
         "src.utils",
         "src.utils.logging",
-    ] + ctk_hiddenimports,
+    ] + ctk_hiddenimports + certifi_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

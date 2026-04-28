@@ -19,6 +19,7 @@ Geschützte Ordner (werden NICHT überschrieben):
 
 import json
 import os
+import ssl
 import sys
 import tempfile
 from pathlib import Path
@@ -36,6 +37,35 @@ GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
 # Timeout für HTTP-Requests (Sekunden)
 HTTP_TIMEOUT = 30
+
+
+def _build_ssl_context() -> ssl.SSLContext:
+    """Erstellt einen SSL-Context mit explizitem CA-Bundle.
+
+    Hintergrund: Im PyInstaller-Build findet `urllib` kein CA-Bundle und liefert
+    bei HTTPS-Calls "SSL: CERTIFICATE_VERIFY_FAILED — unable to get local issuer
+    certificate". Im Dev-Modus klappt es weil Python die System-Zertifikate
+    findet, im EXE-Build aber nicht. Lösung: certifi mitpacken und den
+    Context-Parameter hier explizit setzen.
+    """
+    try:
+        import certifi
+        ca_path = certifi.where()
+        if os.path.isfile(ca_path):
+            return ssl.create_default_context(cafile=ca_path)
+        logger.warning(f"certifi.where() liefert nicht-existenten Pfad: {ca_path} — fallback auf System-Default")
+    except ImportError:
+        logger.warning("certifi nicht installiert — verwende Python-Default-SSL-Context")
+
+    # Fallback: System-Default. Funktioniert im Dev-Modus, im PyInstaller-Build
+    # höchstwahrscheinlich nicht (siehe Doc-String).
+    return ssl.create_default_context()
+
+
+# Globaler SSL-Context für alle HTTPS-Calls in diesem Modul.
+# Einmal beim Modul-Import gebaut, dann von check_for_update() und
+# download_update() gemeinsam genutzt.
+_SSL_CONTEXT = _build_ssl_context()
 
 
 def _get_install_dir() -> Path:
@@ -161,7 +191,7 @@ def check_for_update() -> Optional[dict]:
     )
 
     try:
-        with urlopen(req, timeout=HTTP_TIMEOUT) as response:
+        with urlopen(req, timeout=HTTP_TIMEOUT, context=_SSL_CONTEXT) as response:
             data = json.loads(response.read().decode("utf-8"))
     except HTTPError as e:
         # HTTP-Fehler (404, 403, 500…) — nicht einfach als "kein Internet" verkaufen.
@@ -243,7 +273,7 @@ def download_update(
     )
 
     try:
-        with urlopen(req, timeout=120) as response:
+        with urlopen(req, timeout=120, context=_SSL_CONTEXT) as response:
             total_size = int(response.headers.get("Content-Length", 0))
             downloaded = 0
             chunk_size = 64 * 1024  # 64 KB Chunks (schonend für schwache Hardware)

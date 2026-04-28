@@ -6,6 +6,28 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-04-28
 
+### OTA-Update: SSL-Cert-Fix (v2.2.5)
+
+**Problem (Foto vom Tablet):** v2.2.4 fand das Update via API (`check_for_update()` lief durch), aber der ZIP-Download brach sofort ab mit:
+```
+[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed:
+unable to get local issuer certificate
+```
+
+**Ursache:** Im PyInstaller-Build findet `urllib` kein CA-Bundle. Im Dev-Modus geht's, weil Python die Windows-Zertifikate über OpenSSL findet — aber in der gepackten EXE fehlt diese Anbindung. Der API-Check vorher klappte vermutlich nur weil GitHub den TLS-Handshake mit weniger strengen Defaults toleriert hat (wahrscheinlich ein Cache-Effekt nach dem ersten erfolgreichen Call); der eigentliche Download brach dann an einem anderen Endpoint (`objects.githubusercontent.com`) ab.
+
+**Fix:**
+1. `certifi>=2024.0.0` als explizite Dependency in `requirements.txt`.
+2. In [fexobooth.spec](fexobooth.spec) `collect_all("certifi")` → `cacert.pem` und alle Datendateien werden in den Build gepackt. Plus `certifi` und `ssl` in `hiddenimports`.
+3. In [src/updater.py](src/updater.py) eine neue Funktion `_build_ssl_context()` die einen `ssl.create_default_context(cafile=certifi.where())` zurückgibt. Der Context wird als Modul-globale `_SSL_CONTEXT` einmal beim Import gebaut und an beide `urlopen()`-Aufrufe weitergegeben (API + Download).
+4. Fallback: Wenn certifi fehlt (z.B. broken Dev-Setup), wird auf System-Default zurückgegriffen mit Warning im Log.
+
+**Catch-22 für bestehende Tablets:** v2.2.4 und älter können das Fix nicht via OTA bekommen — genau dieses SSL-Problem blockiert ja den Download. Diese Tablets müssen **einmalig manuell** über die Setup.exe vom FEXODATEN-Stick auf v2.2.5 aktualisiert werden. Ab v2.2.5 läuft OTA für alle weiteren Versionen.
+
+**Betroffen:** `src/updater.py`, `requirements.txt`, `fexobooth.spec`, `src/__init__.py` (2.2.4 → 2.2.5)
+
+---
+
 ### Capture: hiberfil.sys-Removal + drei weitere Bugs (Tooling-Fix, kein App-Release)
 
 **Problem (User-Feedback nach zweitem Tooling-Fix):** Trotz präventivem `ntfsfix` versagte partclone weiterhin mit `is scheduled for a check or it was shutdown uncleanly`. Im Log: `ntfsfix` lief erfolgreich (`Mounting volume... OK`, `Processing of $MFT and $MFTMirr completed successfully`), aber `partclone.ntfs` blockierte trotzdem.

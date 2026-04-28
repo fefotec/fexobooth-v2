@@ -16,6 +16,11 @@ qrcode>=7.4.0
 flask>=3.0.0
 cryptography>=41.0.0
 
+# OTA-Update: explizites CA-Bundle für PyInstaller-Builds.
+# Ohne certifi kann urllib im gepackten Build die GitHub-Zertifikate nicht
+# verifizieren (SSL: CERTIFICATE_VERIFY_FAILED).
+certifi>=2024.0.0
+
 # Developer Mode (CPU/RAM Monitoring)
 psutil>=5.9.0
 
