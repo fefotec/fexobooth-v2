@@ -152,6 +152,43 @@ get_image_sectors() {
 }
 
 # ============================================
+# Helfer: NTFS-Used-Bytes aus Image ermitteln
+# ============================================
+# Streamt das groesste NTFS-Partclone-Image durch unxz + partclone.chkimg
+# und parst "Space in use" + "Block size" aus dem Output.
+#
+# Hintergrund: Selbst wenn die Disk-Geometrie im Image groesser ist als das
+# Ziel-Tablet, kann der Restore funktionieren, sofern die ECHTEN NTFS-Daten
+# ins Ziel passen — Clonezilla schrumpft die Partitionen dann proportional
+# via ocs-expand-gpt-pt -icds.
+#
+# Diese Funktion liefert die echte Datennutzung in Bytes, oder leeren String
+# wenn nicht ermittelbar.
+get_image_ntfs_used_bytes() {
+    local image_dir="$1"
+    # Letzte NTFS-Partition-Datei finden (in Tablet-Image meist mmcblk*p3)
+    local ntfs_aa=$(ls "$image_dir"/*.ntfs-ptcl-img.xz.aa 2>/dev/null | sort | tail -1)
+    [ -z "$ntfs_aa" ] && return
+
+    local prefix="${ntfs_aa%.aa}"
+    local tmp_log="/tmp/ntfs_chkimg_$$.log"
+
+    # Stream alle Parts -> unxz -> partclone.chkimg, dump output ins Log
+    ( for img in "${prefix}"*; do cat "$img"; done ) \
+        | unxz -c -T 0 2>/dev/null \
+        | partclone.chkimg -N -s - > "$tmp_log" 2>&1 || true
+
+    local used_blocks=$(grep "Space in use:" "$tmp_log" | head -1 | sed -E 's/.*= *([0-9]+) *Blocks.*/\1/')
+    local block_size=$(grep "Block size:" "$tmp_log" | head -1 | sed -E 's/.*: *([0-9]+) *Byte.*/\1/')
+    rm -f "$tmp_log"
+
+    # Sanity-Check: Beide Werte sind reine Zahlen
+    if [[ "$used_blocks" =~ ^[0-9]+$ ]] && [[ "$block_size" =~ ^[0-9]+$ ]]; then
+        echo $((used_blocks * block_size))
+    fi
+}
+
+# ============================================
 # START
 # ============================================
 log_section "FexoBooth - IMAGE AUFSPIELEN"
@@ -226,6 +263,7 @@ if [ -z "$TARGET_DISK" ]; then
     echo ""
     read -p "Druecke Enter zum Neustarten..." dummy
     reboot
+    exit 1
 fi
 
 log "Ziel-Disk: /dev/$TARGET_DISK"
@@ -297,6 +335,7 @@ if [ "$IMAGE_COUNT" -eq 0 ]; then
     echo ""
     read -p "Druecke Enter zum Neustarten..." dummy
     reboot
+    exit 1
 fi
 
 log ""
@@ -323,50 +362,127 @@ if [ -n "$SELECTED" ]; then
     IMAGE_GB=$((IMAGE_SECTORS * 512 / 1024 / 1024 / 1024))
     log "[OK] Gewaehltes Image: $IMAGE_NAME (~${IMAGE_GB} GB)"
 else
-    # KEIN passendes Image gefunden -> ABBRUCH vor Pre-Wipe
-    # Kleinstes Image zur Info ermitteln
-    SMALLEST=$(echo "$ALL_IMAGES" | grep -v "^$" | sort -t'|' -k1 -n | head -1)
-    SMALLEST_SECTORS=$(echo "$SMALLEST" | awk -F'|' '{print $1}')
-    SMALLEST_GB=$((SMALLEST_SECTORS * 512 / 1024 / 1024 / 1024))
-
-    DEPLOY_STATUS="ABGEBROCHEN_VOR_WIPE"
-    ERROR_MESSAGE="Kein Image passt auf ${TARGET_GB}GB Tablet (kleinstes Image: ${SMALLEST_GB}GB)"
-
+    # ============================================
+    # Smart-Fallback: NTFS-Used-Check
+    # ============================================
+    # Direkter Disk-Groessen-Vergleich hat versagt — alle Images haben
+    # eine groessere Disk-Geometrie als das Ziel. Aber: Wenn die ECHTEN
+    # NTFS-Daten ins Ziel passen, kann Clonezilla beim Restore
+    # proportional schrumpfen (ocs-expand-gpt-pt -icds).
+    #
+    # Wir pruefen pro Image die echte Datennutzung via partclone.chkimg
+    # und nehmen das KLEINSTE Image, dessen NTFS-Daten ins Ziel passen.
     log ""
-    log "############################################"
-    log "  ABBRUCH: KEIN PASSENDES IMAGE!"
-    log "############################################"
-    log ""
-    log "  Ziel-Tablet hat ~${TARGET_GB} GB"
-    log "  Kleinstes Image auf dem Stick: ~${SMALLEST_GB} GB"
-    log ""
-    log "  TABLET BLEIBT UNVERAENDERT - kein Pre-Wipe!"
-    log ""
-    log "  LOESUNG: Image fuer ${TARGET_GB} GB Tablets erstellen"
-    log "    - Referenz-Tablet mit <= ${TARGET_GB} GB verwenden"
-    log "    - Oder: C auf Referenz-Tablet auf ~$((TARGET_GB - 3)) GB schrumpfen"
-    log "    - Dann neu capturen (Capture-Modus)"
-    log "    - Image auf diesen Stick dazulegen, dann neu deployen"
+    log "Smart-Check: kein Image direkt passend, pruefe ECHTE NTFS-Datennutzung..."
     log ""
 
-    echo ""
-    echo "############################################"
-    echo "#                                          #"
-    echo "#   ABBRUCH: KEIN PASSENDES IMAGE!         #"
-    echo "#                                          #"
-    echo "#   Tablet:          ~${TARGET_GB} GB"
-    echo "#   Kleinstes Image: ~${SMALLEST_GB} GB"
-    echo "#                                          #"
-    echo "#   Tablet bleibt UNVERAENDERT.            #"
-    echo "#   (Pre-Wipe wurde NICHT ausgefuehrt!)    #"
-    echo "#                                          #"
-    echo "#   Fuer ${TARGET_GB} GB Tablets muss ein eigenes"
-    echo "#   (kleineres) Image erstellt werden.     #"
-    echo "#                                          #"
-    echo "############################################"
-    echo ""
-    read -p "Druecke Enter zum Neustarten..." dummy
-    reboot
+    # Bytes-Reservierungen fuer EFI + MSR + GPT-Overhead + Sicherheits-Buffer
+    STATIC_RESERVE_BYTES=$((400 * 1024 * 1024))      # ~400 MB fuer EFI + MSR
+    SAFETY_BUFFER_BYTES=$((1024 * 1024 * 1024))      # 1 GB Sicherheits-Buffer
+    AVAILABLE_BYTES=$((TARGET_BYTES - STATIC_RESERVE_BYTES - SAFETY_BUFFER_BYTES))
+    AVAILABLE_GB=$((AVAILABLE_BYTES / 1024 / 1024 / 1024))
+    log "Verfuegbar im Ziel-Tablet (NTFS): ~${AVAILABLE_GB} GB (nach EFI/MSR/Buffer)"
+    log ""
+
+    # Iteriere von kleinster zu groesster Disk-Groesse, nimm erstes
+    # passendes Image. Ergebnis in tmp-Datei weil while in Pipe Subshell laeuft.
+    SMART_TMP="/tmp/smart_select_$$.txt"
+    > "$SMART_TMP"
+    echo "$ALL_IMAGES" | grep -v "^$" | sort -t'|' -k1 -n > "$SMART_TMP.list"
+
+    while IFS='|' read -r line_sectors line_dir line_name; do
+        [ -z "$line_sectors" ] && continue
+        log "Pruefe NTFS-Datengroesse von '$line_name' (kann 30-60 Sek dauern)..."
+        ntfs_bytes=$(get_image_ntfs_used_bytes "$line_dir")
+
+        if [ -z "$ntfs_bytes" ]; then
+            log "  -> NTFS-Daten konnten nicht ermittelt werden, uebersprungen"
+            continue
+        fi
+
+        ntfs_gb=$((ntfs_bytes / 1024 / 1024 / 1024))
+        log "  NTFS-Daten in Image: ~${ntfs_gb} GB"
+
+        if [ "$ntfs_bytes" -lt "$AVAILABLE_BYTES" ]; then
+            log "  -> [OK] Daten passen ins Ziel — wird gewaehlt (Clonezilla shrinkt proportional)"
+            echo "$line_sectors|$line_dir|$line_name" > "$SMART_TMP"
+            break
+        else
+            log "  -> [ZU GROSS] Daten passen nicht ins ${TARGET_GB} GB Tablet"
+        fi
+    done < "$SMART_TMP.list"
+
+    rm -f "$SMART_TMP.list"
+
+    if [ -s "$SMART_TMP" ]; then
+        SMART_SELECTED=$(cat "$SMART_TMP")
+        rm -f "$SMART_TMP"
+
+        IMAGE_SECTORS=$(echo "$SMART_SELECTED" | awk -F'|' '{print $1}')
+        IMAGE_DIR=$(echo "$SMART_SELECTED" | awk -F'|' '{print $2}')
+        IMAGE_NAME=$(echo "$SMART_SELECTED" | awk -F'|' '{print $3}')
+        IMAGE_GB=$((IMAGE_SECTORS * 512 / 1024 / 1024 / 1024))
+
+        log ""
+        log "############################################"
+        log "  Smart-Select: $IMAGE_NAME"
+        log "  Disk-Geometrie im Image: ~${IMAGE_GB} GB"
+        log "  Ziel-Disk:               ~${TARGET_GB} GB"
+        log "  NTFS-Daten passen — Clonezilla wird proportional shrinken."
+        log "############################################"
+        log ""
+
+        # Spruenge zur Pre-Wipe-Phase, ueberspringe den Abbruch
+        # (kein zusaetzliches goto noetig — der else-Block faellt durch)
+    else
+        rm -f "$SMART_TMP"
+        # Auch Smart-Check versagt -> wirklich abbrechen
+        SMALLEST=$(echo "$ALL_IMAGES" | grep -v "^$" | sort -t'|' -k1 -n | head -1)
+        SMALLEST_SECTORS=$(echo "$SMALLEST" | awk -F'|' '{print $1}')
+        SMALLEST_GB=$((SMALLEST_SECTORS * 512 / 1024 / 1024 / 1024))
+
+        DEPLOY_STATUS="ABGEBROCHEN_VOR_WIPE"
+        ERROR_MESSAGE="Kein Image passt auf ${TARGET_GB}GB Tablet (kleinstes Image: ${SMALLEST_GB}GB)"
+
+        log ""
+        log "############################################"
+        log "  ABBRUCH: KEIN PASSENDES IMAGE!"
+        log "############################################"
+        log ""
+        log "  Ziel-Tablet hat ~${TARGET_GB} GB"
+        log "  Kleinstes Image auf dem Stick: ~${SMALLEST_GB} GB"
+        log "  Auch Smart-Check (echte NTFS-Daten): keine Daten passen ins Ziel."
+        log ""
+        log "  TABLET BLEIBT UNVERAENDERT - kein Pre-Wipe!"
+        log ""
+        log "  LOESUNG: Image fuer ${TARGET_GB} GB Tablets erstellen"
+        log "    - Referenz-Tablet mit <= ${TARGET_GB} GB verwenden"
+        log "    - Oder: C auf Referenz-Tablet auf ~$((TARGET_GB - 3)) GB schrumpfen"
+        log "    - Dann neu capturen (Capture-Modus)"
+        log "    - Image auf diesen Stick dazulegen, dann neu deployen"
+        log ""
+
+        echo ""
+        echo "############################################"
+        echo "#                                          #"
+        echo "#   ABBRUCH: KEIN PASSENDES IMAGE!         #"
+        echo "#                                          #"
+        echo "#   Tablet:          ~${TARGET_GB} GB"
+        echo "#   Kleinstes Image: ~${SMALLEST_GB} GB"
+        echo "#                                          #"
+        echo "#   Tablet bleibt UNVERAENDERT.            #"
+        echo "#   (Pre-Wipe wurde NICHT ausgefuehrt!)    #"
+        echo "#                                          #"
+        echo "#   Auch ECHTE NTFS-Datengroesse zu gross. #"
+        echo "#   Fuer ${TARGET_GB} GB Tablets muss ein eigenes"
+        echo "#   (kleineres) Image erstellt werden.     #"
+        echo "#                                          #"
+        echo "############################################"
+        echo ""
+        read -p "Druecke Enter zum Neustarten..." dummy
+        reboot
+        exit 1
+    fi
 fi
 
 log ""
@@ -466,6 +582,7 @@ if [ "$OCS_EXIT" -ne 0 ]; then
     echo ""
     read -p "Druecke Enter zum Neustarten..." dummy
     reboot
+    exit 1
 fi
 
 log "[OK] Image erfolgreich aufgespielt"

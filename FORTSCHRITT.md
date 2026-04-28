@@ -6,6 +6,24 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-04-28
 
+### Deploy: Smart-Fallback im Pre-Flight-Check (Tooling-Fix)
+
+**Problem (User-Beobachtung):** Master-Tablet ist 64 GB (58 GB Disk), Windows wurde auf 28 GB geschrumpft, 30 GB unallocated am Ende. Beim Capture wird die GPT-Disk-Geometrie aber als 58 GB ins Image geschrieben (Position der GPT-secondary). Beim Deploy auf 32 GB Tablet bricht der Pre-Flight-Check ab: „Image 58 GB > Ziel 29 GB" — obwohl die echten NTFS-Daten ins Ziel passen würden und Clonezilla beim Restore proportional schrumpfen kann (`ocs-expand-gpt-pt -icds`).
+
+**Fix:** Neue Helfer-Funktion `get_image_ntfs_used_bytes()` in [custom-ocs-deploy](deployment/02_usb-stick-erstellen/custom-ocs/custom-ocs-deploy) — streamt das größte NTFS-Partclone-Image durch `unxz | partclone.chkimg`, parst „Space in use" + „Block size", liefert die echte Datennutzung in Bytes.
+
+**Smart-Fallback im Pre-Flight-Check:** Wenn der direkte Disk-Größen-Vergleich kein passendes Image findet (alle Images haben zu große Disk-Geometrie), wird pro Image die echte NTFS-Datennutzung ermittelt und gegen `Ziel-Bytes − 400 MB (EFI/MSR) − 1 GB (Sicherheits-Buffer)` verglichen. Wenn ein Image passt → wird gewählt mit Hinweis „Disk-Geometrie größer als Ziel, aber NTFS-Daten passen — Clonezilla shrinkt proportional". Wenn kein Image passt → Abbruch wie bisher (mit erweitertem Hinweis-Text).
+
+**Performance:** Der `partclone.chkimg`-Lauf dauert pro Image ~30-60 s (Decompression eines mehrstündigen Streams nötig). Smart-Check läuft nur wenn der Direktvergleich versagt — Standard-Fall (passendes Image vorhanden) ist unverändert schnell.
+
+**Bonus-Fix:** `exit 1` nach allen `reboot`-Aufrufen in den Fehlerpfaden (analog zum capture-Script-Fix). `reboot` ist non-blocking, der Code-Flow wäre sonst weitergelaufen.
+
+**Wichtig:** Tooling-Fix auf dem Deploy-Stick. App-Code unverändert v2.2.5. User muss `prepare_usb_stick.bat` mit „Partitionen behalten" laufen lassen oder `custom-ocs-deploy` manuell rüberkopieren.
+
+**Betroffen:** `deployment/02_usb-stick-erstellen/custom-ocs/custom-ocs-deploy`
+
+---
+
 ### OTA-Update: SSL-Cert-Fix (v2.2.5)
 
 **Problem (Foto vom Tablet):** v2.2.4 fand das Update via API (`check_for_update()` lief durch), aber der ZIP-Download brach sofort ab mit:
