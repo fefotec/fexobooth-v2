@@ -6,6 +6,28 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-04-28
 
+### Capture: hiberfil.sys-Removal + drei weitere Bugs (Tooling-Fix, kein App-Release)
+
+**Problem (User-Feedback nach zweitem Tooling-Fix):** Trotz präventivem `ntfsfix` versagte partclone weiterhin mit `is scheduled for a check or it was shutdown uncleanly`. Im Log: `ntfsfix` lief erfolgreich (`Mounting volume... OK`, `Processing of $MFT and $MFTMirr completed successfully`), aber `partclone.ntfs` blockierte trotzdem.
+
+**Root Cause:** Windows-Schnellstart hinterlässt **zwei** Marker auf der NTFS-Partition:
+1. NTFS Dirty Bit im Volume-Header (das räumt `ntfsfix` weg ✓)
+2. **`hiberfil.sys`** mit Kernel-Session-Hibernation (das räumt `ntfsfix` NICHT weg)
+
+`partclone.ntfs` (intern: `ntfsclone-ng`) prüft beides und verweigert das Klonen wenn auch nur einer der beiden gesetzt ist. ntfsfix alleine reichte deshalb nicht.
+
+**Fix 1 — hiberfil.sys via ntfs-3g entfernen:** Nach `ntfsfix -d` wird die NTFS-Partition kurz mit `mount -t ntfs-3g -o remove_hiberfile,rw` gemounted. Diese Mount-Option löscht hiberfil.sys automatisch wenn vorhanden. Dann sofort wieder unmounten. Damit ist der Hibernation-Marker weg und partclone akzeptiert die Partition.
+
+**Fix 2 — Verifikations-Marker robuster:** Beim ANSI-Stripping (`sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g'`) verschwindet manchmal das Whitespace zwischen Wortteilen, weil im Original `shutdown\x1b[8;11Huncleanly` stand → bereinigt zu `shutdownuncleanly` (ohne Space). Mein Regex `scheduled for a check or it was shutdown uncleanly` matchte deshalb nicht. Neu: `scheduled for a check.*shutdown.*uncleanly` mit `.*` zwischen Schlüsselwörtern.
+
+**Fix 3 — Script-Flow nach Fehler:** Das Capture-Script logte am Ende eines Fehlerlaufs paradoxerweise `[FEHLER] Image-Verifikation fehlgeschlagen` UND `[OK] Image-Verifikation erfolgreich` zugleich. Ursache: `reboot` ist non-blocking — der Befehl scheduled nur den Reboot und kehrt zurück, das Script lief dann durch in den Erfolgspfad. Fix: Nach jedem `reboot` ein `exit 1` einfügen.
+
+**Wichtig:** Tooling-Fix auf dem Capture-Stick. App-Code unverändert v2.2.3. User muss [custom-ocs-capture](deployment/02_usb-stick-erstellen/custom-ocs/custom-ocs-capture) neu auf den Stick kopieren (oder `prepare_usb_stick.bat` mit „Partitionen behalten" laufen lassen).
+
+**Betroffen:** `deployment/02_usb-stick-erstellen/custom-ocs/custom-ocs-capture`
+
+---
+
 ### Capture: Präventives ntfsfix + ANSI-robuste Marker-Detection (Tooling-Fix, kein App-Release)
 
 **Problem (User-Feedback nach erstem Tooling-Fix):** Der erste Fix verifizierte korrekt dass die Image-Datei für `mmcblk0p3` fehlt, zeigte aber NICHT die spezifische "dirty NTFS"-Anleitung — obwohl genau das die Ursache war. Im Log stand `is scheduled for a check or it was shutdown uncleanly`, aber mein grep matchte nicht.

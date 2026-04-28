@@ -146,6 +146,7 @@ if [ -z "$TARGET_DISK" ]; then
     echo "############################################"
     read -p "Druecke Enter zum Neustarten..." dummy
     reboot
+    exit 1
 fi
 
 # ============================================
@@ -173,32 +174,58 @@ df -h /home/partimag 2>&1 | tail -1 | tee -a "$LOG_FILE"
 log ""
 
 # ============================================
-# Praeventiv: NTFS dirty bit clearen
+# Praeventiv: NTFS dirty bit + Hibernation aufraeumen
 # ============================================
 # Windows 10/11 hat den "Schnellstart" standardmaessig aktiviert. Beim
-# normalen Shutdown wird das NTFS dann nicht sauber unmounted, sondern in
-# einen Hibernation-aehnlichen Zustand versetzt. partclone.ntfs verweigert
-# dann das Klonen mit der Meldung:
+# normalen Shutdown wird das NTFS dann NICHT sauber unmounted, sondern
+# in einen Hybrid-Sleep-Zustand versetzt:
+#   1. NTFS Dirty Bit gesetzt
+#   2. hiberfil.sys mit der Kernel-Session geschrieben
+# partclone.ntfs verweigert dann das Klonen mit:
 #   "NTFS Volume is scheduled for a check or it was shutdown uncleanly"
 #
-# Loesung: Vor dem Capture laeuft ntfsfix auf alle NTFS-Partitionen.
-# Das clearet das dirty bit und resettet das $LogFile — das ist sicher,
-# weil das NTFS nicht gemountet ist und keine echten Schreibvorgaenge
-# laufen. Es ersetzt aber kein Windows-chkdsk bei echter Korruption.
-log_section "NTFS-Vorbereitung (dirty bit clearen)"
+# Wichtig: ntfsfix alleine reicht NICHT — es clearet zwar das dirty bit,
+# aber partclone.ntfs (ntfsclone-ng) prueft zusaetzlich auf hiberfil.sys.
+# Wir muessen beides aufraeumen:
+#   1. ntfsfix -d (dirty flag clearen + journal reset)
+#   2. ntfs-3g mit -o remove_hiberfile mounten (loescht hiberfil.sys
+#      automatisch beim Mount, dann sofort wieder unmounten)
+log_section "NTFS-Vorbereitung (dirty bit + Hibernation aufraeumen)"
 NTFS_FIXED=0
+TMPMNT="/tmp/ntfs_mount_$$"
+mkdir -p "$TMPMNT" 2>/dev/null
 for PART_DEV in $(lsblk -lno NAME,FSTYPE "/dev/$TARGET_DISK" 2>/dev/null | awk '$2=="ntfs"{print $1}'); do
     PART_PATH="/dev/$PART_DEV"
     log "Pruefe NTFS auf $PART_PATH..."
-    # ntfsfix gibt 0 bei Erfolg zurueck. Bei Bitlocker/echter Korruption faellt es durch.
-    if ntfsfix "$PART_PATH" 2>&1 | tee -a "$LOG_FILE" | grep -q "successfully"; then
-        log "[OK] $PART_PATH gereinigt"
+
+    # Schritt 1: ntfsfix -d (dirty flag explizit clearen)
+    if ntfsfix -d "$PART_PATH" 2>&1 | tee -a "$LOG_FILE" | grep -q "successfully"; then
+        log "[OK] $PART_PATH: dirty bit gecleared"
+    else
+        log "WARNUNG: ntfsfix auf $PART_PATH fehlgeschlagen (evtl. Bitlocker)"
+        continue
+    fi
+
+    # Schritt 2: hiberfil.sys via remove_hiberfile-Mount entfernen.
+    # ntfs-3g loescht die Datei automatisch beim Mount mit dieser Option.
+    # Danach sofort wieder unmounten.
+    log "Loesche hiberfil.sys via ntfs-3g remove_hiberfile..."
+    if mount -t ntfs-3g -o remove_hiberfile,rw "$PART_PATH" "$TMPMNT" 2>&1 | tee -a "$LOG_FILE"; then
+        # Pruefen ob hiberfil.sys jetzt weg ist
+        if [ -f "$TMPMNT/hiberfil.sys" ]; then
+            log "WARNUNG: hiberfil.sys konnte nicht entfernt werden (eventuell schreibgeschuetzt)"
+        else
+            log "[OK] $PART_PATH: hiberfil.sys entfernt (oder war nicht vorhanden)"
+        fi
+        umount "$TMPMNT" 2>&1 | tee -a "$LOG_FILE"
         NTFS_FIXED=$((NTFS_FIXED + 1))
     else
-        log "WARNUNG: ntfsfix konnte $PART_PATH nicht reinigen (evtl. Bitlocker oder echte Korruption)"
+        log "WARNUNG: ntfs-3g Mount fehlgeschlagen — partclone koennte trotzdem klappen"
+        NTFS_FIXED=$((NTFS_FIXED + 1))  # ntfsfix lief, also weiter
     fi
 done
-log "NTFS-Partitionen gereinigt: $NTFS_FIXED"
+rmdir "$TMPMNT" 2>/dev/null
+log "NTFS-Partitionen vorbereitet: $NTFS_FIXED"
 log ""
 
 log_section "Das Image wird jetzt erstellt (ca. 15-30 Minuten)"
@@ -285,10 +312,13 @@ LOG_CLEAN="/tmp/capture-log-clean-${TIMESTAMP}.txt"
 sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$LOG_FILE" > "$LOG_CLEAN" 2>/dev/null
 
 DIRTY_NTFS=0
-if grep -qE "scheduled for a check or it was shutdown uncleanly" "$LOG_CLEAN" 2>/dev/null; then
+# Robuster Match: Im bereinigten Log fehlt manchmal das Whitespace zwischen
+# Wortteilen (weil im Original "shutdown\x1b[8;11Huncleanly" stand), daher
+# .* zwischen den Schluesselwoertern erlauben.
+if grep -qE "scheduled for a check.*shutdown.*uncleanly" "$LOG_CLEAN" 2>/dev/null; then
     DIRTY_NTFS=1
     VERIFY_OK=0
-    VERIFY_REASON="NTFS-Volume dirty (Windows wurde nicht sauber heruntergefahren)"
+    VERIFY_REASON="NTFS-Volume dirty / hiberfil.sys (Windows Schnellstart)"
 elif grep -qE "Failed to save partition|Failed to use partclone" "$LOG_CLEAN" 2>/dev/null; then
     VERIFY_OK=0
     [ -z "$VERIFY_REASON" ] && VERIFY_REASON="partclone-Fehler im Log gefunden (siehe Log fuer Details)"
@@ -351,6 +381,9 @@ if [ "$VERIFY_OK" -eq 0 ]; then
     echo ""
     read -p "Druecke Enter zum Neustarten..." dummy
     reboot
+    # reboot ist non-blocking — exit damit der Erfolgspfad nicht versehentlich
+    # mitgeloggt wird, waehrend der Reboot scheduled ist.
+    exit 1
 fi
 
 CAPTURE_STATUS="ERFOLG"
