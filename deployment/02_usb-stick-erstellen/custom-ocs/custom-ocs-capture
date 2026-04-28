@@ -172,6 +172,35 @@ log "Verfuegbarer Speicher fuer Image:"
 df -h /home/partimag 2>&1 | tail -1 | tee -a "$LOG_FILE"
 log ""
 
+# ============================================
+# Praeventiv: NTFS dirty bit clearen
+# ============================================
+# Windows 10/11 hat den "Schnellstart" standardmaessig aktiviert. Beim
+# normalen Shutdown wird das NTFS dann nicht sauber unmounted, sondern in
+# einen Hibernation-aehnlichen Zustand versetzt. partclone.ntfs verweigert
+# dann das Klonen mit der Meldung:
+#   "NTFS Volume is scheduled for a check or it was shutdown uncleanly"
+#
+# Loesung: Vor dem Capture laeuft ntfsfix auf alle NTFS-Partitionen.
+# Das clearet das dirty bit und resettet das $LogFile — das ist sicher,
+# weil das NTFS nicht gemountet ist und keine echten Schreibvorgaenge
+# laufen. Es ersetzt aber kein Windows-chkdsk bei echter Korruption.
+log_section "NTFS-Vorbereitung (dirty bit clearen)"
+NTFS_FIXED=0
+for PART_DEV in $(lsblk -lno NAME,FSTYPE "/dev/$TARGET_DISK" 2>/dev/null | awk '$2=="ntfs"{print $1}'); do
+    PART_PATH="/dev/$PART_DEV"
+    log "Pruefe NTFS auf $PART_PATH..."
+    # ntfsfix gibt 0 bei Erfolg zurueck. Bei Bitlocker/echter Korruption faellt es durch.
+    if ntfsfix "$PART_PATH" 2>&1 | tee -a "$LOG_FILE" | grep -q "successfully"; then
+        log "[OK] $PART_PATH gereinigt"
+        NTFS_FIXED=$((NTFS_FIXED + 1))
+    else
+        log "WARNUNG: ntfsfix konnte $PART_PATH nicht reinigen (evtl. Bitlocker oder echte Korruption)"
+    fi
+done
+log "NTFS-Partitionen gereinigt: $NTFS_FIXED"
+log ""
+
 log_section "Das Image wird jetzt erstellt (ca. 15-30 Minuten)"
 
 # ============================================
@@ -245,16 +274,26 @@ else
     done
 fi
 
-# Zusaetzlich Log auf bekannte fatale Marker pruefen
+# Zusaetzlich Log auf bekannte fatale Marker pruefen.
+# WICHTIG: ocs-sr/partclone schreiben Terminal-Escape-Sequenzen (\x1b[Z;YH cursor
+# positioning) MITTEN in den Text. Beispiel-Match-Versuch fuer dirty NTFS scheitert
+# sonst weil der String "is scheduled for a check or it was shutdown uncleanly"
+# durch ANSI-Codes zerstueckelt wird zu:
+#   "is scheduled fo\x1b[7;11Hr a check or it was shutdown\x1b[8;11Huncleanly"
+# Loesung: Log durch sed laufen lassen und ANSI-Codes vor dem grep strippen.
+LOG_CLEAN="/tmp/capture-log-clean-${TIMESTAMP}.txt"
+sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$LOG_FILE" > "$LOG_CLEAN" 2>/dev/null
+
 DIRTY_NTFS=0
-if grep -qE "is scheduled for a check or it was shutdown uncleanly" "$LOG_FILE" 2>/dev/null; then
+if grep -qE "scheduled for a check or it was shutdown uncleanly" "$LOG_CLEAN" 2>/dev/null; then
     DIRTY_NTFS=1
     VERIFY_OK=0
     VERIFY_REASON="NTFS-Volume dirty (Windows wurde nicht sauber heruntergefahren)"
-elif grep -qE "Failed to save partition|Failed to use partclone" "$LOG_FILE" 2>/dev/null; then
+elif grep -qE "Failed to save partition|Failed to use partclone" "$LOG_CLEAN" 2>/dev/null; then
     VERIFY_OK=0
     [ -z "$VERIFY_REASON" ] && VERIFY_REASON="partclone-Fehler im Log gefunden (siehe Log fuer Details)"
 fi
+rm -f "$LOG_CLEAN"
 
 if [ "$VERIFY_OK" -eq 0 ]; then
     CAPTURE_STATUS="FEHLER"
@@ -282,12 +321,18 @@ if [ "$VERIFY_OK" -eq 0 ]; then
 
     if [ "$DIRTY_NTFS" -eq 1 ]; then
         echo "#   Ursache: NTFS dirty bit gesetzt        #"
+        echo "#   (trotz ntfsfix-Vorbereitung)           #"
         echo "#                                          #"
-        echo "#   LOESUNG:                               #"
-        echo "#   1. Tablet ohne Stick neu starten       #"
-        echo "#   2. Windows hochfahren, einmal anmelden #"
+        echo "#   Auf dem Referenz-Tablet machen:        #"
+        echo "#                                          #"
+        echo "#   1. Windows starten, als Admin oeffnen  #"
+        echo "#      eine cmd:                           #"
+        echo "#        powercfg /h off                   #"
+        echo "#      (deaktiviert Schnellstart!)         #"
+        echo "#   2. Systemsteuerung > Energieoptionen   #"
+        echo "#      > Netzschalter-Verhalten            #"
+        echo "#      > Schnellstart-Haken entfernen      #"
         echo "#   3. Sauber herunterfahren (Start-Menue) #"
-        echo "#      NICHT Power-Knopf druecken!         #"
         echo "#   4. Capture nochmal starten             #"
     else
         echo "#   Grund: ${VERIFY_REASON:0:38}"

@@ -6,6 +6,24 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-04-28
 
+### Capture: Präventives ntfsfix + ANSI-robuste Marker-Detection (Tooling-Fix, kein App-Release)
+
+**Problem (User-Feedback nach erstem Tooling-Fix):** Der erste Fix verifizierte korrekt dass die Image-Datei für `mmcblk0p3` fehlt, zeigte aber NICHT die spezifische "dirty NTFS"-Anleitung — obwohl genau das die Ursache war. Im Log stand `is scheduled for a check or it was shutdown uncleanly`, aber mein grep matchte nicht.
+
+**Ursache (zwei separate Probleme):**
+
+1. **partclone schreibt Terminal-Cursor-Steuerzeichen MITTEN in den Text.** Der zusammenhängende String "is scheduled for a check or it was shutdown uncleanly" steht im Log als `is scheduled fo\x1b[7;11Hr a check or it was shutdown\x1b[8;11Huncleanly`. Mein `grep -qE "is scheduled for a check..."` findet das nicht weil der Cursor-Code zwischen `fo` und `r` sitzt. → **Fix:** ANSI-Escape-Codes via `sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g'` strippen, dann gegen Clean-Copy matchen.
+
+2. **Windows 10/11 "Schnellstart"** — beim normalen Shutdown wird das NTFS nicht clean unmounted, sondern in einen Hibernation-ähnlichen Zustand versetzt. partclone.ntfs sieht das als "uncleanly shutdown" und verweigert das Klonen. Selbst wenn der User „sauber herunterfährt", bleibt das dirty bit gesetzt, weil Windows das absichtlich tut für schnelleren Boot. → **Fix:** Vor dem Capture läuft `ntfsfix` präventiv auf alle NTFS-Partitionen der Quell-Disk. ntfsfix clearet das dirty bit und resettet `$LogFile` — das ist sicher solange das Filesystem nicht echt korrupt ist (was wir hier voraussetzen können, weil das Tablet ja bootbar ist).
+
+**Zusätzlich:** Der „dirty NTFS"-Hinweistext im Fehlerfall enthält jetzt die echten Lösungsschritte: `powercfg /h off` + Schnellstart-Häkchen in Energieoptionen entfernen (statt der bisher unzureichenden „bitte sauber herunterfahren"-Anleitung).
+
+**Wichtig:** Tooling-Fix auf dem Capture-Stick. App-Code unverändert v2.2.3. User muss [custom-ocs-capture](deployment/02_usb-stick-erstellen/custom-ocs/custom-ocs-capture) neu auf den Stick kopieren.
+
+**Betroffen:** `deployment/02_usb-stick-erstellen/custom-ocs/custom-ocs-capture`
+
+---
+
 ### Capture: Verifikation gegen halbfertige Images (Deployment-Tool-Fix, kein App-Release)
 
 **Problem (vom User gemeldet):** Capture meldete „Image erfolgreich erstellt", obwohl im Log rot „**Das Image wurde NICHT erfolgreicht gesichert**" stand. User dachte, alles ok — wäre fast mit dem halbfertigen Image ein Tablet gebricked worden.
