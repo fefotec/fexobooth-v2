@@ -6,6 +6,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.2.4] - 2026-04-28 - Test-Release zur Verifikation des Update-Mechanismus
+
+App-Code ist **identisch zu v2.2.3** — nur Versions-Bump zur Verifikation des OTA-Update-Pfades vom Tablet.
+
+Was getestet werden soll:
+- Service-Menü (PIN 6588) → „Software aktualisieren" findet v2.2.4
+- Fullscreen-Progress-Dialog mit `-topmost` ist sichtbar
+- Download durchläuft, BAT-Script übernimmt, App startet neu
+- Im Service-Menü steht nach dem Update v2.2.4
+
+Parallel (außerhalb dieses Release): Capture-Tooling-Verbesserungen für USB-Stick, siehe [FORTSCHRITT.md](FORTSCHRITT.md) — `custom-ocs-capture` räumt jetzt `hiberfil.sys` weg, ANSI-robuste Verifikations-Marker, sauberer Abbruch nach Fehler.
+
+---
+
 ## [2.2.3] - 2026-04-28 - Spiegel-Fix für gedruckte/gespeicherte Fotos
 
 ### Behoben
