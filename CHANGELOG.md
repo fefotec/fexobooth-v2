@@ -6,6 +6,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.2.3] - 2026-04-28 - Spiegel-Fix für gedruckte/gespeicherte Fotos
+
+### Behoben
+- **Texte auf Kleidung waren im Druck und in den gespeicherten Singles seitenverkehrt.** Die LiveView-Spiegelung (gewollt: Spiegel-Effekt für intuitive Bewegung) hat sich auch auf den Capture-Pfad ausgewirkt — Webcam und Canon DSLR speicherten gespiegelte Fotos. Jetzt: LiveView bleibt gespiegelt, aber gespeicherte Fotos und Drucke sind korrekt orientiert (Texte lesbar).
+
+---
+
 ## [2.2.2] - 2026-04-23 - Update-UI + Orphan-Cleanup
 
 ### Behoben

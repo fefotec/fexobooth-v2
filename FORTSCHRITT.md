@@ -4,6 +4,20 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-04-28
+
+### Spiegel-Bug: Texte im Druck waren seitenverkehrt (v2.2.3)
+
+**Problem:** LiveView wird absichtlich gespiegelt — User sehen sich wie in einem Spiegel, das ist intuitiv für Pose-Anpassung. Aber im Capture-Pfad ([src/ui/screens/session.py:_capture_worker](src/ui/screens/session.py)) wurde der Frame nach der Aufnahme **ebenfalls** mit `cv2.flip(frame, 1)` gespiegelt — sowohl im Webcam- als auch im Canon-DSLR-Zweig. Das gespeicherte JPG und der Druck waren damit seitenverkehrt: Texte auf T-Shirts, Logos, Schilder, Schriftzüge — alles unleserlich.
+
+**Fix:** Die zwei `cv2.flip(frame, 1)` aus `_capture_worker` entfernt (Z. ~657 DSLR, ~683 Webcam). Der LiveView-Flip bei Z. ~279 bleibt erhalten. Erklärende Kommentare an allen drei Stellen ergänzt damit das später nicht versehentlich „korrigiert" wird.
+
+**Konsequenz:** Im Final-Screen sieht der User sich jetzt nicht-gespiegelt — er winkt links und sieht sich links winken. Das ist gewünscht und konsistent mit dem Druck.
+
+**Betroffen:** `src/ui/screens/session.py`, `src/__init__.py` (2.2.2 → 2.2.3)
+
+---
+
 ## 2026-04-23
 
 ### Update-UI: Progress-Dialog + Orphan-Cleanup (v2.2.2)

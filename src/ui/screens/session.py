@@ -274,6 +274,9 @@ class SessionScreen(ctk.CTkFrame):
             frame = self.app.camera_manager.get_frame()
             if frame is not None:
                 # Kamera-Frame aufbereiten (spiegeln, rotieren)
+                # WICHTIG: Spiegelung NUR für LiveView (intuitiver Spiegel-Effekt für User).
+                # Im _capture_worker (Webcam + DSLR) wird NICHT gespiegelt, damit Texte
+                # auf Kleidung im gespeicherten/gedruckten Foto richtig herum sind.
                 if self.config.get("rotate_180", False):
                     frame = cv2.rotate(frame, cv2.ROTATE_180)
                 frame = cv2.flip(frame, 1)
@@ -654,7 +657,9 @@ class SessionScreen(ctk.CTkFrame):
                         frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                         if self.config.get("rotate_180", False):
                             frame = cv2.rotate(frame, cv2.ROTATE_180)
-                        frame = cv2.flip(frame, 1)
+                        # KEIN cv2.flip(frame, 1): LiveView ist gespiegelt (Spiegel-Effekt für
+                        # intuitive Bewegung), aber das gespeicherte/gedruckte Foto darf nicht
+                        # gespiegelt sein — sonst sind Texte auf Kleidung seitenverkehrt.
                         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                         photo = Image.fromarray(rgb)
                 except Exception as e:
@@ -680,7 +685,8 @@ class SessionScreen(ctk.CTkFrame):
                 if frame is not None:
                     if self.config.get("rotate_180", False):
                         frame = cv2.rotate(frame, cv2.ROTATE_180)
-                    frame = cv2.flip(frame, 1)
+                    # KEIN cv2.flip(frame, 1): siehe Kommentar im DSLR-Pfad oben.
+                    # LiveView wird gespiegelt (Z. ~279), das Foto selbst nicht.
                     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     photo = Image.fromarray(rgb)
 
