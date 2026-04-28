@@ -6,6 +6,29 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-04-28
 
+### Capture: Verifikation gegen halbfertige Images (Deployment-Tool-Fix, kein App-Release)
+
+**Problem (vom User gemeldet):** Capture meldete „Image erfolgreich erstellt", obwohl im Log rot „**Das Image wurde NICHT erfolgreicht gesichert**" stand. User dachte, alles ok — wäre fast mit dem halbfertigen Image ein Tablet gebricked worden.
+
+**Ursache:**
+1. NTFS-Volume hatte das **dirty bit** gesetzt (Windows nicht sauber heruntergefahren). `partclone.ntfs` weigerte sich zu klonen.
+2. **`ocs-sr` gibt Exit-Code 0 zurück** auch wenn `partclone` für eine einzelne Partition fehlschlägt — der Wrapper macht einfach mit Hardware-Info-Files weiter.
+3. Die Exit-Code-Prüfung in [custom-ocs-capture](deployment/02_usb-stick-erstellen/custom-ocs/custom-ocs-capture) (`if [ "$OCS_EXIT" -ne 0 ]`) war damit wirkungslos. Script meldete „ERFOLG", obwohl `mmcblk0p3.ntfs-ptcl-img.xz.aa` (die Windows-Partition mit ~35 GB) komplett fehlte. Image war nur 25 MB groß statt 15-20 GB.
+
+**Fix:** Nach `ocs-sr` neue Verifikation:
+1. `parts`-Datei aus Image-Verzeichnis lesen → erwartete Partitionen ermitteln
+2. Für jede Partition prüfen ob `${PART}.*-ptcl-img.xz.aa` existiert (+Größe loggen)
+3. Log zusätzlich nach Markern scannen: `is scheduled for a check or it was shutdown uncleanly`, `Failed to save partition`, `Failed to use partclone`
+4. Bei „dirty NTFS": spezifische Anleitung zeigen (Tablet booten → Windows → sauber runterfahren → Capture wiederholen)
+5. Bei jedem Fehler: Image-Verzeichnis nach `${IMAGE_NAME}_FAILED_${TIMESTAMP}` umbenennen, damit es im Deploy-Menü nicht erscheint
+6. Bei Erfolg: Gesamtgröße des Images loggen (Sanity-Check)
+
+**Wichtig:** Das Script liegt auf dem Capture-USB-Stick, nicht auf den Tablets. Fix wirkt erst nach Stick-Re-Erstellung mit `prepare_usb_stick.bat` oder manuellem Rüberkopieren der Datei. **Kein neuer App-Release** — App-Code (Tablets) ist unverändert v2.2.3.
+
+**Betroffen:** `deployment/02_usb-stick-erstellen/custom-ocs/custom-ocs-capture`
+
+---
+
 ### Spiegel-Bug: Texte im Druck waren seitenverkehrt (v2.2.3)
 
 **Problem:** LiveView wird absichtlich gespiegelt — User sehen sich wie in einem Spiegel, das ist intuitiv für Pose-Anpassung. Aber im Capture-Pfad ([src/ui/screens/session.py:_capture_worker](src/ui/screens/session.py)) wurde der Frame nach der Aufnahme **ebenfalls** mit `cv2.flip(frame, 1)` gespiegelt — sowohl im Webcam- als auch im Canon-DSLR-Zweig. Das gespeicherte JPG und der Druck waren damit seitenverkehrt: Texte auf T-Shirts, Logos, Schilder, Schriftzüge — alles unleserlich.
