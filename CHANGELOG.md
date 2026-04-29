@@ -6,6 +6,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.3.1] - 2026-04-29 - Admin-Dialog: Z-Order-Fix + Diagnose-Logging
+
+### Behoben
+- **Admin-Dialog (PIN 3198) schloss sich nach wenigen Sekunden** und der ADMIN-Button reagierte danach nicht mehr (User-Bericht: tritt auch mit Maus auf, also nicht Touch-Race). Mein Fix in v2.2.9 (Click-outside-Handler entfernt) war nicht der echte Grund.
+- Wahrscheinliche Ursache: `_check_fullscreen_restore()` läuft alle 5 s und rief `_hide_taskbar()` auf (Win32-`ShowWindow`-Calls) — auch bei offenem Dialog (kein Toplevel-Check im else-Zweig). Win32-Calls können den Z-Order stören → Dialog verschwindet hinter dem Root-Window.
+
+### Fix
+- `_check_fullscreen_restore()` macht jetzt **gar nichts** wenn ein Toplevel-Dialog offen ist — auch keine Taskleisten-Operationen.
+- Toplevel-Erkennung erweitert: prüft `winfo_class()=="Toplevel"` UND `isinstance(child, CTkToplevel)`.
+
+### Diagnose
+- `AdminDialog.destroy()` loggt jetzt den **vollständigen Caller-Stack**. Falls der Bug doch nochmal auftritt, zeigt das Log direkt wer den Dialog schließt.
+
+---
+
 ## [2.3.0] - 2026-04-29 - Update-Pfade mit Timestamp (kein File-Lock-Konflikt mehr)
 
 ### Behoben

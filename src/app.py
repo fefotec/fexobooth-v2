@@ -1079,18 +1079,44 @@ class PhotoboothApp:
         Prüft alle 5 Sekunden:
         - Wenn Fullscreen verloren: wiederherstellen (falls kein Dialog offen)
         - Wenn Fullscreen aktiv: Taskleiste re-asserten (KEIN topmost - blockiert Dialoge!)
+
+        WICHTIG: Wenn ein Dialog (Admin, Service, USB-Sync, ...) offen ist,
+        machen wir GAR NICHTS — auch kein _hide_taskbar(). Win32-ShowWindow-Calls
+        können den Z-Order stören und den Dialog im Hintergrund verschwinden
+        lassen. Bug-Bericht v2.2.9: Admin-Dialog (PIN 3198) schloss sich
+        nach wenigen Sekunden, ADMIN-Button reagierte danach nicht mehr.
         """
+        # Toplevel-Dialoge erkennen — auch CTkToplevel mit overrideredirect.
+        # Wir prüfen sowohl winfo_class() als auch isinstance(child, ctk.CTkToplevel)
+        # damit nichts übersehen wird.
+        try:
+            import customtkinter as _ctk
+            ctk_toplevel_cls = _ctk.CTkToplevel
+        except Exception:
+            ctk_toplevel_cls = None
+
+        any_toplevel_open = False
+        for child in self.root.winfo_children():
+            try:
+                if child.winfo_class() == "Toplevel":
+                    any_toplevel_open = True
+                    break
+                if ctk_toplevel_cls is not None and isinstance(child, ctk_toplevel_cls):
+                    any_toplevel_open = True
+                    break
+            except Exception:
+                continue
+
+        # Wenn ein Dialog offen ist: NICHTS tun. Periodische Win32-Operationen
+        # könnten den Z-Order stören → Dialog verschwindet im Hintergrund.
+        if any_toplevel_open:
+            self.root.after(5000, self._check_fullscreen_restore)
+            return
+
         if self.config.get("start_fullscreen", True):
             if not self._is_fullscreen:
-                # Fullscreen verloren - prüfen ob ein Dialog offen ist
-                dialog_open = False
-                for child in self.root.winfo_children():
-                    if child.winfo_class() == "Toplevel":
-                        dialog_open = True
-                        break
-                if not dialog_open:
-                    logger.info("Kiosk-Sicherheit: Stelle Vollbild wieder her")
-                    self._enter_fullscreen()
+                logger.info("Kiosk-Sicherheit: Stelle Vollbild wieder her")
+                self._enter_fullscreen()
             else:
                 # Fullscreen aktiv - nur Taskleiste sicherstellen (kein topmost!)
                 self._hide_taskbar()

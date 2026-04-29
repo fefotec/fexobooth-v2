@@ -6,6 +6,22 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-04-29
 
+### Admin-Dialog Z-Order-Fix + Diagnose-Logging (v2.3.1)
+
+**Problem (User-Bericht):** Admin-Dialog (PIN 3198) schließt sich nach wenigen Sekunden von alleine, ADMIN-Button reagiert danach nicht mehr — App muss über Taskmanager beendet werden. Tritt auch mit Maus-Bedienung auf (also nicht Touch-Race wie in v2.2.9 vermutet).
+
+**Root Cause:** `_check_fullscreen_restore()` ([src/app.py](src/app.py)) läuft alle 5 s. Im else-Zweig (Fullscreen aktiv) wurde `_hide_taskbar()` aufgerufen **auch bei offenen Dialogen**. `_hide_taskbar()` macht Win32-`ShowWindow(SW_HIDE)`-Calls die den Z-Order beeinflussen. Wenn der Code annahm „Fullscreen verloren", wurde `_enter_fullscreen()` aufgerufen — das macht `root.lift()` + `attributes("-topmost")`, was Toplevels mit `overrideredirect=True` dahinter rutschen lässt. Mein v2.2.9-Fix (Click-outside-Handler entfernt) war damit nicht der echte Grund — der Dialog wurde nicht durch User-Interaktion geschlossen, sondern durch Hintergrund-Status-Check.
+
+**Fix:**
+1. `_check_fullscreen_restore()` macht jetzt **gar nichts** wenn ein Toplevel offen ist — keine Win32-Calls, keine Lift-Operationen. Status-Check wird erst nach Dialog-Schließung wieder aktiv.
+2. Toplevel-Erkennung erweitert: prüft `winfo_class()=="Toplevel"` UND `isinstance(child, CTkToplevel)`.
+
+**Diagnose:** `AdminDialog.destroy()` loggt jetzt den vollständigen Caller-Stack. Falls der Bug doch nochmal auftritt (andere Ursache), zeigt das Log direkt wer den Dialog schließt.
+
+**Betroffen:** `src/app.py`, `src/ui/screens/admin.py`, `src/__init__.py` (2.3.0 → 2.3.1)
+
+---
+
 ### Update-Pfade mit Timestamp gegen File-Lock-Konflikt (v2.3.0)
 
 **Problem (User-Bericht):** Beim 2. Update kam Dialog „Update fehlgeschlagen — kann nicht auf die Datei zugreifen, da sie von einem anderen Prozess verwendet wird: `C:\Users\Selphy\AppData\Local\Temp\...`". Das erste Update lief sauber durch, das nächste hängt sich beim Download auf.

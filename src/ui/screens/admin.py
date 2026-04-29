@@ -2533,12 +2533,27 @@ class AdminDialog(ctk.CTkToplevel):
             app._emergency_quit()
 
     def destroy(self):
-        """Override: garantiert grab_release vor dem destroy.
+        """Override: garantiert grab_release vor dem destroy + Diagnose-Log.
 
         Verhindert Bug, bei dem nach einem versehentlichen Touch-Schließen
         des PIN-Dialogs ein grab am Parent hängen bleibt — der ADMIN-Button
         reagierte dann nicht mehr, bis die App neugestartet wurde.
+
+        Diagnose: Wir loggen JEDEN destroy()-Aufruf mit Stack-Trace damit
+        wir sehen können wer den Dialog schließt (User-Bericht v2.2.9:
+        Dialog schließt sich von alleine nach wenigen Sekunden, auch mit
+        Mausbedienung — Ursache war damit unklar).
         """
+        try:
+            import traceback
+            stack = traceback.extract_stack(limit=8)
+            caller_lines = [f"  {f.filename}:{f.lineno} in {f.name}" for f in stack[:-1]]
+            logger.info(
+                "AdminDialog.destroy() aufgerufen — Caller-Stack:\n"
+                + "\n".join(caller_lines)
+            )
+        except Exception:
+            pass
         try:
             self.grab_release()
         except Exception:
