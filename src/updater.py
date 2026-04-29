@@ -100,12 +100,18 @@ def cleanup_orphan_downloads(max_age_hours: float = 1.0) -> int:
     max_age_sec = max_age_hours * 3600
     cleaned = 0
 
-    # Targets: ZIP, Extract-Dir, BAT-Script
-    candidates = [
-        temp_dir / "fexobooth_update.zip",
-        temp_dir / "fexobooth_update_extract",
-        temp_dir / "fexobooth_updater.bat",
+    # Targets: alle ZIPs/BATs/Extract-Dirs vom Updater (Glob-Patterns).
+    # Seit v2.3.0 nutzen wir Timestamp+PID im Dateinamen, deshalb werden
+    # Wildcards gebraucht. Alte Pfade ohne Suffix werden auch erfasst.
+    patterns = [
+        "fexobooth_update*.zip",
+        "fexobooth_update_extract*",
+        "fexobooth_updater*.bat",
     ]
+
+    candidates = []
+    for pattern in patterns:
+        candidates.extend(temp_dir.glob(pattern))
 
     for path in candidates:
         if not path.exists():
@@ -259,11 +265,24 @@ def download_update(
     Raises:
         ConnectionError: Download fehlgeschlagen
     """
-    zip_path = Path(tempfile.gettempdir()) / "fexobooth_update.zip"
+    # Eindeutiger Dateiname mit Timestamp + PID — vermeidet Lock-Konflikte mit
+    # alten ZIPs die noch von Windows Defender gescannt werden, oder mit
+    # einem laufenden BAT-Script vom letzten Update. Bug v2.2.9 trat auf wenn
+    # %TEMP%\fexobooth_update.zip gerade gelocked war: unlink() warf eine
+    # Exception → Update brach ab mit "Datei wird von anderem Prozess verwendet".
+    import time
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    zip_path = Path(tempfile.gettempdir()) / f"fexobooth_update_{timestamp}_{os.getpid()}.zip"
 
-    # Alte Datei löschen
+    # Sicherheitshalber: Falls die Datei doch existiert (extrem unwahrscheinlich
+    # wegen Timestamp+PID), versuche zu loeschen — bei Fehler ignorieren und
+    # einen alternativen Namen verwenden.
     if zip_path.exists():
-        zip_path.unlink()
+        try:
+            zip_path.unlink()
+        except OSError as e:
+            logger.warning(f"Konnte {zip_path.name} nicht loeschen ({e}) — nutze Alternativnamen")
+            zip_path = Path(tempfile.gettempdir()) / f"fexobooth_update_{timestamp}_{os.getpid()}_alt.zip"
 
     logger.info(f"Lade Update herunter: {download_url}")
 
@@ -320,8 +339,13 @@ def create_update_script(zip_path: Path, install_dir: Path) -> Path:
     Returns:
         Pfad zum erstellten BAT-Script
     """
-    script_path = Path(tempfile.gettempdir()) / "fexobooth_updater.bat"
-    extract_dir = Path(tempfile.gettempdir()) / "fexobooth_update_extract"
+    # Eindeutige Namen pro Update-Lauf — vermeidet Konflikte mit Resten
+    # vom letzten Update (Lock durch Windows Defender Scan, oder BAT-Script
+    # das noch läuft).
+    import time
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    script_path = Path(tempfile.gettempdir()) / f"fexobooth_updater_{timestamp}.bat"
+    extract_dir = Path(tempfile.gettempdir()) / f"fexobooth_update_extract_{timestamp}"
 
     # EXE-Name ermitteln
     if getattr(sys, 'frozen', False):

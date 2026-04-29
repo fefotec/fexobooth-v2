@@ -6,6 +6,23 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-04-29
 
+### Update-Pfade mit Timestamp gegen File-Lock-Konflikt (v2.3.0)
+
+**Problem (User-Bericht):** Beim 2. Update kam Dialog „Update fehlgeschlagen — kann nicht auf die Datei zugreifen, da sie von einem anderen Prozess verwendet wird: `C:\Users\Selphy\AppData\Local\Temp\...`". Das erste Update lief sauber durch, das nächste hängt sich beim Download auf.
+
+**Ursache:** [download_update()](src/updater.py) nutzte einen festen Dateinamen `%TEMP%\fexobooth_update.zip`. Beim ersten Update wird die Datei runtergeladen + nach erfolgreichem Update gelöscht — **aber Windows Defender Real-Time-Schutz** scannt frisch heruntergeladene ZIPs/EXEs noch einige Zeit nach Erstellung. Während dem Scan ist die Datei in einem nicht-löschbaren Zustand. Wenn der User direkt danach das nächste Update startet, schlägt `zip_path.unlink()` fehl, die Exception bricht den Update-Vorgang ab. Gleicher Effekt theoretisch auch für `fexobooth_updater.bat` und `fexobooth_update_extract/`.
+
+**Fix:**
+1. **Eindeutige Dateinamen pro Lauf** in [src/updater.py](src/updater.py): ZIP, BAT und Extract-Verzeichnis bekommen jetzt einen Timestamp + PID-Suffix (`fexobooth_update_<YYYYMMDD_HHMMSS>_<PID>.zip`). Damit kollidiert nie mit Resten vom letzten Update.
+2. **Robustes unlink**: try/except um den unlink-Versuch + Alternativname als letzter Fallback.
+3. **Orphan-Cleanup mit Glob-Patterns**: `cleanup_orphan_downloads()` nutzt jetzt `temp_dir.glob('fexobooth_update*.zip')` etc. — findet sowohl alte feste Namen (von v2.2.x) als auch neue Timestamp-Namen.
+
+**Side-Note:** v2.3.0 ist gleichzeitig das erste Update das v2.2.9 → v2.3.0 testet ob die assets/videos/-Schutz-Logik aus v2.2.9 hält.
+
+**Betroffen:** `src/updater.py`, `src/__init__.py` (2.2.9 → 2.3.0)
+
+---
+
 ### Bug-Fixes: Admin-Dialog + OTA-Custom-Assets (v2.2.9)
 
 **Bug 1: Admin-Dialog ging gelegentlich beim Öffnen sofort wieder zu** und der „ADMIN"-Button reagierte danach nicht mehr (User-Bericht). Im Log nur eine Zeile `Tab 'Allgemein' erstellt (lazy)`, dann nichts mehr von admin.py. Ursache: Im PIN-Dialog war `self.pin_frame.bind("<Button-1>", lambda e: self.destroy())` — Click-outside-zum-Schließen. Auf Touch-Screens kommt es vor dass Touch-Down auf der Karte und Touch-Up auf dem Hintergrund landet (kleine Finger-Bewegung) → Dialog schließt direkt nach Öffnen. Plus: ohne `grab_release()` blieb manchmal ein grab am Parent hängen, der ADMIN-Button reagierte dann nicht mehr.

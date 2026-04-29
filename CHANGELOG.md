@@ -6,6 +6,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.3.0] - 2026-04-29 - Update-Pfade mit Timestamp (kein File-Lock-Konflikt mehr)
+
+### Behoben
+- **„Update fehlgeschlagen — Datei wird von anderem Prozess verwendet"**: Die `download_update()` nutzte einen festen Dateinamen `%TEMP%\fexobooth_update.zip`. Wenn Windows Defender das ZIP nach dem letzten erfolgreichen Update noch scannte (Real-Time-Schutz lockt frische ZIPs/EXEs für einige Sekunden bis Minuten), schlug der nächste Update-Versuch fehl. Auch `fexobooth_updater.bat` und `fexobooth_update_extract/` hatten feste Namen — gleiche Gefahr.
+
+### Fix
+- **Eindeutige Dateinamen pro Update-Lauf**: ZIP, BAT und Extract-Verzeichnis bekommen jetzt einen Timestamp + PID-Suffix:
+  - `fexobooth_update_<YYYYMMDD_HHMMSS>_<PID>.zip`
+  - `fexobooth_updater_<timestamp>.bat`
+  - `fexobooth_update_extract_<timestamp>/`
+- **Robustes `unlink()`**: Falls die Datei doch existiert (extrem unwahrscheinlich wegen Timestamp+PID), wird der Lösch-Versuch in `try/except` gepackt und im Notfall ein Alternativname verwendet.
+- **Orphan-Cleanup mit Glob-Patterns**: `cleanup_orphan_downloads()` findet jetzt alle alten Update-Reste (sowohl alte feste Namen als auch neue Timestamp-Namen) via `glob('fexobooth_update*.zip')` etc.
+
+---
+
 ## [2.2.9] - 2026-04-29 - Bug-Fixes: Admin-Dialog + OTA-Custom-Assets
 
 ### Behoben
