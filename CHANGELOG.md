@@ -6,6 +6,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.2.6] - 2026-04-29 - Test-Release: OTA-Update verifizieren
+
+App-Code **identisch zu v2.2.5**. Reiner Versions-Bump um den OTA-Update-Pfad auf bereits-installierten v2.2.5-Tablets zu verifizieren.
+
+Erwartet:
+- Tablet auf v2.2.5 → Service-Menü → „Software aktualisieren" findet v2.2.6
+- Download läuft durch (kein SSL-Fehler mehr, weil v2.2.5 das certifi-Bundle hat)
+- Fullscreen-Progress-Dialog zeigt MB-Fortschritt
+- Nach Install: Tablet auf v2.2.6
+
+---
+
 ## [2.2.5] - 2026-04-28 - SSL-Fix für OTA-Update (certifi mitgepackt)
 
 ### Behoben
