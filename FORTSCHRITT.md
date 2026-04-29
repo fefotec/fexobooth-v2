@@ -4,6 +4,29 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-04-29
+
+### Template & Settings vom USB neu laden (v2.2.8)
+
+**Problem:** Kunden tauschen manchmal mitten in der Veranstaltung das Template auf dem USB-Stick (oder ändern eine Einstellung in `settings.json`). Da die `booking_id` gleich bleibt, hat [BookingManager.load_from_usb()](src/storage/booking.py) den Reload übersprungen ([Z. 317](src/storage/booking.py#L317)):
+```python
+if not force and new_booking_id == self.booking_id and self._settings:
+    return True  # gleiche Buchung, überspringe
+```
+Bisherige Workarounds: Stick mit anderer booking_id präparieren oder Tablet neu starten. Beides umständlich.
+
+**Fix:** Neuer Eintrag in beide PIN-Menüs (User-Wunsch: in beide):
+1. **Service-Menü 6588** ([src/ui/screens/service.py](src/ui/screens/service.py)) — neuer Button „Template & Settings vom USB neu laden". Mit Progress-Anzeige + Status-Feedback.
+2. **Kunden-Menü 2015** ([src/ui/screens/admin.py](src/ui/screens/admin.py)) — neuer Button „📂 Template neu einlesen". Vereinfachte UI für Vor-Ort-Helfer.
+
+Beide rufen `booking_manager.load_from_usb(usb_root, force=True)` auf, dann `apply_settings_to_config(config)`, dann `app._restore_cached_template()`, dann Screen-Refresh. Das erzwingt das Reload aller relevanten USB-Daten ohne Tablet-Neustart.
+
+**Anwendungsfall settings.json:** Auch das wird damit aktualisiert — bisher genauso ignoriert wie das Template, weil der Code-Pfad identisch ist.
+
+**Betroffen:** `src/ui/screens/service.py`, `src/ui/screens/admin.py`, `src/__init__.py` (2.2.7 → 2.2.8)
+
+---
+
 ## 2026-04-28
 
 ### Deploy: Smart-Fallback im Pre-Flight-Check (Tooling-Fix)

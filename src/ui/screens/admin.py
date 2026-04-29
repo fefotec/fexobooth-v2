@@ -332,7 +332,18 @@ class AdminDialog(ctk.CTkToplevel):
         )
         self._overlay_btn.pack(pady=4)
 
-        # 3. Druckstau beheben
+        # 3. Template & Settings neu von USB laden (gleiche Buchungs-ID)
+        ctk.CTkButton(
+            btn_container,
+            text="  📂  Template neu einlesen",
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["bg_card"],
+            text_color=COLORS["text_primary"],
+            command=lambda: self._customer_reload_from_usb(menu_frame),
+            **btn_style
+        ).pack(pady=4)
+
+        # 4. Druckstau beheben
         ctk.CTkButton(
             btn_container,
             text="  🖨  Druckstau beheben",
@@ -619,6 +630,124 @@ class AdminDialog(ctk.CTkToplevel):
             text_color=COLORS["text_muted"],
             command=lambda: self._customer_back_to_menu(select_frame)
         ).pack(pady=(4, 12))
+
+    def _customer_reload_from_usb(self, parent_frame):
+        """Lädt Template + Settings vom USB neu (auch bei gleicher booking_id).
+
+        Use Case: Kunde tauscht das Template-ZIP auf dem Stick mitten in der
+        Veranstaltung. Da die booking_id gleich bleibt, würde BookingManager
+        normalerweise den Reload überspringen. Dieser Button erzwingt es.
+        """
+        import threading
+        from pathlib import Path
+
+        parent_frame.destroy()
+
+        # Status-Karte aufbauen
+        status_frame = ctk.CTkFrame(self, fg_color="#0a0a10", corner_radius=0)
+        status_frame.pack(fill="both", expand=True)
+
+        card = ctk.CTkFrame(
+            status_frame,
+            fg_color=COLORS["bg_medium"],
+            border_color=COLORS["info"],
+            border_width=2,
+            corner_radius=16,
+        )
+        card.place(relx=0.5, rely=0.5, anchor="center")
+
+        ctk.CTkLabel(
+            card,
+            text="📂 Template neu einlesen",
+            font=("Segoe UI", 22, "bold"),
+            text_color=COLORS["info"],
+        ).pack(pady=(20, 5), padx=30)
+
+        status_label = ctk.CTkLabel(
+            card,
+            text="Suche USB-Stick...",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"],
+        )
+        status_label.pack(pady=(0, 20), padx=30)
+
+        # Schließen-Button (nach Abschluss aktiv)
+        close_btn = ctk.CTkButton(
+            card,
+            text="OK",
+            width=140, height=42,
+            font=FONTS["button"],
+            fg_color=COLORS["primary"],
+            hover_color=COLORS["primary_hover"],
+            command=lambda: self._customer_back_to_menu(status_frame),
+        )
+
+        app = self.parent_window._photobooth_app if hasattr(self.parent_window, "_photobooth_app") else None
+
+        def update_status(text, color=None):
+            try:
+                if color:
+                    status_label.configure(text=text, text_color=color)
+                else:
+                    status_label.configure(text=text)
+                self.update_idletasks()
+            except Exception:
+                pass
+
+        def show_done(success: bool, message: str):
+            try:
+                update_status(message, COLORS["success"] if success else COLORS["error"])
+                close_btn.pack(pady=(5, 20))
+            except Exception:
+                pass
+
+        def do_reload():
+            try:
+                if app is None:
+                    self.after(0, lambda: show_done(False, "App-Referenz nicht verfügbar."))
+                    return
+
+                usb_drive = app.usb_manager.find_usb_stick()
+                if not usb_drive:
+                    self.after(0, lambda: show_done(False, "Kein USB-Stick gefunden!\nBitte Stick einstecken."))
+                    return
+
+                self.after(0, lambda: update_status("Lade settings.json + Template..."))
+
+                if not app.booking_manager.load_from_usb(Path(usb_drive), force=True):
+                    self.after(0, lambda: show_done(False, "Keine gültige settings.json gefunden."))
+                    return
+
+                # Settings auf Config übertragen
+                app.booking_manager.apply_settings_to_config(app.config)
+
+                # Template in der App neu laden
+                if hasattr(app, "_restore_cached_template"):
+                    try:
+                        app._restore_cached_template()
+                    except Exception as e:
+                        logger.warning(f"Template-Restore fehlgeschlagen: {e}")
+
+                # StartScreen refreshen
+                try:
+                    current = getattr(app, "current_screen", None)
+                    if current and hasattr(current, "_refresh_template_cards"):
+                        current._refresh_template_cards()
+                    elif current and hasattr(current, "on_show"):
+                        current.on_show()
+                except Exception as e:
+                    logger.warning(f"Screen-Refresh fehlgeschlagen: {e}")
+
+                booking_id = app.booking_manager.booking_id or "?"
+                self.after(0, lambda: show_done(True, f"Template neu geladen.\nBuchung: {booking_id}"))
+                logger.info(f"Customer-Reload-from-USB: erfolgreich (booking_id={booking_id})")
+
+            except Exception as e:
+                logger.error(f"Customer-Reload fehlgeschlagen: {e}", exc_info=True)
+                err = str(e)
+                self.after(0, lambda: show_done(False, f"Fehler: {err[:120]}"))
+
+        threading.Thread(target=do_reload, daemon=True).start()
 
     def _customer_fix_paper_jam(self, parent_frame):
         """Druckstau beheben - Drucker zurücksetzen"""

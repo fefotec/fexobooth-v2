@@ -6,6 +6,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.2.8] - 2026-04-29 - Template & Settings vom USB neu laden
+
+### Hinzugefügt
+- **Service-Menü (PIN 6588): „Template & Settings vom USB neu laden"** — erzwingt Reload der `settings.json` und des Template-ZIPs vom USB-Stick, auch wenn die `booking_id` gleich bleibt. Use Case: Kunde tauscht mitten in der Veranstaltung das Template, ändert eine Einstellung. Vorher wurde das ignoriert (BookingManager überspringt Reload bei gleicher booking_id).
+- **Kunden-Menü (PIN 2015): „Template neu einlesen"** — gleiche Funktion, vereinfacht für Vor-Ort-Helfer ohne Service-PIN.
+
+### Hintergrund
+[BookingManager.load_from_usb()](src/storage/booking.py) hat in Z. 317 eine Optimierung:
+```python
+if not force and new_booking_id == self.booking_id and self._settings:
+    return True  # gleiche Buchung, überspringe
+```
+Diese Optimierung war zwar gewollt (kein unnötiges Reload bei jedem Stick-Plug), aber für Inline-Anpassungen im laufenden Event musste der User vorher den Stick mit anderer booking_id präparieren oder das Tablet neu starten. Beide Buttons rufen jetzt `force=True` auf und triggern danach `_restore_cached_template()` + Screen-Refresh.
+
+---
+
 ## [2.2.7] - 2026-04-29 - KRITISCH: OTA-Update Race-Condition gefixt
 
 ### Behoben

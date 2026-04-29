@@ -165,7 +165,32 @@ class ServiceDialog(ctk.CTkToplevel):
             text_color=COLORS["text_muted"]
         ).pack(pady=(0, 12))
 
-        # 3. Software-Update
+        # 3. Template & Settings vom USB neu laden
+        # Hintergrund: BookingManager.load_from_usb() überspringt das Reload
+        # wenn die booking_id gleich bleibt — auch wenn der Kunde mitten in
+        # der Veranstaltung das Template tauschen muss. Dieser Button erzwingt
+        # ein force-Reload (Settings + Template-ZIP).
+        reload_btn = ctk.CTkButton(
+            btn_container,
+            text="Template & Settings vom USB neu laden",
+            font=("Segoe UI", 14, "bold"),
+            width=min(380, int(card_w * 0.8)),
+            height=60,
+            fg_color=COLORS["info"],
+            hover_color="#4dabf7",
+            corner_radius=SIZES["corner_radius"],
+            command=self._reload_from_usb
+        )
+        reload_btn.pack(pady=8)
+
+        ctk.CTkLabel(
+            btn_container,
+            text="Lädt settings.json + Template neu (gleiche Buchungs-ID)",
+            font=FONTS["tiny"],
+            text_color=COLORS["text_muted"]
+        ).pack(pady=(0, 12))
+
+        # 4. Software-Update
         update_btn = ctk.CTkButton(
             btn_container,
             text="Software aktualisieren",
@@ -552,6 +577,90 @@ class ServiceDialog(ctk.CTkToplevel):
         # 3. Fallback: Datum
         from datetime import datetime
         return datetime.now().strftime("%Y%m%d_%H%M")
+
+    # ========== Template & Settings neu laden ==========
+
+    def _reload_from_usb(self):
+        """Lädt Template + Settings vom USB neu — auch wenn booking_id gleich.
+
+        Use Case: Kunde tauscht mitten in der Veranstaltung das Template oder
+        ändert eine Einstellung in settings.json, BookingManager überspringt
+        normalerweise das Reload bei gleicher booking_id. Dieser Button
+        erzwingt das Reload.
+        """
+        self._show_progress("Suche USB-Stick...", 0.1)
+
+        def do_reload():
+            try:
+                # USB-Stick suchen
+                usb_drive = self.app.usb_manager.find_usb_stick()
+                if not usb_drive:
+                    self.after(0, lambda: self._show_result(
+                        "Kein USB-Stick gefunden!\nBitte einstecken und nochmal versuchen.",
+                        "error"
+                    ))
+                    return
+
+                from pathlib import Path
+                usb_root = Path(usb_drive)
+
+                self.after(0, lambda: self._update_progress("Lade Settings...", 0.4))
+
+                # Force-Reload: setzt sich über die "gleiche booking_id"-Optimierung hinweg
+                if not self.app.booking_manager.load_from_usb(usb_root, force=True):
+                    self.after(0, lambda: self._show_result(
+                        "Keine gültige settings.json auf dem USB-Stick gefunden.",
+                        "error"
+                    ))
+                    return
+
+                self.after(0, lambda: self._update_progress("Wende Settings an...", 0.7))
+
+                # Settings auf App-Config übertragen (max_prints, print_singles, gallery_enabled, ...)
+                self.app.booking_manager.apply_settings_to_config(self.app.config)
+
+                # Template-Cache wurde von load_from_usb() schon aktualisiert.
+                # Jetzt müssen wir das Template auch in der App neu laden, damit
+                # der Renderer + StartScreen sofort das neue Template nutzen.
+                self.after(0, lambda: self._update_progress("Lade Template...", 0.9))
+
+                if hasattr(self.app, "_restore_cached_template"):
+                    try:
+                        self.app._restore_cached_template()
+                    except Exception as e:
+                        logger.warning(f"Template-Restore fehlgeschlagen: {e}")
+
+                # StartScreen refreshen damit die neue Template-Karte sichtbar wird
+                self.after(0, self._refresh_app_after_reload)
+
+                booking_id = self.app.booking_manager.booking_id or "?"
+                self.after(0, lambda: self._show_result(
+                    f"Template + Settings neu geladen.\nBuchung: {booking_id}",
+                    "success"
+                ))
+                logger.info(f"Reload-from-USB: erfolgreich (booking_id={booking_id})")
+
+            except Exception as e:
+                logger.error(f"Reload-from-USB fehlgeschlagen: {e}", exc_info=True)
+                err_msg = str(e)
+                self.after(0, lambda: self._show_result(
+                    f"Fehler beim Neuladen:\n{err_msg}",
+                    "error"
+                ))
+
+        thread = threading.Thread(target=do_reload, daemon=True)
+        thread.start()
+
+    def _refresh_app_after_reload(self):
+        """Triggert UI-Refresh nach Template/Settings-Reload (Main-Thread)."""
+        try:
+            current_screen = getattr(self.app, "current_screen", None)
+            if current_screen and hasattr(current_screen, "_refresh_template_cards"):
+                current_screen._refresh_template_cards()
+            elif current_screen and hasattr(current_screen, "on_show"):
+                current_screen.on_show()
+        except Exception as e:
+            logger.warning(f"App-Refresh nach Reload fehlgeschlagen: {e}")
 
     # ========== Software-Update ==========
 
