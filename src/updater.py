@@ -453,10 +453,54 @@ if exist "%SOURCE_DIR%\\_internal" (
     echo   _internal/ erfolgreich aktualisiert
 )
 
-:: Assets aktualisieren (Templates, Icons etc.)
+:: Assets aktualisieren — User-Custom-Files SCHUETZEN
+:: Bug v2.2.8: xcopy /Y ueberschrieb assets/videos/start.mp4 etc. mit den
+:: Defaults aus dem ZIP. User die ihre eigenen Videos eingerichtet hatten
+:: verloren sie beim OTA-Update.
+:: Fix: assets/videos/ vor dem xcopy in TEMP wegsichern, danach atomar
+:: zurueckmoven (ueberschreibt die Defaults aus dem ZIP).
+:: Auch das Auslose-Bild (flash_image, falls in assets/) wird via Backup
+:: aller .png/.jpg/.jpeg im assets/-Root mitgesichert.
 if exist "%SOURCE_DIR%\\assets" (
-    echo - assets/
-    xcopy "%SOURCE_DIR%\\assets" "%INSTALL_DIR%\\assets" /E /I /Y >nul 2>&1
+    echo - assets/ (User-Videos und Custom-Bilder werden geschuetzt)
+
+    :: Backup-Verzeichnis vorbereiten
+    set "ASSET_BACKUP=%TEMP%\\fexobooth_user_assets"
+    if exist "%ASSET_BACKUP%" rmdir /s /q "%ASSET_BACKUP%" 2>nul
+    mkdir "%ASSET_BACKUP%" 2>nul
+
+    :: 1. assets/videos/ atomar wegsichern (User-Videos)
+    if exist "%INSTALL_DIR%\\assets\\videos" (
+        move "%INSTALL_DIR%\\assets\\videos" "%ASSET_BACKUP%\\videos" >nul 2>&1
+    )
+
+    :: 2. User-Bilder im assets/-Root sichern (z.B. custom flash_image)
+    ::    Default-Files (fexobooth.ico) werden vom xcopy eh wieder hingelegt,
+    ::    aber Custom-PNGs/JPGs die der User reingelegt hat sollen bleiben.
+    mkdir "%ASSET_BACKUP%\\root_images" 2>nul
+    for %%F in ("%INSTALL_DIR%\\assets\\*.png" "%INSTALL_DIR%\\assets\\*.jpg" "%INSTALL_DIR%\\assets\\*.jpeg") do (
+        if exist "%%F" copy /Y "%%F" "%ASSET_BACKUP%\\root_images\\" >nul 2>&1
+    )
+
+    :: 3. Jetzt assets/ aus dem ZIP rueberkopieren
+    xcopy "%SOURCE_DIR%\\assets" "%INSTALL_DIR%\\assets" /E /I /Y /Q
+
+    :: 4. User-Videos zurueck (atomar move = ueberschreibt Default-Videos im ZIP)
+    if exist "%ASSET_BACKUP%\\videos" (
+        if exist "%INSTALL_DIR%\\assets\\videos" rmdir /s /q "%INSTALL_DIR%\\assets\\videos" 2>nul
+        move "%ASSET_BACKUP%\\videos" "%INSTALL_DIR%\\assets\\videos" >nul 2>&1
+        echo   User-Videos wiederhergestellt
+    )
+
+    :: 5. User-Bilder im assets/-Root zurueckkopieren
+    if exist "%ASSET_BACKUP%\\root_images" (
+        for %%F in ("%ASSET_BACKUP%\\root_images\\*.*") do (
+            copy /Y "%%F" "%INSTALL_DIR%\\assets\\" >nul 2>&1
+        )
+    )
+
+    :: 6. Backup aufraeumen
+    if exist "%ASSET_BACKUP%" rmdir /s /q "%ASSET_BACKUP%" 2>nul
 )
 
 :: Setup-Scripts aktualisieren
@@ -485,6 +529,8 @@ echo - config.json (Einstellungen)
 echo - BILDER/ (Fotos)
 echo - logs/ (Protokolle)
 echo - .booking_cache/ (Buchungsdaten)
+echo - assets/videos/ (User-Videos)
+echo - assets/*.png/jpg (User-Bilder, z.B. Auslose-Bild)
 
 :: Aufräumen
 echo.

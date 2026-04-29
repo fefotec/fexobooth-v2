@@ -6,6 +6,28 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-04-29
 
+### Bug-Fixes: Admin-Dialog + OTA-Custom-Assets (v2.2.9)
+
+**Bug 1: Admin-Dialog ging gelegentlich beim Öffnen sofort wieder zu** und der „ADMIN"-Button reagierte danach nicht mehr (User-Bericht). Im Log nur eine Zeile `Tab 'Allgemein' erstellt (lazy)`, dann nichts mehr von admin.py. Ursache: Im PIN-Dialog war `self.pin_frame.bind("<Button-1>", lambda e: self.destroy())` — Click-outside-zum-Schließen. Auf Touch-Screens kommt es vor dass Touch-Down auf der Karte und Touch-Up auf dem Hintergrund landet (kleine Finger-Bewegung) → Dialog schließt direkt nach Öffnen. Plus: ohne `grab_release()` blieb manchmal ein grab am Parent hängen, der ADMIN-Button reagierte dann nicht mehr.
+
+Fix in [src/ui/screens/admin.py](src/ui/screens/admin.py):
+1. `pin_frame.bind("<Button-1>", ...)` entfernt — User schließt jetzt nur über `✕`-Button oder ESC
+2. `destroy()` Override eingebaut, der vor super().destroy() immer `grab_release()` aufruft
+
+**Bug 2: OTA-Update überschrieb User-Videos und Custom-Bilder.** User-Bericht: Beim OTA-Update auf v2.2.8 wurden seine Einstellungen zu Capture-Bild und Video-Sequenzen gelöscht. Ursache: Das BAT-Script in `updater.py:create_update_script()` machte `xcopy assets/ /E /Y` — überschreibt `assets/videos/start.mp4`, `end.mp4` und ggf. ein Custom-Auslöse-Bild im `assets/`-Root mit den Defaults aus dem ZIP. `config.json` blieb zwar geschützt, aber die referenzierten Files waren weg.
+
+Fix im BAT-Script:
+1. Vor dem `xcopy`: `assets/videos/` atomar nach `%TEMP%\fexobooth_user_assets\videos` movieren, Custom-PNGs/JPGs im `assets/`-Root nach `\root_images\` kopieren
+2. Nach dem `xcopy`: User-Videos atomar zurück (überschreibt Default-Videos aus dem ZIP), User-Bilder zurück
+3. Backup aufräumen
+4. Hinweis-Liste „Geschuetzte Dateien" um `assets/videos/` und `assets/*.png/jpg` erweitert
+
+Damit bleiben **alle User-Custom-Files** beim OTA erhalten.
+
+**Betroffen:** `src/ui/screens/admin.py`, `src/updater.py`, `src/__init__.py` (2.2.8 → 2.2.9)
+
+---
+
 ### Template & Settings vom USB neu laden (v2.2.8)
 
 **Problem:** Kunden tauschen manchmal mitten in der Veranstaltung das Template auf dem USB-Stick (oder ändern eine Einstellung in `settings.json`). Da die `booking_id` gleich bleibt, hat [BookingManager.load_from_usb()](src/storage/booking.py) den Reload übersprungen ([Z. 317](src/storage/booking.py#L317)):

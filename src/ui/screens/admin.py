@@ -70,8 +70,12 @@ class AdminDialog(ctk.CTkToplevel):
         self.pin_frame = ctk.CTkFrame(self, fg_color="#0a0a10", corner_radius=0)
         self.pin_frame.pack(fill="both", expand=True)
 
-        # Klick auf Hintergrund schließt Dialog
-        self.pin_frame.bind("<Button-1>", lambda e: self.destroy())
+        # KEIN Click-outside-zum-Schließen mehr! Auf Touch-Screens kommt es
+        # häufig vor, dass Touch-Down auf der Karte und Touch-Up auf dem
+        # Hintergrund landet — der Dialog schloss sich dann sofort wieder
+        # nach dem Öffnen, und im schlimmsten Fall blieb ein grab am Parent
+        # hängen sodass der ADMIN-Button nicht mehr reagiert.
+        # User schließt jetzt nur über den ✕-Button oder ESC (Fenstermodus).
 
         # Responsive Werte
         screen_w = self.winfo_screenwidth()
@@ -2527,6 +2531,19 @@ class AdminDialog(ctk.CTkToplevel):
         app = getattr(self.parent_window, '_photobooth_app', None)
         if app:
             app._emergency_quit()
+
+    def destroy(self):
+        """Override: garantiert grab_release vor dem destroy.
+
+        Verhindert Bug, bei dem nach einem versehentlichen Touch-Schließen
+        des PIN-Dialogs ein grab am Parent hängen bleibt — der ADMIN-Button
+        reagierte dann nicht mehr, bis die App neugestartet wurde.
+        """
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        super().destroy()
 
     def _quit_app(self):
         """Beendet die gesamte Anwendung - stellt Taskleiste und Benachrichtigungen wieder her."""

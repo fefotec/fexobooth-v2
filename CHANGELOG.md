@@ -6,6 +6,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.2.9] - 2026-04-29 - Bug-Fixes: Admin-Dialog + OTA-Custom-Assets
+
+### Behoben
+- **Admin-Dialog (PIN 3198) ging gelegentlich beim Öffnen sofort wieder zu** und der ADMIN-Button reagierte danach nicht mehr. Ursache: Der PIN-Dialog hatte `pin_frame.bind("<Button-1>", lambda e: self.destroy())` (Click-outside-zum-Schließen). Auf Touch-Screens kommt es vor, dass Touch-Down auf der Karte und Touch-Up auf dem Hintergrund landet → Dialog schließt direkt. Plus: ein hängender `grab` am Parent verhinderte weitere Klicks. Fix: Click-outside-Handler entfernt (User schließt nur noch über `✕` oder ESC), `destroy()` Override garantiert `grab_release`.
+- **OTA-Update überschrieb User-Videos und Custom-Bilder.** `assets/videos/start.mp4` + `end.mp4` wurden mit den Defaults aus dem ZIP überschrieben, ebenso ggf. ein Custom-`flash_image` im `assets/`-Root. Fix: Vor dem `xcopy` wird `assets/videos/` atomar nach `%TEMP%\fexobooth_user_assets` gemoved + alle `*.png/.jpg/.jpeg` aus `assets/` Root gesichert. Nach dem xcopy werden die User-Files atomar zurück, was die Defaults aus dem ZIP überschreibt.
+
+### Neue geschützte Pfade beim OTA
+- `config.json`
+- `BILDER/`
+- `logs/`
+- `.booking_cache/`
+- **`assets/videos/`** (NEU — User-Videos)
+- **`assets/*.png/.jpg/.jpeg`** (NEU — User-Bilder im `assets/`-Root, z.B. Auslöse-Bild)
+
+---
+
 ## [2.2.8] - 2026-04-29 - Template & Settings vom USB neu laden
 
 ### Hinzugefügt
