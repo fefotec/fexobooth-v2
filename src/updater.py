@@ -348,15 +348,17 @@ set "ZIP_FILE={zip_path}"
 set "EXTRACT_DIR={extract_dir}"
 set "PROCESS_NAME={process_name}"
 
-:: Warte bis die App beendet ist (max 30 Sekunden)
+:: Warte bis die App beendet ist (max 15 Sekunden — sollte sofort wegen os._exit)
 echo Warte auf Beendigung von %PROCESS_NAME%...
 set WAIT_COUNT=0
 :wait_loop
 tasklist /FI "IMAGENAME eq %PROCESS_NAME%" 2>NUL | find /I "%PROCESS_NAME%" >NUL
 if not errorlevel 1 (
     set /a WAIT_COUNT+=1
-    if !WAIT_COUNT! GEQ 30 (
-        echo WARNUNG: App laeuft noch nach 30s - fahre trotzdem fort
+    if !WAIT_COUNT! GEQ 15 (
+        echo App laeuft noch nach 15s - hartes Killen via taskkill
+        taskkill /F /IM "%PROCESS_NAME%" >nul 2>&1
+        timeout /t 3 /nobreak >nul
         goto :do_update
     )
     timeout /t 1 /nobreak >nul
@@ -416,11 +418,39 @@ if exist "%SOURCE_DIR%\\fexobooth.exe" (
     copy /Y "%SOURCE_DIR%\\fexobooth.exe" "%INSTALL_DIR%\\" >nul 2>&1
 )
 
-:: _internal/ komplett ersetzen (Python-Runtime + Dependencies)
+:: _internal/ ATOMIC ersetzen mit Rollback bei Fehler.
+:: Vorher: rmdir + xcopy, Fehler unterdrueckt → mixed state moeglich (siehe Bugfix v2.2.7).
+:: Jetzt: alten Stand zuerst nach _internal_OLD umbenennen, dann neuen kopieren.
+:: Wenn Kopieren fehlschlaegt → Rollback auf alten Stand. Tablet bleibt funktional.
 if exist "%SOURCE_DIR%\\_internal" (
     echo - _internal/ (Runtime + Dependencies)
-    if exist "%INSTALL_DIR%\\_internal" rmdir /s /q "%INSTALL_DIR%\\_internal"
-    xcopy "%SOURCE_DIR%\\_internal" "%INSTALL_DIR%\\_internal" /E /I /Y >nul 2>&1
+    :: Aufraeumen aus vorherigem fehlgeschlagenen Update
+    if exist "%INSTALL_DIR%\\_internal_OLD" rmdir /s /q "%INSTALL_DIR%\\_internal_OLD" 2>nul
+    :: Alten Stand wegsichern (atomic move, scheitert wenn Files gelocked)
+    if exist "%INSTALL_DIR%\\_internal" (
+        move "%INSTALL_DIR%\\_internal" "%INSTALL_DIR%\\_internal_OLD" >nul 2>&1
+        if errorlevel 1 (
+            echo FEHLER: _internal/ ist gelockt - Update abgebrochen
+            echo Alte Version bleibt erhalten.
+            pause
+            exit /b 1
+        )
+    )
+    :: Neuen Stand kopieren - Fehler werden NICHT mehr unterdrueckt
+    xcopy "%SOURCE_DIR%\\_internal" "%INSTALL_DIR%\\_internal" /E /I /Y /Q
+    if errorlevel 1 (
+        echo FEHLER: Kopieren fehlgeschlagen - Rollback auf alte Version...
+        if exist "%INSTALL_DIR%\\_internal" rmdir /s /q "%INSTALL_DIR%\\_internal" 2>nul
+        if exist "%INSTALL_DIR%\\_internal_OLD" (
+            move "%INSTALL_DIR%\\_internal_OLD" "%INSTALL_DIR%\\_internal" >nul 2>&1
+            echo Rollback abgeschlossen - alte Version laeuft.
+        )
+        pause
+        exit /b 1
+    )
+    :: Erfolg - alten Stand jetzt loeschen
+    if exist "%INSTALL_DIR%\\_internal_OLD" rmdir /s /q "%INSTALL_DIR%\\_internal_OLD" 2>nul
+    echo   _internal/ erfolgreich aktualisiert
 )
 
 :: Assets aktualisieren (Templates, Icons etc.)

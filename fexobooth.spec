@@ -126,6 +126,15 @@ certifi_datas, certifi_binaries, certifi_hiddenimports = collect_all("certifi")
 datas += certifi_datas
 binaries += certifi_binaries
 
+# setuptools: enthält versteckte Daten-Files (z.B. _vendor/jaraco/text/Lorem ipsum.txt)
+# die pkg_resources beim Import braucht. PyInstaller's pyi_rth_pkgres-Hook
+# crasht mit FileNotFoundError wenn die Files fehlen.
+# Bug v2.2.6: Datei wurde teilweise mitgepackt aber beim BAT-Update durch
+# rmdir/xcopy-Race verloren. Mit collect_all sind die Daten zuverlässig dabei.
+setuptools_datas, setuptools_binaries, setuptools_hiddenimports = collect_all("setuptools")
+datas += setuptools_datas
+binaries += setuptools_binaries
+
 # ─────────────────────────────────────────────
 # Analysis
 # ─────────────────────────────────────────────
@@ -149,6 +158,8 @@ a = Analysis(
         "cryptography",
         "certifi",
         "ssl",
+        "setuptools",
+        "pkg_resources",
         "win32print",
         "win32api",
         "win32timezone",
@@ -201,7 +212,7 @@ a = Analysis(
         "src.updater",
         "src.utils",
         "src.utils.logging",
-    ] + ctk_hiddenimports + certifi_hiddenimports,
+    ] + ctk_hiddenimports + certifi_hiddenimports + setuptools_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

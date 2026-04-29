@@ -6,6 +6,30 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.2.7] - 2026-04-29 - KRITISCH: OTA-Update Race-Condition gefixt
+
+### Behoben
+- **Tablets crashten beim Boot nach OTA-Update** mit `FileNotFoundError: 'C:\FexoBooth\_internal\setuptools\_vendor\jaraco\text\Lorem ipsum.txt'`. Race-Condition zwischen App-Beendigung und BAT-Update-Script:
+  1. `app.quit()` beendet zwar den Mainloop, aber Hintergrund-Threads (Camera, Galerie-Server) hielten den Prozess am Leben
+  2. BAT wartete 30 s, fuhr dann „warnend" fort obwohl App noch lief
+  3. `rmdir /s /q "_internal"` schlug **partiell** fehl (gelockte DLLs), `xcopy` mit `>nul 2>&1` unterdrückte alle Fehler
+  4. Mixed state: manche Files weg, andere nicht ersetzt → App startet nicht mehr
+
+### Drei-fach-Fix
+1. **`os._exit(0)` statt `app.quit()`** ([src/ui/dialogs/update_progress.py](src/ui/dialogs/update_progress.py)) — terminiert den Prozess sofort, ohne auf Threads zu warten. Logging wird vorher geflushed.
+2. **BAT-Script atomic mit Rollback** ([src/updater.py](src/updater.py)) — `_internal` wird zuerst nach `_internal_OLD` umbenannt (atomic, scheitert wenn gelockt), dann neu kopiert. Bei xcopy-Fehler: Rollback auf alten Stand. Tablet bleibt **immer funktional**, auch wenn das Update scheitert.
+3. **`setuptools` via `collect_all`** ([fexobooth.spec](fexobooth.spec)) — extra Absicherung damit alle vendored Daten-Files (jaraco.text/Lorem ipsum.txt etc.) zuverlässig im Build landen.
+
+### Plus
+- BAT-Wait-Timeout von 30 s auf 15 s reduziert (App sollte mit `os._exit` sofort sterben)
+- Nach 15 s zusätzlich `taskkill /F /IM` als Fallback
+- xcopy nutzt jetzt `/Q` (quiet) aber meldet Errors per `errorlevel`
+
+### Wichtig
+Tablets auf v2.2.6 mit dem kaputten State müssen einmalig manuell via `FexoBooth_Setup_2.1.exe` vom Stick auf v2.2.7 gehoben werden — Inno Setup repariert die fehlenden Dateien.
+
+---
+
 ## [2.2.6] - 2026-04-29 - Test-Release: OTA-Update verifizieren
 
 App-Code **identisch zu v2.2.5**. Reiner Versions-Bump um den OTA-Update-Pfad auf bereits-installierten v2.2.5-Tablets zu verifizieren.

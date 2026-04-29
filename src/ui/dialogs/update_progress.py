@@ -12,6 +12,7 @@ Phasen:
 Bei Fehler: Error-Text + OK-Button zum Schließen.
 """
 
+import os
 import threading
 from typing import Callable, Optional
 
@@ -226,22 +227,35 @@ class UpdateProgressDialog(ctk.CTkToplevel):
         self.update_idletasks()
 
     def _quit_for_update(self):
-        """Beendet die App damit das BAT-Script übernehmen kann."""
+        """Beendet die App HART damit das BAT-Script übernehmen kann.
+
+        WICHTIG: app.quit() reicht NICHT! root.quit() beendet zwar mainloop,
+        aber Hintergrund-Threads (Camera, Flask-Galerie-Server, USB-Manager)
+        halten den Python-Prozess am Leben. Das BAT-Script wartet 30 s auf
+        Beendigung — wenn die App noch läuft, fährt es trotzdem fort und
+        kollidiert mit gelockten DLLs (rmdir /s schlägt partiell fehl,
+        Files wie 'Lorem ipsum.txt' werden gelöscht aber nicht ersetzt
+        → mixed state, App startet nicht mehr).
+
+        Lösung: os._exit(0) — terminiert den Prozess SOFORT, ohne auf
+        Threads, atexit-Handler oder garbage collection zu warten. Die
+        Cleanup-Schritte (Taskleiste wiederherstellen) sind vorher in
+        atexit registriert und werden NICHT mehr ausgeführt — auf einem
+        Tablet das gleich neu gestartet wird ist das egal.
+        """
         if self._finished:
             return
         self._finished = True
-        logger.info("App wird für Update beendet (Progress-Dialog)...")
+        logger.info("App wird HART beendet (os._exit) für Update...")
+        # Logging und Disk-Buffer flushen damit das letzte Log-Statement
+        # noch geschrieben wird vor os._exit
+        import logging
         try:
-            self.grab_release()
+            logging.shutdown()
         except Exception:
             pass
-        # App sauber beenden — BAT-Script wartet darauf
-        try:
-            self.app.quit()
-        except Exception:
-            # Harter Fallback damit BAT übernehmen kann
-            import os
-            os._exit(0)
+        # Sofort-Termination — keine Threads, kein atexit
+        os._exit(0)
 
     def _show_error(self, message: str):
         """Zeigt Fehlermeldung + OK-Button."""
