@@ -6,6 +6,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.1] - 2026-04-30 - Auto-Update sichtbar + Deploy-Skript-Fallback
+
+### Behoben
+- **Auto-Update lief vollkommen unsichtbar.** Wenn die Box im Firmen-WLAN war und ein Update geladen hat, sah der Mitarbeiter nur, dass die Box plötzlich neu startete — wie ein Crash. Im Code stand explizit "*Wird VOLLKOMMEN still ausgeführt — keine UI, keine Dialoge*". Daraufhin nicht mehr klar, ob das Update lief, abstürzte oder etwas anderes passierte.
+
+### Fix — UpdateProgressDialog auch beim Auto-Update
+- [company_network.py](src/company_network.py): `check_and_auto_update()` bekommt einen optionalen `app`-Parameter. Wenn vorhanden, öffnet der Background-Worker bei verfügbarem Update den **gleichen Fullscreen-`UpdateProgressDialog`** wie beim manuellen Update über Service-Menü 6588 (Titel, MB-Counter, Progress-Bar, "Bitte nicht ausschalten").
+- Dialog erledigt Download + Apply + `os._exit(0)` selbst — keine doppelte Logik.
+- Bei Fehlern beim Dialog-Öffnen: Fallback auf den alten stillen Pfad (`_silent_fallback()`), damit das Update auch ohne UI durchlaufen kann.
+- Aufruf in [app.py](src/app.py) erweitert: `check_and_auto_update(..., app=self)`.
+
+### Bonus — Deploy-Skript: Drei-Stufen-Fallback bei Image-Auswahl
+- [custom-ocs-deploy](deployment/02_usb-stick-erstellen/custom-ocs/custom-ocs-deploy): Smart-Check zur NTFS-Datennutzung hatte nur einen Pfad (`partclone.chkimg`). Wenn der fehlschlug → Abbruch, Tablet bleibt unverändert. Auf 32-GB-Tablets mit 64-GB-Master-Image war das ein Showstopper.
+- **Stufe 1 (genau, wie bisher):** `partclone.chkimg` streamt das XZ-Image und liefert die exakte NTFS-Datennutzung.
+- **Stufe 2 (NEU, Schätzung):** XZ-Image-Größe × 2.2 als konservative Obergrenze (NTFS-XZ-Ratio ~45–50 %).
+- **Stufe 3 (NEU, Worst-Case):** NTFS-Partitionsgröße aus `dev-fs.list`. Wenn die Partition selbst ins Ziel passt, schrumpft Clonezilla mit `ocs-expand-gpt-pt -icds` proportional.
+- Bei `partclone.chkimg`-Fehler wird das Failure-Log nun nach `/home/partimag/deploy-logs/chkimg-failure-*.log` kopiert (statt stillem `rm`), damit Diagnose im Nachhinein möglich ist.
+- 64→64-Pfad bleibt unverändert (Direct-Match in [Zeile 343](deployment/02_usb-stick-erstellen/custom-ocs/custom-ocs-deploy#L343)) — Fallback-Logik wird nur betreten, wenn Direct-Match versagt.
+
+---
+
 ## [2.4.0] - 2026-04-30 - HMAC-Signatur (Soft-Mode) + Spiegel-Bug im Auto-Test
 
 ### Behoben

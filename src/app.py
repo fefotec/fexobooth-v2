@@ -243,6 +243,7 @@ class PhotoboothApp:
                 check_and_auto_update(
                     whitelist=self.config.get("company_wifi_ssids", []),
                     delay_seconds=15.0,
+                    app=self,
                 )
             except Exception as e:
                 logger.debug(f"Auto-Update-Trigger fehlgeschlagen: {e}")

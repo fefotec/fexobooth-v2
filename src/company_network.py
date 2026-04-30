@@ -78,13 +78,19 @@ def is_company_wifi(ssid: Optional[str], whitelist: List[str]) -> bool:
     return ssid in whitelist
 
 
-def check_and_auto_update(whitelist: List[str], delay_seconds: float = 15.0) -> None:
+def check_and_auto_update(
+    whitelist: List[str],
+    delay_seconds: float = 15.0,
+    app=None,
+) -> None:
     """Startet einen Background-Thread der nach `delay_seconds` prüft:
     1. Firmen-WLAN aktiv?
     2. Internet + GitHub erreichbar?
-    3. Update verfügbar? → herunterladen + anwenden (App beendet sich dann)
+    3. Update verfügbar? → UpdateProgressDialog auf UI-Thread öffnen.
+       Der Dialog erledigt Download + Apply + os._exit selbst und ist
+       sichtbar (Fullscreen, MB-Counter), damit der Mitarbeiter erkennt
+       was passiert (vor v2.4.1 lief das komplett unsichtbar).
 
-    Wird VOLLKOMMEN still ausgeführt — keine UI, keine Dialoge.
     Beim Kunden ohne Internet passiert einfach nichts (ConnectionError wird
     geschluckt).
 
@@ -92,6 +98,8 @@ def check_and_auto_update(whitelist: List[str], delay_seconds: float = 15.0) -> 
         whitelist: Liste der Firmen-SSIDs aus config.company_wifi_ssids
         delay_seconds: Wartezeit nach App-Start bevor geprüft wird
                        (damit die App erst sauber hochfährt)
+        app: PhotoboothApp-Instanz für UI-Dialog-Anzeige. Wenn None,
+             fällt es auf den alten stillen Pfad zurück (Headless-Tests).
     """
     if not whitelist:
         logger.debug("Auto-Update: Keine Firmen-SSIDs konfiguriert — übersprungen")
@@ -114,7 +122,7 @@ def check_and_auto_update(whitelist: List[str], delay_seconds: float = 15.0) -> 
 
         # Update-Check (wirft ConnectionError ohne Internet — Kundenbetrieb)
         try:
-            from src.updater import check_for_update, download_update, apply_update_and_restart
+            from src.updater import check_for_update
         except ImportError as e:
             logger.warning(f"Auto-Update: Updater-Modul nicht ladbar: {e}")
             return
@@ -132,29 +140,40 @@ def check_and_auto_update(whitelist: List[str], delay_seconds: float = 15.0) -> 
             logger.info("Auto-Update: Bereits aktuell — nichts zu tun")
             return
 
-        logger.info(f"Auto-Update: Neue Version verfügbar: {release['tag']} — lade herunter...")
+        logger.info(f"Auto-Update: Neue Version verfügbar: {release['tag']} — öffne UpdateProgressDialog")
 
-        try:
-            zip_path = download_update(release["download_url"])
-        except Exception as e:
-            logger.warning(f"Auto-Update: Download fehlgeschlagen: {e}")
-            return
+        # Dialog auf UI-Thread öffnen, sofern App-Instanz da ist
+        if app is not None and hasattr(app, "root"):
+            def open_dialog():
+                try:
+                    from src.ui.dialogs.update_progress import UpdateProgressDialog
+                    UpdateProgressDialog(app.root, app, release)
+                except Exception as e:
+                    logger.error(f"Auto-Update: Dialog konnte nicht geöffnet werden: {e}", exc_info=True)
+                    _silent_fallback(release)
 
-        logger.info(f"Auto-Update: Download fertig ({zip_path}) — starte Update-Script + App-Neustart")
+            try:
+                app.root.after(0, open_dialog)
+                return
+            except Exception as e:
+                logger.warning(f"Auto-Update: app.root.after fehlgeschlagen, Fallback auf still: {e}")
 
-        try:
-            apply_update_and_restart(zip_path)
-        except Exception as e:
-            logger.error(f"Auto-Update: Apply fehlgeschlagen: {e}")
-            return
-
-        # apply_update_and_restart startet das BAT-Script. Das BAT wartet bis die App
-        # beendet ist und startet dann neu. Wir müssen die App also sauber beenden.
-        # Das macht der Updater nicht selbst — wir nutzen os._exit damit garantiert
-        # alle Fenster geschlossen werden.
-        logger.info("Auto-Update: Beende App damit Update-Script übernehmen kann...")
-        import os
-        os._exit(0)
+        # Fallback: alter stiller Pfad (App-Instanz fehlt oder UI nicht erreichbar)
+        _silent_fallback(release)
 
     t = threading.Thread(target=worker, name="AutoUpdateCheck", daemon=True)
     t.start()
+
+
+def _silent_fallback(release: dict) -> None:
+    """Stiller Update-Pfad ohne UI — Fallback wenn der Dialog nicht geöffnet werden kann."""
+    try:
+        from src.updater import download_update, apply_update_and_restart
+        zip_path = download_update(release["download_url"])
+        logger.info(f"Auto-Update (still): Download fertig ({zip_path}) — wende an")
+        apply_update_and_restart(zip_path)
+        logger.info("Auto-Update (still): Beende App per os._exit damit BAT übernehmen kann")
+        import os
+        os._exit(0)
+    except Exception as e:
+        logger.error(f"Auto-Update (still): Fehlgeschlagen: {e}", exc_info=True)

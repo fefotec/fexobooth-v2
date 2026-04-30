@@ -152,19 +152,25 @@ get_image_sectors() {
 }
 
 # ============================================
-# Helfer: NTFS-Used-Bytes aus Image ermitteln
+# Helfer: NTFS-Used-Bytes aus Image ermitteln (DREI-STUFEN-FALLBACK)
 # ============================================
-# Streamt das groesste NTFS-Partclone-Image durch unxz + partclone.chkimg
-# und parst "Space in use" + "Block size" aus dem Output.
-#
 # Hintergrund: Selbst wenn die Disk-Geometrie im Image groesser ist als das
 # Ziel-Tablet, kann der Restore funktionieren, sofern die ECHTEN NTFS-Daten
 # ins Ziel passen — Clonezilla schrumpft die Partitionen dann proportional
 # via ocs-expand-gpt-pt -icds.
 #
-# Diese Funktion liefert die echte Datennutzung in Bytes, oder leeren String
-# wenn nicht ermittelbar.
-get_image_ntfs_used_bytes() {
+# STUFE 1 (genau): partclone.chkimg streamt das XZ-Image und liefert die
+#                  exakte Datennutzung. Funktioniert in der Regel.
+# STUFE 2 (geschaetzt): XZ-Komprimierungs-Verhaeltnis bei NTFS ~45-50% — wir
+#                       nehmen die Summe aller XZ-Image-Teile mal 2.2 als
+#                       konservative Obergrenze der echten Datennutzung.
+# STUFE 3 (Worst-Case): NTFS-Partitionsgroesse aus dev-fs.list. Worst-Case-
+#                       Annahme dass die Partition randvoll ist. Clonezilla
+#                       kann mit -icds proportional shrinken, sofern die
+#                       Partition selbst ins Ziel passt.
+
+# STUFE 1: Exakte NTFS-Daten via partclone.chkimg
+get_image_ntfs_used_bytes_exact() {
     local image_dir="$1"
     # Letzte NTFS-Partition-Datei finden (in Tablet-Image meist mmcblk*p3)
     local ntfs_aa=$(ls "$image_dir"/*.ntfs-ptcl-img.xz.aa 2>/dev/null | sort | tail -1)
@@ -180,12 +186,92 @@ get_image_ntfs_used_bytes() {
 
     local used_blocks=$(grep "Space in use:" "$tmp_log" | head -1 | sed -E 's/.*= *([0-9]+) *Blocks.*/\1/')
     local block_size=$(grep "Block size:" "$tmp_log" | head -1 | sed -E 's/.*: *([0-9]+) *Byte.*/\1/')
-    rm -f "$tmp_log"
 
-    # Sanity-Check: Beide Werte sind reine Zahlen
     if [[ "$used_blocks" =~ ^[0-9]+$ ]] && [[ "$block_size" =~ ^[0-9]+$ ]]; then
+        rm -f "$tmp_log"
         echo $((used_blocks * block_size))
+    else
+        # Fehler: Log fuer Diagnose im deploy-logs-Ordner aufheben
+        if [ -d "/home/partimag/deploy-logs" ]; then
+            local img_basename=$(basename "$image_dir")
+            cp "$tmp_log" "/home/partimag/deploy-logs/chkimg-failure-${img_basename}-$(date +%H%M%S).log" 2>/dev/null || true
+        fi
+        rm -f "$tmp_log"
     fi
+}
+
+# STUFE 2: Geschaetzte NTFS-Daten aus XZ-Image-Groesse (Faktor 2.2)
+get_image_ntfs_used_bytes_estimated() {
+    local image_dir="$1"
+    # Summe aller XZ-Teile der NTFS-Partition (.xz.aa, .xz.ab, ...)
+    local ntfs_aa=$(ls "$image_dir"/*.ntfs-ptcl-img.xz.aa 2>/dev/null | sort | tail -1)
+    [ -z "$ntfs_aa" ] && return
+
+    local prefix="${ntfs_aa%.aa}"
+    local total=0
+    for img in "${prefix}"*; do
+        [ -f "$img" ] || continue
+        local sz=$(stat -c '%s' "$img" 2>/dev/null)
+        [[ "$sz" =~ ^[0-9]+$ ]] && total=$((total + sz))
+    done
+
+    if [ "$total" -gt 0 ]; then
+        # Faktor 2.2 = konservative obere Grenze (NTFS-XZ ~45-50% Ratio)
+        echo $((total * 22 / 10))
+    fi
+}
+
+# STUFE 3: NTFS-Partitionsgroesse aus dev-fs.list (Worst-Case)
+get_image_ntfs_partition_bytes() {
+    local image_dir="$1"
+    local list_file="$image_dir/dev-fs.list"
+    [ ! -f "$list_file" ] && return
+
+    # Letzte NTFS-Zeile, dritte Spalte ist Groesse (z.B. "27.9G")
+    local size=$(grep -i ' ntfs ' "$list_file" | awk '{print $3}' | tail -1)
+    [ -z "$size" ] && return
+
+    # "27.9G" -> Bytes via awk (unterstuetzt Float)
+    case "$size" in
+        *G|*g)
+            local num="${size%[Gg]}"
+            awk -v n="$num" 'BEGIN { printf "%.0f\n", n * 1024 * 1024 * 1024 }'
+            ;;
+        *M|*m)
+            local num="${size%[Mm]}"
+            awk -v n="$num" 'BEGIN { printf "%.0f\n", n * 1024 * 1024 }'
+            ;;
+    esac
+}
+
+# Kombinierte Funktion: probiert alle drei Stufen, gibt "<bytes>|<methode>" zurueck
+# oder leeren String wenn alle drei fehlschlagen.
+get_image_ntfs_used_bytes() {
+    local image_dir="$1"
+
+    # Stufe 1: exakt
+    local exact=$(get_image_ntfs_used_bytes_exact "$image_dir")
+    if [[ "$exact" =~ ^[0-9]+$ ]] && [ "$exact" -gt 0 ]; then
+        echo "${exact}|exakt (partclone.chkimg)"
+        return
+    fi
+
+    # Stufe 2: geschaetzt aus XZ-Groesse
+    local estimated=$(get_image_ntfs_used_bytes_estimated "$image_dir")
+    if [[ "$estimated" =~ ^[0-9]+$ ]] && [ "$estimated" -gt 0 ]; then
+        echo "${estimated}|geschaetzt (XZ-Groesse * 2.2)"
+        return
+    fi
+
+    # Stufe 3: NTFS-Partitionsgroesse (Worst-Case)
+    local partition=$(get_image_ntfs_partition_bytes "$image_dir")
+    if [[ "$partition" =~ ^[0-9]+$ ]] && [ "$partition" -gt 0 ]; then
+        echo "${partition}|Worst-Case (NTFS-Partitionsgroesse)"
+        return
+    fi
+
+    # Alle drei fehlgeschlagen
+    return
 }
 
 # ============================================
@@ -393,15 +479,20 @@ else
     while IFS='|' read -r line_sectors line_dir line_name; do
         [ -z "$line_sectors" ] && continue
         log "Pruefe NTFS-Datengroesse von '$line_name' (kann 30-60 Sek dauern)..."
-        ntfs_bytes=$(get_image_ntfs_used_bytes "$line_dir")
 
-        if [ -z "$ntfs_bytes" ]; then
-            log "  -> NTFS-Daten konnten nicht ermittelt werden, uebersprungen"
+        # Drei-Stufen-Fallback: exakt -> XZ-geschaetzt -> Partitionsgroesse
+        result=$(get_image_ntfs_used_bytes "$line_dir")
+
+        if [ -z "$result" ]; then
+            log "  -> Alle drei Mess-Methoden fehlgeschlagen, uebersprungen"
+            log "     (chkimg-Failure-Log liegt in /home/partimag/deploy-logs/)"
             continue
         fi
 
+        ntfs_bytes=$(echo "$result" | cut -d'|' -f1)
+        method=$(echo "$result" | cut -d'|' -f2)
         ntfs_gb=$((ntfs_bytes / 1024 / 1024 / 1024))
-        log "  NTFS-Daten in Image: ~${ntfs_gb} GB"
+        log "  NTFS-Daten in Image: ~${ntfs_gb} GB (Methode: ${method})"
 
         if [ "$ntfs_bytes" -lt "$AVAILABLE_BYTES" ]; then
             log "  -> [OK] Daten passen ins Ziel — wird gewaehlt (Clonezilla shrinkt proportional)"
