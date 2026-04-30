@@ -53,7 +53,13 @@ class AdminDialog(ctk.CTkToplevel):
         # Ganzen Bildschirm überdecken - Inhalt wird darin zentriert
         self.geometry(f"{screen_w}x{screen_h}+0+0")
 
-        # Dialog in den Vordergrund bringen
+        # Dialog in den Vordergrund bringen UND topmost setzen.
+        # WICHTIG: Bug v2.3.1 — Wenn der User auf 📁 klickt, öffnet sich der
+        # Windows-Datei-Dialog. Wenn dieser geschlossen wird, fällt der Admin-
+        # Dialog hinter das Kiosk-Root-Fullscreen, weil er overrideredirect ist
+        # aber NICHT topmost. Andere Dialoge in der App (FexosafeBackupDialog,
+        # UpdateProgressDialog) haben das schon korrekt.
+        self.attributes("-topmost", True)
         self.lift()
         self.focus_force()
 
@@ -1248,13 +1254,31 @@ class AdminDialog(ctk.CTkToplevel):
         
         def browse():
             from tkinter import filedialog
+            # Topmost kurz aus, damit der Datei-Dialog ueberhaupt sichtbar
+            # vor dem Admin-Dialog erscheinen kann.
+            try:
+                self.attributes("-topmost", False)
+            except Exception:
+                pass
+
             path = filedialog.askopenfilename(
+                parent=self,
                 title=f"Wähle {label}",
                 filetypes=filetypes + [("Alle Dateien", "*.*")]
             )
             if path:
                 entry.delete(0, "end")
                 entry.insert(0, path)
+
+            # WICHTIG: Nach Schliessen des Datei-Dialogs muss der Admin-Dialog
+            # explizit zurueck nach vorne — sonst rutscht er hinter das
+            # Kiosk-Root-Fullscreen und bleibt unsichtbar.
+            try:
+                self.attributes("-topmost", True)
+                self.lift()
+                self.focus_force()
+            except Exception:
+                pass
         
         ctk.CTkButton(
             input_frame,
@@ -2277,14 +2301,28 @@ class AdminDialog(ctk.CTkToplevel):
                 self._show_message("Keine Statistiken zum Exportieren vorhanden.")
                 return
             
-            # Datei-Dialog
+            # Datei-Dialog — topmost kurz aus damit Datei-Dialog vorne erscheint
+            try:
+                self.attributes("-topmost", False)
+            except Exception:
+                pass
+
             path = filedialog.asksaveasfilename(
+                parent=self,
                 title="Statistik exportieren",
                 defaultextension=".csv",
                 filetypes=[("CSV-Dateien", "*.csv"), ("Alle Dateien", "*.*")],
                 initialfilename="fexobooth_statistik.csv"
             )
-            
+
+            # Nach Schliessen wieder topmost + lift
+            try:
+                self.attributes("-topmost", True)
+                self.lift()
+                self.focus_force()
+            except Exception:
+                pass
+
             if not path:
                 return
             

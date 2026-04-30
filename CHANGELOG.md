@@ -6,6 +6,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.3.2] - 2026-04-30 - Admin-Dialog: topmost + Datei-Dialog-Fix
+
+### Behoben
+- **Admin-Dialog verschwand wenn ein Datei-Auswahl-Dialog geöffnet wurde** (📁-Button im Admin-Menü). Der Dialog wurde nicht zerstört — er rutschte hinter das Kiosk-Root-Fullscreen, weil ihm `attributes("-topmost", True)` fehlte. Andere Dialoge in der App (FexosafeBackup, UpdateProgress) hatten das schon korrekt.
+
+### Fix
+1. `AdminDialog.__init__()`: `attributes("-topmost", True)` gesetzt — Dialog bleibt immer vor dem Root sichtbar.
+2. `_create_file_picker()` browse-Funktion: Vor `filedialog.askopenfilename()` topmost kurz auf `False` (damit der Datei-Dialog überhaupt **vor** dem Admin-Dialog erscheinen kann), danach wieder `True` + `lift()` + `focus_force()`. Plus `parent=self` als Hinweis ans OS.
+3. CSV-Export (`asksaveasfilename`): identische Logik.
+
+---
+
 ## [2.3.1] - 2026-04-29 - Admin-Dialog: Z-Order-Fix + Diagnose-Logging
 
 ### Behoben

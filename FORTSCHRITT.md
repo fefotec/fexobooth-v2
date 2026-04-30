@@ -4,6 +4,25 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-04-30
+
+### Admin-Dialog: topmost + Datei-Dialog-Z-Order-Fix (v2.3.2)
+
+**Problem (User-Bericht klar reproduziert):** Im Admin-Menü auf 📁 klicken → Windows-Datei-Auswahl-Dialog öffnet sich → in dem Moment **verschwindet der Admin-Dialog**. Datei wählen oder abbrechen ändert nichts: Admin-Dialog bleibt unsichtbar. User vermutet (richtig): er rutscht hinter das Kiosk-Vollbild.
+
+**Root Cause:** [AdminDialog](src/ui/screens/admin.py) hatte **kein `attributes("-topmost", True)`** im `__init__()` — andere Dialoge (FexosafeBackup, UpdateProgress) hatten das schon. Der Admin-Dialog hatte nur `overrideredirect(True)` + `lift()` + `focus_force()`. Wenn der Windows-File-Dialog kommt und wieder geht, erbt das Z-Top wieder zum Root (Kiosk-Fullscreen) → Admin-Dialog ist hinter Root verborgen.
+
+**Fix:**
+1. `AdminDialog.__init__()`: `self.attributes("-topmost", True)` direkt nach `lift()` gesetzt.
+2. `_create_file_picker()` `browse()` und `asksaveasfilename()`: vor dem `filedialog`-Aufruf topmost auf `False` setzen (sonst überlagert der Admin-Dialog den File-Dialog), nach Schließen sofort wieder `True` + `lift()` + `focus_force()`.
+3. `parent=self` als Hinweis fürs OS, damit der File-Dialog den Admin-Dialog als Owner kennt.
+
+**Damit ist meine v2.3.1-Theorie widerlegt:** Es war nicht `_check_fullscreen_restore()` — der Fix von gestern ist trotzdem sinnvoll als Prävention. Der echte Z-Order-Bug war einfach das fehlende topmost.
+
+**Betroffen:** `src/ui/screens/admin.py`, `src/__init__.py` (2.3.1 → 2.3.2)
+
+---
+
 ## 2026-04-29
 
 ### Admin-Dialog Z-Order-Fix + Diagnose-Logging (v2.3.1)
