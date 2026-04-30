@@ -378,10 +378,12 @@ class SystemTestDialog(ctk.CTkToplevel):
         if frame is None:
             raise Exception("Kein Kamera-Frame verfügbar")
 
-        # Rotation und Spiegelung anwenden
+        # Rotation anwenden — KEIN cv2.flip(frame, 1):
+        # Der Frame wird als Foto gespeichert/gedruckt. LiveView spiegelt nur
+        # zur Darstellung (siehe session.py:282), Capture-Pfade dürfen nicht
+        # spiegeln, sonst sind Texte auf Kleidung im Print seitenverkehrt.
         if self.app.config.get("rotate_180", False):
             frame = cv2.rotate(frame, cv2.ROTATE_180)
-        frame = cv2.flip(frame, 1)
 
         # OpenCV BGR zu PIL RGB
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)

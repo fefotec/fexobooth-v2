@@ -6,6 +6,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.0] - 2026-04-30 - HMAC-Signatur (Soft-Mode) + Spiegel-Bug im Auto-Test
+
+### Behoben
+- **System-Test (Auto-Test für neue Events) spiegelte das Test-Foto fälschlicherweise.** [system_test.py:384](src/ui/dialogs/system_test.py#L384) hatte ein verschollenes `cv2.flip(frame, 1)`, obwohl die Capture-Pfade in [session.py](src/ui/screens/session.py) bewusst nicht spiegeln (siehe v2.2.3-Fix). Folge: der Print im Systemtest sah seitenverkehrt aus, obwohl echte Capture-Prints korrekt waren.
+
+### Neu — settings.json HMAC-Signatur (Soft-Mode)
+Vorbereitung für nachträgliche Upgrade-Buchungen über das Kundenportal: settings.json kann ab sofort vom Laravel-Backend mit HMAC-SHA256 signiert werden. Verhindert, dass Kunden lokal Features wie `dslr_camera`, `fullframe_prints` oder `max_prints` manipulieren.
+
+- **Neues Feld `_signature`** in der settings.json (Format: `hmac_sha256:<hex>`)
+- **Soft-Mode aktiv (v2.4.x):**
+  - Unsigned-JSONs werden weiterhin akzeptiert, aber mit Log-Warning markiert (Migration zu Laravel-Signing).
+  - Signed-JSONs mit korrektem HMAC werden akzeptiert.
+  - **Signed-JSONs mit falschem HMAC werden IMMER abgelehnt** — auch im Soft-Mode (Manipulationsversuch).
+- **Geprüft an drei Einstiegspunkten** in [booking.py](src/storage/booking.py):
+  1. `_find_settings_file()` — manipulierte JSONs werden gar nicht erst als Kandidat aufgenommen.
+  2. `check_usb_for_new_booking()` — keine "neue Buchung erkannt"-Meldung bei kaputter Signatur.
+  3. `load_from_usb()` — Final-Check vor dem Cachen.
+- **Cache** (`.booking_cache/last_booking.json`) bleibt unsigniert — wird nur lokal von der Box selbst geschrieben, ist nicht über USB einspielbar.
+- **Strict-Mode geplant für v2.5.0** nach Stabilisierungsphase.
+
+### Konfiguration
+- HMAC-Geheimnis aktuell als Konstante `_HMAC_SECRET` in `src/storage/booking.py`. Muss identisch zum Laravel-`SETTINGS_HMAC_SECRET` sein, sobald Laravel Signing scharf schaltet. Build-Zeit-Override via PyInstaller folgt sobald Laravel-Seite produktiv signiert.
+
+---
+
 ## [2.3.3] - 2026-04-30 - Service-Menü: responsiv für Quer- und Hochformat
 
 ### Behoben

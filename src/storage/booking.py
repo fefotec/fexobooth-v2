@@ -4,12 +4,20 @@ Persistenz-Strategie:
 - Buchungsdaten werden lokal gecached (last_booking.json)
 - Template-ZIP wird lokal kopiert (cached_template.zip)
 - Wechsel nur bei ANDERER booking_id oder manuellem Reset
+
+Sicherheit (ab v2.4.0):
+- settings.json kann mit HMAC-SHA256 signiert sein (Feld _signature)
+- Soft-Mode: unsignierte JSONs werden mit Warning akzeptiert (Migration)
+- Strict-Mode (geplant v2.5.0): nur signierte JSONs werden akzeptiert
+- Manipulationsversuche (Signatur falsch) werden IMMER abgelehnt, auch im Soft-Mode
 """
 
+import hashlib
+import hmac
 import json
 import shutil
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 from dataclasses import dataclass, field, asdict
 
 from src.utils.logging import get_logger
@@ -20,6 +28,59 @@ logger = get_logger(__name__)
 CACHE_DIR = Path(__file__).parent.parent.parent / ".booking_cache"
 BOOKING_CACHE_FILE = CACHE_DIR / "last_booking.json"
 TEMPLATE_CACHE_FILE = CACHE_DIR / "cached_template.zip"
+
+# HMAC-Geheimnis für settings.json-Signatur. Muss identisch im Laravel-Backend
+# als ENV SETTINGS_HMAC_SECRET gesetzt sein, damit signierte JSONs akzeptiert werden.
+# Bei Build-Zeit-Override via PyInstaller in eine .env oder direkte Patch-Konstante
+# auslagern, sobald Laravel signiert.
+_HMAC_SECRET = b"fexobox-settings-hmac-2026-CHANGE-ME-IN-PROD"
+_SIGNATURE_PREFIX = "hmac_sha256:"
+# Soft-Mode: True = unsignierte JSONs werden akzeptiert (Übergangsphase v2.4.x).
+# False = Strict-Mode, alle JSONs müssen signiert sein (v2.5.0+).
+_HMAC_SOFT_MODE = True
+
+
+def _verify_signature(data: Dict[str, Any]) -> Tuple[bool, str]:
+    """Validiert die _signature der settings.json.
+
+    Returns:
+        (valid, reason):
+        - (True, "unsigned"): keine Signatur, Soft-Mode akzeptiert
+        - (True, "signed_valid"): Signatur korrekt
+        - (False, "unsigned_strict"): keine Signatur, Strict-Mode lehnt ab
+        - (False, "signed_invalid"): Signatur vorhanden aber falsch (Manipulation)
+    """
+    payload = dict(data)  # Kopie, damit das Original nicht modifiziert wird
+    sig = payload.pop("_signature", None)
+
+    if sig is None:
+        if _HMAC_SOFT_MODE:
+            logger.warning(
+                "⚠️  settings.json ohne Signatur — Soft-Mode akzeptiert "
+                "(in v2.5.0 wird das abgelehnt)"
+            )
+            return (True, "unsigned")
+        return (False, "unsigned_strict")
+
+    if not isinstance(sig, str) or not sig.startswith(_SIGNATURE_PREFIX):
+        logger.error(f"settings.json _signature hat ungültiges Format: {sig!r:.40}")
+        return (False, "signed_invalid")
+
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    expected = hmac.new(
+        _HMAC_SECRET, canonical.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    expected_full = f"{_SIGNATURE_PREFIX}{expected}"
+
+    if hmac.compare_digest(sig, expected_full):
+        logger.info("✅ settings.json Signatur gültig")
+        return (True, "signed_valid")
+
+    logger.error(
+        "🛑 settings.json Signatur UNGÜLTIG — JSON wurde manipuliert oder "
+        "Geheimnis stimmt nicht überein. JSON wird ignoriert."
+    )
+    return (False, "signed_invalid")
 
 
 @dataclass
@@ -232,12 +293,21 @@ class BookingManager:
                 try:
                     with open(json_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
-                    
+
                     # Prüfen ob es eine gültige Settings-Datei ist
                     # Muss mindestens booking_id ODER customer_name enthalten
-                    if data.get("booking_id") or data.get("customer_name"):
-                        mtime = json_path.stat().st_mtime
-                        valid_files.append((json_path, mtime))
+                    if not (data.get("booking_id") or data.get("customer_name")):
+                        continue
+
+                    # Signatur prüfen — manipulierte/falsch signierte JSONs überspringen.
+                    # Soft-Mode lässt unsignierte durch, hartes Reject nur bei
+                    # falscher Signatur (echter Manipulationsversuch).
+                    sig_valid, _ = _verify_signature(data)
+                    if not sig_valid:
+                        continue
+
+                    mtime = json_path.stat().st_mtime
+                    valid_files.append((json_path, mtime))
                 except (json.JSONDecodeError, KeyError, IOError):
                     continue
             
@@ -274,16 +344,24 @@ class BookingManager:
         try:
             with open(settings_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            
+
+            # Signatur prüfen — manipulierte JSONs nicht als "neue Buchung" melden
+            valid, reason = _verify_signature(data)
+            if not valid:
+                logger.error(
+                    f"❌ check_usb: {settings_path.name} abgelehnt ({reason})"
+                )
+                return None
+
             new_booking_id = data.get("booking_id", "")
-            
+
             # Vergleich mit aktuellem
             if new_booking_id and new_booking_id != self.booking_id:
                 logger.info(f"🔄 Neue Buchung erkannt: {new_booking_id} (vorher: {self.booking_id or 'keine'})")
                 return new_booking_id
-            
+
             return None
-            
+
         except Exception as e:
             logger.debug(f"USB-Check Fehler: {e}")
             return None
@@ -310,14 +388,22 @@ class BookingManager:
         try:
             with open(settings_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            
+
+            # Signatur prüfen (Soft-Mode: unsigniert wird akzeptiert, Manipulation nicht)
+            valid, reason = _verify_signature(data)
+            if not valid:
+                logger.error(
+                    f"❌ settings.json {settings_path.name} abgelehnt: {reason}"
+                )
+                return False
+
             new_booking_id = data.get("booking_id", "")
-            
+
             # Prüfen ob wirklich neue Buchung (außer force=True)
             if not force and new_booking_id == self.booking_id and self._settings:
                 logger.debug(f"Gleiche Buchung, überspringe: {new_booking_id}")
                 return True
-            
+
             self._settings = BookingSettings.from_dict(data)
             self._settings_path = settings_path
             self._last_check_path = settings_path
