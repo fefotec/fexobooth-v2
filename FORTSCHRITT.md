@@ -6,6 +6,23 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-04-30
 
+### Service-Menü responsiv: 2x2-Grid im Querformat (v2.3.3)
+
+**Problem (User-Bericht):** Service-Menü (PIN 6588) im Querformat (1280×800) unten abgeschnitten — „Aktuelle Version"-Zeile + untere Steuerelemente nicht sichtbar.
+
+**Ursache:** Layout war 1-spaltig vertikal: 4 Buttons à 60 px + 4 Beschreibungen + Header + Footer ≈ 600+ px. Die Card hatte `place(relx=0.5, rely=0.5)` ohne Höhen-Begrenzung — auf 800-px-Höhe + Border + Header sprengt das den Rahmen.
+
+**Fix in [src/ui/screens/service.py](src/ui/screens/service.py):**
+- Layout-Logik prüft Screen-Aspect-Ratio:
+  - **Querformat (w ≥ h):** Card 900 × 650, **2×2-Grid** für Buttons. Jede Zelle = 1 Button + Beschreibung.
+  - **Hochformat (w < h):** Card 520 × 92%, Buttons in 1 Spalte gestapelt (wie vorher).
+- Compact-Modus bei `screen_height < 700`: kleinere Buttons + Paddings.
+- Status- und Versions-Info am unteren Card-Rand fixiert (`side="bottom"`), nicht im scrollbaren Bereich versteckt.
+
+**Betroffen:** `src/ui/screens/service.py`, `src/__init__.py` (2.3.2 → 2.3.3)
+
+---
+
 ### Admin-Dialog: topmost + Datei-Dialog-Z-Order-Fix (v2.3.2)
 
 **Problem (User-Bericht klar reproduziert):** Im Admin-Menü auf 📁 klicken → Windows-Datei-Auswahl-Dialog öffnet sich → in dem Moment **verschwindet der Admin-Dialog**. Datei wählen oder abbrechen ändert nichts: Admin-Dialog bleibt unsichtbar. User vermutet (richtig): er rutscht hinter das Kiosk-Vollbild.

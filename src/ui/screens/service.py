@@ -59,164 +59,171 @@ class ServiceDialog(ctk.CTkToplevel):
         self._show_menu()
 
     def _show_menu(self):
-        """Zeigt das Service-Menü"""
+        """Zeigt das Service-Menü mit responsivem Layout.
+
+        Querformat (w >= h): Card breit, Buttons in 2-Spalten-Grid (2x2).
+        Hochformat (w < h): Card schmaler, Buttons untereinander (1-Spalte).
+        Bei sehr kleinen Höhen (<700) zusätzlich kompaktere Maße.
+        """
         # Dunkler Hintergrund
         self.main_frame = ctk.CTkFrame(self, fg_color="#0a0a10", corner_radius=0)
         self.main_frame.pack(fill="both", expand=True)
 
-        # Zentrierte Karte
         screen_w = self.winfo_screenwidth()
         screen_h = self.winfo_screenheight()
-        card_w = min(500, int(screen_w * 0.85))
+        is_landscape = screen_w >= screen_h
+        compact = screen_h < 700
+
+        # Card-Größe an Orientierung anpassen
+        if is_landscape:
+            # Querformat: breite Card mit 2-spaltigem Button-Grid
+            card_w = min(900, int(screen_w * 0.85))
+            card_h = min(650, int(screen_h * 0.92))
+        else:
+            # Hochformat: schmalere Card, Buttons gestapelt
+            card_w = min(520, int(screen_w * 0.92))
+            card_h = int(screen_h * 0.92)
+
+        # Skalierungsfaktoren für kompakte Höhe
+        btn_height = 50 if compact else 60
+        title_size = 22 if compact else 26
+        info_pad = 6 if compact else 14
 
         card = ctk.CTkFrame(
             self.main_frame,
             fg_color=COLORS["bg_medium"],
             border_color=COLORS["warning"],
             border_width=2,
-            corner_radius=16
+            corner_radius=16,
+            width=card_w,
+            height=card_h,
         )
         card.place(relx=0.5, rely=0.5, anchor="center")
+        card.pack_propagate(False)
 
-        # Schließen-Button
-        close_btn = ctk.CTkButton(
-            card,
+        # ── Header (Schließen + Titel + Info) ──
+        header = ctk.CTkFrame(card, fg_color="transparent")
+        header.pack(fill="x", padx=10, pady=(8, 0))
+
+        ctk.CTkButton(
+            header,
             text="✕",
-            width=36,
-            height=36,
+            width=36, height=36,
             font=("Segoe UI", 18, "bold"),
             fg_color="transparent",
             hover_color=COLORS["error"],
             text_color=COLORS["text_muted"],
             corner_radius=18,
             command=self._close
-        )
-        close_btn.pack(anchor="e", padx=(0, 10), pady=(10, 0))
+        ).pack(anchor="e")
 
-        # Titel
         ctk.CTkLabel(
             card,
             text="SERVICE-MENU",
-            font=("Segoe UI", 26, "bold"),
+            font=("Segoe UI", title_size, "bold"),
             text_color=COLORS["warning"]
-        ).pack(pady=(0, 5))
+        ).pack(pady=(0, 2))
 
         ctk.CTkLabel(
             card,
             text="Internes Wartungsmenü",
             font=FONTS["small"],
             text_color=COLORS["text_muted"]
-        ).pack(pady=(0, 20))
+        ).pack(pady=(0, info_pad))
 
-        # Bilder-Info anzeigen
+        # Bilder-Info
         single_count, print_count = self._count_images()
-        info_text = f"Bilder auf Festplatte: {single_count} Singles, {print_count} Prints"
         self.info_label = ctk.CTkLabel(
             card,
-            text=info_text,
+            text=f"Bilder auf Festplatte: {single_count} Singles, {print_count} Prints",
             font=FONTS["body"],
             text_color=COLORS["text_secondary"]
         )
-        self.info_label.pack(pady=(0, 20))
+        self.info_label.pack(pady=(0, info_pad))
 
-        # Button-Container
-        btn_container = ctk.CTkFrame(card, fg_color="transparent")
-        btn_container.pack(pady=(0, 10), padx=30)
+        # ── Status-Bereich am unteren Rand (immer sichtbar) ──
+        bottom = ctk.CTkFrame(card, fg_color="transparent")
+        bottom.pack(side="bottom", fill="x", padx=20, pady=(4, 12))
 
-        # 1. Bilder sichern (USB)
-        backup_btn = ctk.CTkButton(
-            btn_container,
-            text="Bilder sichern",
-            font=("Segoe UI", 16, "bold"),
-            width=min(380, int(card_w * 0.8)),
-            height=60,
-            fg_color=COLORS["primary"],
-            hover_color=COLORS["primary_hover"],
-            corner_radius=SIZES["corner_radius"],
-            command=self._backup_images
-        )
-        backup_btn.pack(pady=8)
-
-        ctk.CTkLabel(
-            btn_container,
-            text="Kopiert alle Bilder auf USB-Stick (Ordner = Event-ID)",
-            font=FONTS["tiny"],
-            text_color=COLORS["text_muted"]
-        ).pack(pady=(0, 12))
-
-        # 2. Bilder löschen
-        delete_btn = ctk.CTkButton(
-            btn_container,
-            text="Alle Bilder löschen",
-            font=("Segoe UI", 16, "bold"),
-            width=min(380, int(card_w * 0.8)),
-            height=60,
-            fg_color=COLORS["error"],
-            hover_color="#ff6b7a",
-            corner_radius=SIZES["corner_radius"],
-            command=self._confirm_delete
-        )
-        delete_btn.pack(pady=8)
-
-        ctk.CTkLabel(
-            btn_container,
-            text="Löscht Singles + Prints von der Festplatte (Datenschutz)",
-            font=FONTS["tiny"],
-            text_color=COLORS["text_muted"]
-        ).pack(pady=(0, 12))
-
-        # 3. Template & Settings vom USB neu laden
-        # Hintergrund: BookingManager.load_from_usb() überspringt das Reload
-        # wenn die booking_id gleich bleibt — auch wenn der Kunde mitten in
-        # der Veranstaltung das Template tauschen muss. Dieser Button erzwingt
-        # ein force-Reload (Settings + Template-ZIP).
-        reload_btn = ctk.CTkButton(
-            btn_container,
-            text="Template & Settings vom USB neu laden",
-            font=("Segoe UI", 14, "bold"),
-            width=min(380, int(card_w * 0.8)),
-            height=60,
-            fg_color=COLORS["info"],
-            hover_color="#4dabf7",
-            corner_radius=SIZES["corner_radius"],
-            command=self._reload_from_usb
-        )
-        reload_btn.pack(pady=8)
-
-        ctk.CTkLabel(
-            btn_container,
-            text="Lädt settings.json + Template neu (gleiche Buchungs-ID)",
-            font=FONTS["tiny"],
-            text_color=COLORS["text_muted"]
-        ).pack(pady=(0, 12))
-
-        # 4. Software-Update
-        update_btn = ctk.CTkButton(
-            btn_container,
-            text="Software aktualisieren",
-            font=("Segoe UI", 16, "bold"),
-            width=min(380, int(card_w * 0.8)),
-            height=60,
-            fg_color=COLORS["info"],
-            hover_color="#4dabf7",
-            corner_radius=SIZES["corner_radius"],
-            command=self._check_update
-        )
-        update_btn.pack(pady=8)
-
-        # Versions-Info anzeigen
         from src.updater import get_current_version
         version = get_current_version()
         ctk.CTkLabel(
-            btn_container,
+            bottom,
             text=f"Aktuelle Version: {version} — Prüft GitHub auf neue Version",
             font=FONTS["tiny"],
             text_color=COLORS["text_muted"]
-        ).pack(pady=(0, 12))
+        ).pack(pady=(0, 4))
 
-        # Status-Bereich (für Fortschrittsanzeige)
-        self.status_frame = ctk.CTkFrame(card, fg_color="transparent")
-        self.status_frame.pack(fill="x", padx=30, pady=(0, 20))
+        self.status_frame = ctk.CTkFrame(bottom, fg_color="transparent")
+        self.status_frame.pack(fill="x")
+
+        # ── Button-Bereich ──
+        btn_outer = ctk.CTkFrame(card, fg_color="transparent")
+        btn_outer.pack(fill="both", expand=True, padx=20, pady=(0, 5))
+
+        # Button-Definitionen — Reihenfolge wie bisher
+        button_defs = [
+            ("Bilder sichern", "Kopiert alle Bilder auf USB-Stick\n(Ordner = Event-ID)",
+             COLORS["primary"], COLORS["primary_hover"], self._backup_images),
+            ("Alle Bilder löschen", "Löscht Singles + Prints\nvon der Festplatte (Datenschutz)",
+             COLORS["error"], "#ff6b7a", self._confirm_delete),
+            ("Template & Settings\nvom USB neu laden", "Lädt settings.json + Template neu\n(gleiche Buchungs-ID)",
+             COLORS["info"], "#4dabf7", self._reload_from_usb),
+            ("Software aktualisieren", "Lädt neueste Version von GitHub\nund installiert sie",
+             COLORS["info"], "#4dabf7", self._check_update),
+        ]
+
+        if is_landscape:
+            # 2x2 Grid im Querformat
+            grid = ctk.CTkFrame(btn_outer, fg_color="transparent")
+            grid.pack(expand=True)
+
+            col_width = (card_w - 80) // 2  # 2 Spalten mit Padding
+            for idx, (text, desc, color, hover, cmd) in enumerate(button_defs):
+                row, col = divmod(idx, 2)
+                cell = ctk.CTkFrame(grid, fg_color="transparent")
+                cell.grid(row=row, column=col, padx=8, pady=6, sticky="nsew")
+
+                ctk.CTkButton(
+                    cell,
+                    text=text,
+                    font=("Segoe UI", 14, "bold"),
+                    width=col_width,
+                    height=btn_height,
+                    fg_color=color,
+                    hover_color=hover,
+                    corner_radius=SIZES["corner_radius"],
+                    command=cmd
+                ).pack()
+
+                ctk.CTkLabel(
+                    cell,
+                    text=desc,
+                    font=FONTS["tiny"],
+                    text_color=COLORS["text_muted"],
+                    justify="center"
+                ).pack(pady=(4, 0))
+        else:
+            # 1-Spalte gestapelt im Hochformat
+            btn_width = min(440, int(card_w * 0.85))
+            for text, desc, color, hover, cmd in button_defs:
+                ctk.CTkButton(
+                    btn_outer,
+                    text=text.replace("\n", " "),
+                    font=("Segoe UI", 15, "bold"),
+                    width=btn_width,
+                    height=btn_height,
+                    fg_color=color,
+                    hover_color=hover,
+                    corner_radius=SIZES["corner_radius"],
+                    command=cmd
+                ).pack(pady=4)
+                ctk.CTkLabel(
+                    btn_outer,
+                    text=desc.replace("\n", " "),
+                    font=FONTS["tiny"],
+                    text_color=COLORS["text_muted"]
+                ).pack(pady=(0, 8))
 
         self.progress_bar = ctk.CTkProgressBar(
             self.status_frame,

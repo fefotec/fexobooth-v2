@@ -6,6 +6,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.3.3] - 2026-04-30 - Service-Menü: responsiv für Quer- und Hochformat
+
+### Behoben
+- **Service-Menü (PIN 6588) war im Querformat unten abgeschnitten** — Card war 500 px breit + Buttons untereinander gestapelt, das ergab eine schmale hohe Card die auf 1280×800 nicht in die Höhe passte.
+
+### Fix — adaptives Layout
+- **Querformat (Width ≥ Height):** Card 900 × 650, Buttons in **2×2 Grid** angeordnet. Passt komfortabel auf 1280×800.
+- **Hochformat (Width < Height):** Card 520 × 92% Höhe, Buttons untereinander wie vorher.
+- **Compact-Modus bei `screen_height < 700`:** kleinere Buttons + Paddings.
+- **Status-Bereich + Versions-Info am unteren Rand der Card** — immer sichtbar, nicht in einem Scrollbereich versteckt.
+
+---
+
 ## [2.3.2] - 2026-04-30 - Admin-Dialog: topmost + Datei-Dialog-Fix
 
 ### Behoben
