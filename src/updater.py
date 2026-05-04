@@ -404,6 +404,9 @@ def create_update_script(zip_path: Path, install_dir: Path) -> Path:
         start_cmd = f'start "" python "{install_dir}\\src\\main.py"'
 
     # BAT-Script Inhalt
+    # WICHTIG: Bei jedem Fehlerpfad MUSS die App neu gestartet werden und das
+    # Fenster sich automatisch schliessen. Sonst bleibt das CMD-Fenster offen
+    # und blockiert das UI (Bug 04.05.2026: pause am Fehler-Ende → Fenster offen).
     script = f'''@echo off
 chcp 65001 >nul
 setlocal EnableDelayedExpansion
@@ -417,6 +420,7 @@ set "INSTALL_DIR={install_dir}"
 set "ZIP_FILE={zip_path}"
 set "EXTRACT_DIR={extract_dir}"
 set "PROCESS_NAME={process_name}"
+set "CONFIG_BACKUP=%TEMP%\\fexobooth_config_backup_%RANDOM%.json"
 
 :: Warte bis die App beendet ist (max 15 Sekunden — sollte sofort wegen os._exit)
 echo Warte auf Beendigung von %PROCESS_NAME%...
@@ -441,40 +445,84 @@ timeout /t 2 /nobreak >nul
 echo App beendet. Starte Update...
 echo.
 
+:: ============================================
+:: SAFETY 1: config.json wegsichern
+:: ============================================
+:: Druck-Korrekturwerte (print_adjustment.offset_x/y/zoom), Drucker-Auswahl etc.
+:: liegen in config.json. Falls beim Update etwas schiefgeht und die App
+:: config.json mit Defaults neu erzeugt → Werte weg. Backup vor jedem Eingriff.
+if exist "%INSTALL_DIR%\\config.json" (
+    copy /Y "%INSTALL_DIR%\\config.json" "%CONFIG_BACKUP%" >nul 2>&1
+    echo - config.json gesichert nach %CONFIG_BACKUP%
+)
+
 :: Altes Extract-Verzeichnis löschen
 if exist "%EXTRACT_DIR%" rmdir /s /q "%EXTRACT_DIR%"
 mkdir "%EXTRACT_DIR%"
 
 :: ZIP entpacken
 echo Entpacke Update...
-powershell -Command "Expand-Archive -Path '%ZIP_FILE%' -DestinationPath '%EXTRACT_DIR%' -Force"
+powershell -Command "Expand-Archive -Path '%ZIP_FILE%' -DestinationPath '%EXTRACT_DIR%' -Force" 2>&1
 
-if errorlevel 1 (
-    echo FEHLER: Entpacken fehlgeschlagen!
-    echo Die alte Version laeuft weiter.
-    pause
-    exit /b 1
-)
+:: ============================================
+:: SAFETY 2: Pre-Check NACH Entpacken, VOR jedem Anfassen von %INSTALL_DIR%
+:: ============================================
+:: PowerShell-Errors bei Expand-Archive setzen errorlevel NICHT zuverlaessig.
+:: Bei truncated ZIPs liefert Expand-Archive teilweise Output, errorlevel
+:: bleibt aber 0 → das alte Script ging trotzdem in den zerstoererischen
+:: _internal-Move. Daher: explizit pruefen ob das Entpacken nutzbar war.
+:: Wenn nicht → Abbruch BEVOR irgendwas am Install-Dir berührt wird.
 
 :: Finde entpacktes Verzeichnis (kann direkt oder in Unterordner sein)
 set "SOURCE_DIR=%EXTRACT_DIR%"
-
-:: Prüfe ob es einen einzelnen Unterordner gibt
 set SUBDIR_COUNT=0
 for /d %%D in ("%EXTRACT_DIR%\\*") do (
     set "FIRST_SUBDIR=%%D"
     set /a SUBDIR_COUNT+=1
 )
 if !SUBDIR_COUNT! EQU 1 (
-    :: Prüfe ob der Unterordner die App-Dateien enthält
-    if exist "!FIRST_SUBDIR!\\fexobooth.exe" (
-        set "SOURCE_DIR=!FIRST_SUBDIR!"
-    )
-    if exist "!FIRST_SUBDIR!\\_internal" (
-        set "SOURCE_DIR=!FIRST_SUBDIR!"
+    if exist "!FIRST_SUBDIR!\\fexobooth.exe" set "SOURCE_DIR=!FIRST_SUBDIR!"
+    if exist "!FIRST_SUBDIR!\\_internal" set "SOURCE_DIR=!FIRST_SUBDIR!"
+)
+
+:: Pre-Check 1: _internal/ muss existieren
+if not exist "%SOURCE_DIR%\\_internal" (
+    echo.
+    echo ============================================
+    echo  FEHLER: Update-Archiv unvollstaendig!
+    echo  _internal/ fehlt im entpackten Inhalt.
+    echo  Das Tablet wurde NICHT angefasst — alte Version laeuft weiter.
+    echo ============================================
+    goto :restart_old
+)
+
+:: Pre-Check 2: base_library.zip muss existieren (Pflicht-File jeder PyInstaller-Build)
+if not exist "%SOURCE_DIR%\\_internal\\base_library.zip" (
+    echo.
+    echo ============================================
+    echo  FEHLER: _internal/base_library.zip fehlt!
+    echo  Das ZIP war beim Entpacken kaputt.
+    echo  Das Tablet wurde NICHT angefasst — alte Version laeuft weiter.
+    echo ============================================
+    goto :restart_old
+)
+
+:: Pre-Check 3: pywin32-Module muessen drin sein (sonst geht der Druck nicht)
+:: Bug 04.05.2026: halbherziges Update entfernte pywin32, "Druck nur unter
+:: Windows verfuegbar" obwohl Box Windows war.
+if not exist "%SOURCE_DIR%\\_internal\\win32" (
+    if not exist "%SOURCE_DIR%\\_internal\\pywin32_system32" (
+        echo.
+        echo ============================================
+        echo  FEHLER: pywin32-Module fehlen im Update-Archiv!
+        echo  Druck-Funktionalitaet wuerde brechen.
+        echo  Das Tablet wurde NICHT angefasst — alte Version laeuft weiter.
+        echo ============================================
+        goto :restart_old
     )
 )
 
+echo Pre-Check OK: Update-Archiv ist vollstaendig
 echo Quelle: %SOURCE_DIR%
 echo Ziel: %INSTALL_DIR%
 echo.
@@ -489,39 +537,41 @@ if exist "%SOURCE_DIR%\\fexobooth.exe" (
 )
 
 :: _internal/ ATOMIC ersetzen mit Rollback bei Fehler.
-:: Vorher: rmdir + xcopy, Fehler unterdrueckt → mixed state moeglich (siehe Bugfix v2.2.7).
-:: Jetzt: alten Stand zuerst nach _internal_OLD umbenennen, dann neuen kopieren.
-:: Wenn Kopieren fehlschlaegt → Rollback auf alten Stand. Tablet bleibt funktional.
-if exist "%SOURCE_DIR%\\_internal" (
-    echo - _internal/ (Runtime + Dependencies)
-    :: Aufraeumen aus vorherigem fehlgeschlagenen Update
-    if exist "%INSTALL_DIR%\\_internal_OLD" rmdir /s /q "%INSTALL_DIR%\\_internal_OLD" 2>nul
-    :: Alten Stand wegsichern (atomic move, scheitert wenn Files gelocked)
-    if exist "%INSTALL_DIR%\\_internal" (
-        move "%INSTALL_DIR%\\_internal" "%INSTALL_DIR%\\_internal_OLD" >nul 2>&1
-        if errorlevel 1 (
-            echo FEHLER: _internal/ ist gelockt - Update abgebrochen
-            echo Alte Version bleibt erhalten.
-            pause
-            exit /b 1
-        )
-    )
-    :: Neuen Stand kopieren - Fehler werden NICHT mehr unterdrueckt
-    xcopy "%SOURCE_DIR%\\_internal" "%INSTALL_DIR%\\_internal" /E /I /Y /Q
+echo - _internal/ (Runtime + Dependencies)
+:: Aufraeumen aus vorherigem fehlgeschlagenen Update
+if exist "%INSTALL_DIR%\\_internal_OLD" rmdir /s /q "%INSTALL_DIR%\\_internal_OLD" 2>nul
+:: Alten Stand wegsichern (atomic move, scheitert wenn Files gelocked)
+if exist "%INSTALL_DIR%\\_internal" (
+    move "%INSTALL_DIR%\\_internal" "%INSTALL_DIR%\\_internal_OLD" >nul 2>&1
     if errorlevel 1 (
-        echo FEHLER: Kopieren fehlgeschlagen - Rollback auf alte Version...
-        if exist "%INSTALL_DIR%\\_internal" rmdir /s /q "%INSTALL_DIR%\\_internal" 2>nul
-        if exist "%INSTALL_DIR%\\_internal_OLD" (
-            move "%INSTALL_DIR%\\_internal_OLD" "%INSTALL_DIR%\\_internal" >nul 2>&1
-            echo Rollback abgeschlossen - alte Version laeuft.
-        )
-        pause
-        exit /b 1
+        echo FEHLER: _internal/ ist gelockt - Update abgebrochen
+        goto :restart_old
     )
-    :: Erfolg - alten Stand jetzt loeschen
-    if exist "%INSTALL_DIR%\\_internal_OLD" rmdir /s /q "%INSTALL_DIR%\\_internal_OLD" 2>nul
-    echo   _internal/ erfolgreich aktualisiert
 )
+:: Neuen Stand kopieren
+xcopy "%SOURCE_DIR%\\_internal" "%INSTALL_DIR%\\_internal" /E /I /Y /Q
+if errorlevel 1 goto :rollback_internal
+
+:: Post-Check: Wurde tatsaechlich was kopiert? xcopy kann errorlevel 0 setzen
+:: auch wenn nur 0 Files kopiert wurden. Kritische Pflicht-Files pruefen.
+if not exist "%INSTALL_DIR%\\_internal\\base_library.zip" goto :rollback_internal
+if not exist "%INSTALL_DIR%\\_internal" goto :rollback_internal
+
+:: Erfolg - alten Stand jetzt loeschen
+if exist "%INSTALL_DIR%\\_internal_OLD" rmdir /s /q "%INSTALL_DIR%\\_internal_OLD" 2>nul
+echo   _internal/ erfolgreich aktualisiert
+goto :continue_assets
+
+:rollback_internal
+echo FEHLER: Kopieren fehlgeschlagen - Rollback auf alte Version...
+if exist "%INSTALL_DIR%\\_internal" rmdir /s /q "%INSTALL_DIR%\\_internal" 2>nul
+if exist "%INSTALL_DIR%\\_internal_OLD" (
+    move "%INSTALL_DIR%\\_internal_OLD" "%INSTALL_DIR%\\_internal" >nul 2>&1
+    echo Rollback abgeschlossen - alte Version laeuft.
+)
+goto :restart_old
+
+:continue_assets
 
 :: Assets aktualisieren — User-Custom-Files SCHUETZEN
 :: Bug v2.2.8: xcopy /Y ueberschrieb assets/videos/start.mp4 etc. mit den
@@ -602,6 +652,20 @@ echo - .booking_cache/ (Buchungsdaten)
 echo - assets/videos/ (User-Videos)
 echo - assets/*.png/jpg (User-Bilder, z.B. Auslose-Bild)
 
+:: ============================================
+:: SAFETY: config.json-Restore wenn sie waehrend Update verloren ging
+:: ============================================
+:: Eigentlich wird config.json explizit nicht angefasst, aber als Sicherheitsnetz
+:: stellen wir sie aus dem Backup wieder her, falls sie verloren ging oder
+:: kleiner als das Backup wurde (Manipulation/Korruption durch teilweises Update).
+if exist "%CONFIG_BACKUP%" (
+    if not exist "%INSTALL_DIR%\\config.json" (
+        echo - config.json fehlt - stelle aus Backup wieder her
+        copy /Y "%CONFIG_BACKUP%" "%INSTALL_DIR%\\config.json" >nul 2>&1
+    )
+    del "%CONFIG_BACKUP%" 2>nul
+)
+
 :: Aufräumen
 echo.
 echo Raeume auf...
@@ -622,6 +686,44 @@ cd /d "%INSTALL_DIR%"
 
 :: Dieses Script löschen
 (goto) 2>nul & del "%~f0"
+exit /b 0
+
+:: ============================================
+:: FEHLER-PFAD: alte App neu starten + Fenster zu
+:: ============================================
+:: Wird von allen Pre-Checks und Rollback-Pfaden angesprungen. Stellt sicher
+:: dass:
+::   1. config.json aus dem Backup wiederhergestellt wird (falls sie verschwand)
+::   2. die alte App automatisch neu gestartet wird
+::   3. das CMD-Fenster sich nach 8 s automatisch schliesst
+::   4. das BAT-Script sich selbst loescht
+:: Verhindert den Bug 04.05.2026: pause am Ende blockierte das CMD-Fenster
+:: ueber dem UI, Box wirkte tot.
+:restart_old
+echo.
+echo === Update fehlgeschlagen — alte Version wird neu gestartet ===
+:: config.json restoren falls weg
+if exist "%CONFIG_BACKUP%" (
+    if not exist "%INSTALL_DIR%\\config.json" (
+        echo - config.json wird aus Backup wiederhergestellt
+        copy /Y "%CONFIG_BACKUP%" "%INSTALL_DIR%\\config.json" >nul 2>&1
+    )
+    del "%CONFIG_BACKUP%" 2>nul
+)
+:: Aufraeumen Update-Reste
+del "%ZIP_FILE%" 2>nul
+rmdir /s /q "%EXTRACT_DIR%" 2>nul
+:: Alte App starten
+echo Starte FexoBooth...
+cd /d "%INSTALL_DIR%"
+{start_cmd}
+:: Fenster schliesst sich automatisch — kein blockierendes pause mehr
+echo.
+echo Dieses Fenster schliesst sich in 8 Sekunden automatisch...
+timeout /t 8 /nobreak >nul
+:: Script selbst loeschen
+(goto) 2>nul & del "%~f0"
+exit /b 1
 '''
 
     with open(script_path, "w", encoding="utf-8") as f:

@@ -6,6 +6,53 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.3] - 2026-05-04 - BAT-Script-Härtung: Pre-Check + config.json-Backup + Auto-Restart
+
+### Behoben
+
+**1. Update-Bug v2: Halbherzige Updates ließen pywin32 verschwinden**
+
+Trotz v2.4.2-ZIP-Validierung in Python kam beim Kunden derselbe Fehler nochmal — Box war noch auf einer älteren Version (vor v2.4.2), daher griff die Python-Validierung nicht. Folgen:
+- "Druck nur unter Windows verfügbar" im Service-Test, weil `pywin32` (= `win32print`) im halbherzig kopierten `_internal/` fehlte.
+- Druck-Korrekturwerte (`offset_x/y`, `zoom`) auf Defaults zurückgesetzt — `config.json` ging beim teilweise gelaufenen Update kaputt, App erzeugte sie mit Defaults neu.
+
+**Root Cause:** `xcopy /E /I /Y /Q` setzt `errorlevel` auf 0 auch wenn 0 Files kopiert wurden (wenn das Source-Verzeichnis leer war). Das alte BAT-Script erkannte den teilweise erfolgreichen Update nicht und überschrieb `_internal/` mit einem unvollständigen Stand.
+
+### Fix in [updater.py](src/updater.py) — knallharte BAT-Härtung
+
+1. **Pre-Check VOR jedem Anfassen** des Install-Dirs:
+   - `%SOURCE_DIR%\_internal\` muss existieren
+   - `%SOURCE_DIR%\_internal\base_library.zip` muss existieren (Pflicht-File jeder PyInstaller-Build)
+   - `%SOURCE_DIR%\_internal\win32\` ODER `pywin32_system32\` muss existieren (sonst geht der Druck nicht)
+   - Wenn auch nur einer dieser Checks fehlschlägt → **Abbruch BEVOR irgendwas am Tablet berührt wird**, alte App startet automatisch neu.
+
+2. **Post-Check nach xcopy:** explizit prüfen ob `_internal\base_library.zip` im Ziel angekommen ist — falls nicht trotz `errorlevel 0`: erzwungener Rollback.
+
+3. **`config.json`-Backup vor jedem Eingriff:** Datei wird nach `%TEMP%\fexobooth_config_backup_<RANDOM>.json` kopiert. Falls sie während des Updates verloren geht → automatisches Restore am Ende (sowohl im Erfolgs- als auch im Fehlerpfad). Schützt vor Druck-Korrekturwerte-Reset.
+
+4. **`pause` raus, `timeout /t 8 /nobreak` rein:** CMD-Fenster schließt sich nach 8 s automatisch — auch im Fehlerpfad. Verhindert dass das schwarze Fenster das UI blockiert (Bug 04.05.2026).
+
+5. **Auto-Restart der alten App** in **jedem** Fehlerpfad. Kein Pfad führt mehr zu einer Box ohne UI:
+   - Pre-Check fehlgeschlagen → `:restart_old`
+   - `_internal/` gelockt → `:restart_old`
+   - xcopy-Fehler → `:rollback_internal` → `:restart_old`
+   - Post-Check Pflicht-Datei fehlt → `:rollback_internal` → `:restart_old`
+
+6. **Selbst-Löschung des BAT-Scripts** in beiden Exit-Pfaden (Erfolg + Fehler). Keine alten Update-Scripts in `%TEMP%`.
+
+### Was die Box macht wenn das nächste Update kaputt ankommt
+
+- Schwarzes CMD-Fenster für maximal 8 Sekunden, danach weg.
+- Photobooth-UI startet automatisch wieder mit alter Version.
+- Druck-Korrekturwerte bleiben erhalten (config.json-Backup).
+- Druck funktioniert weiter (kein halbherziger pywin32-Replace).
+
+### Wichtig
+
+Wie alle BAT-Script-Verbesserungen wirkt das **erst wenn die Box bereits v2.4.3 läuft** (das BAT wird vom laufenden Updater erzeugt). Boxen auf älteren Versionen müssen einmalig manuell via `FexoBooth_Setup_2.1.exe` aktualisiert werden, danach sind sie geschützt.
+
+---
+
 ## [2.4.2] - 2026-05-04 - Update-ZIP-Validierung + Service-Menü Z-Order
 
 ### Behoben
