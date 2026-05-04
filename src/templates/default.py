@@ -46,6 +46,15 @@ def _get_default_template_zip_path() -> Optional[str]:
     return None
 
 
+# Öffentlicher Alias — wird von admin.py beim Testdruck (Fallback auf
+# Default-Template) und ggf. weiteren Stellen verwendet. Entstand weil die
+# Funktion früher öffentlich hieß und dann zu _get_default_template_zip_path
+# umbenannt wurde, ohne admin.py anzupassen → ImportError beim Testdruck.
+def get_default_template_path() -> Optional[str]:
+    """Öffentlicher Alias für _get_default_template_zip_path()."""
+    return _get_default_template_zip_path()
+
+
 def create_default_template() -> Tuple[Image.Image, List[Dict]]:
     """Lädt das Standard-Template aus Default-Template.zip.
 
