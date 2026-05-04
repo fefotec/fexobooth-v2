@@ -8,6 +8,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ## [2.4.3] - 2026-05-04 - BAT-Script-Härtung + Update-Überspringen-Button
 
+### Neu — Druck-Defaults: +30 / +30 / 103 %
+
+`print_adjustment` Default-Werte in [defaults.py](src/config/defaults.py) angepasst auf die Werte, die sich auf den meisten Boxen ohne weitere Kalibrierung als Standard etabliert haben:
+
+- `offset_x: 30` (vorher 0)
+- `offset_y: 30` (vorher 0)
+- `zoom: 103` (unverändert)
+- `bleed_mm: 3` (unverändert)
+
+**Wichtig:** Gilt nur für **frische Installationen**. Bestehende `config.json` wird beim Update **nicht** überschrieben — Boxen mit individuell kalibrierten Werten behalten ihre.
+
 ### Neu — "Überspringen"-Button im UpdateProgressDialog
 
 Wenn ein Update gerade läuft (Auto-Update im Firmen-WLAN oder manuell), kann es jetzt am Display abgelehnt werden. Hintergrund: Updates beim Eintreffen einer Kunden-Box können stören (Box wird gerade vorbereitet, kein guter Zeitpunkt für ungeplanten Neustart).

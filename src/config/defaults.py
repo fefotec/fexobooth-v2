@@ -48,8 +48,13 @@ DEFAULT_CONFIG = {
     "printer_name": "",
     "max_prints_per_session": 1,
     "print_adjustment": {
-        "offset_x": 0,      # Fein-Offset in Pixeln (horizontal)
-        "offset_y": 0,      # Fein-Offset in Pixeln (vertikal)
+        # Default-Kalibrierung Canon SELPHY CP1000 (10x15cm, randlos):
+        # +30/+30/103 hat sich als Standard-Wert etabliert, der auf den meisten
+        # Boxen ohne weitere Anpassung passt. Wer's anders braucht, ändert's
+        # im Admin → Druck. Bestehende config.json wird beim Update NICHT
+        # überschrieben — diese Defaults gelten nur für FRESH-Installs.
+        "offset_x": 30,     # Fein-Offset in Pixeln (horizontal)
+        "offset_y": 30,     # Fein-Offset in Pixeln (vertikal)
         "zoom": 103,        # Zoom in Prozent (103% für randlosen Druck empfohlen)
         "bleed_mm": 3       # Überdrucken in mm pro Seite (für randlosen Druck)
     },
