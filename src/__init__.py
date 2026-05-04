@@ -1,4 +1,4 @@
 """Fexobooth - Photobooth Software für fexobox"""
 
-__version__ = "2.4.3"
+__version__ = "2.4.4"
 __author__ = "fexon e.K."

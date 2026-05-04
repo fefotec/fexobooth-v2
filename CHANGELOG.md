@@ -6,7 +6,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
-## [2.4.3] - 2026-05-04 - BAT-Script-Härtung + Update-Überspringen-Button
+## [2.4.4] - 2026-05-04 - Re-Tag von 2.4.3 (kaputte halbherzige Updates aussortieren)
+
+Inhaltlich identisch zur kurz erscheinenen v2.4.3, **nur mit höherer Versions-Nummer**. Hintergrund:
+
+Einige Boxen hatten zuvor das halbherzige (kaputte) v2.4.3-Update gezogen — sie melden sich seitdem als "v2.4.3", haben aber unvollständige `_internal/`-Module (z.B. fehlt `pywin32`). Wenn wir das echte v2.4.3-Release als v2.4.3 ausspielen würden, würde die Versionsprüfung sagen "Box hat v2.4.3, Server hat v2.4.3 → kein Update" — die kaputten Boxen blieben kaputt.
+
+Mit v2.4.4 wird die Versionsprüfung erkennen "v2.4.3 < v2.4.4" und das Update auch auf den kaputten Boxen ausführen. Die neue BAT-Härtung sorgt dafür, dass das Update diesmal sauber durchgeht (oder bei Truncation **vor** jedem Tablet-Eingriff abbricht und die alte App sauber neu startet).
+
+## [2.4.3] - 2026-05-04 - BAT-Script-Härtung + Update-Überspringen-Button (zurückgezogen, durch 2.4.4 ersetzt)
 
 ### Neu — Druck-Defaults: +30 / +30 / 103 %
 
