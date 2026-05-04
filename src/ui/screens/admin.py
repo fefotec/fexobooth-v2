@@ -1435,6 +1435,23 @@ class AdminDialog(ctk.CTkToplevel):
         self.update_idletasks()
 
         def do_print():
+            # pywin32 zuerst pruefen — separater Block, damit die Fehlermeldung
+            # "Druck nur unter Windows verfügbar" wirklich nur dann kommt wenn
+            # pywin32 fehlt. Vorher umfasste das try/except den ganzen Render-
+            # und Druck-Block, sodass auch ein PIL- oder Template-Loader-Bug
+            # als "nur Windows" gemeldet wurde — irreführend.
+            try:
+                import win32print  # noqa: F401
+                import win32ui  # noqa: F401
+                from PIL import ImageWin  # noqa: F401
+            except ImportError as e:
+                logger.error(f"Testdruck: pywin32-ImportError: {e}", exc_info=True)
+                self.after(0, lambda: self._test_print_status.configure(
+                    text="Druck nur unter Windows verfügbar (pywin32 fehlt)",
+                    text_color=COLORS["warning"]
+                ))
+                return
+
             try:
                 from PIL import Image, ImageDraw, ImageFont
                 from src.templates.renderer import TemplateRenderer
@@ -1585,9 +1602,13 @@ class AdminDialog(ctk.CTkToplevel):
                 logger.info(f"Testdruck gesendet an '{printer_name}'")
 
             except ImportError as e:
-                self.after(0, lambda: self._test_print_status.configure(
-                    text="Druck nur unter Windows verfügbar",
-                    text_color=COLORS["warning"]
+                # pywin32 wurde oben separat geprueft — dieser Pfad fängt jetzt
+                # nur noch Imports von PIL/TemplateLoader/TemplateRenderer ab.
+                # Konkrete Modul-Meldung statt irreführender "nur Windows".
+                logger.error(f"Testdruck: ImportError (nicht pywin32): {e}", exc_info=True)
+                self.after(0, lambda m=str(e): self._test_print_status.configure(
+                    text=f"Modul fehlt: {m}",
+                    text_color=COLORS["error"]
                 ))
             except Exception as e:
                 logger.error(f"Testdruck Fehler: {e}")

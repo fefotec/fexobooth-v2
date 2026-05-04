@@ -303,10 +303,22 @@ class FinalScreen(ctk.CTkFrame):
         Verwendet feste Pixelwerte die zum 10x15cm Fotodrucker passen.
         Kein Dialog - vollautomatisch im Hintergrund.
         """
+        # pywin32 separat pruefen — sonst wird ein Import-Fehler in
+        # find_matching_printer (weiter unten) auch als "nur unter Windows"
+        # gemeldet, was irrefuehrend waere.
         try:
             import win32print
             import win32ui
             from PIL import ImageWin
+        except ImportError as e:
+            logger.warning(f"pywin32-ImportError: {e} - Druck nur unter Windows")
+            self.print_info.configure(
+                text="Druck nur unter Windows verfügbar (pywin32 fehlt)",
+                text_color=COLORS["warning"]
+            )
+            return
+
+        try:
 
             printer_name = self.config.get("printer_name")
             if not printer_name:
@@ -392,10 +404,12 @@ class FinalScreen(ctk.CTkFrame):
                        f"(Größe: {base_width}x{base_height}, Offset: {offset_x},{offset_y})")
 
         except ImportError as e:
-            logger.warning(f"Import-Fehler: {e} - Druck nur unter Windows")
+            # pywin32 wurde oben separat geprueft — dieser Pfad fängt jetzt
+            # nur noch andere Imports (z.B. find_matching_printer) ab.
+            logger.error(f"Print: ImportError (nicht pywin32): {e}", exc_info=True)
             self.print_info.configure(
-                text="Druck nur unter Windows verfügbar",
-                text_color=COLORS["warning"]
+                text=f"Modul fehlt: {e}",
+                text_color=COLORS["error"]
             )
         except Exception as e:
             logger.error(f"Druckfehler: {e}")
