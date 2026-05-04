@@ -6,7 +6,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
-## [2.4.3] - 2026-05-04 - BAT-Script-Härtung: Pre-Check + config.json-Backup + Auto-Restart
+## [2.4.3] - 2026-05-04 - BAT-Script-Härtung + Update-Überspringen-Button
+
+### Neu — "Überspringen"-Button im UpdateProgressDialog
+
+Wenn ein Update gerade läuft (Auto-Update im Firmen-WLAN oder manuell), kann es jetzt am Display abgelehnt werden. Hintergrund: Updates beim Eintreffen einer Kunden-Box können stören (Box wird gerade vorbereitet, kein guter Zeitpunkt für ungeplanten Neustart).
+
+- Kleiner sekundärer Button **"Überspringen"** unten im Dialog während des Downloads.
+- Klick → `cancel_event` wird gesetzt → `download_update()` bricht im Read-Loop zwischen Chunks ab → ZIP wird gelöscht → Dialog schließt sich → alte App läuft normal weiter.
+- Sobald die Installations-Phase begonnen hat (BAT-Script läuft gleich), wird der Button automatisch ausgeblendet — Cancel ist ab dem Punkt nicht mehr sicher möglich.
+- Beim **nächsten** App-Start (oder beim nächsten Auto-Update-Check) wird das Update wieder angeboten — kein dauerhaftes Verstecken dieser Version.
+
+Implementierung:
+- `UpdateCancelled` Exception in [updater.py](src/updater.py)
+- `download_update()` bekommt optionalen `cancel_event: threading.Event` Parameter
+- Cancel-Check zwischen jedem Chunk im Download-Loop
+- `UpdateProgressDialog`-Worker fängt `UpdateCancelled` ab und macht KEIN Apply
+
+
 
 ### Behoben
 

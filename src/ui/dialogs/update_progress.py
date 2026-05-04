@@ -35,6 +35,9 @@ class UpdateProgressDialog(ctk.CTkToplevel):
         self._on_done = on_done
         self._destroyed = False
         self._finished = False
+        # Cancel-Event: wenn gesetzt, bricht download_update() den Stream ab.
+        # Wird vom "Überspringen"-Button gesetzt.
+        self._cancel_event = threading.Event()
 
         # Fullscreen-Overlay (wie FexosafeBackupDialog)
         self.overrideredirect(True)
@@ -157,12 +160,31 @@ class UpdateProgressDialog(ctk.CTkToplevel):
             command=self._close,
         )
 
+        # "Überspringen"-Button — Update verwerfen, alte Version weiterlaufen lassen.
+        # Ist während des Downloads sichtbar; bei Klick wird der Download
+        # abgebrochen, das ZIP gelöscht, der Dialog schließt sich. Apply läuft NICHT.
+        self.skip_btn = ctk.CTkButton(
+            self.card,
+            text="Überspringen",
+            font=FONTS["small"],
+            width=140,
+            height=36,
+            fg_color="transparent",
+            hover_color=COLORS["bg_dark"],
+            text_color=COLORS["text_muted"],
+            border_width=1,
+            border_color=COLORS["text_muted"],
+            corner_radius=SIZES["corner_radius"],
+            command=self._on_skip,
+        )
+        self.skip_btn.pack(pady=(0, 24))
+
     # ================= Download =================
 
     def _start_download(self):
         def worker():
             try:
-                from src.updater import download_update, apply_update_and_restart
+                from src.updater import download_update, apply_update_and_restart, UpdateCancelled
 
                 def on_progress(progress: float, text: str):
                     # Thread-safe UI-Update
@@ -171,6 +193,7 @@ class UpdateProgressDialog(ctk.CTkToplevel):
                 zip_path = download_update(
                     self.release["download_url"],
                     progress_callback=on_progress,
+                    cancel_event=self._cancel_event,
                 )
 
                 # Installations-Phase
@@ -181,12 +204,34 @@ class UpdateProgressDialog(ctk.CTkToplevel):
                 # App beenden damit BAT-Script übernimmt
                 self.after(800, self._quit_for_update)
 
+            except UpdateCancelled:
+                # User hat "Überspringen" gedrückt — Dialog ist schon weg, nichts zu tun
+                logger.info("Update-Dialog: Download vom User abgebrochen")
             except Exception as e:
                 logger.error(f"Update-Download/Apply fehlgeschlagen: {e}", exc_info=True)
                 err_msg = str(e)
                 self.after(0, lambda: self._show_error(err_msg))
 
         threading.Thread(target=worker, daemon=True, name="UpdateDownload").start()
+
+    def _on_skip(self):
+        """User hat 'Überspringen' gedrückt: Download abbrechen, Dialog schließen,
+        alte App läuft normal weiter. Beim NÄCHSTEN App-Start wird wieder geprüft —
+        kein dauerhaftes Ignorieren dieser Version (das wäre eine eigene Funktion).
+        """
+        if self._destroyed or self._finished:
+            return
+        logger.info("User hat Update-Überspringen gedrückt — breche Download ab")
+        # Download-Worker via Event signalisieren (er prüft zwischen Chunks)
+        self._cancel_event.set()
+        # UI sofort umschalten damit es nicht so wirkt als wäre nichts passiert
+        try:
+            self.skip_btn.configure(state="disabled", text="Wird abgebrochen...")
+            self.status_label.configure(text="Update wird verworfen...")
+        except Exception:
+            pass
+        # Dialog nach kurzer Wartezeit (damit der Worker rausläuft) schließen
+        self.after(800, self._close)
 
     def _on_progress(self, progress: float, text: str):
         if self._destroyed:
@@ -224,6 +269,12 @@ class UpdateProgressDialog(ctk.CTkToplevel):
         self.hint_label.configure(
             text="Die App beendet sich gleich.\nDas Update wird installiert und die App startet automatisch.",
         )
+        # Skip-Button verstecken — ab hier ist Cancel nicht mehr möglich,
+        # das BAT-Script läuft gleich
+        try:
+            self.skip_btn.pack_forget()
+        except Exception:
+            pass
         self.update_idletasks()
 
     def _quit_for_update(self):

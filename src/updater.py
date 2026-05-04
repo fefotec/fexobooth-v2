@@ -250,21 +250,33 @@ def check_for_update() -> Optional[dict]:
     }
 
 
+class UpdateCancelled(Exception):
+    """Wird geworfen wenn der Benutzer den Download via Cancel-Button abbricht."""
+    pass
+
+
 def download_update(
     download_url: str,
-    progress_callback: Optional[Callable[[float, str], None]] = None
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+    cancel_event=None,
 ) -> Path:
     """Lädt das Update-ZIP herunter
 
     Args:
         download_url: URL zum ZIP-Asset
         progress_callback: Callback(fortschritt_0_bis_1, status_text)
+        cancel_event: Optionales threading.Event. Wird zwischen Chunks geprüft —
+                      wenn gesetzt, wird der Download abgebrochen (ZIP gelöscht,
+                      UpdateCancelled geworfen). Erlaubt dem User, ein Update
+                      über einen "Überspringen"-Button auf dem Display zu
+                      verweigern, ohne dass die App neu starten muss.
 
     Returns:
         Pfad zur heruntergeladenen ZIP-Datei
 
     Raises:
         ConnectionError: Download fehlgeschlagen
+        UpdateCancelled: User hat den Download abgebrochen
     """
     # Eindeutiger Dateiname mit Timestamp + PID — vermeidet Lock-Konflikte mit
     # alten ZIPs die noch von Windows Defender gescannt werden, oder mit
@@ -300,6 +312,17 @@ def download_update(
 
             with open(zip_path, "wb") as f:
                 while True:
+                    # Cancel-Check vor jedem Chunk (User hat "Überspringen" gedrückt?)
+                    if cancel_event is not None and cancel_event.is_set():
+                        # Datei schließen, dann löschen, dann UpdateCancelled werfen
+                        f.close()
+                        try:
+                            zip_path.unlink()
+                        except OSError:
+                            pass
+                        logger.info("Download vom Benutzer abgebrochen")
+                        raise UpdateCancelled("Update vom Benutzer abgebrochen")
+
                     chunk = response.read(chunk_size)
                     if not chunk:
                         break
@@ -322,6 +345,9 @@ def download_update(
                 except OSError as fsync_err:
                     logger.debug(f"fsync nicht möglich ({fsync_err}) — weiter")
 
+    except UpdateCancelled:
+        # Cancel ist KEIN Fehler — durchreichen ohne als ConnectionError zu maskieren
+        raise
     except Exception as e:
         # Aufräumen bei Fehler
         if zip_path.exists():
