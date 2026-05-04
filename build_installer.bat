@@ -193,12 +193,26 @@ echo  Windows-Installer erstellen...
 echo ===================================================
 echo.
 
-"%ISCC_PATH%" installer.iss
+REM App-Version aus src/__init__.py auslesen — damit der Installer-Dateiname
+REM die echte App-Version traegt (FexoBooth_Setup_2.4.4.exe statt _2.1.exe).
+set "APP_VERSION="
+for /f "tokens=2 delims== " %%V in ('findstr /B "__version__" src\__init__.py') do (
+    set "APP_VERSION=%%~V"
+)
+REM Anfuehrungszeichen entfernen falls vorhanden
+set APP_VERSION=%APP_VERSION:"=%
+if "%APP_VERSION%"=="" (
+    echo WARNUNG: App-Version nicht gefunden, fallback auf 2.1
+    set APP_VERSION=2.1
+)
+echo App-Version: %APP_VERSION%
+
+"%ISCC_PATH%" /DMyAppVersion=%APP_VERSION% installer.iss
 
 if %errorlevel% neq 0 (
     echo WARNUNG: Installer-Erstellung fehlgeschlagen.
 ) else (
-    echo [OK] Installer erstellt: installer_output\FexoBooth_Setup_2.0.exe
+    echo [OK] Installer erstellt: installer_output\FexoBooth_Setup_%APP_VERSION%.exe
 )
 
 :skip_installer
@@ -238,8 +252,8 @@ echo  BUILD ERFOLGREICH!
 echo ===================================================
 echo.
 
-if exist "installer_output\FexoBooth_Setup_2.0.exe" (
-    echo  Installer: installer_output\FexoBooth_Setup_2.0.exe
+if exist "installer_output\FexoBooth_Setup_%APP_VERSION%.exe" (
+    echo  Installer: installer_output\FexoBooth_Setup_%APP_VERSION%.exe
 )
 if exist "installer_output\fexobooth.zip" (
     echo  ZIP:       installer_output\fexobooth.zip
@@ -257,7 +271,7 @@ echo.
 echo Naechste Schritte:
 echo.
 echo   ERSTINSTALLATION (neue Tablets):
-echo   1. FexoBooth_Setup_2.0.exe auf USB-Stick kopieren
+echo   1. FexoBooth_Setup_%APP_VERSION%.exe auf USB-Stick kopieren
 echo   2. Auf Tablet ausfuehren - installiert nach C:\FexoBooth\
 echo.
 echo   OTA-UPDATE (bestehende Tablets):

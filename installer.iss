@@ -2,7 +2,13 @@
 ; Erstellt einen professionellen Windows-Installer
 
 #define MyAppName "FexoBooth"
-#define MyAppVersion "2.1"
+; MyAppVersion kann beim ISCC-Aufruf via /DMyAppVersion=2.4.4 ueberschrieben
+; werden. build_installer.bat liest die echte App-Version aus src/__init__.py
+; und uebergibt sie als Parameter — dann heisst die EXE z.B. FexoBooth_Setup_2.4.4.exe.
+; Default fuer manuelle ISCC-Aufrufe ohne Parameter:
+#ifndef MyAppVersion
+  #define MyAppVersion "0.0.0"
+#endif
 #define MyAppPublisher "FexoBox"
 #define MyAppURL "https://github.com/fefotec/fexobooth-v2"
 #define MyAppExeName "FexoBooth.exe"
