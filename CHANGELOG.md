@@ -6,6 +6,33 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.2] - 2026-05-04 - Update-ZIP-Validierung + Service-Menü Z-Order
+
+### Behoben
+
+**1. Update-Bug: BAT-Script scheiterte an truncated ZIP, Box ohne UI**
+
+Symptom (Bild von Christian): nach Auto-Update bleibt ein schwarzes CMD-Fenster sichtbar mit:
+> *"Das Ende des Datensatzes im zentralen Verzeichnis wurde nicht gefunden"*
+
+Anschließend: *"Datei _internal nicht gefunden, 0 Datei(en) kopiert, FEHLER: Kopieren fehlgeschlagen — Rollback auf alte Version"*. Box hat zwar die alte Version, aber kein Photobooth-UI mehr (CMD-Fenster blockiert).
+
+**Ursache:** `download_update()` validierte weder `Content-Length` noch ZIP-Integrität. Wenn das WLAN während des Downloads kurz wegbrach, schrieb der Code eine teilweise ZIP und meldete trotzdem "Download abgeschlossen". `apply_update_and_restart()` startete dann das BAT-Script mit kaputter ZIP, App machte `os._exit(0)`, BAT scheiterte beim Entpacken — und zeigte nur noch das CMD-Fenster.
+
+**Fix in [updater.py](src/updater.py):**
+- **`f.flush()` + `os.fsync()`** nach Download — Disk-Buffer ist garantiert geschrieben bevor wir validieren oder die App terminiert wird.
+- **Content-Length-Check:** Wenn der Server "150 MB" angekündigt hat aber nur 80 MB ankamen → `ConnectionError` mit klarer Meldung. ZIP wird gelöscht, kein BAT-Start.
+- **`zipfile.testzip()`-Validierung:** Doppelte Sicherheit, prüft die internen Checksummen aller Einträge. Falls trotz korrekter Bytes-Anzahl irgendwo ein Bit kippte, wird das hier erkannt.
+- Bei beiden Fehlern: ZIP wird sofort gelöscht, `download_update()` wirft `ConnectionError`. Der UpdateProgressDialog zeigt "Update fehlgeschlagen", die alte App läuft weiter.
+
+**2. Service-Menü (PIN 6588) ploppte in den Hintergrund — Box reagierte nicht mehr**
+
+Gleicher Bug wie Admin-Dialog vor v2.3.2: dem ServiceDialog fehlte `attributes("-topmost", True)`. Daraufhin konnte das Root-Window (durch `_check_fullscreen_restore()` oder andere Win32-Calls) den Dialog überdecken — Foto-UI sichtbar, aber Service-Menü unerreichbar.
+
+**Fix in [service.py:55](src/ui/screens/service.py):** `self.attributes("-topmost", True)` direkt nach `overrideredirect(True)`. Identische Lösung wie für AdminDialog in v2.3.2.
+
+---
+
 ## [2.4.1] - 2026-04-30 - Auto-Update sichtbar + Deploy-Skript-Fallback
 
 ### Behoben

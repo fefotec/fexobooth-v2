@@ -50,6 +50,13 @@ class ServiceDialog(ctk.CTkToplevel):
         screen_h = self.winfo_screenheight()
         self.geometry(f"{screen_w}x{screen_h}+0+0")
 
+        # Topmost setzen damit der Service-Dialog im Kiosk-Modus garantiert
+        # vor dem Root-Window bleibt. Ohne diesen Flag konnte _check_fullscreen_restore()
+        # oder andere Win32-Calls den Dialog hinter das Root rutschen lassen
+        # → User sah die Foto-UI, kam aber nicht mehr zurück ins Service-Menü.
+        # Gleicher Fix wie für Admin-Dialog in v2.3.2.
+        self.attributes("-topmost", True)
+
         self.lift()
         self.focus_force()
 

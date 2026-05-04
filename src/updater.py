@@ -22,6 +22,7 @@ import os
 import ssl
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.request import urlopen, Request
@@ -312,13 +313,58 @@ def download_update(
                         text = f"Lade herunter... {mb_done:.1f} / {mb_total:.1f} MB"
                         progress_callback(progress, text)
 
+                # Disk-Buffer hart flushen damit der Inhalt garantiert auf Disk
+                # liegt bevor wir gleich validieren (und bevor BAT-Script + os._exit
+                # die Datei aus der Hand nehmen).
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError as fsync_err:
+                    logger.debug(f"fsync nicht möglich ({fsync_err}) — weiter")
+
     except Exception as e:
         # Aufräumen bei Fehler
         if zip_path.exists():
-            zip_path.unlink()
+            try:
+                zip_path.unlink()
+            except OSError:
+                pass
         raise ConnectionError(f"Download fehlgeschlagen: {e}")
 
-    logger.info(f"Download abgeschlossen: {zip_path} ({downloaded} Bytes)")
+    # Validierung 1: Content-Length muss übereinstimmen.
+    # Wenn der Server die Verbindung früher schließt (WLAN-Drop, Server-Timeout)
+    # haben wir eine truncated ZIP — PowerShell scheitert dann beim Expand-Archive
+    # mit "Das Ende des Datensatzes im zentralen Verzeichnis wurde nicht gefunden".
+    # Ohne diesen Check würde apply_update_and_restart() trotzdem starten,
+    # die App würde sich beenden, das BAT-Script würde scheitern → Box hat
+    # kein UI mehr (CMD-Fenster sichtbar). Genau der Bug aus 04.05.2026.
+    if total_size > 0 and downloaded != total_size:
+        try:
+            zip_path.unlink()
+        except OSError:
+            pass
+        raise ConnectionError(
+            f"Download unvollständig: {downloaded} von {total_size} Bytes "
+            f"empfangen ({downloaded / total_size * 100:.1f} %)"
+        )
+
+    # Validierung 2: ZIP-Integrität via zipfile.testzip() prüfen.
+    # Stellt sicher dass die ZIP valide ist UND alle internen Checksummen passen.
+    # Doppelt sicher — Content-Length kann theoretisch trotz Truncation matchen
+    # wenn Server falschen Header sendet.
+    try:
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            bad = zf.testzip()
+            if bad is not None:
+                raise zipfile.BadZipFile(f"Datei {bad!r} im ZIP ist beschädigt")
+    except (zipfile.BadZipFile, OSError) as e:
+        try:
+            zip_path.unlink()
+        except OSError:
+            pass
+        raise ConnectionError(f"Heruntergeladenes ZIP ist beschädigt: {e}")
+
+    logger.info(f"Download abgeschlossen + validiert: {zip_path} ({downloaded} Bytes)")
     return zip_path
 
 
