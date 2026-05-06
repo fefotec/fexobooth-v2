@@ -64,6 +64,73 @@ class UpdateProgressDialog(ctk.CTkToplevel):
         # Download automatisch starten
         self._start_download()
 
+    @staticmethod
+    def _extract_highlights(description: str, max_lines: int = 6) -> str:
+        """Extrahiert die wichtigsten Highlights aus dem GitHub-Release-Body.
+
+        Heuristik:
+        - Sucht in dieser Reihenfolge: '### Highlights', '## Behoben', '## Neu'
+          → wenn vorhanden, nimmt deren Bullet-Points
+        - Wenn keine Sektion da ist: nimmt einfach die ersten Markdown-Listen-Items
+          (Zeilen die mit '-', '*' oder '•' beginnen)
+        - Markdown-Formatierung (** _ `) wird gestrippt für saubere Anzeige
+        - Max max_lines Bullets, danach abgeschnitten mit '…'
+        """
+        if not description or not description.strip():
+            return ""
+
+        import re
+
+        lines = description.splitlines()
+        bullets = []
+
+        # Versuche bevorzugte Sektion zu finden
+        preferred_sections = ["### Highlights", "## Behoben", "## Neu", "### Behoben", "### Neu"]
+        section_start = -1
+        for marker in preferred_sections:
+            for i, line in enumerate(lines):
+                if line.strip().lower().startswith(marker.lower()):
+                    section_start = i + 1
+                    break
+            if section_start >= 0:
+                break
+
+        # Bullet-Points sammeln (entweder ab Sektion oder vom Anfang)
+        scan_lines = lines[section_start:] if section_start >= 0 else lines
+        for line in scan_lines:
+            stripped = line.strip()
+            # Nächste Sektion (## ... oder ### ...) → stop
+            if stripped.startswith("##") and bullets:
+                break
+            # Bullet-Point erkennen
+            if stripped.startswith("- ") or stripped.startswith("* ") or stripped.startswith("• "):
+                # Bullet-Marker entfernen
+                text = re.sub(r"^[-*•]\s+", "", stripped)
+                # Markdown-Formatierung strippen: **bold**, *italic*, _italic_, `code`
+                text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+                text = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"\1", text)
+                text = re.sub(r"_([^_]+)_", r"\1", text)
+                text = re.sub(r"`([^`]+)`", r"\1", text)
+                # Markdown-Links [Text](url) → nur Text behalten
+                text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+                if text:
+                    bullets.append("• " + text)
+                if len(bullets) >= max_lines:
+                    break
+
+        if not bullets:
+            return ""
+
+        result = "\n".join(bullets)
+        # Falls noch mehr Bullets im Text wären, signalisieren
+        remaining = sum(
+            1 for line in scan_lines
+            if line.strip().startswith(("- ", "* ", "• "))
+        ) - len(bullets)
+        if remaining > 0:
+            result += f"\n  (+ {remaining} weitere Änderungen)"
+        return result
+
     def _build_ui(self, screen_w: int, screen_h: int):
         bg = ctk.CTkFrame(self, fg_color="#0a0a10", corner_radius=0)
         bg.pack(fill="both", expand=True)
@@ -103,7 +170,42 @@ class UpdateProgressDialog(ctk.CTkToplevel):
             font=FONTS["body"],
             text_color=COLORS["text_secondary"],
         )
-        self.status_label.pack(pady=(0, 18))
+        self.status_label.pack(pady=(0, 10))
+
+        # "Was ist neu?"-Bereich aus release.description (= GitHub-Release-Body).
+        # Zeigt eine kompakte Liste der Highlights, max ~6 Zeilen, scrollbar
+        # falls länger. Wenn die Description leer ist (alte API-Response oder
+        # Release ohne Body), wird der Bereich nicht angezeigt.
+        highlights = self._extract_highlights(self.release.get("description", ""))
+        if highlights:
+            self.whats_new_header = ctk.CTkLabel(
+                self.card,
+                text="Was ist neu?",
+                font=FONTS["small"],
+                text_color=COLORS["text_secondary"],
+            )
+            self.whats_new_header.pack(pady=(2, 4))
+
+            text_w = min(500, int(card_w * 0.92))
+            text_h = 90  # ca. 5-6 Zeilen
+            self.whats_new_box = ctk.CTkTextbox(
+                self.card,
+                width=text_w,
+                height=text_h,
+                font=FONTS["small"],
+                fg_color=COLORS["bg_dark"],
+                text_color=COLORS["text_secondary"],
+                border_width=0,
+                wrap="word",
+            )
+            self.whats_new_box.pack(pady=(0, 14), padx=20)
+            self.whats_new_box.insert("1.0", highlights)
+            self.whats_new_box.configure(state="disabled")
+        else:
+            self.whats_new_header = None
+            self.whats_new_box = None
+            # Etwas mehr Padding zur Progress-Bar wenn kein Text-Bereich
+            self.status_label.pack_configure(pady=(0, 18))
 
         # Progress-Bar (deutlich größer als vorher)
         bar_w = min(460, int(card_w * 0.85))
