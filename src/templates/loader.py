@@ -304,45 +304,82 @@ class TemplateLoader:
     @staticmethod
     def _parse_xml(xml_path: str, overlay_size: Optional[Tuple[int, int]] = None) -> List[Dict]:
         """Parst die XML-Datei mit Photo-Positionen (DSLR-Booth Format)
-        
+
         Unterstützte XML-Struktur:
-        <Template>
+        <Template Width="1800" Height="1200" ...>
           <Elements>
             <Photo PhotoNumber="1" Left="50" Top="100" Width="300" Height="200" Rotation="0"/>
             ...
           </Elements>
         </Template>
+
+        WICHTIG — Skalierung bei abweichender Overlay-Größe:
+        DSLR Booth speichert die Photo-Koordinaten relativ zur Canvas-Größe
+        die im <Template>-Tag steht (z.B. 1800x1200). Das Overlay-PNG kann
+        aber eine ANDERE Auflösung haben (z.B. 2400x1600 = 1.333× hochskaliert).
+        In dem Fall müssen die Photo-Boxen mit dem gleichen Faktor hochskaliert
+        werden — sonst sitzen die Fotos auf dem Canvas verschoben.
+        Bug v2.0–v2.4 vor diesem Fix: Photo-Boxen wurden 1:1 übernommen ohne
+        Skalierung → Fotos saßen oben links zu nah am Rand bei Templates mit
+        höher aufgelöstem Overlay (typischer Fall: DSLR-Booth Legacy-Templates).
         """
         boxes = []
-        
+
         try:
             tree = ET.parse(xml_path)
             root = tree.getroot()
-            
+
+            # Template-Canvas-Größe aus dem <Template>-Tag lesen
+            template_w_attr = root.attrib.get("Width")
+            template_h_attr = root.attrib.get("Height")
+            template_w = int(float(template_w_attr)) if template_w_attr else 0
+            template_h = int(float(template_h_attr)) if template_h_attr else 0
+
+            # Skalierungsfaktor berechnen falls Overlay-PNG eine andere Auflösung
+            # hat als das Template-XML angibt
+            scale_x = 1.0
+            scale_y = 1.0
+            if overlay_size and template_w > 0 and template_h > 0:
+                ovl_w, ovl_h = overlay_size
+                if ovl_w != template_w or ovl_h != template_h:
+                    scale_x = ovl_w / template_w
+                    scale_y = ovl_h / template_h
+                    logger.info(
+                        f"Template-XML sagt {template_w}x{template_h}, "
+                        f"Overlay-PNG ist {ovl_w}x{ovl_h} → skaliere Photo-Boxen "
+                        f"mit Faktor {scale_x:.3f}x / {scale_y:.3f}y"
+                    )
+
             # Verschiedene XML-Strukturen unterstützen
             # Variante 1: <Template><Elements><Photo>
             elements = root.find("Elements")
             if elements is None:
                 # Variante 2: Direkt <Photo> unter Root
                 elements = root
-            
+
             for photo in elements.findall("Photo"):
                 try:
-                    # Attribute lesen
-                    x = int(float(photo.attrib.get("Left", photo.attrib.get("X", "0"))))
-                    y = int(float(photo.attrib.get("Top", photo.attrib.get("Y", "0"))))
-                    w = int(float(photo.attrib.get("Width", "300")))
-                    h = int(float(photo.attrib.get("Height", "200")))
+                    # Attribute lesen — anschließend mit scale_x/scale_y skalieren
+                    x_raw = float(photo.attrib.get("Left", photo.attrib.get("X", "0")))
+                    y_raw = float(photo.attrib.get("Top", photo.attrib.get("Y", "0")))
+                    w_raw = float(photo.attrib.get("Width", "300"))
+                    h_raw = float(photo.attrib.get("Height", "200"))
+
+                    x = int(round(x_raw * scale_x))
+                    y = int(round(y_raw * scale_y))
+                    w = int(round(w_raw * scale_x))
+                    h = int(round(h_raw * scale_y))
+
                     angle = float(photo.attrib.get("Rotation", photo.attrib.get("Angle", "0")))
                     number = int(photo.attrib.get("PhotoNumber", photo.attrib.get("Number", str(len(boxes) + 1))))
-                    
+
                     # Box erstellen (x1, y1, x2, y2)
                     boxes.append({
                         "box": (x, y, x + w - 1, y + h - 1),
                         "angle": angle,
                         "number": number
                     })
-                    
+
                 except (ValueError, KeyError) as e:
                     logger.warning(f"Fehler beim Parsen eines Photo-Elements: {e}")
             
