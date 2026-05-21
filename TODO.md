@@ -89,6 +89,9 @@ Details siehe ROADMAP.md. Datenschutz vorab klären, dann erst angehen.
 
 ## Erledigt ✅
 
+### 2026-05-20
+- [x] Hotline-Prompt „Felix" auf reinen V2-Modus umgestellt (alle Boxen jetzt auf V2). V1-Blöcke, Versions-Gate und USB-Hub-Lampen-Diagnose aus `support/HOTLINE_PROMPT_FELIX.md` entfernt.
+
 ### 2026-04-23
 - [x] Auto-Update im Firmen-WLAN (SSID-Whitelist + Internet-Check, still im Background)
 - [x] FEXOSAFE-Backup mit Buchungs-ID als Überordner

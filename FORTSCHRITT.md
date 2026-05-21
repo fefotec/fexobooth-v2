@@ -4,6 +4,39 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-05-20
+
+### Hotline-Prompt „Felix" auf V2-only umgestellt
+
+Alle Fexoboxen im Umlauf sind auf V2 aktualisiert. Der Felix-Prompt unter [support/HOTLINE_PROMPT_FELIX.md](support/HOTLINE_PROMPT_FELIX.md) wurde entsprechend bereinigt:
+
+- **Versions-Gate entfernt** – keine Frage mehr „V1 oder V2?"
+- **V1-Fallbacks entfernt** in STROM-GATE, RUNBOOK B/C/D (USB-Hub-Lampen-Diagnose komplett raus)
+- **Hard-Reset vereinfacht** – nur noch „bis Display schwarz wird"
+- **Service-Menü** verliert den „nur V2"-Marker, gilt jetzt für alle Boxen
+- **Buchungsnummer-Regel** vereinfacht – immer vom Display ablesen lassen
+- Header-Vermerk: „V2 only (alle Boxen sind auf V2)" mit Datum 2026-05-20
+
+---
+
+## 2026-05-06
+
+### Hotline-Prompt „Felix" für V1 + V2 erstellt
+
+Telefon-KI-Prompt unter [support/HOTLINE_PROMPT_FELIX.md](support/HOTLINE_PROMPT_FELIX.md) angelegt. Deckt beide Box-Versionen ab über ein Versions-Gate („Sehen Sie oben rechts Buchungsnummer und Blitz-Symbol?").
+
+**V2-Spezifika integriert:**
+- STROM-GATE über das ⚡-Symbol oben rechts statt „rote Lampe in der Box suchen"
+- Drucker-Diagnose über die konkreten Display-Fehlertexte aus `printer_error.py` (`PAPIERSTAU!`, `KASSETTE LEER!`, `KLAPPE OFFEN!`, `DRUCKER OFFLINE!` etc.)
+- USB-/Kamera-Status direkt vom Kunden ablesbar
+- Kunden-Service-Menü (PIN 2015, unsichtbarer Button oben rechts in der Ecke) als Eskalationsstufe vor dem Callback — mit „Druckstau beheben", „Windows Neustart" und „Live-View Overlay EIN/AUS" für den Wunsch nach Vollbild-Kamerabild
+
+**Pflege-Anweisung in [CLAUDE.md](CLAUDE.md) ergänzt:** Prompt muss bei Änderungen an Top-Bar, Fehlertexten oder Kunden-Menü mit aktualisiert werden.
+
+**TODO ergänzt** ([TODO.md](TODO.md)): Am 2026-05-11 (Mo) auf reinen V2-Modus umstellen, V1-Fallbacks dann entfernen.
+
+---
+
 ## 2026-04-30
 
 ### Service-Menü responsiv: 2x2-Grid im Querformat (v2.3.3)

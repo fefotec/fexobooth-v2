@@ -27,6 +27,7 @@
    - `ERKENNTNISSE.md` - Bei neuen Erkenntnissen oder Tech-Entscheidungen
    - `TODO.md` - Aufgaben hinzufügen/abhaken
    - `CHANGELOG.md` - Für Release-relevante Änderungen
+   - `support/HOTLINE_PROMPT_FELIX.md` - Steuert die Telefon-KI „Felix". **Muss bei jeder Änderung an Status-Anzeigen (`src/app.py` Top-Bar), Drucker-Fehlertexten (`src/ui/dialogs/printer_error.py`) oder am Kunden-Menü PIN 2015 (`src/ui/screens/admin.py`) geprüft und angepasst werden.** Sonst gibt Felix dem Kunden falsche Anweisungen.
 
 ---
 
