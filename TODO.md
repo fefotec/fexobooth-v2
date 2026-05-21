@@ -21,11 +21,69 @@ Aufgabenliste mit Prioritäten.
 - [ ] Deployment: Referenz-Tablet einrichten und erstes Image testen
 - [ ] Deployment: Clonezilla USB-Stick auf Miix 310 testen (Boot + Capture + Restore)
 
+### Heim-WLAN-Workflow Phase 1 — "Bilder sichern"-Screen lokal
+
+Details siehe ROADMAP.md Abschnitt "Heim-WLAN-Workflow". Kein Backend nötig.
+
+- [ ] `BookingSettings` um Feld `online_gallery: bool` erweitern (`src/storage/booking.py`)
+- [ ] `from_dict` mappt `features.online_gallery` aus settings.json
+- [ ] `to_dict` schreibt das Feld in den Cache
+- [ ] Idempotenz-Datei `.booking_cache/homecheck_handled.json` (Liste verarbeiteter Booking-IDs)
+- [ ] Heim-Check-Logik in `src/company_network.py` ergänzen: nach Auto-Update-Block prüfen, ob `last_booking.online_gallery == True` UND `BILDER/<booking_id>/` nicht leer UND Booking-ID noch nicht abgehakt
+- [ ] Neuer Modal-Screen "Bilder dieser Buchung jetzt sichern?" (am `FexosafeBackupDialog` orientiert)
+- [ ] Button startet vorhandenen `FexosafeBackupDialog`, danach Booking-ID in Idempotenz-Datei abhaken
+- [ ] Test: am Tablet im Firmen-WLAN mit echter Online-Galerie-Buchung verifizieren
+
+### Heim-WLAN-Workflow Phase 2 — Box-Identität + Heim-Check-API
+
+Details siehe ROADMAP.md. Setzt Phase 1 voraus, braucht Laravel-Backend-Code.
+
+- [ ] [laravel] `POST /api/v1/box/learn-identity`: Booking-IDs + HMAC-Timestamp → `box_barcode` + Sanctum-Token
+- [ ] [laravel] `GET /api/v1/box/{barcode}/homecheck` (Sanctum): letzte Buchung, Alerts, pending Aktionen
+- [ ] [laravel] Sanctum auf `Photobox`-Model oder eigene `photobox_tokens`-Tabelle
+- [ ] [laravel] IP-Allowlist auf den beiden Endpoints (nur fexon-WLAN)
+- [ ] Booth: `box_identity.json` (write-once), Erweiterung im Update-Skript zum Schutz
+- [ ] Booth: kleine `booking_history.json` mit den letzten ~3 Booking-IDs
+- [ ] Booth: Identity-Learning-Call beim ersten Heim-WLAN-Erkennung wenn keine Identität da
+- [ ] Booth: Heim-Check-Call bei jeder Heim-WLAN-Erkennung (Sanctum-Token), auswerten + Screen anzeigen
+- [ ] Admin-Screen: kleine Zeile "Box-Identität: FB-XXX ✅" + "Zurücksetzen"-Button
+- [ ] Test: gesamter Flow auf Tablet im Firmen-WLAN
+
+### Update-Strategie / Staged Rollout
+
+Details siehe ROADMAP.md Abschnitt "Update-Strategie / Staged Rollout".
+Bis Phase 2 steht: Disziplin mit GitHub-Pre-Release-Flag (kein Code).
+
+**Stufe Auto-Rollback (eigenständig, unabhängig von Phase 2):**
+- [ ] `src/updater.py`: `_internal_OLD/` 24 h aufbewahren statt sofort löschen
+- [ ] Beim ersten App-Start nach Update: Smoke-Test (Kamera/Drucker/Config/Galerie-Server)
+- [ ] Bei Smoke-Test-Fehler: automatischer Rollback auf `_internal_OLD/`
+- [ ] Markierung in `update_history.json` damit kein Endlos-Rollback-Loop entsteht
+
+**Stufe Release-Manager (mit Phase 2):**
+- [ ] [laravel] Tabelle `photobox_version_pins` (photobox_id, target_version, channel, set_at)
+- [ ] [laravel] Heim-Check-Response um `update_channel` + optional `target_version` erweitern
+- [ ] Booth: `update_channel` + optionalen Pin im Updater berücksichtigen (statt nur GitHub-Latest)
+- [ ] [laravel] Release-Manager-UI: Übersicht aller Boxen pro Release mit Status + Health
+- [ ] [laravel] Wellen-Steuerung: explizite Box-Auswahl / Anzahl / Prozent
+- [ ] [laravel] "Welle stoppen", "Auf alle ausrollen", "Box auf Version fixieren"
+- [ ] Booth meldet aktuelle Version + Smoke-Test-Status im Heim-Check für Dashboard-Übersicht
+
 ---
 
 ## Niedrig 🟢
 
-_Aktuell keine niedrig priorisierten Aufgaben_
+### Heim-WLAN-Workflow Phase 3 — Auto-Upload (optional, nach DSGVO-Klärung)
+
+Details siehe ROADMAP.md. Datenschutz vorab klären, dann erst angehen.
+
+- [ ] Datenschutz prüfen: Upload nur bei `online_gallery == True` reicht als Zustimmung?
+- [ ] Workflow definieren: Mitarbeiter-Freigabe vor Sichtbarmachung in Kundengalerie?
+- [ ] [laravel] `POST /api/v1/box/{barcode}/gallery-image` (idempotent per File-Hash)
+- [ ] [laravel] Server-side Throttling damit Heimkehr-Welle die Leitung nicht sättigt
+- [ ] Booth: Upload-Queue mit Resume bei Verbindungsabbruch
+- [ ] Booth: lokale Markierung erfolgreich hochgeladener Bilder
+- [ ] Booth: Auto-Upload-Trigger wenn Heim-Check sagt "Bilder fehlen für diese Buchung"
 
 ---
 
