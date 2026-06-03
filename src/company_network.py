@@ -1,26 +1,33 @@
 """Firmennetzwerk-Erkennung + Auto-Update-Trigger
 
 Erkennt ob die FexoBooth im Firmen-WLAN (fexon) hängt und triggert
-dort still einen Update-Check gegen GitHub. Beim Kunden ist nie Internet,
+dort still einen Update-Check gegen GitHub sowie optional einen kurzen
+Software-Monitoring-Heartbeat ans Dashboard. Beim Kunden ist nie Internet,
 also passiert nichts.
 
 Ablauf beim App-Start (Background-Thread):
 1. Aktive WLAN-SSID via `netsh wlan show interfaces` auslesen
 2. Gegen Whitelist aus config prüfen (company_wifi_ssids)
-3. Wenn Firmen-WLAN: check_for_update() aufrufen (wirft ConnectionError ohne Internet)
-4. Bei verfügbarem Update: download + apply + Neustart
+3. Wenn Firmen-WLAN: Monitoring-Heartbeat senden, sofern konfiguriert
+4. Wenn Auto-Update aktiv: check_for_update() aufrufen
+5. Bei verfügbarem Update: download + apply + Neustart
 """
 
+import json
 import re
+import socket
 import subprocess
 import threading
 import time
-from pathlib import Path
-from typing import Optional, List
+from typing import Any, Dict, Optional, List
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+MONITORING_HTTP_TIMEOUT = 3
 
 
 def get_active_ssid() -> Optional[str]:
@@ -78,15 +85,99 @@ def is_company_wifi(ssid: Optional[str], whitelist: List[str]) -> bool:
     return ssid in whitelist
 
 
+def _get_booking_id(app=None) -> str:
+    """Liest die aktive Buchungs-ID, ohne den Startfluss davon abhängig zu machen."""
+    if app is None:
+        return ""
+
+    booking_manager = getattr(app, "booking_manager", None)
+    if booking_manager is None:
+        return ""
+
+    booking_id = getattr(booking_manager, "booking_id", "")
+    return str(booking_id or "").strip()
+
+
+def _send_monitoring_heartbeat(config: Dict[str, Any], ssid: str, app=None) -> None:
+    """Sendet einen kurzen Software-Heartbeat ans Dashboard.
+
+    Läuft nur mit expliziter 3-stelliger box_id, Endpoint und Token. Fehler werden
+    bewusst nicht in den UI-Fluss getragen, damit Kundenbetrieb und Startzeit nicht
+    von Netzwerk oder Dashboard abhängen.
+    """
+    if not config.get("monitoring_enabled", True):
+        logger.debug("Monitoring: Deaktiviert")
+        return
+
+    box_id = str(config.get("box_id", "")).strip()
+    if not re.fullmatch(r"\d{3}", box_id):
+        logger.debug("Monitoring: Keine gültige 3-stellige Box-ID gesetzt — übersprungen")
+        return
+
+    endpoint = str(config.get("monitoring_endpoint", "")).strip()
+    token = str(config.get("monitoring_token", "")).strip()
+    if not endpoint or not token:
+        logger.debug("Monitoring: Endpoint oder Token fehlt — übersprungen")
+        return
+
+    try:
+        from src.updater import _SSL_CONTEXT, get_current_version
+        ssl_context = _SSL_CONTEXT
+        version = get_current_version()
+    except Exception as e:
+        logger.debug(f"Monitoring: Version/SSL-Kontext nicht ladbar, nutze Fallback: {e}")
+        ssl_context = None
+        version = "0.0.0"
+
+    payload = {
+        "box_id": box_id,
+        "version": version,
+        "hostname": socket.gethostname(),
+        "booking_id": _get_booking_id(app),
+        "source": "fexobooth-v2",
+        "ssid": ssid,
+    }
+
+    data = json.dumps(payload).encode("utf-8")
+    request = Request(
+        endpoint,
+        data=data,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "FexoBooth-Monitoring/1.0",
+        },
+        method="POST",
+    )
+
+    try:
+        if ssl_context is not None:
+            response = urlopen(request, timeout=MONITORING_HTTP_TIMEOUT, context=ssl_context)
+        else:
+            response = urlopen(request, timeout=MONITORING_HTTP_TIMEOUT)
+        with response:
+            logger.info(f"Monitoring: Version {version} für Box-ID {box_id} gemeldet")
+    except HTTPError as e:
+        logger.warning(f"Monitoring: Dashboard lehnt Meldung ab (HTTP {e.code})")
+    except (URLError, TimeoutError, OSError) as e:
+        logger.debug(f"Monitoring: Dashboard nicht erreichbar — übersprungen ({e})")
+    except Exception as e:
+        logger.debug(f"Monitoring: Heartbeat fehlgeschlagen — übersprungen ({e})")
+
+
 def check_and_auto_update(
     whitelist: List[str],
     delay_seconds: float = 15.0,
     app=None,
+    config: Optional[Dict[str, Any]] = None,
+    update_enabled: bool = True,
 ) -> None:
     """Startet einen Background-Thread der nach `delay_seconds` prüft:
     1. Firmen-WLAN aktiv?
-    2. Internet + GitHub erreichbar?
-    3. Update verfügbar? → UpdateProgressDialog auf UI-Thread öffnen.
+    2. Optional Software-Monitoring ans Dashboard melden.
+    3. Optional Internet + GitHub erreichbar?
+    4. Update verfügbar? → UpdateProgressDialog auf UI-Thread öffnen.
        Der Dialog erledigt Download + Apply + os._exit selbst und ist
        sichtbar (Fullscreen, MB-Counter), damit der Mitarbeiter erkennt
        was passiert (vor v2.4.1 lief das komplett unsichtbar).
@@ -100,9 +191,18 @@ def check_and_auto_update(
                        (damit die App erst sauber hochfährt)
         app: PhotoboothApp-Instanz für UI-Dialog-Anzeige. Wenn None,
              fällt es auf den alten stillen Pfad zurück (Headless-Tests).
+        config: Vollständige App-Konfiguration für Monitoring.
+        update_enabled: Wenn False, wird nur Monitoring geprüft.
     """
+    config = config or {}
+    monitoring_enabled = bool(config.get("monitoring_enabled", True))
+
     if not whitelist:
-        logger.debug("Auto-Update: Keine Firmen-SSIDs konfiguriert — übersprungen")
+        logger.debug("Firmennetzwerk: Keine Firmen-SSIDs konfiguriert — übersprungen")
+        return
+
+    if not update_enabled and not monitoring_enabled:
+        logger.debug("Firmennetzwerk: Auto-Update und Monitoring deaktiviert — übersprungen")
         return
 
     def worker():
@@ -115,10 +215,18 @@ def check_and_auto_update(
             return
 
         if not is_company_wifi(ssid, whitelist):
-            logger.debug(f"Auto-Update: SSID '{ssid}' nicht in Firmen-Whitelist — übersprungen")
+            logger.debug(f"Firmennetzwerk: SSID '{ssid}' nicht in Firmen-Whitelist — übersprungen")
             return
 
-        logger.info(f"Auto-Update: Firmen-WLAN erkannt ('{ssid}') — prüfe auf Updates...")
+        logger.info(f"Firmennetzwerk: Firmen-WLAN erkannt ('{ssid}')")
+
+        _send_monitoring_heartbeat(config, ssid, app)
+
+        if not update_enabled:
+            logger.debug("Auto-Update: Deaktiviert — nur Monitoring geprüft")
+            return
+
+        logger.info("Auto-Update: Prüfe auf Updates...")
 
         # Update-Check (wirft ConnectionError ohne Internet — Kundenbetrieb)
         try:

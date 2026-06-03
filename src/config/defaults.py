@@ -80,6 +80,7 @@ DEFAULT_CONFIG = {
     "canvas_height": 1200,
     
     # Sonstiges
+    "box_id": "",  # 3-stellige Box-ID, wird manuell im Admin-Menü gesetzt
     "admin_button_alpha": 0.1,
     "hide_finish_button": True,
     "print_enabled": True,
@@ -89,6 +90,9 @@ DEFAULT_CONFIG = {
 
     # Auto-Update (nur im Firmen-WLAN mit Internet)
     "auto_update_enabled": True,
+    "monitoring_enabled": True,
+    "monitoring_endpoint": "https://admin.fexobox.de/api/booth/heartbeat",
+    "monitoring_token": "",
     "company_wifi_ssids": [
         "fexon WLAN",
         "fexon_Buero_WLAN2",

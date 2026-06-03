@@ -30,6 +30,8 @@ class FinalScreen(ctk.CTkFrame):
         self.prints_count = 0
         self.auto_return_time = 0
         self.is_active = False
+        self._is_printing = False
+        self._print_quantity_dialog: Optional[ctk.CTkToplevel] = None
 
         self._setup_ui()
 
@@ -160,67 +162,292 @@ class FinalScreen(ctk.CTkFrame):
 
     def _on_print(self):
         """Drucken gedrückt"""
-        max_prints = self.config.get("max_prints_per_session", 1)
+        if self._is_printing:
+            return
 
-        if self.prints_count >= max_prints:
-            self.print_info.configure(
-                text="Maximale Anzahl Drucke erreicht!",
-                text_color=COLORS["warning"]
-            )
+        remaining = self._get_remaining_prints()
+        if remaining <= 0:
+            self._update_print_button_state()
+            return
+
+        # Auto-Return Timer zurücksetzen sobald der Gast mit Drucken interagiert
+        self.auto_return_time = time.time() + self.config.get("final_time", 30)
+
+        if self._get_max_prints() > 1 and remaining > 1:
+            self._show_print_quantity_dialog(remaining)
+        else:
+            self._start_prints(1)
+
+    def _get_max_prints(self) -> int:
+        """Gibt die maximal erlaubten Prints als sichere Zahl zurück."""
+        try:
+            return max(0, int(self.config.get("max_prints_per_session", 1)))
+        except (TypeError, ValueError):
+            return 1
+
+    def _get_remaining_prints(self) -> int:
+        """Gibt zurück, wie viele Prints in dieser Session noch erlaubt sind."""
+        return max(0, self._get_max_prints() - self.prints_count)
+
+    def _start_prints(self, quantity: int):
+        """Startet einen oder mehrere Druckaufträge."""
+        if self._is_printing:
+            return
+
+        remaining = self._get_remaining_prints()
+        quantity = max(0, min(int(quantity), remaining))
+        if quantity <= 0:
+            self._update_print_button_state()
             return
 
         # Drucker-Status prüfen bevor gedruckt wird
         if self._check_printer_before_print():
             return  # Drucker nicht bereit, Meldung wird angezeigt
 
-        logger.info("Drucke Bild...")
+        logger.info(f"Drucke Bild ({quantity}x)...")
+        self._is_printing = True
+        self._set_printing_state(quantity)
 
-        if self.print_btn:
-            self.print_btn.configure(state="disabled", text="Wird gedruckt...")
+        printed_count = 0
+        had_error = False
+        try:
+            if not self.final_image:
+                logger.warning("Kein finales Bild zum Drucken vorhanden")
+                self.print_info.configure(
+                    text="Kein Bild zum Drucken vorhanden",
+                    text_color=COLORS["error"]
+                )
+                self._restore_print_button_after_error()
+                return
 
-        if self.final_image:
-            saved_path = self.app.local_storage.save_print(
-                self.final_image.convert("RGB"),
-                suffix=f"print_{self.prints_count + 1}"
-            )
+            from src.storage.printer_lifetime import get_printer_lifetime
+            lifetime_counter = get_printer_lifetime()
 
-            if saved_path:
+            for _ in range(quantity):
+                print_number = self.prints_count + 1
+                saved_path = self.app.local_storage.save_print(
+                    self.final_image.convert("RGB"),
+                    suffix=f"print_{print_number}"
+                )
+
+                if not saved_path:
+                    had_error = True
+                    self.print_info.configure(
+                        text="Druck konnte nicht gespeichert werden",
+                        text_color=COLORS["error"]
+                    )
+                    break
+
                 self.app.usb_manager.copy_to_usb(saved_path, "Prints")
                 self._print_image(saved_path)
 
                 self.prints_count += 1
+                printed_count += 1
                 self.app.prints_in_session = self.prints_count
                 self.app.statistics.record_print_success()
+                lifetime_counter.increment()
 
-                # Lifetime-Drucker-Zähler hochzählen
-                from src.storage.printer_lifetime import get_printer_lifetime
-                get_printer_lifetime().increment()
+            if printed_count > 0 or not had_error:
+                self._update_print_button_state(printed_count)
+            else:
+                self._restore_print_button_after_error()
+        finally:
+            self._is_printing = False
+            # Auto-Return Timer zurücksetzen
+            self.auto_return_time = time.time() + self.config.get("final_time", 30)
 
-                remaining = max_prints - self.prints_count
-                if remaining > 0:
-                    self.print_info.configure(
-                        text=f"Gedruckt! Noch {remaining} Druck(e) möglich",
-                        text_color=COLORS["success"]
-                    )
-                    if self.print_btn:
-                        self.print_btn.configure(
-                            state="normal",
-                            text=f"{self.config.get('ui_texts', {}).get('print', 'DRUCKEN')}"
-                        )
+    def _set_printing_state(self, quantity: int):
+        """Zeigt am Druck-Button, dass gerade gedruckt wird."""
+        if self.print_btn:
+            self.print_btn.configure(
+                state="disabled",
+                text="...wird gedruckt!",
+                fg_color=COLORS["success"]
+            )
+
+        if quantity > 1:
+            info_text = f"{quantity} Druckaufträge werden gesendet..."
+        else:
+            info_text = "Druckauftrag wird gesendet..."
+        self.print_info.configure(text=info_text, text_color=COLORS["success"])
+
+    def _update_print_button_state(self, printed_count: int = 0):
+        """Aktualisiert Button und Info ohne Limit-Hinweis für Gäste."""
+        remaining = self._get_remaining_prints()
+        button_text = self.config.get("ui_texts", {}).get("print", "DRUCKEN")
+
+        if remaining > 0:
+            if printed_count > 0:
+                if printed_count == 1:
+                    info_text = f"Druckauftrag gesendet! Noch {remaining} verfügbar"
                 else:
-                    self.print_info.configure(
-                        text="Gedruckt! Keine weiteren Drucke möglich",
-                        text_color=COLORS["text_primary"]
-                    )
-                    if self.print_btn:
-                        self.print_btn.configure(
-                            state="disabled",
-                            text="Limit erreicht",
-                            fg_color=COLORS["bg_light"]
-                        )
+                    info_text = f"{printed_count} Druckaufträge gesendet! Noch {remaining} verfügbar"
+            else:
+                info_text = f"{remaining} Druck(e) verfügbar"
 
-        # Auto-Return Timer zurücksetzen
-        self.auto_return_time = time.time() + self.config.get("final_time", 30)
+            if self.print_btn:
+                self.print_btn.configure(
+                    state="normal",
+                    text=button_text,
+                    fg_color=COLORS["success"]
+                )
+            self.print_info.configure(text=info_text, text_color=COLORS["success"])
+            return
+
+        if printed_count > 1:
+            info_text = f"{printed_count} Druckaufträge gesendet"
+        elif printed_count == 1:
+            info_text = "Druckauftrag gesendet"
+        else:
+            info_text = "Drucken nicht verfügbar"
+
+        if self.print_btn:
+            self.print_btn.configure(
+                state="disabled",
+                text="...wird gedruckt!" if printed_count > 0 else button_text,
+                fg_color=COLORS["success"] if printed_count > 0 else COLORS["bg_light"]
+            )
+        self.print_info.configure(
+            text=info_text,
+            text_color=COLORS["success"] if printed_count > 0 else COLORS["text_muted"]
+        )
+
+    def _restore_print_button_after_error(self):
+        """Reaktiviert den Druck-Button nach lokalen Fehlern."""
+        if not self.print_btn:
+            return
+
+        button_text = self.config.get("ui_texts", {}).get("print", "DRUCKEN")
+        if self._get_remaining_prints() > 0:
+            self.print_btn.configure(
+                state="normal",
+                text=button_text,
+                fg_color=COLORS["success"]
+            )
+        else:
+            self.print_btn.configure(
+                state="disabled",
+                text=button_text,
+                fg_color=COLORS["bg_light"]
+            )
+
+    def _show_print_quantity_dialog(self, max_quantity: int):
+        """Zeigt eine Touch-Auswahl für die gewünschte Anzahl Prints."""
+        if self._print_quantity_dialog and self._print_quantity_dialog.winfo_exists():
+            self._print_quantity_dialog.lift()
+            return
+
+        parent = self.winfo_toplevel()
+        dialog = ctk.CTkToplevel(parent)
+        self._print_quantity_dialog = dialog
+
+        dialog.overrideredirect(True)
+        screen_w = dialog.winfo_screenwidth()
+        screen_h = dialog.winfo_screenheight()
+        dialog.geometry(f"{screen_w}x{screen_h}+0+0")
+        dialog.configure(fg_color="#0a0a10")
+        dialog.attributes("-topmost", True)
+        dialog.transient(parent)
+        dialog.grab_set()
+        dialog.focus_force()
+
+        def close_dialog():
+            self._close_print_quantity_dialog(dialog)
+
+        def choose_quantity(amount: int):
+            close_dialog()
+            self._start_prints(amount)
+
+        def emergency_quit():
+            close_dialog()
+            if hasattr(self.app, "_emergency_quit"):
+                self.app._emergency_quit()
+
+        dialog.bind("<Escape>", lambda e: close_dialog())
+        dialog.bind("<Control-Shift-Q>", lambda e: emergency_quit())
+        dialog.bind("<Control-Shift-q>", lambda e: emergency_quit())
+
+        bg_frame = ctk.CTkFrame(dialog, fg_color="#0a0a10", corner_radius=0)
+        bg_frame.pack(fill="both", expand=True)
+
+        card_w = min(620, int(screen_w * 0.86))
+        card = ctk.CTkFrame(
+            bg_frame,
+            fg_color=COLORS["bg_medium"],
+            border_color=COLORS["success"],
+            border_width=3,
+            corner_radius=20
+        )
+        card.place(relx=0.5, rely=0.5, anchor="center")
+        card.bind("<Button-1>", lambda e: "break")
+
+        ctk.CTkLabel(
+            card,
+            text="Wie viele Ausdrucke?",
+            font=FONTS["heading"],
+            text_color=COLORS["text_primary"]
+        ).pack(pady=(34, 6), padx=35)
+
+        ctk.CTkLabel(
+            card,
+            text=f"{max_quantity} verfügbar",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"]
+        ).pack(pady=(0, 22))
+
+        buttons_frame = ctk.CTkFrame(card, fg_color="transparent")
+        buttons_frame.pack(padx=36, pady=(0, 24))
+
+        columns = 3 if max_quantity > 4 else max_quantity
+        button_size = max(76, min(108, int(screen_h * 0.12)))
+        for amount in range(1, max_quantity + 1):
+            row = (amount - 1) // columns
+            column = (amount - 1) % columns
+            ctk.CTkButton(
+                buttons_frame,
+                text=str(amount),
+                font=("Segoe UI", 32, "bold"),
+                width=button_size,
+                height=button_size,
+                fg_color=COLORS["success"],
+                hover_color="#00e676",
+                text_color=COLORS["text_primary"],
+                corner_radius=16,
+                command=lambda value=amount: choose_quantity(value)
+            ).grid(row=row, column=column, padx=8, pady=8, sticky="nsew")
+
+        ctk.CTkButton(
+            card,
+            text=self.config.get("ui_texts", {}).get("cancel", "ABBRECHEN"),
+            font=FONTS["button"],
+            width=min(260, int(card_w * 0.48)),
+            height=48,
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["bg_card"],
+            text_color=COLORS["text_secondary"],
+            corner_radius=SIZES["corner_radius"],
+            command=close_dialog
+        ).pack(pady=(0, 32))
+
+    def _close_print_quantity_dialog(self, dialog: Optional[ctk.CTkToplevel] = None):
+        """Schließt den Print-Anzahl-Dialog, falls er offen ist."""
+        active_dialog = dialog or self._print_quantity_dialog
+        if not active_dialog:
+            return
+
+        if self._print_quantity_dialog is active_dialog:
+            self._print_quantity_dialog = None
+
+        try:
+            active_dialog.grab_release()
+        except Exception:
+            pass
+
+        try:
+            if active_dialog.winfo_exists():
+                active_dialog.destroy()
+        except Exception:
+            pass
 
     def _check_printer_before_print(self) -> bool:
         """Prüft ob der Drucker bereit ist. Zeigt Meldung wenn nicht.
@@ -466,7 +693,9 @@ class FinalScreen(ctk.CTkFrame):
         """Screen wird angezeigt"""
         logger.info("Final-Screen angezeigt")
         self.is_active = True
+        self._is_printing = False
         self.prints_count = 0
+        self._close_print_quantity_dialog()
 
         # Finales Bild rendern
         self.final_image = self._render_final_image()
@@ -496,17 +725,13 @@ class FinalScreen(ctk.CTkFrame):
         self.preview_label.image = ctk_img
 
         # Druck-Button zurücksetzen
-        max_prints = self.config.get("max_prints_per_session", 1)
         if self.print_btn:
-            self.print_btn.configure(
-                state="normal",
-                text=f"{self.config.get('ui_texts', {}).get('print', 'DRUCKEN')}",
-                fg_color=COLORS["success"]
+            self._update_print_button_state()
+        else:
+            self.print_info.configure(
+                text="Drucken deaktiviert",
+                text_color=COLORS["text_muted"]
             )
-        self.print_info.configure(
-            text=f"{max_prints} Druck(e) verfügbar" if self.print_btn else "Drucken deaktiviert",
-            text_color=COLORS["text_primary"] if self.print_btn else COLORS["text_muted"]
-        )
 
         # Auto-Return Timer starten
         self.auto_return_time = time.time() + self.config.get("final_time", 30)
@@ -516,3 +741,4 @@ class FinalScreen(ctk.CTkFrame):
     def on_hide(self):
         """Screen wird verlassen"""
         self.is_active = False
+        self._close_print_quantity_dialog()

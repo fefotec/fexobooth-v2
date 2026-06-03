@@ -1115,6 +1115,42 @@ class AdminDialog(ctk.CTkToplevel):
         """Allgemeine Einstellungen"""
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Box-ID für Monitoring/Inventar. Leer = nicht gesetzt.
+        box_id_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        box_id_frame.pack(fill="x", pady=(5, 10))
+
+        ctk.CTkLabel(
+            box_id_frame,
+            text="Box-ID:",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"]
+        ).pack(side="left")
+
+        self.box_id_error = ctk.CTkLabel(
+            box_id_frame,
+            text="",
+            font=FONTS["tiny"],
+            text_color=COLORS["error"]
+        )
+        self.box_id_error.pack(side="left", padx=(12, 0))
+
+        self.box_id_entry = ctk.CTkEntry(
+            box_id_frame,
+            placeholder_text="3 Ziffern",
+            width=90,
+            fg_color=COLORS["bg_card"],
+            border_color=COLORS["border"],
+            justify="center"
+        )
+        initial_box_id = str(self.config_data.get("box_id", "") or "")
+        if initial_box_id and (not initial_box_id.isdigit() or len(initial_box_id) > 3):
+            logger.warning(f"Ignoriere ungültige Box-ID aus Config: {initial_box_id!r}")
+            initial_box_id = ""
+        self._last_valid_box_id = initial_box_id
+        self.box_id_entry.insert(0, initial_box_id)
+        self.box_id_entry.pack(side="right")
+        self.box_id_entry.bind("<KeyRelease>", lambda e: self._sanitize_box_id_entry())
         
         # Flash-Bild (beim Foto-Auslösen)
         ctk.CTkLabel(
@@ -1189,6 +1225,21 @@ class AdminDialog(ctk.CTkToplevel):
             border_color=COLORS["border"]
         )
         self.new_pin.pack(side="right")
+
+    def _sanitize_box_id_entry(self):
+        """Erlaubt nur maximal drei Ziffern im Box-ID-Feld."""
+        if not hasattr(self, "box_id_entry"):
+            return
+
+        current = self.box_id_entry.get()
+        if current == "" or (current.isdigit() and len(current) <= 3):
+            self._last_valid_box_id = current
+        else:
+            self.box_id_entry.delete(0, "end")
+            self.box_id_entry.insert(0, getattr(self, "_last_valid_box_id", ""))
+
+        if hasattr(self, "box_id_error"):
+            self.box_id_error.configure(text="")
     
     def _create_templates_tab(self, parent):
         """Template-Einstellungen mit Datei-Dialogen"""
@@ -2638,6 +2689,17 @@ class AdminDialog(ctk.CTkToplevel):
     def _save(self):
         """Speichert die Einstellungen"""
         logger.info("=== Admin-Einstellungen speichern ===")
+
+        # Box-ID: keine automatische Vergabe, leer erlaubt, sonst exakt 3 Ziffern.
+        if hasattr(self, "box_id_entry"):
+            box_id = self.box_id_entry.get().strip()
+            if box_id and (len(box_id) != 3 or not box_id.isdigit()):
+                if hasattr(self, "box_id_error"):
+                    self.box_id_error.configure(text="Genau 3 Ziffern")
+                self.box_id_entry.focus_set()
+                logger.warning(f"Ungültige Box-ID verworfen: {box_id!r}")
+                return
+            self.config_data["box_id"] = box_id
         
         # Flash-Bild
         self.config_data["flash_image"] = self.flash_image_path.get().strip()

@@ -235,18 +235,22 @@ class PhotoboothApp:
         except Exception as e:
             logger.debug(f"Orphan-Cleanup fehlgeschlagen: {e}")
 
-        # Auto-Update: Nur im Firmen-WLAN mit Internet. Beim Kunden passiert nichts.
+        # Firmen-WLAN-Aktionen: Auto-Update und Software-Monitoring.
         # Läuft als Background-Thread mit 15s Verzögerung, damit App erst sauber hochfährt.
-        if self.config.get("auto_update_enabled", True):
+        auto_update_enabled = self.config.get("auto_update_enabled", True)
+        monitoring_enabled = self.config.get("monitoring_enabled", True)
+        if auto_update_enabled or monitoring_enabled:
             try:
                 from src.company_network import check_and_auto_update
                 check_and_auto_update(
                     whitelist=self.config.get("company_wifi_ssids", []),
                     delay_seconds=15.0,
                     app=self,
+                    config=self.config,
+                    update_enabled=auto_update_enabled,
                 )
             except Exception as e:
-                logger.debug(f"Auto-Update-Trigger fehlgeschlagen: {e}")
+                logger.debug(f"Firmennetzwerk-Trigger fehlgeschlagen: {e}")
 
         logger.info("PhotoboothApp initialisiert")
 
