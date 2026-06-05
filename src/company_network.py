@@ -28,6 +28,7 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 MONITORING_HTTP_TIMEOUT = 3
+DEFAULT_MONITORING_TOKEN = "fexobooth-v2-monitoring-X2KWF8ZS5Ab4s1hy2sevRlaxkkGti5glvSZhcSpWh5o"
 
 
 def get_active_ssid() -> Optional[str]:
@@ -101,9 +102,10 @@ def _get_booking_id(app=None) -> str:
 def _send_monitoring_heartbeat(config: Dict[str, Any], ssid: str, app=None) -> None:
     """Sendet einen kurzen Software-Heartbeat ans Dashboard.
 
-    Läuft nur mit expliziter 3-stelliger box_id, Endpoint und Token. Fehler werden
-    bewusst nicht in den UI-Fluss getragen, damit Kundenbetrieb und Startzeit nicht
-    von Netzwerk oder Dashboard abhängen.
+    Läuft nur mit expliziter 3-stelliger box_id und Endpoint. Der Token ist als
+    Fallback eingebaut, damit keine Box einzeln provisioniert werden muss.
+    Fehler werden bewusst nicht in den UI-Fluss getragen, damit Kundenbetrieb
+    und Startzeit nicht von Netzwerk oder Dashboard abhängen.
     """
     if not config.get("monitoring_enabled", True):
         logger.debug("Monitoring: Deaktiviert")
@@ -115,10 +117,10 @@ def _send_monitoring_heartbeat(config: Dict[str, Any], ssid: str, app=None) -> N
         return
 
     endpoint = str(config.get("monitoring_endpoint", "")).strip()
-    token = str(config.get("monitoring_token", "")).strip()
-    if not endpoint or not token:
-        logger.debug("Monitoring: Endpoint oder Token fehlt — übersprungen")
+    if not endpoint:
+        logger.debug("Monitoring: monitoring_endpoint fehlt — übersprungen")
         return
+    token = str(config.get("monitoring_token", "")).strip() or DEFAULT_MONITORING_TOKEN
 
     try:
         from src.updater import _SSL_CONTEXT, get_current_version
@@ -159,7 +161,12 @@ def _send_monitoring_heartbeat(config: Dict[str, Any], ssid: str, app=None) -> N
         with response:
             logger.info(f"Monitoring: Version {version} für Box-ID {box_id} gemeldet")
     except HTTPError as e:
-        logger.warning(f"Monitoring: Dashboard lehnt Meldung ab (HTTP {e.code})")
+        try:
+            error_body = e.read().decode("utf-8", errors="replace").strip()
+        except Exception:
+            error_body = ""
+        details = f": {error_body[:300]}" if error_body else ""
+        logger.warning(f"Monitoring: Dashboard lehnt Meldung ab (HTTP {e.code}){details}")
     except (URLError, TimeoutError, OSError) as e:
         logger.debug(f"Monitoring: Dashboard nicht erreichbar — übersprungen ({e})")
     except Exception as e:
@@ -270,6 +277,28 @@ def check_and_auto_update(
         _silent_fallback(release)
 
     t = threading.Thread(target=worker, name="AutoUpdateCheck", daemon=True)
+    t.start()
+
+
+def trigger_monitoring_heartbeat_now(app=None, config: Optional[Dict[str, Any]] = None) -> None:
+    """Sendet einen Monitoring-Heartbeat sofort im Hintergrund.
+
+    Wird z.B. nach dem Speichern der Box-ID genutzt. Prüft weiterhin Firmen-WLAN,
+    Box-ID und Endpoint, damit im Kundenbetrieb nichts blockiert.
+    """
+    config = config or {}
+
+    def worker():
+        ssid = get_active_ssid()
+        whitelist = config.get("company_wifi_ssids", [])
+        if not is_company_wifi(ssid, whitelist):
+            logger.debug("Monitoring-Sofortmeldung: Kein Firmen-WLAN — übersprungen")
+            return
+
+        logger.info("Monitoring-Sofortmeldung: Firmen-WLAN erkannt")
+        _send_monitoring_heartbeat(config, ssid, app)
+
+    t = threading.Thread(target=worker, name="MonitoringHeartbeatNow", daemon=True)
     t.start()
 
 
