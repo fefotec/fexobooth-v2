@@ -11,6 +11,7 @@ import threading
 from src.filters import FilterManager, AVAILABLE_FILTERS
 from src.ui.theme import COLORS, FONTS, get_sizes, get_fonts, is_small_screen
 from src.utils.logging import get_logger
+from src.i18n import t
 
 if TYPE_CHECKING:
     from src.app import PhotoboothApp
@@ -203,7 +204,7 @@ class FilterScreen(ctk.CTkFrame):
         title_size = 28 if self._is_small else 32
         title = ctk.CTkLabel(
             header,
-            text="🎨 Wähle deinen Style!",
+            text=t(self.config, "filter.choose_style"),
             font=("Segoe UI", title_size, "bold"),
             text_color=COLORS["primary"]
         )
@@ -212,7 +213,7 @@ class FilterScreen(ctk.CTkFrame):
         if not self._is_small:
             subtitle = ctk.CTkLabel(
                 header,
-                text="Tippe auf einen Filter für die Vorschau",
+                text=t(self.config, "filter.hint"),
                 font=self._fonts["body"],
                 text_color=COLORS["text_primary"]
             )
@@ -251,7 +252,7 @@ class FilterScreen(ctk.CTkFrame):
         preview_title_size = 18 if self._is_small else 20
         preview_title = ctk.CTkLabel(
             preview_container,
-            text="📸 Vorschau",
+            text=t(self.config, "filter.preview"),
             font=("Segoe UI", preview_title_size, "bold"),
             text_color=COLORS["text_primary"]
         )
@@ -262,7 +263,7 @@ class FilterScreen(ctk.CTkFrame):
         filter_label_size = 16 if self._is_small else 18
         self.current_filter_label = ctk.CTkLabel(
             preview_container,
-            text="✨ Original",
+            text=f"✨ {t(self.config, 'filter.none')}",
             font=("Segoe UI", filter_label_size),
             text_color=COLORS["primary"]
         )
@@ -286,7 +287,7 @@ class FilterScreen(ctk.CTkFrame):
         back_btn_height = 45 if self._is_small else 55
         back_btn = ctk.CTkButton(
             button_frame,
-            text="← Nochmal",
+            text=t(self.config, "filter.back_redo"),
             font=self._fonts["button"],
             width=back_btn_width,
             height=back_btn_height,
@@ -304,7 +305,7 @@ class FilterScreen(ctk.CTkFrame):
         continue_font_size = 18 if self._is_small else 20
         self.continue_btn = ctk.CTkButton(
             button_frame,
-            text="Weiter →",
+            text=t(self.config, "filter.continue"),
             font=("Segoe UI", continue_font_size, "bold"),
             width=continue_btn_width,
             height=continue_btn_height,
@@ -337,12 +338,13 @@ class FilterScreen(ctk.CTkFrame):
             parent.grid_columnconfigure(c, weight=1)
 
         for idx, (key, name) in enumerate(filters):
+            display_name = t(self.config, f"filter.{key}")
             row = idx // num_cols
             col = idx % num_cols
             card = FilterCard(
                 parent,
                 filter_key=key,
-                filter_name=name,
+                filter_name=display_name if display_name != f"filter.{key}" else name,
                 on_click=lambda b: self._select_filter(b),
                 card_width=card_w,
                 card_height=card_h
@@ -453,16 +455,24 @@ class FilterScreen(ctk.CTkFrame):
 
     def on_show(self):
         """Screen wird angezeigt"""
+        self.config = self.app.config
+
         # Cache leeren
         self.preview_cache = {}
 
         # Standard-Filter auswählen
         self.selected_filter = "none"
         for key, card in self.filter_buttons.items():
+            display_name = t(self.config, f"filter.{key}")
+            if display_name != f"filter.{key}":
+                card.filter_name = display_name
+                emoji = FILTER_EMOJIS.get(key, "🎨")
+                label = card._get_short_name(display_name) if card._is_small else display_name
+                card.name_label.configure(text=f"{emoji} {label}")
             card.set_selected(key == "none")
 
         # Label zurücksetzen
-        self.current_filter_label.configure(text="✨ Original")
+        self.current_filter_label.configure(text=f"✨ {t(self.config, 'filter.none')}")
 
         # Vorschau aktualisieren
         self._update_main_preview()

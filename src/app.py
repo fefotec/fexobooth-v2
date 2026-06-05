@@ -25,6 +25,7 @@ from src.templates.loader import TemplateLoader
 from src.templates.renderer import TemplateRenderer
 from src.ui.theme import COLORS, FONTS, SIZES
 from src.utils.logging import get_logger
+from src.i18n import apply_locale_to_config, t
 
 logger = get_logger(__name__)
 
@@ -34,6 +35,7 @@ class PhotoboothApp:
     
     def __init__(self, config: Dict[str, Any]):
         self.config = config
+        apply_locale_to_config(self.config)
         
         # CustomTkinter Setup
         ctk.set_appearance_mode("dark")
@@ -185,6 +187,11 @@ class PhotoboothApp:
         logger.info(f"📋 Config nach Settings-Load:")
         logger.info(f"   allow_single_mode = {self.config.get('allow_single_mode', True)}")
         logger.info(f"   gallery_enabled = {self.config.get('gallery_enabled', False)}")
+        logger.info(f"   locale = {self.config.get('locale', 'de-DE')}")
+
+        # Der QR-Code kann schon beim ersten StartScreen-Render entstehen.
+        # Deshalb Kontext fuer die spaetere Smartphone-App vor dem UI-Aufbau setzen.
+        self._prepare_gallery_app_context()
 
         # UI Setup (NACH Settings, damit korrekte Optionen angezeigt werden!)
         self._setup_ui()
@@ -474,7 +481,12 @@ class PhotoboothApp:
 
             if gallery_path:
                 port = self.config.get("gallery_port", 8080)
-                start_server(gallery_path, port=port)
+                start_server(
+                    gallery_path,
+                    port=port,
+                    locale=self.config.get("locale", "de-DE"),
+                    app_context=self._get_gallery_app_context()
+                )
 
                 # URL für QR-Code speichern
                 self.gallery_url = get_gallery_url(port)
@@ -486,6 +498,35 @@ class PhotoboothApp:
             logger.warning(f"Galerie-Modul nicht verfügbar: {e}")
         except Exception as e:
             logger.error(f"Galerie-Server Start fehlgeschlagen: {e}")
+
+    def _get_gallery_app_context(self) -> Dict[str, Any]:
+        """Kontext fuer Pairing-QR und Smartphone-App API."""
+        gallery_config = self.config.get("gallery", {})
+        booking_id = self.booking_manager.booking_id if self.booking_manager.is_loaded else ""
+        try:
+            from src import __version__ as software_version
+        except Exception:
+            software_version = ""
+
+        return {
+            "box_id": self.config.get("box_id", ""),
+            "booking_id": booking_id,
+            "locale": self.config.get("locale", "de-DE"),
+            "software_version": software_version,
+            "hotspot_ssid": gallery_config.get("hotspot_ssid", ""),
+            "hotspot_password": gallery_config.get("hotspot_password", ""),
+        }
+
+    def _prepare_gallery_app_context(self) -> None:
+        """Setzt App-Metadaten auch dann, wenn der Server noch nicht laeuft."""
+        if not self.config.get("gallery_enabled", False):
+            return
+        try:
+            from src.gallery import set_gallery_app_context, set_gallery_locale
+            set_gallery_locale(self.config.get("locale", "de-DE"))
+            set_gallery_app_context(self._get_gallery_app_context())
+        except Exception as e:
+            logger.debug(f"Galerie-App-Kontext konnte nicht vorbereitet werden: {e}")
 
     def _stop_hotspot_if_running(self):
         """Stoppt den Hotspot wenn er läuft (Galerie deaktiviert) - im Hintergrund"""
@@ -529,7 +570,13 @@ class PhotoboothApp:
     def _start_gallery_if_needed(self):
         """Startet Galerie + Hotspot wenn noch nicht gestartet"""
         try:
-            from src.gallery import is_running, start_server, get_gallery_url, start_hotspot
+            from src.gallery import (
+                is_running,
+                set_gallery_app_context,
+                start_server,
+                get_gallery_url,
+                start_hotspot
+            )
 
             # Hotspot starten (auch wenn Galerie schon läuft - Hotspot könnte aus sein)
             gallery_config = self.config.get("gallery", {})
@@ -539,6 +586,7 @@ class PhotoboothApp:
             )
 
             if is_running():
+                set_gallery_app_context(self._get_gallery_app_context())
                 logger.debug("Galerie läuft bereits")
                 return
 
@@ -547,7 +595,12 @@ class PhotoboothApp:
 
             if gallery_path:
                 port = self.config.get("gallery_port", 8080)
-                start_server(gallery_path, port=port)
+                start_server(
+                    gallery_path,
+                    port=port,
+                    locale=self.config.get("locale", "de-DE"),
+                    app_context=self._get_gallery_app_context()
+                )
                 self.gallery_url = get_gallery_url(port)
                 logger.info(f"🌐 Galerie gestartet: {self.gallery_url}")
         except Exception as e:
@@ -866,7 +919,7 @@ class PhotoboothApp:
         # Buchungsnummer-Anzeige (prominent, für Support-Anrufe)
         self.booking_label = ctk.CTkLabel(
             status_frame,
-            text="Buchung: ---",
+            text=t(self.config, "topbar.booking_empty"),
             font=FONTS["body_bold"] if "body_bold" in FONTS else FONTS["body"],
             text_color=COLORS["primary"],
             fg_color=COLORS["bg_light"],
@@ -1140,7 +1193,7 @@ class PhotoboothApp:
             logger.info(f"Buchungsanzeige aktualisiert: {booking_id}")
         else:
             self.booking_label.configure(
-                text="Buchung: ---",
+                text=t(self.config, "topbar.booking_empty"),
                 text_color=COLORS["text_muted"],
                 fg_color=COLORS["bg_light"]
             )
@@ -1215,14 +1268,14 @@ class PhotoboothApp:
 
         # Titel
         ctk.CTkLabel(
-            content, text="USB-Stick erkannt",
+            content, text=t(self.config, "usb.detected"),
             font=("Segoe UI", 20, "bold"), text_color=COLORS["primary"]
         ).pack(pady=(20, 5))
 
         # Info-Text (wird später zu Status-Text)
         status_label = ctk.CTkLabel(
             content,
-            text=f"{missing_count} Bild(er) fehlen auf dem USB-Stick.\nJetzt kopieren?",
+            text=t(self.config, "usb.sync_missing", count=missing_count),
             font=FONTS["body"], text_color=COLORS["text_primary"], justify="center"
         )
         status_label.pack(pady=(5, 15))
@@ -1257,7 +1310,7 @@ class PhotoboothApp:
                 widget.destroy()
 
             cancel_btn = ctk.CTkButton(
-                btn_frame, text="Abbrechen",
+                btn_frame, text=t(self.config, "common.cancel"),
                 font=FONTS["button"], width=160, height=45,
                 fg_color=COLORS["bg_light"], hover_color=COLORS["bg_card"],
                 text_color=COLORS["text_primary"],
@@ -1269,13 +1322,15 @@ class PhotoboothApp:
             progress_bar.set(0)
             progress_bar.pack(pady=(0, 10))
 
-            status_label.configure(text="Kopiere...")
+            status_label.configure(text=t(self.config, "usb.copying"))
 
             def progress_callback(copied, total, filename):
                 def update():
                     try:
                         progress_bar.set(copied / total)
-                        status_label.configure(text=f"Kopiere... {copied}/{total}")
+                        status_label.configure(
+                            text=t(self.config, "usb.copying_progress", copied=copied, total=total)
+                        )
                     except Exception:
                         pass
                 dialog.after(0, update)
@@ -1290,17 +1345,17 @@ class PhotoboothApp:
                 def show_result():
                     if cancelled:
                         status_label.configure(
-                            text=f"Abgebrochen. {copied} Bild(er) kopiert.",
+                            text=t(self.config, "usb.copy_cancelled", copied=copied),
                             text_color=COLORS["warning"]
                         )
                     elif result.get("errors", 0) > 0:
                         status_label.configure(
-                            text=f"{copied} kopiert, {result['errors']} Fehler.",
+                            text=t(self.config, "usb.copy_errors", copied=copied, errors=result["errors"]),
                             text_color=COLORS["warning"]
                         )
                     else:
                         status_label.configure(
-                            text=f"{copied} Bild(er) auf USB kopiert!",
+                            text=t(self.config, "usb.copy_success", copied=copied),
                             text_color=COLORS["success"]
                         )
                         progress_bar.set(1.0)
@@ -1320,7 +1375,7 @@ class PhotoboothApp:
 
         # Kopieren-Button
         ctk.CTkButton(
-            btn_frame, text="Kopieren",
+            btn_frame, text=t(self.config, "usb.copy"),
             font=FONTS["button"], width=140, height=50,
             fg_color=COLORS["success"], hover_color="#00e676",
             corner_radius=SIZES["corner_radius"], command=on_copy
@@ -1328,7 +1383,7 @@ class PhotoboothApp:
 
         # Abbrechen-Button
         ctk.CTkButton(
-            btn_frame, text="Abbrechen",
+            btn_frame, text=t(self.config, "common.cancel"),
             font=FONTS["button"], width=140, height=50,
             fg_color=COLORS["bg_light"], hover_color=COLORS["bg_card"],
             text_color=COLORS["text_primary"],
@@ -1387,7 +1442,7 @@ class PhotoboothApp:
 
         # Titel
         ctk.CTkLabel(
-            content, text="USB-Stick erkannt",
+            content, text=t(self.config, "usb.detected"),
             font=("Segoe UI", 20, "bold"), text_color=COLORS["info"]
         ).pack(pady=(20, 5))
 
@@ -1395,14 +1450,14 @@ class PhotoboothApp:
         drive_letter = target_drive[0]
         ctk.CTkLabel(
             content,
-            text=f"Unbekannter Stick ({drive_letter}:) eingesteckt",
+            text=t(self.config, "usb.unknown_drive", drive=drive_letter),
             font=FONTS["small"], text_color=COLORS["text_muted"]
         ).pack(pady=(0, 5))
 
         # Status-Text
         status_label = ctk.CTkLabel(
             content,
-            text=f"{image_count} Bild(er) auf den Stick kopieren?",
+            text=t(self.config, "usb.export_question", count=image_count),
             font=FONTS["body"], text_color=COLORS["text_primary"], justify="center"
         )
         status_label.pack(pady=(5, 15))
@@ -1437,7 +1492,7 @@ class PhotoboothApp:
                 widget.destroy()
 
             cancel_btn = ctk.CTkButton(
-                btn_frame, text="Abbrechen",
+                btn_frame, text=t(self.config, "common.cancel"),
                 font=FONTS["button"], width=160, height=45,
                 fg_color=COLORS["bg_light"], hover_color=COLORS["bg_card"],
                 text_color=COLORS["text_primary"],
@@ -1447,13 +1502,15 @@ class PhotoboothApp:
 
             progress_bar.set(0)
             progress_bar.pack(pady=(0, 10))
-            status_label.configure(text="Exportiere...")
+            status_label.configure(text=t(self.config, "usb.exporting"))
 
             def progress_callback(copied, total):
                 def update():
                     try:
                         progress_bar.set(copied / total)
-                        status_label.configure(text=f"Exportiere... {copied}/{total}")
+                        status_label.configure(
+                            text=t(self.config, "usb.exporting_progress", copied=copied, total=total)
+                        )
                     except Exception:
                         pass
                 dialog.after(0, update)
@@ -1470,17 +1527,17 @@ class PhotoboothApp:
                 def show_result():
                     if cancelled:
                         status_label.configure(
-                            text=f"Abgebrochen. {copied} Bild(er) exportiert.",
+                            text=t(self.config, "usb.export_cancelled", copied=copied),
                             text_color=COLORS["warning"]
                         )
                     elif result.get("errors", 0) > 0:
                         status_label.configure(
-                            text=f"{copied} exportiert, {result['errors']} Fehler.",
+                            text=t(self.config, "usb.export_errors", copied=copied, errors=result["errors"]),
                             text_color=COLORS["warning"]
                         )
                     else:
                         status_label.configure(
-                            text=f"{copied} Bild(er) exportiert!",
+                            text=t(self.config, "usb.export_success", copied=copied),
                             text_color=COLORS["success"]
                         )
                         progress_bar.set(1.0)
@@ -1500,7 +1557,7 @@ class PhotoboothApp:
 
         # Exportieren-Button
         ctk.CTkButton(
-            btn_frame, text="Exportieren",
+            btn_frame, text=t(self.config, "usb.export"),
             font=FONTS["button"], width=140, height=50,
             fg_color=COLORS["success"], hover_color="#00e676",
             corner_radius=SIZES["corner_radius"], command=on_export
@@ -1508,7 +1565,7 @@ class PhotoboothApp:
 
         # Abbrechen-Button
         ctk.CTkButton(
-            btn_frame, text="Abbrechen",
+            btn_frame, text=t(self.config, "common.cancel"),
             font=FONTS["button"], width=140, height=50,
             fg_color=COLORS["bg_light"], hover_color=COLORS["bg_card"],
             text_color=COLORS["text_primary"],
@@ -1828,8 +1885,24 @@ class PhotoboothApp:
             self.root.wait_window(service)
         elif dialog.result:
             self.config = dialog.result
+            apply_locale_to_config(self.config)
             save_config(self.config)
             logger.info("Admin-Einstellungen gespeichert")
+
+            try:
+                from src.gallery import set_gallery_app_context, set_gallery_locale
+                set_gallery_locale(self.config.get("locale", "de-DE"))
+                set_gallery_app_context(self._get_gallery_app_context())
+            except Exception:
+                pass
+
+            self._update_booking_display()
+
+            try:
+                from src.company_network import trigger_monitoring_heartbeat_now
+                trigger_monitoring_heartbeat_now(app=self, config=self.config)
+            except Exception as e:
+                logger.debug(f"Monitoring-Sofortmeldung nach Admin-Speichern fehlgeschlagen: {e}")
 
             # Galerie/Hotspot starten oder stoppen je nach Einstellung
             if self.config.get("gallery_enabled", False):
@@ -1902,7 +1975,8 @@ class PhotoboothApp:
             self.root, new_booking_id,
             on_accept=on_accept,
             on_reject=on_reject,
-            image_count=image_count
+            image_count=image_count,
+            config=self.config
         )
 
     def _execute_event_change(self, new_booking_id: str):
@@ -1992,26 +2066,84 @@ class PhotoboothApp:
             logger.info(f"System-Test abgeschlossen: success={success}, errors={errors}")
 
             if success:
-                # Buchungsmodus-Bestätigung anzeigen
-                print_enabled = self.config.get("print_enabled", True)
-                booking_id = ""
-                if self.booking_manager and self.booking_manager._settings:
-                    booking_id = self.booking_manager._settings.booking_id
-
-                from src.ui.dialogs.print_mode_confirmation import PrintModeConfirmationDialog
-                PrintModeConfirmationDialog(
-                    parent=self.root,
-                    print_enabled=print_enabled,
-                    booking_id=booking_id,
-                    on_confirm=lambda: self._after_print_mode_confirmed()
-                )
+                self._show_print_mode_confirmation()
             else:
                 # Bei fehlgeschlagenem Test direkt weiter
                 if self.current_screen_name == "start" and self.current_screen:
                     if hasattr(self.current_screen, "on_show"):
                         self.current_screen.on_show()
 
-        SystemTestDialog(self.root, self, on_complete=on_complete)
+        def on_adjust_print():
+            logger.info("System-Test: Öffne Druckkorrektur nach Testdruck")
+            self._adjust_print_then_show_confirmation()
+
+        SystemTestDialog(
+            self.root,
+            self,
+            on_complete=on_complete,
+            on_adjust_print=on_adjust_print
+        )
+
+    def _show_print_mode_confirmation(self):
+        """Zeigt nach erfolgreichem Event-Test die Druckmodus-Bestätigung."""
+        print_enabled = self.config.get("print_enabled", True)
+        booking_id = ""
+        if self.booking_manager and self.booking_manager._settings:
+            booking_id = self.booking_manager._settings.booking_id
+
+        from src.ui.dialogs.print_mode_confirmation import PrintModeConfirmationDialog
+        PrintModeConfirmationDialog(
+            parent=self.root,
+            print_enabled=print_enabled,
+            booking_id=booking_id,
+            on_confirm=lambda: self._after_print_mode_confirmed(),
+            on_adjust_print=lambda: self._adjust_print_then_show_confirmation(),
+            on_shutdown=lambda: self._shutdown_for_new_event()
+        )
+
+    def _adjust_print_then_show_confirmation(self):
+        """Öffnet die Druckkorrektur und danach wieder die Abschlussaktionen."""
+        self._show_customer_print_adjustment_dialog()
+        self._show_print_mode_confirmation()
+
+    def _shutdown_for_new_event(self):
+        """Fährt Windows nach abgeschlossenem Event-Test herunter."""
+        import subprocess
+
+        logger.info("Event-Test abgeschlossen: Windows wird heruntergefahren")
+        subprocess.Popen(
+            ["shutdown", "/s", "/f", "/t", "5", "/c", "FexoBooth: Neues Event bereit"],
+            creationflags=0x08000000
+        )
+
+    def _show_customer_print_adjustment_dialog(self):
+        """Öffnet nur die Druckkorrektur für Kunden/Mitarbeiter, ohne Admin-Settings."""
+        from src.ui.screens.admin import AdminDialog
+
+        is_kiosk = self.config.get("start_fullscreen", True) and self._is_fullscreen
+        if not is_kiosk:
+            self._exit_fullscreen()
+
+        dialog = AdminDialog(
+            self.root,
+            self.config,
+            kiosk_mode=is_kiosk,
+            initial_customer_screen="print_adjustment"
+        )
+        self.root.wait_window(dialog)
+
+        if dialog.result:
+            self.config = dialog.result
+            save_config(self.config)
+            logger.info("Druckkorrektur gespeichert")
+
+        if self.current_screen_name == "start" and self.current_screen:
+            self.current_screen.config = self.config
+            if hasattr(self.current_screen, "on_show"):
+                self.current_screen.on_show()
+
+        if not is_kiosk and self.config.get("start_fullscreen", True):
+            self.root.after(200, self._enter_fullscreen)
 
     def _after_print_mode_confirmed(self):
         """Wird aufgerufen nachdem der Druck-Modus bestätigt wurde."""

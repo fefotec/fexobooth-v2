@@ -19,6 +19,7 @@ import threading
 
 from src.ui.theme import COLORS, FONTS, SIZES
 from src.utils.logging import get_logger
+from src.i18n import t
 
 if TYPE_CHECKING:
     from src.app import PhotoboothApp
@@ -81,7 +82,7 @@ class SessionScreen(ctk.CTkFrame):
         # Foto-Fortschritt
         self.progress_label = ctk.CTkLabel(
             info_bar,
-            text="Foto 1 von 1",
+            text=t(self.config, "session.photo_progress", current=1, total=1),
             font=FONTS["body_bold"],
             text_color=COLORS["text_primary"]
         )
@@ -90,7 +91,7 @@ class SessionScreen(ctk.CTkFrame):
         # Abbrechen-Button
         cancel_btn = ctk.CTkButton(
             info_bar,
-            text=self.config.get("ui_texts", {}).get("cancel", "ABBRECHEN"),
+            text=t(self.config, "common.cancel"),
             font=FONTS["small"],
             width=120,
             height=32,
@@ -127,7 +128,7 @@ class SessionScreen(ctk.CTkFrame):
 
         self._redo_btn = ctk.CTkButton(
             self._button_bar,
-            text="↻ NOCHMAL",
+            text=t(self.config, "session.redo"),
             font=("Segoe UI", 22, "bold"),
             width=220,
             height=55,
@@ -140,7 +141,7 @@ class SessionScreen(ctk.CTkFrame):
 
         self._continue_btn = ctk.CTkButton(
             self._button_bar,
-            text="WEITER →",
+            text=t(self.config, "session.continue"),
             font=("Segoe UI", 22, "bold"),
             width=220,
             height=55,
@@ -153,6 +154,9 @@ class SessionScreen(ctk.CTkFrame):
 
     def on_show(self):
         """Screen wird angezeigt"""
+        self.config = self.app.config
+        self._redo_btn.configure(text=t(self.config, "session.redo"))
+        self._continue_btn.configure(text=t(self.config, "session.continue"))
 
         # Template-Overlay Einstellung bei jedem Show neu lesen (Admin kann es ändern)
         self._template_overlay_enabled = self.config.get("liveview_template_overlay", False)
@@ -192,7 +196,7 @@ class SessionScreen(ctk.CTkFrame):
                 int(live_res * 0.75)
             ):
                 logger.error("Kamera konnte nicht initialisiert werden")
-                self._show_error("Kamera konnte nicht geöffnet werden!")
+                self._show_error(t(self.config, "session.camera_error"))
                 return
 
         # Session initialisieren (NUR bei neuem Start!)
@@ -235,7 +239,7 @@ class SessionScreen(ctk.CTkFrame):
         else:
             current = min(self.app.current_photo_index + 1, self.total_photos)
         self.progress_label.configure(
-            text=f"Foto {current} von {self.total_photos}"
+            text=t(self.config, "session.photo_progress", current=current, total=self.total_photos)
         )
 
     def _update_live_view(self):
@@ -638,7 +642,7 @@ class SessionScreen(ctk.CTkFrame):
                 padx=20,
                 pady=10
             )
-        self._loading_label.configure(text=f"  Foto wird aufgenommen{dots}  ")
+        self._loading_label.configure(text=t(self.config, "session.capture_loading", dots=dots))
         self._loading_label.place(relx=0.5, rely=0.95, anchor="center")
         self._loading_label.tkraise()
         self.after(400, self._show_capture_loading)

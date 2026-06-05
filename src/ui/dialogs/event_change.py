@@ -9,6 +9,7 @@ import customtkinter as ctk
 
 from src.ui.theme import COLORS, FONTS, SIZES
 from src.utils.logging import get_logger
+from src.i18n import t
 
 logger = get_logger(__name__)
 
@@ -18,13 +19,14 @@ class EventChangeDialog(ctk.CTkToplevel):
 
     def __init__(self, parent, new_booking_id: str,
                  on_accept: callable, on_reject: callable,
-                 image_count: int = 0):
+                 image_count: int = 0, config: dict = None):
         super().__init__(parent)
 
         self._on_accept = on_accept
         self._on_reject = on_reject
         self.new_booking_id = new_booking_id
         self._image_count = image_count
+        self.config = config or {}
 
         # Fullscreen Overlay
         self.overrideredirect(True)
@@ -104,7 +106,7 @@ class EventChangeDialog(ctk.CTkToplevel):
         # Titel
         ctk.CTkLabel(
             card,
-            text="Neues Event erkannt",
+            text=t(self.config, "event.new_detected"),
             font=FONTS["heading"],
             text_color=COLORS["primary"]
         ).pack(pady=(0, 8))
@@ -112,7 +114,7 @@ class EventChangeDialog(ctk.CTkToplevel):
         # Buchungs-Info
         ctk.CTkLabel(
             card,
-            text=f"Buchung: {self.new_booking_id}",
+            text=t(self.config, "event.booking", booking_id=self.new_booking_id),
             font=FONTS["body"],
             text_color=COLORS["text_secondary"]
         ).pack(pady=(0, 10))
@@ -121,7 +123,7 @@ class EventChangeDialog(ctk.CTkToplevel):
         if self._image_count > 0:
             ctk.CTkLabel(
                 card,
-                text=f"⚠️ {self._image_count} vorhandene Bilder werden gelöscht!",
+                text=t(self.config, "event.images_deleted_warning", count=self._image_count),
                 font=FONTS["body_bold"],
                 text_color=COLORS["warning"]
             ).pack(pady=(0, 10))
@@ -136,7 +138,7 @@ class EventChangeDialog(ctk.CTkToplevel):
         # Neues Event starten
         ctk.CTkButton(
             btn_frame,
-            text="NEUES EVENT STARTEN",
+            text=t(self.config, "event.start_new"),
             font=FONTS["button_large"],
             width=btn_w,
             height=btn_h,
@@ -150,7 +152,7 @@ class EventChangeDialog(ctk.CTkToplevel):
         # Aktuelles Event behalten
         ctk.CTkButton(
             btn_frame,
-            text="Aktuelles Event behalten",
+            text=t(self.config, "event.keep_current"),
             font=FONTS["button"],
             width=btn_w,
             height=btn_h - 8,
@@ -195,7 +197,7 @@ class EventChangeDialog(ctk.CTkToplevel):
         # Titel
         ctk.CTkLabel(
             card,
-            text="Bilder löschen?",
+            text=t(self.config, "event.delete_title"),
             font=FONTS["heading"],
             text_color=COLORS["error"]
         ).pack(pady=(0, 8))
@@ -203,7 +205,7 @@ class EventChangeDialog(ctk.CTkToplevel):
         # Warnung
         ctk.CTkLabel(
             card,
-            text=f"{self._image_count} Bilder auf der Festplatte\nwerden unwiderruflich gelöscht!",
+            text=t(self.config, "event.delete_warning", count=self._image_count),
             font=FONTS["body"],
             text_color=COLORS["text_primary"],
             justify="center"
@@ -211,7 +213,7 @@ class EventChangeDialog(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             card,
-            text="(USB-Stick bleibt unangetastet)",
+            text=t(self.config, "event.usb_untouched"),
             font=FONTS["small"],
             text_color=COLORS["text_muted"]
         ).pack(pady=(0, 15))
@@ -226,7 +228,7 @@ class EventChangeDialog(ctk.CTkToplevel):
         # Bestätigen (Rot)
         ctk.CTkButton(
             btn_frame,
-            text="LÖSCHEN & NEUES EVENT",
+            text=t(self.config, "event.delete_new"),
             font=FONTS["button_large"],
             width=btn_w,
             height=btn_h,
@@ -240,7 +242,7 @@ class EventChangeDialog(ctk.CTkToplevel):
         # Zurück
         ctk.CTkButton(
             btn_frame,
-            text="Zurück",
+            text=t(self.config, "common.back"),
             font=FONTS["button"],
             width=btn_w,
             height=btn_h - 8,

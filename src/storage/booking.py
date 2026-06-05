@@ -21,6 +21,7 @@ from typing import Optional, Dict, Any, Tuple
 from dataclasses import dataclass, field, asdict
 
 from src.utils.logging import get_logger
+from src.i18n import apply_locale_to_config, normalize_locale
 
 logger = get_logger(__name__)
 
@@ -90,6 +91,7 @@ class BookingSettings:
     # Buchungsidentifikation
     booking_id: str = ""
     source: str = "de"
+    locale: Optional[str] = None
     
     # Template-Infos
     template_type: str = ""  # preset, designer, selfmade, none
@@ -123,9 +125,12 @@ class BookingSettings:
         features = data.get("features", {})
         customer = data.get("customer", {})
         
+        raw_locale = data.get("locale", data.get("language"))
+
         return cls(
             booking_id=data.get("booking_id", ""),
             source=data.get("source", "de"),
+            locale=normalize_locale(raw_locale) if raw_locale else None,
             template_type=template.get("type", ""),
             template_code=template.get("code", ""),
             template_text=template.get("text", ""),
@@ -149,7 +154,7 @@ class BookingSettings:
     
     def to_dict(self) -> Dict[str, Any]:
         """Konvertiert zu Dictionary für JSON-Speicherung"""
-        return {
+        result = {
             "booking_id": self.booking_id,
             "source": self.source,
             "template": {
@@ -174,6 +179,9 @@ class BookingSettings:
             "_generated_at": self.generated_at,
             "extensions": self.extensions,
         }
+        if self.locale:
+            result["locale"] = self.locale
+        return result
 
 
 class BookingManager:
@@ -511,6 +519,13 @@ class BookingManager:
         if not self._settings:
             return False
         
+        if self._settings.locale:
+            config["locale"] = normalize_locale(self._settings.locale)
+        else:
+            config["locale"] = normalize_locale(config.get("locale", "de-DE"))
+        apply_locale_to_config(config)
+        logger.info(f"   📋 locale = {config['locale']}")
+
         # Single-Foto Modus
         config["allow_single_mode"] = self._settings.print_singles
         logger.info(f"   📋 allow_single_mode = {self._settings.print_singles}")

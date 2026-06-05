@@ -15,6 +15,7 @@ from typing import Optional, TYPE_CHECKING
 
 from src.ui.theme import COLORS, FONTS
 from src.utils.logging import get_logger
+from src.i18n import t
 
 if TYPE_CHECKING:
     from src.app import PhotoboothApp
@@ -80,6 +81,7 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
         super().__init__(parent)
 
         self.app = app
+        self.config = getattr(app, "config", {}) or {}
         self.error_text = error_text
         self.error_category = error_category  # 'consumable', 'jam'
         self._is_open = True
@@ -171,12 +173,12 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
         # Icon
         if self.error_category == "jam":
             icon_text = "⚙"
-            title_text = "PAPIERSTAU"
-            subtitle = "Wird automatisch behoben..."
+            title_text = t(self.config, "printer.paper_jam_title")
+            subtitle = t(self.config, "printer.resolving")
             title_color = COLORS["warning"]
         else:
             icon_text = "⚠"
-            title_text = "DRUCKER PROBLEM"
+            title_text = t(self.config, "printer.problem_title")
             subtitle = self._get_instruction_text()
             title_color = COLORS["error"]
 
@@ -257,9 +259,9 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
             self.confirm_btn.pack(pady=(15, 10))
 
         # Hinweis unten
-        hint_text = ("Bitte nicht ausschalten!"
+        hint_text = (t(self.config, "printer.dont_turn_off")
                      if self.error_category == "jam"
-                     else "Erst Material wechseln, dann bestätigen")
+                     else t(self.config, "printer.material_hint"))
         self.hint_label = ctk.CTkLabel(
             self.card,
             text=hint_text,
@@ -272,25 +274,25 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
         """Gibt Anweisungstext je nach Fehler zurück"""
         upper = self.error_text.upper()
         if "PAPIER" in upper:
-            return "Bitte Papier nachlegen und Kassette einsetzen"
+            return t(self.config, "printer.instruction_paper")
         elif "TINTE" in upper or "KASSETTE" in upper:
-            return "Bitte Tintenkassette wechseln"
+            return t(self.config, "printer.instruction_ink")
         elif "KLAPPE" in upper or "DOOR" in upper:
-            return "Bitte Druckerklappe schließen"
+            return t(self.config, "printer.instruction_cover")
         else:
-            return "Bitte Drucker prüfen"
+            return t(self.config, "printer.instruction_check")
 
     def _get_button_text(self) -> str:
         """Gibt Button-Text je nach Fehler zurück"""
         upper = self.error_text.upper()
         if "PAPIER" in upper:
-            return "PAPIER EINGELEGT"
+            return t(self.config, "printer.button_paper")
         elif "TINTE" in upper or "KASSETTE" in upper:
-            return "KASSETTE GEWECHSELT"
+            return t(self.config, "printer.button_cassette")
         elif "KLAPPE" in upper or "DOOR" in upper:
-            return "KLAPPE GESCHLOSSEN"
+            return t(self.config, "printer.button_cover")
         else:
-            return "PROBLEM BEHOBEN"
+            return t(self.config, "printer.button_fixed")
 
     # ========== Bestätigungs-Button ==========
 
@@ -318,10 +320,10 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
         # Button deaktivieren, Status ändern
         self.confirm_btn.configure(
             state="disabled",
-            text="Wird geprüft...",
+            text=t(self.config, "printer.checking"),
             fg_color=COLORS["bg_light"]
         )
-        self.status_label.configure(text="Drucker wird geprüft...")
+        self.status_label.configure(text=t(self.config, "printer.checking_printer"))
         self.animation_label.configure(text="")
 
         def _check():
@@ -409,7 +411,7 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
             logger.warning(f"Drucker meldet noch Fehler: '{error}'")
             self.error_label.configure(text=error)
             self.status_label.configure(
-                text="Fehler besteht noch!\n" + self._get_instruction_text(),
+                text=t(self.config, "printer.still_error", instruction=self._get_instruction_text()),
                 text_color=COLORS["error"]
             )
             self.animation_label.configure(text="⚠", text_color=COLORS["error"])
@@ -422,6 +424,17 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
             self._hide_canon_dialogs()
 
     # ========== Reset-Modus (Papierstau) ==========
+
+    def _translate_reset_step(self, text: str) -> str:
+        if text.startswith("Schritt 1/3"):
+            return t(self.config, "printer.reset_step_jobs")
+        if text.startswith("Schritt 2/3"):
+            return t(self.config, "printer.reset_step_spooler")
+        if text.startswith("Schritt 3/3"):
+            return t(self.config, "printer.reset_step_usb")
+        if "Status" in text:
+            return t(self.config, "printer.reset_step_status")
+        return text
 
     def _start_reset(self):
         """Startet den automatischen Drucker-Reset"""
@@ -437,7 +450,8 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
 
         def on_step(text):
             if self._is_open:
-                self.after(0, lambda: self.status_label.configure(text=text))
+                translated = self._translate_reset_step(text)
+                self.after(0, lambda: self.status_label.configure(text=translated))
 
         def on_done(success, message):
             if not self._is_open:
@@ -470,21 +484,21 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
 
         if success:
             self.status_label.configure(
-                text="Reset durchgeführt.\nBitte prüfe ob der Drucker bereit ist.",
+                text=t(self.config, "printer.reset_done"),
                 text_color=COLORS["text_primary"]
             )
             self.animation_label.configure(text="")
         else:
             self.status_label.configure(
-                text=f"{message}\nBitte Drucker manuell prüfen.",
+                text=t(self.config, "printer.manual_check", message=message),
                 text_color=COLORS["warning"]
             )
             self.animation_label.configure(text="⚠", text_color=COLORS["warning"])
 
         # Bestätigungs-Button zeigen
-        self.confirm_btn.configure(text="PROBLEM BEHOBEN")
+        self.confirm_btn.configure(text=t(self.config, "printer.button_fixed"))
         self.confirm_btn.pack(pady=(15, 10))
-        self.hint_label.configure(text="Erst Problem beheben, dann bestätigen")
+        self.hint_label.configure(text=t(self.config, "printer.material_hint"))
 
     # ========== Erfolg + Lifecycle ==========
 
@@ -492,11 +506,11 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
         """Fehler behoben → Kurz Erfolg zeigen, dann schließen"""
         self.animation_label.configure(text="✓", text_color=COLORS["success"])
         self.status_label.configure(
-            text="Drucker ist wieder bereit!",
+            text=t(self.config, "printer.ready"),
             text_color=COLORS["success"]
         )
         self.error_label.configure(
-            text="Problem behoben",
+            text=t(self.config, "printer.resolved"),
             text_color=COLORS["success"]
         )
         self.confirm_btn.pack_forget()

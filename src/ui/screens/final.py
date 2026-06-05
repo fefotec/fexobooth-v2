@@ -11,6 +11,7 @@ import time
 
 from src.ui.theme import COLORS, FONTS, SIZES
 from src.utils.logging import get_logger
+from src.i18n import t
 
 if TYPE_CHECKING:
     from src.app import PhotoboothApp
@@ -78,7 +79,7 @@ class FinalScreen(ctk.CTkFrame):
         if self.config.get("print_enabled", True):
             self.print_btn = ctk.CTkButton(
                 btn_frame,
-                text="DRUCKEN",
+                text=t(self.config, "common.print"),
                 font=("Segoe UI", 22, "bold"),
                 width=220,
                 height=55,
@@ -95,7 +96,7 @@ class FinalScreen(ctk.CTkFrame):
         if not self.config.get("hide_finish_button", False):
             self.finish_btn = ctk.CTkButton(
                 btn_frame,
-                text=self.config.get("ui_texts", {}).get("finish", "FERTIG"),
+                text=t(self.config, "common.finish"),
                 font=("Segoe UI", 18, "bold"),
                 width=160,
                 height=50,
@@ -155,7 +156,7 @@ class FinalScreen(ctk.CTkFrame):
         self.progress_bar.set(progress)
 
         self.subtitle_label.configure(
-            text=f"Automatisch zurück in {int(remaining)} Sekunden..."
+            text=t(self.config, "final.auto_return", seconds=int(remaining))
         )
 
         self.after(100, self._update_countdown)
@@ -214,7 +215,7 @@ class FinalScreen(ctk.CTkFrame):
             if not self.final_image:
                 logger.warning("Kein finales Bild zum Drucken vorhanden")
                 self.print_info.configure(
-                    text="Kein Bild zum Drucken vorhanden",
+                    text=t(self.config, "final.no_image"),
                     text_color=COLORS["error"]
                 )
                 self._restore_print_button_after_error()
@@ -233,7 +234,7 @@ class FinalScreen(ctk.CTkFrame):
                 if not saved_path:
                     had_error = True
                     self.print_info.configure(
-                        text="Druck konnte nicht gespeichert werden",
+                        text=t(self.config, "final.save_error"),
                         text_color=COLORS["error"]
                     )
                     break
@@ -261,29 +262,29 @@ class FinalScreen(ctk.CTkFrame):
         if self.print_btn:
             self.print_btn.configure(
                 state="disabled",
-                text="...wird gedruckt!",
+                text=t(self.config, "final.printing"),
                 fg_color=COLORS["success"]
             )
 
         if quantity > 1:
-            info_text = f"{quantity} Druckaufträge werden gesendet..."
+            info_text = t(self.config, "final.jobs_sending", quantity=quantity)
         else:
-            info_text = "Druckauftrag wird gesendet..."
+            info_text = t(self.config, "final.job_sending")
         self.print_info.configure(text=info_text, text_color=COLORS["success"])
 
     def _update_print_button_state(self, printed_count: int = 0):
         """Aktualisiert Button und Info ohne Limit-Hinweis für Gäste."""
         remaining = self._get_remaining_prints()
-        button_text = self.config.get("ui_texts", {}).get("print", "DRUCKEN")
+        button_text = t(self.config, "common.print")
 
         if remaining > 0:
             if printed_count > 0:
                 if printed_count == 1:
-                    info_text = f"Druckauftrag gesendet! Noch {remaining} verfügbar"
+                    info_text = t(self.config, "final.job_sent_remaining", remaining=remaining)
                 else:
-                    info_text = f"{printed_count} Druckaufträge gesendet! Noch {remaining} verfügbar"
+                    info_text = t(self.config, "final.jobs_sent_remaining", printed=printed_count, remaining=remaining)
             else:
-                info_text = f"{remaining} Druck(e) verfügbar"
+                info_text = t(self.config, "final.prints_available", remaining=remaining)
 
             if self.print_btn:
                 self.print_btn.configure(
@@ -295,16 +296,16 @@ class FinalScreen(ctk.CTkFrame):
             return
 
         if printed_count > 1:
-            info_text = f"{printed_count} Druckaufträge gesendet"
+            info_text = t(self.config, "final.jobs_sent", printed=printed_count)
         elif printed_count == 1:
-            info_text = "Druckauftrag gesendet"
+            info_text = t(self.config, "final.job_sent")
         else:
-            info_text = "Drucken nicht verfügbar"
+            info_text = t(self.config, "final.print_unavailable")
 
         if self.print_btn:
             self.print_btn.configure(
                 state="disabled",
-                text="...wird gedruckt!" if printed_count > 0 else button_text,
+                text=t(self.config, "final.printing") if printed_count > 0 else button_text,
                 fg_color=COLORS["success"] if printed_count > 0 else COLORS["bg_light"]
             )
         self.print_info.configure(
@@ -317,7 +318,7 @@ class FinalScreen(ctk.CTkFrame):
         if not self.print_btn:
             return
 
-        button_text = self.config.get("ui_texts", {}).get("print", "DRUCKEN")
+        button_text = t(self.config, "common.print")
         if self._get_remaining_prints() > 0:
             self.print_btn.configure(
                 state="normal",
@@ -383,14 +384,14 @@ class FinalScreen(ctk.CTkFrame):
 
         ctk.CTkLabel(
             card,
-            text="Wie viele Ausdrucke?",
+            text=t(self.config, "final.quantity_question"),
             font=FONTS["heading"],
             text_color=COLORS["text_primary"]
         ).pack(pady=(34, 6), padx=35)
 
         ctk.CTkLabel(
             card,
-            text=f"{max_quantity} verfügbar",
+            text=t(self.config, "final.quantity_available", max_quantity=max_quantity),
             font=FONTS["body"],
             text_color=COLORS["text_secondary"]
         ).pack(pady=(0, 22))
@@ -418,7 +419,7 @@ class FinalScreen(ctk.CTkFrame):
 
         ctk.CTkButton(
             card,
-            text=self.config.get("ui_texts", {}).get("cancel", "ABBRECHEN"),
+            text=t(self.config, "common.cancel"),
             font=FONTS["button"],
             width=min(260, int(card_w * 0.48)),
             height=48,
@@ -461,17 +462,17 @@ class FinalScreen(ctk.CTkFrame):
             if error:
                 # Fehlermeldung je nach Problem
                 if "AUS" in error or "FEHLT" in error or "KEIN" in error:
-                    msg = "Drucker ist aus! Bitte einschalten und warten bis das Display leuchtet."
+                    msg = t(self.config, "final.printer_off")
                 elif "PAPIER" in error and "STAU" in error:
-                    msg = "Papierstau! Bitte Drucker öffnen und Papier entfernen."
+                    msg = t(self.config, "final.paper_jam")
                 elif "PAPIER" in error:
-                    msg = "Kein Papier! Bitte Papier nachlegen."
+                    msg = t(self.config, "final.no_paper")
                 elif "KASSETTE" in error:
-                    msg = "Farbkassette leer! Bitte wechseln."
+                    msg = t(self.config, "final.cassette_empty")
                 elif "KLAPPE" in error:
-                    msg = "Druckerklappe offen! Bitte schließen."
+                    msg = t(self.config, "final.cover_open")
                 else:
-                    msg = f"Drucker meldet: {error}"
+                    msg = t(self.config, "final.printer_reports", error=error)
 
                 logger.warning(f"Drucken abgebrochen - Drucker nicht bereit: {error}")
                 self._show_printer_warning(msg)
@@ -512,7 +513,7 @@ class FinalScreen(ctk.CTkFrame):
 
         # OK-Button
         ctk.CTkButton(
-            container, text="Verstanden",
+            container, text=t(self.config, "common.understood"),
             font=("Segoe UI", 16, "bold"),
             width=200, height=45,
             fg_color=COLORS["primary"],
@@ -540,7 +541,7 @@ class FinalScreen(ctk.CTkFrame):
         except ImportError as e:
             logger.warning(f"pywin32-ImportError: {e} - Druck nur unter Windows")
             self.print_info.configure(
-                text="Druck nur unter Windows verfügbar (pywin32 fehlt)",
+                text=t(self.config, "final.print_windows_only"),
                 text_color=COLORS["warning"]
             )
             return
@@ -565,7 +566,7 @@ class FinalScreen(ctk.CTkFrame):
                     logger.error(f"Drucker nicht gefunden: '{printer_name}'")
                     logger.info(f"Verfügbare Drucker: {available_printers}")
                     self.print_info.configure(
-                        text=f"Drucker '{printer_name}' nicht gefunden!",
+                        text=t(self.config, "final.printer_missing", printer=printer_name),
                         text_color=COLORS["error"]
                     )
                     return
@@ -635,7 +636,7 @@ class FinalScreen(ctk.CTkFrame):
             # nur noch andere Imports (z.B. find_matching_printer) ab.
             logger.error(f"Print: ImportError (nicht pywin32): {e}", exc_info=True)
             self.print_info.configure(
-                text=f"Modul fehlt: {e}",
+                text=t(self.config, "final.module_missing", error=e),
                 text_color=COLORS["error"]
             )
         except Exception as e:
@@ -645,13 +646,13 @@ class FinalScreen(ctk.CTkFrame):
 
             error_str = str(e)
             if "1801" in error_str or "unzulässig" in error_str.lower():
-                msg = "Drucker nicht erreichbar!"
+                msg = t(self.config, "final.printer_not_reachable")
             elif "offline" in error_str.lower():
-                msg = "Drucker ist offline!"
+                msg = t(self.config, "final.printer_offline")
             elif "paper" in error_str.lower() or "papier" in error_str.lower():
-                msg = "Kein Papier im Drucker!"
+                msg = t(self.config, "final.no_paper_short")
             else:
-                msg = "Druckfehler"
+                msg = t(self.config, "final.print_error")
 
             self.print_info.configure(
                 text=msg,
@@ -692,10 +693,16 @@ class FinalScreen(ctk.CTkFrame):
     def on_show(self):
         """Screen wird angezeigt"""
         logger.info("Final-Screen angezeigt")
+        self.config = self.app.config
         self.is_active = True
         self._is_printing = False
         self.prints_count = 0
         self._close_print_quantity_dialog()
+
+        if self.print_btn:
+            self.print_btn.configure(text=t(self.config, "common.print"))
+        if hasattr(self, "finish_btn"):
+            self.finish_btn.configure(text=t(self.config, "common.finish"))
 
         # Finales Bild rendern
         self.final_image = self._render_final_image()
@@ -729,7 +736,7 @@ class FinalScreen(ctk.CTkFrame):
             self._update_print_button_state()
         else:
             self.print_info.configure(
-                text="Drucken deaktiviert",
+                text=t(self.config, "final.print_disabled"),
                 text_color=COLORS["text_muted"]
             )
 

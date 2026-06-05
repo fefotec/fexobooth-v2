@@ -16,6 +16,7 @@ from src.config.config import find_usb_template
 from src.ui.theme import COLORS, FONTS, SIZES, get_sizes, get_fonts, is_small_screen
 from src.utils.logging import get_logger
 from src.ui.screens.video import is_vlc_warm, _vlc_available
+from src.i18n import t
 
 if TYPE_CHECKING:
     from src.app import PhotoboothApp
@@ -32,7 +33,8 @@ class TemplateCard(ctk.CTkFrame):
     """Template-Auswahl-Karte - responsive Design"""
 
     def __init__(self, parent, title: str, preview_image: Optional[Image.Image] = None,
-                 is_single: bool = False, on_click=None, card_width=None, card_height=None):
+                 is_single: bool = False, on_click=None, card_width=None, card_height=None,
+                 subtitle: Optional[str] = None):
         # Responsive Größen laden
         sizes = get_sizes()
         fonts = get_fonts()
@@ -116,7 +118,7 @@ class TemplateCard(ctk.CTkFrame):
         title_label.bind("<Button-1>", self._on_click)
 
         # Untertitel - responsive Font
-        subtitle = "Einzelbild" if is_single else "Druck-Vorlage"
+        subtitle = subtitle or ("Einzelbild" if is_single else "Druck-Vorlage")
         subtitle_font = fonts["small"] if card_width >= 250 else fonts["tiny"]
         subtitle_label = ctk.CTkLabel(
             self,
@@ -194,7 +196,7 @@ class StartScreen(ctk.CTkFrame):
         btn_corner = 28 if self._is_small else 35
         self.start_btn = ctk.CTkButton(
             self,
-            text=f"▶  {self.config.get('ui_texts', {}).get('start', 'START')}",
+            text=f"▶  {t(self.config, 'common.start')}",
             font=("Segoe UI", btn_font_size, "bold"),
             width=btn_width,
             height=btn_height,
@@ -219,7 +221,7 @@ class StartScreen(ctk.CTkFrame):
         inner_frame.place(relx=0.5, rely=0.5, anchor="center")
 
         # Titel - responsive Font
-        title_text = self.config.get("ui_texts", {}).get("choose_mode", "Wähle dein Layout!")
+        title_text = t(self.config, "start.choose_mode")
         title_font = self._fonts["title"] if not self._is_small else self._fonts["heading"]
         self.title_label = ctk.CTkLabel(
             inner_frame,
@@ -232,7 +234,7 @@ class StartScreen(ctk.CTkFrame):
         # Untertitel - responsive Font
         self.subtitle_label = ctk.CTkLabel(
             inner_frame,
-            text="Tippe auf eine Option",
+            text=t(self.config, "start.tap_option"),
             font=self._fonts["body"],
             text_color=COLORS["text_primary"]
         )
@@ -301,14 +303,15 @@ class StartScreen(ctk.CTkFrame):
                 preview = self._load_template_preview(cached.get("path", ""))
 
             # Titel: Immer "Wunsch-Template" anzeigen (nicht den Dateinamen)
-            display_name = "Wunsch-Template"
+            display_name = t(self.config, "start.wish_template")
 
             card = TemplateCard(
                 self.cards_frame,
                 title=display_name,
                 preview_image=preview,
                 on_click=lambda c: self._select_card(c, "usb_template"),
-                card_width=card_w, card_height=card_h
+                card_width=card_w, card_height=card_h,
+                subtitle=t(self.config, "start.print_template")
             )
             card.pack(side="left", padx=card_padx)
             self.cards["usb_template"] = card
@@ -328,10 +331,11 @@ class StartScreen(ctk.CTkFrame):
 
             card = TemplateCard(
                 self.cards_frame,
-                title=f"USB: {usb_name}" if len(usb_name) <= 12 else "USB-Vorlage",
+                title=f"USB: {usb_name}" if len(usb_name) <= 12 else t(self.config, "start.usb_template"),
                 preview_image=usb_preview,
                 on_click=lambda c: self._select_card(c, "usb_stick_original"),
-                card_width=card_w, card_height=card_h
+                card_width=card_w, card_height=card_h,
+                subtitle=t(self.config, "start.print_template")
             )
             card.pack(side="left", padx=card_padx)
             self.cards["usb_stick_original"] = card
@@ -343,10 +347,11 @@ class StartScreen(ctk.CTkFrame):
             default_overlay, _ = create_default_template()
             card = TemplateCard(
                 self.cards_frame,
-                title="Standard 2x2",
+                title=t(self.config, "start.standard_2x2"),
                 preview_image=default_overlay,
                 on_click=lambda c: self._select_card(c, "default_2x2"),
-                card_width=card_w, card_height=card_h
+                card_width=card_w, card_height=card_h,
+                subtitle=t(self.config, "start.print_template")
             )
             card.pack(side="left", padx=card_padx)
             self.cards["default_2x2"] = card
@@ -355,10 +360,11 @@ class StartScreen(ctk.CTkFrame):
         if self.config.get("allow_single_mode", True):
             card = TemplateCard(
                 self.cards_frame,
-                title="Single-Foto",
+                title=t(self.config, "start.single_photo"),
                 is_single=True,
                 on_click=lambda c: self._select_card(c, "single"),
-                card_width=card_w, card_height=card_h
+                card_width=card_w, card_height=card_h,
+                subtitle=t(self.config, "start.single_subtitle")
             )
             card.pack(side="left", padx=card_padx)
             self.cards["single"] = card
@@ -367,10 +373,11 @@ class StartScreen(ctk.CTkFrame):
         if not self.cards:
             card = TemplateCard(
                 self.cards_frame,
-                title="Einzelfoto",
+                title=t(self.config, "start.one_photo"),
                 is_single=True,
                 on_click=lambda c: self._select_card(c, "single"),
-                card_width=card_w, card_height=card_h
+                card_width=card_w, card_height=card_h,
+                subtitle=t(self.config, "start.single_subtitle")
             )
             card.pack(side="left", padx=card_padx)
             self.cards["single"] = card
@@ -385,12 +392,12 @@ class StartScreen(ctk.CTkFrame):
 
         # Header-Text anpassen wenn nur 1 Karte (nichts zu wählen)
         if len(self.cards) <= 1:
-            self.title_label.configure(text="Dein Druckformat")
-            self.subtitle_label.configure(text="Tippe zum Starten")
+            self.title_label.configure(text=t(self.config, "start.print_format"))
+            self.subtitle_label.configure(text=t(self.config, "start.tap_to_start"))
         else:
-            default_title = self.config.get("ui_texts", {}).get("choose_mode", "Wähle dein Layout!")
+            default_title = t(self.config, "start.choose_mode")
             self.title_label.configure(text=default_title)
-            self.subtitle_label.configure(text="Tippe auf eine Option")
+            self.subtitle_label.configure(text=t(self.config, "start.tap_option"))
 
         logger.info(f"Erstellte Karten: {list(self.cards.keys())}")
     
@@ -612,6 +619,7 @@ class StartScreen(ctk.CTkFrame):
 
         # Config könnte sich geändert haben (Admin-Dialog)
         self.config = self.app.config
+        self.start_btn.configure(text=f"▶  {t(self.config, 'common.start')}")
 
         # === USB-Stick Template erkennen (getrennt vom aktiven Template) ===
         real_usb = find_usb_template(include_cache=False)  # Nur echte USB-Sticks
@@ -722,21 +730,21 @@ class StartScreen(ctk.CTkFrame):
         if first_name:
             ctk.CTkLabel(
                 content,
-                text=f"Hallo {first_name},",
+                text=t(self.config, "start.greeting_named", name=first_name),
                 font=("Segoe UI", 30, "bold"),
                 text_color=COLORS["text_primary"]
             ).pack(pady=(0, 5))
 
             ctk.CTkLabel(
                 content,
-                text="vielen Dank für deine Buchung bei fexobox!",
+                text=t(self.config, "start.greeting_thanks"),
                 font=("Segoe UI", 20),
                 text_color=COLORS["text_primary"]
             ).pack(pady=(0, 15))
 
             ctk.CTkLabel(
                 content,
-                text="Deine fexobox wärmt sich gerade auf\nund dann kann die Party losgehen!",
+                text=t(self.config, "start.greeting_warmup"),
                 font=("Segoe UI", 18),
                 text_color=COLORS["text_secondary"],
                 justify="center"
@@ -744,7 +752,7 @@ class StartScreen(ctk.CTkFrame):
 
             ctk.CTkLabel(
                 content,
-                text="Das kann bis zu 2 Minuten dauern.",
+                text=t(self.config, "start.loading_wait"),
                 font=("Segoe UI", 16),
                 text_color=COLORS["text_secondary"],
                 justify="center"
@@ -753,7 +761,7 @@ class StartScreen(ctk.CTkFrame):
             # Lade-Text (ohne Kundenname)
             self._loading_label = ctk.CTkLabel(
                 content,
-                text="Software wird geladen...",
+                text=t(self.config, "start.loading_software"),
                 font=("Segoe UI", 22),
                 text_color=COLORS["text_primary"]
             )
@@ -761,7 +769,7 @@ class StartScreen(ctk.CTkFrame):
 
             ctk.CTkLabel(
                 content,
-                text="Das kann bis zu 2 Minuten dauern.",
+                text=t(self.config, "start.loading_wait"),
                 font=("Segoe UI", 16),
                 text_color=COLORS["text_secondary"]
             ).pack(pady=(0, 20))
@@ -835,17 +843,27 @@ class StartScreen(ctk.CTkFrame):
             return
 
         try:
-            from src.gallery import get_gallery_url, generate_qr_code
+            from src.gallery import (
+                generate_qr_code,
+                get_app_pairing_url,
+                get_gallery_url,
+                set_gallery_app_context,
+            )
 
             # URL und WLAN-Daten holen
             gallery_config = self.config.get("gallery", {})
             port = gallery_config.get("port", self.config.get("gallery_port", 8080))
+            if hasattr(self.app, "_get_gallery_app_context"):
+                set_gallery_app_context(self.app._get_gallery_app_context())
             url = get_gallery_url(port)
+            qr_payload = get_app_pairing_url(port)
             ssid = gallery_config.get("hotspot_ssid", "fexobox-gallery")
             password = gallery_config.get("hotspot_password", "fotobox123")
 
-            # QR-Code generieren (größer für bessere Scanbarkeit)
-            qr_img = generate_qr_code(url, size=90)
+            # App-Pairing-QR generieren. Der Payload enthaelt API-URL, Box/Event
+            # und Pairing-Token fuer die spaetere Smartphone-App.
+            qr_size = 118 if not self._is_small else 108
+            qr_img = generate_qr_code(qr_payload, size=qr_size)
             if not qr_img:
                 logger.warning("QR-Code konnte nicht generiert werden")
                 self.gallery_banner.pack_forget()
@@ -879,7 +897,7 @@ class StartScreen(ctk.CTkFrame):
             qr_container = ctk.CTkFrame(content, fg_color="#ffffff", corner_radius=8)
             qr_container.pack(side="left", padx=(0, 20))
 
-            self.qr_ctk_image = ctk.CTkImage(light_image=qr_img, size=(90, 90))
+            self.qr_ctk_image = ctk.CTkImage(light_image=qr_img, size=(qr_size, qr_size))
             self.qr_label = ctk.CTkLabel(
                 qr_container,
                 image=self.qr_ctk_image,
@@ -895,7 +913,7 @@ class StartScreen(ctk.CTkFrame):
             # Titel
             ctk.CTkLabel(
                 info_frame,
-                text="📸 FOTO-GALERIE",
+                text=t(self.config, "gallery.banner_title"),
                 font=("Segoe UI", 20, "bold"),
                 text_color=COLORS["primary"]
             ).pack(anchor="w")
@@ -906,14 +924,14 @@ class StartScreen(ctk.CTkFrame):
 
             ctk.CTkLabel(
                 wifi_info,
-                text=f"📶 WLAN:  {ssid}",
+                text=t(self.config, "gallery.banner_wifi", ssid=ssid),
                 font=("Segoe UI", 18, "bold"),
                 text_color=COLORS["text_primary"]
             ).pack(anchor="w")
 
             ctk.CTkLabel(
                 wifi_info,
-                text=f"🔑 Passwort:  {password}",
+                text=t(self.config, "gallery.banner_password", password=password),
                 font=("Segoe UI", 18),
                 text_color=COLORS["text_primary"]
             ).pack(anchor="w", pady=(2, 0))
@@ -921,12 +939,12 @@ class StartScreen(ctk.CTkFrame):
             # Anleitung
             ctk.CTkLabel(
                 info_frame,
-                text="1. Mit WLAN verbinden  →  2. QR-Code scannen  →  3. Fotos ansehen!",
+                text=t(self.config, "gallery.banner_steps"),
                 font=("Segoe UI", 15),
                 text_color=COLORS["text_secondary"]
             ).pack(anchor="w", pady=(10, 0))
 
-            logger.info(f"✅ Galerie-Banner angezeigt: {url}")
+            logger.info(f"✅ App-Galerie-QR angezeigt: {url}")
 
         except ImportError as e:
             logger.warning(f"Galerie-Modul nicht verfügbar: {e}")

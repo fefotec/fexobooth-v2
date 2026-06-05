@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional
 from copy import deepcopy
 
 from .defaults import DEFAULT_CONFIG
+from src.i18n import apply_locale_to_config
 
 # Globale Config-Instanz
 _config: Optional[Dict[str, Any]] = None
@@ -36,6 +37,8 @@ def load_config() -> Dict[str, Any]:
     usb_config = _find_usb_config()
     if usb_config:
         _deep_merge(config, usb_config)
+
+    apply_locale_to_config(config)
     
     _config = config
     return config
@@ -46,6 +49,7 @@ def save_config(config: Dict[str, Any]) -> bool:
     global _config
     
     try:
+        apply_locale_to_config(config)
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
         _config = config

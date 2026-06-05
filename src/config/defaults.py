@@ -60,6 +60,7 @@ DEFAULT_CONFIG = {
     },
     
     # UI Texte
+    "locale": "de-DE",
     "ui_texts": {
         "admin": "ADMIN",
         "finish": "FERTIG",

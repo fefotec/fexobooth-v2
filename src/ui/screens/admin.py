@@ -15,6 +15,13 @@ import threading
 
 from src.ui.theme import COLORS, FONTS, SIZES
 from src.utils.logging import get_logger
+from src.i18n import (
+    SUPPORTED_LOCALES,
+    apply_locale_to_config,
+    get_locale_label,
+    normalize_locale,
+    t,
+)
 
 logger = get_logger(__name__)
 
@@ -22,7 +29,13 @@ logger = get_logger(__name__)
 class AdminDialog(ctk.CTkToplevel):
     """Moderner Admin-Einstellungen Dialog"""
 
-    def __init__(self, parent, config: Dict[str, Any], kiosk_mode: bool = False):
+    def __init__(
+        self,
+        parent,
+        config: Dict[str, Any],
+        kiosk_mode: bool = False,
+        initial_customer_screen: Optional[str] = None
+    ):
         super().__init__(parent)
 
         self.title("⚙️ Admin-Einstellungen")
@@ -34,6 +47,7 @@ class AdminDialog(ctk.CTkToplevel):
         self._open_service = False
         self.parent_window = parent
         self._kiosk_mode = kiosk_mode
+        self._initial_customer_screen = initial_customer_screen
 
         # Modal machen
         self.transient(parent)
@@ -67,8 +81,23 @@ class AdminDialog(ctk.CTkToplevel):
         if not kiosk_mode:
             self.bind("<Escape>", lambda e: self.destroy())
 
-        # PIN-Abfrage zuerst
-        self._show_pin_dialog()
+        # PIN-Abfrage zuerst, außer ein explizit eingeschränkter Kunden-Screen
+        # wird direkt aus dem System-Test geöffnet.
+        if self._initial_customer_screen == "print_adjustment":
+            self._show_customer_print_adjustment()
+        else:
+            self._show_pin_dialog()
+
+    def _current_locale(self) -> str:
+        return normalize_locale(self.config_data.get("locale", "de-DE"))
+
+    def _tr(self, key: str, **kwargs) -> str:
+        return t(self.config_data, key, **kwargs)
+
+    def _bind_customer_click_recursive(self, widget, callback):
+        widget.bind("<Button-1>", callback)
+        for child in widget.winfo_children():
+            self._bind_customer_click_recursive(child, callback)
     
     def _show_pin_dialog(self):
         """Zeigt PIN-Eingabe als zentriertes Overlay"""
@@ -291,14 +320,14 @@ class AdminDialog(ctk.CTkToplevel):
         # Titel
         ctk.CTkLabel(
             card,
-            text="🔧 Service-Menü",
+            text=self._tr("service.menu_title"),
             font=("Segoe UI", 22, "bold"),
             text_color=COLORS["primary"]
         ).pack(pady=(20, 5))
 
         ctk.CTkLabel(
             card,
-            text="Bitte wählen Sie eine Option:",
+            text=self._tr("service.menu_subtitle"),
             font=FONTS["body"],
             text_color=COLORS["text_secondary"]
         ).pack(pady=(0, 15))
@@ -318,7 +347,7 @@ class AdminDialog(ctk.CTkToplevel):
         # 1. Template-Auswahl
         ctk.CTkButton(
             btn_container,
-            text="  📋  Template wählen",
+            text=f"  {self._tr('service.template_select')}",
             fg_color=COLORS["bg_light"],
             hover_color=COLORS["bg_card"],
             text_color=COLORS["text_primary"],
@@ -329,11 +358,11 @@ class AdminDialog(ctk.CTkToplevel):
         # 2. Live-View Template Overlay ein/aus
         app = self.parent_window._photobooth_app if hasattr(self.parent_window, '_photobooth_app') else None
         overlay_on = self.config_data.get("liveview_template_overlay", True)
-        overlay_text = "  👁  Live-View Overlay: EIN" if overlay_on else "  👁  Live-View Overlay: AUS"
+        overlay_text = self._tr("service.overlay_on") if overlay_on else self._tr("service.overlay_off")
 
         self._overlay_btn = ctk.CTkButton(
             btn_container,
-            text=overlay_text,
+            text=f"  {overlay_text}",
             fg_color=COLORS["success"] if overlay_on else COLORS["bg_light"],
             hover_color=COLORS["bg_card"],
             text_color="#ffffff" if overlay_on else COLORS["text_primary"],
@@ -342,10 +371,22 @@ class AdminDialog(ctk.CTkToplevel):
         )
         self._overlay_btn.pack(pady=4)
 
-        # 3. Template & Settings neu von USB laden (gleiche Buchungs-ID)
+        # 3. Frontend-Sprache
+        current_locale = normalize_locale(self.config_data.get("locale", "de-DE"))
         ctk.CTkButton(
             btn_container,
-            text="  📂  Template neu einlesen",
+            text=f"  {self._tr('service.language_button', locale=get_locale_label(current_locale))}",
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["bg_card"],
+            text_color=COLORS["text_primary"],
+            command=lambda: self._customer_language_select(menu_frame),
+            **btn_style
+        ).pack(pady=4)
+
+        # 4. Template & Settings neu von USB laden (gleiche Buchungs-ID)
+        ctk.CTkButton(
+            btn_container,
+            text=f"  {self._tr('service.reload_template')}",
             fg_color=COLORS["bg_light"],
             hover_color=COLORS["bg_card"],
             text_color=COLORS["text_primary"],
@@ -353,10 +394,21 @@ class AdminDialog(ctk.CTkToplevel):
             **btn_style
         ).pack(pady=4)
 
-        # 4. Druckstau beheben
+        # 5. Druck-Korrektur
         ctk.CTkButton(
             btn_container,
-            text="  🖨  Druckstau beheben",
+            text=f"  {self._tr('service.print_adjustment')}",
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["bg_card"],
+            text_color=COLORS["text_primary"],
+            command=lambda: self._show_customer_print_adjustment(menu_frame),
+            **btn_style
+        ).pack(pady=4)
+
+        # 6. Druckstau beheben
+        ctk.CTkButton(
+            btn_container,
+            text=f"  {self._tr('service.fix_paper_jam')}",
             fg_color=COLORS["bg_light"],
             hover_color=COLORS["bg_card"],
             text_color=COLORS["text_primary"],
@@ -364,10 +416,10 @@ class AdminDialog(ctk.CTkToplevel):
             **btn_style
         ).pack(pady=4)
 
-        # 4. Neustart
+        # 7. Neustart
         ctk.CTkButton(
             btn_container,
-            text="  🔄  Windows Neustart",
+            text=f"  {self._tr('service.restart_windows')}",
             fg_color=COLORS["bg_light"],
             hover_color=COLORS["warning"],
             text_color=COLORS["text_primary"],
@@ -378,7 +430,7 @@ class AdminDialog(ctk.CTkToplevel):
         # Schließen-Button
         ctk.CTkButton(
             card,
-            text="Schließen",
+            text=self._tr("service.close"),
             font=FONTS["body"],
             width=120, height=38,
             fg_color="transparent",
@@ -404,16 +456,145 @@ class AdminDialog(ctk.CTkToplevel):
         # Button-Text aktualisieren
         if new_val:
             self._overlay_btn.configure(
-                text="  👁  Live-View Overlay: EIN",
+                text=f"  {self._tr('service.overlay_on')}",
                 fg_color=COLORS["success"],
                 text_color="#ffffff"
             )
         else:
             self._overlay_btn.configure(
-                text="  👁  Live-View Overlay: AUS",
+                text=f"  {self._tr('service.overlay_off')}",
                 fg_color=COLORS["bg_light"],
                 text_color=COLORS["text_primary"]
             )
+
+    def _customer_language_select(self, parent_frame):
+        """Eingeschränkte Sprachwahl für das Frontend."""
+        parent_frame.destroy()
+
+        frame = ctk.CTkFrame(self, fg_color="#0a0a10", corner_radius=0)
+        frame.pack(fill="both", expand=True)
+
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        card_w = min(520, int(screen_w * 0.84))
+        card = ctk.CTkFrame(
+            frame,
+            fg_color=COLORS["bg_medium"],
+            border_color=COLORS["primary"],
+            border_width=2,
+            corner_radius=16
+        )
+        card.place(relx=0.5, rely=0.5, anchor="center")
+
+        ctk.CTkLabel(
+            card,
+            text=self._tr("service.language_title"),
+            font=("Segoe UI", 20, "bold"),
+            text_color=COLORS["primary"]
+        ).pack(pady=(16, 4), padx=28)
+
+        ctk.CTkLabel(
+            card,
+            text=self._tr("service.language_subtitle"),
+            font=FONTS["tiny"],
+            text_color=COLORS["text_secondary"],
+            wraplength=card_w - 70,
+            justify="center"
+        ).pack(pady=(0, 10), padx=30)
+
+        status_label = ctk.CTkLabel(
+            card,
+            text="",
+            font=FONTS["tiny"],
+            text_color=COLORS["text_muted"],
+            wraplength=card_w - 70,
+            justify="center"
+        )
+
+        current_locale = normalize_locale(self.config_data.get("locale", "de-DE"))
+        grid = ctk.CTkFrame(card, fg_color="transparent")
+        grid.pack(padx=24, pady=(0, 8))
+        grid.grid_columnconfigure((0, 1), weight=1)
+
+        button_w = max(190, min(230, (card_w - 70) // 2))
+        button_h = max(42, min(48, int(screen_h * 0.075)))
+        for index, (locale, meta) in enumerate(SUPPORTED_LOCALES.items()):
+            selected = locale == current_locale
+            text = f"{meta['native']}\n{locale}"
+            ctk.CTkButton(
+                grid,
+                text=text,
+                font=("Segoe UI", 14, "bold"),
+                width=button_w,
+                height=button_h,
+                fg_color=COLORS["success"] if selected else COLORS["bg_light"],
+                hover_color=COLORS["primary_hover"] if selected else COLORS["bg_card"],
+                text_color="#ffffff" if selected else COLORS["text_primary"],
+                corner_radius=12,
+                command=lambda l=locale: self._save_customer_locale(l, status_label, frame),
+            ).grid(row=index // 2, column=index % 2, padx=6, pady=4, sticky="ew")
+
+        status_label.pack(pady=(0, 6), padx=30)
+
+        ctk.CTkButton(
+            card,
+            text=self._tr("service.back"),
+            font=("Segoe UI", 15, "bold"),
+            width=150,
+            height=40,
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["bg_card"],
+            text_color=COLORS["text_primary"],
+            corner_radius=12,
+            command=lambda: self._customer_back_to_menu(frame)
+        ).pack(pady=(0, 14))
+
+    def _save_customer_locale(self, locale: str, status_label, current_frame):
+        """Speichert die lokale Frontend-Sprache und aktualisiert laufende Screens."""
+        locale = normalize_locale(locale)
+        self.config_data["locale"] = locale
+        apply_locale_to_config(self.config_data)
+
+        app = self.parent_window._photobooth_app if hasattr(self.parent_window, "_photobooth_app") else None
+        if app:
+            app.config["locale"] = locale
+            apply_locale_to_config(app.config)
+            from src.config.config import save_config
+            save_config(app.config)
+            self.config_data = app.config.copy()
+
+            try:
+                from src.gallery import set_gallery_app_context, set_gallery_locale
+                set_gallery_locale(locale)
+                if hasattr(app, "_get_gallery_app_context"):
+                    set_gallery_app_context(app._get_gallery_app_context())
+            except Exception as e:
+                logger.debug(f"Galerie-Sprache konnte nicht aktualisiert werden: {e}")
+
+            try:
+                if hasattr(app, "_update_booking_display"):
+                    app._update_booking_display()
+                current = getattr(app, "current_screen", None)
+                if current and hasattr(current, "config"):
+                    current.config = app.config
+                if current and hasattr(current, "on_show"):
+                    current.on_show()
+            except Exception as e:
+                logger.debug(f"Screen-Sprache konnte nicht aktualisiert werden: {e}")
+        else:
+            from src.config.config import save_config
+            save_config(self.config_data)
+
+        self.result = self.config_data
+        status_label.configure(
+            text=self._tr("service.saved_locale", locale=get_locale_label(locale)),
+            text_color=COLORS["success"]
+        )
+        logger.info(f"Kunden-Menü: Frontend-Sprache gesetzt: {locale}")
+        self.after(
+            900,
+            lambda: self._customer_back_to_menu(current_frame) if current_frame.winfo_exists() else None
+        )
 
     def _get_templates_dir(self) -> str:
         """Findet den Pfad zum templates-Ordner (Build + Entwicklung)"""
@@ -458,7 +639,7 @@ class AdminDialog(ctk.CTkToplevel):
         # Titel
         ctk.CTkLabel(
             select_frame,
-            text="Template wählen",
+            text=self._tr("service.template_select"),
             font=("Segoe UI", 20, "bold"),
             text_color=COLORS["primary"]
         ).pack(pady=(12, 8))
@@ -485,7 +666,7 @@ class AdminDialog(ctk.CTkToplevel):
             if os.path.isfile(c):
                 basename = os.path.basename(c)
                 is_current = basename == os.path.basename(current_path) or "Default" in current_path
-                all_templates.append(("Standard (4 Fotos)", c, is_current))
+                all_templates.append((self._tr("service.template_default"), c, is_current))
                 seen_basenames.add(basename)
                 break
 
@@ -632,7 +813,7 @@ class AdminDialog(ctk.CTkToplevel):
         # Zurück-Button
         ctk.CTkButton(
             select_frame,
-            text="← Zurück",
+            text=f"< {self._tr('service.back')}",
             font=FONTS["body"],
             width=120, height=38,
             fg_color="transparent",
@@ -668,14 +849,14 @@ class AdminDialog(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             card,
-            text="📂 Template neu einlesen",
+            text=self._tr("service.reload_template"),
             font=("Segoe UI", 22, "bold"),
             text_color=COLORS["info"],
         ).pack(pady=(20, 5), padx=30)
 
         status_label = ctk.CTkLabel(
             card,
-            text="Suche USB-Stick...",
+            text=self._tr("service.reload_searching"),
             font=FONTS["body"],
             text_color=COLORS["text_secondary"],
         )
@@ -714,18 +895,18 @@ class AdminDialog(ctk.CTkToplevel):
         def do_reload():
             try:
                 if app is None:
-                    self.after(0, lambda: show_done(False, "App-Referenz nicht verfügbar."))
+                    self.after(0, lambda: show_done(False, self._tr("service.reload_no_app")))
                     return
 
                 usb_drive = app.usb_manager.find_usb_stick()
                 if not usb_drive:
-                    self.after(0, lambda: show_done(False, "Kein USB-Stick gefunden!\nBitte Stick einstecken."))
+                    self.after(0, lambda: show_done(False, self._tr("service.reload_no_usb")))
                     return
 
-                self.after(0, lambda: update_status("Lade settings.json + Template..."))
+                self.after(0, lambda: update_status(self._tr("service.reload_loading")))
 
                 if not app.booking_manager.load_from_usb(Path(usb_drive), force=True):
-                    self.after(0, lambda: show_done(False, "Keine gültige settings.json gefunden."))
+                    self.after(0, lambda: show_done(False, self._tr("service.reload_no_settings")))
                     return
 
                 # Settings auf Config übertragen
@@ -749,15 +930,166 @@ class AdminDialog(ctk.CTkToplevel):
                     logger.warning(f"Screen-Refresh fehlgeschlagen: {e}")
 
                 booking_id = app.booking_manager.booking_id or "?"
-                self.after(0, lambda: show_done(True, f"Template neu geladen.\nBuchung: {booking_id}"))
+                self.after(0, lambda: show_done(True, self._tr("service.reload_done", booking_id=booking_id)))
                 logger.info(f"Customer-Reload-from-USB: erfolgreich (booking_id={booking_id})")
 
             except Exception as e:
                 logger.error(f"Customer-Reload fehlgeschlagen: {e}", exc_info=True)
                 err = str(e)
-                self.after(0, lambda: show_done(False, f"Fehler: {err[:120]}"))
+                self.after(0, lambda: show_done(False, self._tr("service.reload_error", error=err[:120])))
 
         threading.Thread(target=do_reload, daemon=True).start()
+
+    def _show_customer_print_adjustment(self, parent_frame=None):
+        """Eingeschränkte Druckkorrektur für Kunden/Mitarbeiter."""
+        if parent_frame is not None:
+            parent_frame.destroy()
+
+        frame = ctk.CTkFrame(self, fg_color="#0a0a10", corner_radius=0)
+        frame.pack(fill="both", expand=True)
+
+        screen_w = self.winfo_screenwidth()
+        card_w = min(520, int(screen_w * 0.86))
+        card = ctk.CTkFrame(
+            frame,
+            fg_color=COLORS["bg_medium"],
+            border_color=COLORS["primary"],
+            border_width=2,
+            corner_radius=16
+        )
+        card.place(relx=0.5, rely=0.5, anchor="center")
+
+        ctk.CTkLabel(
+            card,
+            text=self._tr("service.print_adjustment"),
+            font=("Segoe UI", 22, "bold"),
+            text_color=COLORS["primary"]
+        ).pack(pady=(20, 5), padx=30)
+
+        ctk.CTkLabel(
+            card,
+            text=self._tr("service.print_adjustment_help"),
+            font=FONTS["small"],
+            text_color=COLORS["text_secondary"],
+            wraplength=card_w - 70,
+            justify="center"
+        ).pack(pady=(0, 12), padx=30)
+
+        adjustment = self.config_data.get("print_adjustment", {})
+
+        sliders_frame = ctk.CTkFrame(card, fg_color=COLORS["bg_card"], corner_radius=10)
+        sliders_frame.pack(fill="x", padx=25, pady=(0, 10))
+
+        self.customer_offset_x_slider = self._create_print_slider(
+            sliders_frame, "Offset X:", adjustment.get("offset_x", 0), -100, 100, " px"
+        )
+        ctk.CTkLabel(
+            sliders_frame,
+            text=self._tr("service.print_x_hint"),
+            font=FONTS["tiny"],
+            text_color=COLORS["text_muted"]
+        ).pack(padx=15, anchor="w")
+
+        self.customer_offset_y_slider = self._create_print_slider(
+            sliders_frame, "Offset Y:", adjustment.get("offset_y", 0), -100, 100, " px"
+        )
+        ctk.CTkLabel(
+            sliders_frame,
+            text=self._tr("service.print_y_hint"),
+            font=FONTS["tiny"],
+            text_color=COLORS["text_muted"]
+        ).pack(padx=15, anchor="w")
+
+        self.customer_zoom_slider = self._create_print_slider(
+            sliders_frame, "Zoom:", adjustment.get("zoom", 100), 50, 150, " %"
+        )
+
+        status_label = ctk.CTkLabel(
+            card,
+            text="",
+            font=FONTS["tiny"],
+            text_color=COLORS["text_muted"],
+            wraplength=card_w - 70,
+            justify="center"
+        )
+        status_label.pack(pady=(0, 8), padx=30)
+
+        btn_frame = ctk.CTkFrame(card, fg_color="transparent")
+        btn_frame.pack(pady=(0, 15))
+
+        ctk.CTkButton(
+            btn_frame,
+            text=self._tr("common.test_print"),
+            font=("Segoe UI", 15, "bold"),
+            width=135,
+            height=44,
+            fg_color=COLORS["primary"],
+            hover_color=COLORS["primary_hover"],
+            corner_radius=12,
+            command=lambda: self._execute_test_print(
+                status_label=status_label,
+                offset_x_slider=self.customer_offset_x_slider,
+                offset_y_slider=self.customer_offset_y_slider,
+                zoom_slider=self.customer_zoom_slider,
+                printer_name=self.config_data.get("printer_name", "")
+            )
+        ).pack(side="left", padx=6)
+
+        ctk.CTkButton(
+            btn_frame,
+            text=self._tr("common.save"),
+            font=("Segoe UI", 15, "bold"),
+            width=135,
+            height=44,
+            fg_color=COLORS["success"],
+            hover_color="#22aa44",
+            corner_radius=12,
+            command=lambda: self._save_customer_print_adjustment(status_label)
+        ).pack(side="left", padx=6)
+
+        ctk.CTkButton(
+            btn_frame,
+            text=self._tr("service.back") if parent_frame is not None else self._tr("service.close"),
+            font=("Segoe UI", 15, "bold"),
+            width=135,
+            height=44,
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["bg_card"],
+            text_color=COLORS["text_primary"],
+            corner_radius=12,
+            command=lambda: self._customer_back_to_menu(frame) if parent_frame is not None else self.destroy()
+        ).pack(side="left", padx=6)
+
+    def _save_customer_print_adjustment(self, status_label):
+        """Speichert nur print_adjustment aus dem Kunden-Menü."""
+        adjustment = {
+            "offset_x": int(self.customer_offset_x_slider.get()),
+            "offset_y": int(self.customer_offset_y_slider.get()),
+            "zoom": int(self.customer_zoom_slider.get()),
+        }
+        self.config_data["print_adjustment"] = adjustment
+
+        app = self.parent_window._photobooth_app if hasattr(self.parent_window, "_photobooth_app") else None
+        if app:
+            app.config["print_adjustment"] = adjustment
+            from src.config.config import save_config
+            save_config(app.config)
+            self.config_data = app.config.copy()
+        else:
+            from src.config.config import save_config
+            save_config(self.config_data)
+
+        self.result = self.config_data
+        status_label.configure(
+            text=self._tr(
+                "service.print_saved",
+                x=adjustment["offset_x"],
+                y=adjustment["offset_y"],
+                zoom=adjustment["zoom"]
+            ),
+            text_color=COLORS["success"]
+        )
+        logger.info(f"Kunden-Menü: Druck-Korrektur gespeichert: {adjustment}")
 
     def _customer_fix_paper_jam(self, parent_frame):
         """Druckstau beheben - Drucker zurücksetzen"""
@@ -777,14 +1109,14 @@ class AdminDialog(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             card,
-            text="🖨 Druckstau beheben",
+            text=self._tr("service.paper_jam_title"),
             font=("Segoe UI", 20, "bold"),
             text_color=COLORS["primary"]
         ).pack(pady=(20, 10))
 
         status_label = ctk.CTkLabel(
             card,
-            text="Drucker wird zurückgesetzt...",
+            text=self._tr("service.paper_jam_running"),
             font=FONTS["body"],
             text_color=COLORS["text_primary"],
             wraplength=300
@@ -800,13 +1132,13 @@ class AdminDialog(ctk.CTkToplevel):
                 subprocess.run(["net", "start", "spooler"], capture_output=True, timeout=10,
                                creationflags=0x08000000)
                 self.after(0, lambda: status_label.configure(
-                    text="✅ Drucker wurde zurückgesetzt!\n\nBitte Papier prüfen und\nggf. Drucker aus-/einschalten.",
+                    text=self._tr("service.paper_jam_done"),
                     text_color=COLORS["success"]
                 ))
                 logger.info("Kunden-Menü: Druckstau behoben (Spooler neugestartet)")
             except Exception as e:
                 self.after(0, lambda: status_label.configure(
-                    text=f"❌ Fehler: {e}\n\nBitte Drucker manuell\naus- und einschalten.",
+                    text=self._tr("service.paper_jam_error", error=str(e)[:120]),
                     text_color=COLORS["error"]
                 ))
                 logger.error(f"Druckstau-Fix fehlgeschlagen: {e}")
@@ -815,7 +1147,7 @@ class AdminDialog(ctk.CTkToplevel):
 
         ctk.CTkButton(
             card,
-            text="Schließen",
+            text=self._tr("service.close"),
             font=FONTS["body"],
             width=120, height=38,
             fg_color="transparent",
@@ -842,14 +1174,14 @@ class AdminDialog(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             card,
-            text="🔄 Windows Neustart",
+            text=self._tr("service.restart_title"),
             font=("Segoe UI", 20, "bold"),
             text_color=COLORS["warning"]
         ).pack(pady=(20, 10))
 
         self._restart_status = ctk.CTkLabel(
             card,
-            text="Der Computer wird neu gestartet.\nDies dauert ca. 1-2 Minuten.",
+            text=self._tr("service.restart_hint"),
             font=FONTS["body"],
             text_color=COLORS["text_primary"],
             justify="center",
@@ -863,7 +1195,7 @@ class AdminDialog(ctk.CTkToplevel):
         def do_restart():
             import subprocess
             self._restart_status.configure(
-                text="⏳ Computer wird neu gestartet...\n\nBitte warten Sie, bis das Gerät\nwieder hochgefahren ist.",
+                text=self._tr("service.restart_running"),
                 text_color=COLORS["warning"]
             )
             btn_frame.destroy()
@@ -875,7 +1207,7 @@ class AdminDialog(ctk.CTkToplevel):
 
         ctk.CTkButton(
             btn_frame,
-            text="Neustart",
+            text=self._tr("service.restart_confirm"),
             font=("Segoe UI", 16, "bold"),
             width=130, height=45,
             fg_color=COLORS["warning"],
@@ -886,7 +1218,7 @@ class AdminDialog(ctk.CTkToplevel):
 
         ctk.CTkButton(
             btn_frame,
-            text="Abbrechen",
+            text=self._tr("service.abort"),
             font=("Segoe UI", 16, "bold"),
             width=130, height=45,
             fg_color=COLORS["bg_light"],
@@ -1116,42 +1448,8 @@ class AdminDialog(ctk.CTkToplevel):
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # Box-ID für Monitoring/Inventar. Leer = nicht gesetzt.
-        box_id_frame = ctk.CTkFrame(scroll, fg_color="transparent")
-        box_id_frame.pack(fill="x", pady=(5, 10))
+        self._create_box_id_control(scroll)
 
-        ctk.CTkLabel(
-            box_id_frame,
-            text="Box-ID:",
-            font=FONTS["body"],
-            text_color=COLORS["text_secondary"]
-        ).pack(side="left")
-
-        self.box_id_error = ctk.CTkLabel(
-            box_id_frame,
-            text="",
-            font=FONTS["tiny"],
-            text_color=COLORS["error"]
-        )
-        self.box_id_error.pack(side="left", padx=(12, 0))
-
-        self.box_id_entry = ctk.CTkEntry(
-            box_id_frame,
-            placeholder_text="3 Ziffern",
-            width=90,
-            fg_color=COLORS["bg_card"],
-            border_color=COLORS["border"],
-            justify="center"
-        )
-        initial_box_id = str(self.config_data.get("box_id", "") or "")
-        if initial_box_id and (not initial_box_id.isdigit() or len(initial_box_id) > 3):
-            logger.warning(f"Ignoriere ungültige Box-ID aus Config: {initial_box_id!r}")
-            initial_box_id = ""
-        self._last_valid_box_id = initial_box_id
-        self.box_id_entry.insert(0, initial_box_id)
-        self.box_id_entry.pack(side="right")
-        self.box_id_entry.bind("<KeyRelease>", lambda e: self._sanitize_box_id_entry())
-        
         # Flash-Bild (beim Foto-Auslösen)
         ctk.CTkLabel(
             scroll,
@@ -1159,46 +1457,46 @@ class AdminDialog(ctk.CTkToplevel):
             font=FONTS["body"],
             text_color=COLORS["text_secondary"]
         ).pack(anchor="w", pady=(5, 2))
-        
+
         self.flash_image_path = self._create_file_picker(
             scroll,
             "",
             self.config_data.get("flash_image", ""),
             [("Bilder", "*.png *.jpg *.jpeg *.gif")]
         )
-        
+
         ctk.CTkLabel(
             scroll,
             text="Leer = Standard-Smiley 😊",
             font=FONTS["tiny"],
             text_color=COLORS["text_muted"]
         ).pack(anchor="w", pady=(0, 10))
-        
+
         # Countdown
         self.countdown_slider = self._create_slider_with_value(
             scroll, "Countdown:", "countdown_time", 1, 15, " Sek"
         )
-        
+
         # Foto-Anzeige
         self.single_slider = self._create_slider_with_value(
             scroll, "Foto-Anzeige:", "single_display_time", 1, 10, " Sek"
         )
-        
+
         # Auto-Return
         self.final_slider = self._create_slider_with_value(
             scroll, "Auto-Return:", "final_time", 10, 60, " Sek"
         )
-        
+
         # Auslöse-Bild (Flash) Dauer
         self.flash_slider = self._create_slider_with_value(
             scroll, "Auslöse-Bild:", "flash_duration", 100, 1000, " ms"
         )
-        
+
         # Max Drucke
         self.prints_slider = self._create_slider_with_value(
             scroll, "Max. Drucke:", "max_prints_per_session", 0, 10, ""
         )
-        
+
         # Checkboxen
         self._add_checkbox(scroll, "Single-Foto Modus erlauben", "allow_single_mode")
         self._add_checkbox(scroll, "Performance-Modus", "performance_mode")
@@ -1209,14 +1507,14 @@ class AdminDialog(ctk.CTkToplevel):
         # Neue PIN
         pin_frame = ctk.CTkFrame(scroll, fg_color="transparent")
         pin_frame.pack(fill="x", pady=(15, 5))
-        
+
         ctk.CTkLabel(
             pin_frame,
             text="Neue Admin-PIN:",
             font=FONTS["body"],
             text_color=COLORS["text_secondary"]
         ).pack(side="left")
-        
+
         self.new_pin = ctk.CTkEntry(
             pin_frame,
             placeholder_text="4-stellig",
@@ -1225,6 +1523,382 @@ class AdminDialog(ctk.CTkToplevel):
             border_color=COLORS["border"]
         )
         self.new_pin.pack(side="right")
+
+    def _create_box_id_control(self, parent):
+        """Kompakte Box-ID-Anzeige mit Popup-Eingabe."""
+        card = ctk.CTkFrame(parent, fg_color=COLORS["bg_card"], corner_radius=10)
+        card.pack(fill="x", pady=(5, 12))
+
+        header = ctk.CTkFrame(card, fg_color="transparent")
+        header.pack(fill="x", padx=15, pady=12)
+
+        ctk.CTkLabel(
+            header,
+            text="Box-ID",
+            font=FONTS["body_bold"],
+            text_color=COLORS["text_primary"]
+        ).pack(side="left")
+
+        self.box_id_error = ctk.CTkLabel(
+            header,
+            text="",
+            font=FONTS["tiny"],
+            text_color=COLORS["error"]
+        )
+        self.box_id_error.pack(side="left", padx=(10, 0))
+
+        initial_box_id = str(self.config_data.get("box_id", "") or "")
+        if initial_box_id and (not initial_box_id.isdigit() or len(initial_box_id) > 3):
+            logger.warning(f"Ignoriere ungültige Box-ID aus Config: {initial_box_id!r}")
+            initial_box_id = ""
+
+        self._box_id_value = initial_box_id
+        self._box_id_locked = bool(initial_box_id)
+
+        self.box_id_display = ctk.CTkLabel(
+            header,
+            text=self._format_box_id_display(),
+            font=("Segoe UI", 22, "bold"),
+            text_color=COLORS["primary"],
+            width=110,
+            height=40,
+            fg_color=COLORS["bg_dark"],
+            corner_radius=10
+        )
+        self.box_id_display.pack(side="left", padx=(15, 0))
+
+        self.box_id_button = ctk.CTkButton(
+            header,
+            text="Ändern" if self._box_id_locked else "Setzen",
+            font=FONTS["small"],
+            width=100,
+            height=38,
+            fg_color=COLORS["primary"],
+            hover_color=COLORS["primary_hover"],
+            corner_radius=SIZES["corner_radius_small"],
+            command=self._request_box_id_edit
+        )
+        self.box_id_button.pack(side="right")
+
+    def _update_box_id_display(self):
+        """Aktualisiert Anzeige und Buttontext."""
+        if hasattr(self, "box_id_display"):
+            self.box_id_display.configure(text=self._format_box_id_display())
+        if hasattr(self, "box_id_button"):
+            button_text = "Ändern" if getattr(self, "_box_id_locked", False) or self._box_id_value else "Setzen"
+            self.box_id_button.configure(text=button_text)
+
+    def _format_box_id_display(self) -> str:
+        """Formatiert die Box-ID-Anzeige als drei feste Stellen."""
+        value = getattr(self, "_box_id_value", "")
+        return " ".join(value.ljust(3, "_"))
+
+    def _request_box_id_edit(self):
+        """Öffnet die Box-ID-Eingabe, bei gesetzter ID erst nach Service-PIN."""
+        if hasattr(self, "box_id_error"):
+            self.box_id_error.configure(text="")
+
+        if getattr(self, "_box_id_locked", False):
+            self._show_box_id_service_pin_dialog()
+        else:
+            self._show_box_id_popup()
+
+    def _show_box_id_service_pin_dialog(self):
+        """Fragt den Service-PIN ab, bevor eine vorhandene Box-ID geändert wird."""
+        from src.ui.screens.service import SERVICE_PIN
+
+        dialog = ctk.CTkToplevel(self)
+        dialog.overrideredirect(True)
+        dialog.configure(fg_color=COLORS["bg_dark"])
+        dialog.transient(self)
+
+        dialog_w, dialog_h = 340, 420
+        x = (self.winfo_screenwidth() - dialog_w) // 2
+        y = (self.winfo_screenheight() - dialog_h) // 2
+        dialog.geometry(f"{dialog_w}x{dialog_h}+{x}+{y}")
+        dialog.attributes("-topmost", True)
+        dialog.grab_set()
+        dialog.lift()
+        dialog.focus_force()
+
+        content = ctk.CTkFrame(
+            dialog,
+            fg_color=COLORS["bg_medium"],
+            border_color=COLORS["warning"],
+            border_width=2,
+            corner_radius=16
+        )
+        content.pack(fill="both", expand=True, padx=2, pady=2)
+
+        ctk.CTkLabel(
+            content,
+            text="Box-ID ändern",
+            font=FONTS["body_bold"],
+            text_color=COLORS["warning"]
+        ).pack(pady=(18, 6))
+
+        ctk.CTkLabel(
+            content,
+            text="Service-PIN erforderlich",
+            font=FONTS["small"],
+            text_color=COLORS["text_secondary"]
+        ).pack(pady=(0, 8))
+
+        pin_entry = ctk.CTkEntry(
+            content,
+            show="●",
+            width=160,
+            height=38,
+            font=("Segoe UI", 18),
+            justify="center",
+            fg_color=COLORS["bg_dark"],
+            border_color=COLORS["border_light"],
+            corner_radius=SIZES["corner_radius"]
+        )
+        pin_entry.pack(pady=(0, 4))
+        pin_entry.focus()
+
+        error_label = ctk.CTkLabel(
+            content,
+            text="",
+            font=FONTS["tiny"],
+            text_color=COLORS["error"]
+        )
+        error_label.pack()
+
+        def approve():
+            if pin_entry.get() == SERVICE_PIN:
+                try:
+                    dialog.grab_release()
+                except Exception:
+                    pass
+                dialog.destroy()
+                self._show_box_id_popup()
+                return
+
+            pin_entry.delete(0, "end")
+            error_label.configure(text="Falsche PIN")
+            pin_entry.configure(border_color=COLORS["error"])
+            dialog.after(600, lambda: pin_entry.configure(border_color=COLORS["border_light"]))
+
+        def press(key):
+            if key == "⌫":
+                current = pin_entry.get()
+                pin_entry.delete(0, "end")
+                pin_entry.insert(0, current[:-1])
+            elif key == "✓":
+                approve()
+            elif len(pin_entry.get()) < 4:
+                pin_entry.insert("end", key)
+                if len(pin_entry.get()) >= 4:
+                    dialog.after(100, approve)
+
+        pin_entry.bind("<Return>", lambda e: approve())
+        pin_entry.bind("<KeyRelease>", lambda e: approve() if len(pin_entry.get()) >= 4 else None)
+
+        self._build_small_numpad(content, press, include_confirm=True)
+
+        ctk.CTkButton(
+            content,
+            text="Abbrechen",
+            font=FONTS["small"],
+            width=120,
+            height=30,
+            fg_color="transparent",
+            hover_color=COLORS["bg_light"],
+            text_color=COLORS["text_muted"],
+            command=dialog.destroy
+        ).pack(pady=(6, 12))
+
+    def _show_box_id_popup(self):
+        """Öffnet die eigentliche Box-ID-Zifferneingabe als Popup."""
+        dialog = ctk.CTkToplevel(self)
+        dialog.overrideredirect(True)
+        dialog.configure(fg_color=COLORS["bg_dark"])
+        dialog.transient(self)
+
+        dialog_w, dialog_h = 380, 420
+        x = (self.winfo_screenwidth() - dialog_w) // 2
+        y = (self.winfo_screenheight() - dialog_h) // 2
+        dialog.geometry(f"{dialog_w}x{dialog_h}+{x}+{y}")
+        dialog.attributes("-topmost", True)
+        dialog.grab_set()
+        dialog.lift()
+        dialog.focus_force()
+
+        content = ctk.CTkFrame(
+            dialog,
+            fg_color=COLORS["bg_medium"],
+            border_color=COLORS["primary"],
+            border_width=2,
+            corner_radius=16
+        )
+        content.pack(fill="both", expand=True, padx=2, pady=2)
+
+        ctk.CTkLabel(
+            content,
+            text="Box-ID setzen",
+            font=FONTS["body_bold"],
+            text_color=COLORS["primary"]
+        ).pack(pady=(18, 8))
+
+        value = {"text": getattr(self, "_box_id_value", "")}
+
+        display = ctk.CTkLabel(
+            content,
+            text=self._format_box_id_display_value(value["text"]),
+            font=("Segoe UI", 34, "bold"),
+            text_color=COLORS["primary"],
+            width=170,
+            height=54,
+            fg_color=COLORS["bg_dark"],
+            corner_radius=10
+        )
+        display.pack(pady=(0, 8))
+
+        error_label = ctk.CTkLabel(
+            content,
+            text="",
+            font=FONTS["tiny"],
+            text_color=COLORS["error"]
+        )
+        error_label.pack()
+
+        def update_display():
+            display.configure(text=self._format_box_id_display_value(value["text"]))
+            error_label.configure(text="")
+
+        def press(key):
+            if key == "⌫":
+                value["text"] = value["text"][:-1]
+            elif key == "Löschen":
+                value["text"] = ""
+            elif key.isdigit() and len(value["text"]) < 3:
+                value["text"] += key
+            elif key.isdigit():
+                error_label.configure(text="Max. 3 Ziffern")
+                return
+            update_display()
+
+        self._build_box_id_numpad(content, press)
+
+        btn_frame = ctk.CTkFrame(content, fg_color="transparent")
+        btn_frame.pack(pady=(8, 12))
+
+        def apply_value():
+            new_value = value["text"].strip()
+            if new_value and (len(new_value) != 3 or not new_value.isdigit()):
+                error_label.configure(text="Genau 3 Ziffern")
+                return
+
+            self._box_id_value = new_value
+            if new_value:
+                self._box_id_locked = True
+            self._update_box_id_display()
+            if hasattr(self, "box_id_error"):
+                self.box_id_error.configure(text="")
+            try:
+                dialog.grab_release()
+            except Exception:
+                pass
+            dialog.destroy()
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Abbrechen",
+            font=FONTS["small"],
+            width=120,
+            height=38,
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["bg_card"],
+            text_color=COLORS["text_primary"],
+            command=dialog.destroy
+        ).pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Übernehmen",
+            font=FONTS["small"],
+            width=130,
+            height=38,
+            fg_color=COLORS["success"],
+            hover_color="#22aa44",
+            command=apply_value
+        ).pack(side="left", padx=5)
+
+    def _format_box_id_display_value(self, value: str) -> str:
+        """Formatiert einen beliebigen Box-ID-Wert für Popup/Anzeige."""
+        return " ".join(str(value or "").ljust(3, "_"))
+
+    def _build_box_id_numpad(self, parent, command):
+        """Baut den Box-ID-Ziffernblock im Popup."""
+        numpad_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        numpad_frame.pack(pady=(8, 0))
+
+        buttons = [
+            ["1", "2", "3", "4", "5"],
+            ["6", "7", "8", "9", "0"],
+            ["⌫", "Löschen"],
+        ]
+
+        for row in buttons:
+            row_frame = ctk.CTkFrame(numpad_frame, fg_color="transparent")
+            row_frame.pack()
+            for key in row:
+                is_digit = key.isdigit()
+                btn_width = 58 if is_digit or key == "⌫" else 134
+                ctk.CTkButton(
+                    row_frame,
+                    text=key,
+                    width=btn_width,
+                    height=42,
+                    font=FONTS["button"],
+                    fg_color=COLORS["bg_light"] if is_digit else COLORS["bg_card"],
+                    hover_color=COLORS["bg_card"] if is_digit else COLORS["primary_dark"],
+                    text_color=COLORS["text_primary"],
+                    corner_radius=SIZES["corner_radius_small"],
+                    command=lambda value=key: command(value)
+                ).pack(side="left", padx=3, pady=3)
+
+    def _build_small_numpad(self, parent, command, include_confirm: bool = False):
+        """Baut einen kompakten 3x4-Ziffernblock für PIN-Abfragen."""
+        buttons = [
+            ["1", "2", "3"],
+            ["4", "5", "6"],
+            ["7", "8", "9"],
+            ["⌫", "0", "✓" if include_confirm else ""],
+        ]
+
+        numpad_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        numpad_frame.pack(pady=6)
+
+        for row in buttons:
+            row_frame = ctk.CTkFrame(numpad_frame, fg_color="transparent")
+            row_frame.pack()
+            for key in row:
+                if not key:
+                    ctk.CTkLabel(row_frame, text="", width=56, height=56).pack(side="left", padx=3, pady=3)
+                    continue
+
+                ctk.CTkButton(
+                    row_frame,
+                    text=key,
+                    width=56,
+                    height=56,
+                    font=("Segoe UI", 18),
+                    fg_color=COLORS["bg_light"] if key.isdigit() else COLORS["bg_card"],
+                    hover_color=COLORS["bg_card"] if key.isdigit() else COLORS["primary_dark"],
+                    corner_radius=SIZES["corner_radius_small"],
+                    command=lambda value=key: command(value)
+                ).pack(side="left", padx=3, pady=3)
+
+    def _get_box_id_value(self) -> str:
+        """Liest die Box-ID aus der Touch-Eingabe oder dem alten Entry-Fallback."""
+        if hasattr(self, "_box_id_value"):
+            return str(self._box_id_value).strip()
+        if hasattr(self, "box_id_entry"):
+            return self.box_id_entry.get().strip()
+        return ""
 
     def _sanitize_box_id_entry(self):
         """Erlaubt nur maximal drei Ziffern im Box-ID-Feld."""
@@ -1478,10 +2152,25 @@ class AdminDialog(ctk.CTkToplevel):
             command=self._execute_test_print
         ).pack(pady=(5, 12))
 
-    def _execute_test_print(self):
+    def _execute_test_print(
+        self,
+        status_label=None,
+        offset_x_slider=None,
+        offset_y_slider=None,
+        zoom_slider=None,
+        printer_name: Optional[str] = None,
+    ):
         """Führt einen Testdruck mit Platzhalter-Bildern aus"""
-        self._test_print_status.configure(
-            text="Testdruck wird vorbereitet...", text_color=COLORS["info"]
+        status_label = status_label or self._test_print_status
+        offset_x_slider = offset_x_slider or self.offset_x_slider
+        offset_y_slider = offset_y_slider or self.offset_y_slider
+        zoom_slider = zoom_slider or self.zoom_slider
+
+        def set_status(text: str, color: str):
+            self.after(0, lambda: status_label.configure(text=text, text_color=color))
+
+        status_label.configure(
+            text=self._tr("service.test_print_preparing"), text_color=COLORS["info"]
         )
         self.update_idletasks()
 
@@ -1497,10 +2186,7 @@ class AdminDialog(ctk.CTkToplevel):
                 from PIL import ImageWin  # noqa: F401
             except ImportError as e:
                 logger.error(f"Testdruck: pywin32-ImportError: {e}", exc_info=True)
-                self.after(0, lambda: self._test_print_status.configure(
-                    text="Druck nur unter Windows verfügbar (pywin32 fehlt)",
-                    text_color=COLORS["warning"]
-                ))
+                set_status(t(self.config_data, "final.print_windows_only"), COLORS["warning"])
                 return
 
             try:
@@ -1510,34 +2196,33 @@ class AdminDialog(ctk.CTkToplevel):
                 import tempfile
                 from pathlib import Path
 
-                # Template laden (aktives Template oder Default)
+                # Template laden: zuerst den wirklich aktiven App-Zustand,
+                # damit Event-Testdrucke das Kunden-Template verwenden.
                 app = self.parent_window._photobooth_app if hasattr(self.parent_window, '_photobooth_app') else None
                 template_path = None
                 overlay = None
                 boxes = []
 
-                # 1. Aktives Template aus der App
-                if app and hasattr(app, 'template_path') and app.template_path:
+                # 1. Bereits geladenes Event-Template aus der App
+                if app and getattr(app, "template_boxes", None):
+                    boxes = app.template_boxes
+                    overlay = getattr(app, "overlay_image", None)
+                    template_path = getattr(app, "template_path", None) or "aktives Event-Template"
+
+                # 2. Aktiver Template-Pfad aus der App
+                if not boxes and app and hasattr(app, 'template_path') and app.template_path:
                     template_path = app.template_path
-                # 2. Config-Template
-                if not template_path:
+
+                # 3. Config-Template
+                if not boxes and not template_path:
                     paths = self.config_data.get("template_paths", {})
                     template_path = paths.get("template1", "")
 
-                if template_path and os.path.isfile(template_path):
+                if not boxes and template_path and os.path.isfile(template_path):
                     overlay, boxes = TemplateLoader.load(template_path, use_cache=False)
 
                 if not boxes:
-                    # Fallback: Default-Template
-                    from src.templates.default import get_default_template_path
-                    default_path = get_default_template_path()
-                    if default_path:
-                        overlay, boxes = TemplateLoader.load(default_path, use_cache=False)
-
-                if not boxes:
-                    self.after(0, lambda: self._test_print_status.configure(
-                        text="Kein Template gefunden!", text_color=COLORS["error"]
-                    ))
+                    set_status(self._tr("service.test_print_no_template"), COLORS["error"])
                     return
 
                 # Platzhalter-Bilder erzeugen (grau mit "TEST" Text)
@@ -1561,7 +2246,7 @@ class AdminDialog(ctk.CTkToplevel):
                     test_photos.append(img)
 
                 # Template rendern
-                renderer = TemplateRenderer()
+                renderer = app.renderer if app and hasattr(app, "renderer") else TemplateRenderer()
                 result = renderer.render(test_photos, boxes, overlay)
 
                 # Temporär speichern
@@ -1569,36 +2254,41 @@ class AdminDialog(ctk.CTkToplevel):
                 result_rgb = result.convert("RGB")
                 result_rgb.save(str(temp_path), "JPEG", quality=95)
 
-                self.after(0, lambda: self._test_print_status.configure(
-                    text="Wird gedruckt...", text_color=COLORS["info"]
-                ))
+                set_status(t(self.config_data, "final.printing"), COLORS["info"])
 
                 # GDI-Druck (gleiche Logik wie final.py)
                 import win32print
                 import win32ui
                 from PIL import ImageWin
 
-                # Drucker-Name: aktueller Wert aus Dropdown
-                printer_name = self.printer_dropdown.get() if hasattr(self, 'printer_dropdown') else ""
-                if printer_name.startswith("⭐ "):
-                    printer_name = printer_name[2:].replace(" (Standard)", "")
-                if not printer_name:
-                    printer_name = win32print.GetDefaultPrinter()
+                # Drucker-Name: explizit, aktueller Dropdown-Wert oder Windows-Default
+                selected_printer = printer_name
+                if selected_printer is None:
+                    selected_printer = self.printer_dropdown.get() if hasattr(self, 'printer_dropdown') else ""
+                if selected_printer.startswith("⭐ "):
+                    selected_printer = selected_printer[2:].replace(" (Standard)", "")
+                if not selected_printer:
+                    selected_printer = win32print.GetDefaultPrinter()
 
                 available = [p[2] for p in win32print.EnumPrinters(
                     win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
                 )]
-                if printer_name not in available:
-                    self.after(0, lambda: self._test_print_status.configure(
-                        text=f"Drucker '{printer_name}' nicht gefunden!",
-                        text_color=COLORS["error"]
-                    ))
-                    return
+                if selected_printer not in available:
+                    from src.printer import find_matching_printer
+                    matched = find_matching_printer(selected_printer, available)
+                    if matched:
+                        selected_printer = matched
+                    else:
+                        set_status(
+                            t(self.config_data, "final.printer_missing", printer=selected_printer),
+                            COLORS["error"]
+                        )
+                        return
 
                 # Aktuelle Slider-Werte nehmen (nicht config_data — die sind erst nach Speichern aktuell!)
-                offset_x = int(self.offset_x_slider.get())
-                offset_y = int(self.offset_y_slider.get())
-                zoom = int(self.zoom_slider.get()) / 100
+                offset_x = int(offset_x_slider.get())
+                offset_y = int(offset_y_slider.get())
+                zoom = int(zoom_slider.get()) / 100
 
                 img = Image.open(temp_path)
                 base_width = int(1772 * zoom)
@@ -1626,7 +2316,7 @@ class AdminDialog(ctk.CTkToplevel):
                 draw_y = offset_y + center_offset_y
 
                 hDC = win32ui.CreateDC()
-                hDC.CreatePrinterDC(printer_name)
+                hDC.CreatePrinterDC(selected_printer)
                 hDC.StartDoc("Fexobooth Testdruck")
                 hDC.StartPage()
                 dib = ImageWin.Dib(img)
@@ -1646,33 +2336,28 @@ class AdminDialog(ctk.CTkToplevel):
                 from src.storage.printer_lifetime import get_printer_lifetime
                 get_printer_lifetime().increment()
 
-                self.after(0, lambda: self._test_print_status.configure(
-                    text=f"Testdruck gesendet an '{printer_name}'",
-                    text_color=COLORS["success"]
-                ))
-                logger.info(f"Testdruck gesendet an '{printer_name}'")
+                set_status(
+                    self._tr("service.test_print_sent", printer=selected_printer),
+                    COLORS["success"]
+                )
+                logger.info(f"Testdruck gesendet an '{selected_printer}' ({template_path})")
 
             except ImportError as e:
                 # pywin32 wurde oben separat geprueft — dieser Pfad fängt jetzt
                 # nur noch Imports von PIL/TemplateLoader/TemplateRenderer ab.
                 # Konkrete Modul-Meldung statt irreführender "nur Windows".
                 logger.error(f"Testdruck: ImportError (nicht pywin32): {e}", exc_info=True)
-                self.after(0, lambda m=str(e): self._test_print_status.configure(
-                    text=f"Modul fehlt: {m}",
-                    text_color=COLORS["error"]
-                ))
+                set_status(t(self.config_data, "final.module_missing", error=e), COLORS["error"])
             except Exception as e:
                 logger.error(f"Testdruck Fehler: {e}")
                 import traceback
                 logger.error(traceback.format_exc())
                 msg = str(e)
                 if "1801" in msg:
-                    msg = "Drucker nicht erreichbar!"
+                    msg = t(self.config_data, "final.printer_not_reachable")
                 elif "offline" in msg.lower():
-                    msg = "Drucker ist offline!"
-                self.after(0, lambda m=msg: self._test_print_status.configure(
-                    text=f"Fehler: {m}", text_color=COLORS["error"]
-                ))
+                    msg = t(self.config_data, "final.printer_offline")
+                set_status(t(self.config_data, "service.reload_error", error=msg), COLORS["error"])
 
         thread = threading.Thread(target=do_print, daemon=True)
         thread.start()
@@ -2691,12 +3376,11 @@ class AdminDialog(ctk.CTkToplevel):
         logger.info("=== Admin-Einstellungen speichern ===")
 
         # Box-ID: keine automatische Vergabe, leer erlaubt, sonst exakt 3 Ziffern.
-        if hasattr(self, "box_id_entry"):
-            box_id = self.box_id_entry.get().strip()
+        if hasattr(self, "_box_id_value") or hasattr(self, "box_id_entry"):
+            box_id = self._get_box_id_value()
             if box_id and (len(box_id) != 3 or not box_id.isdigit()):
                 if hasattr(self, "box_id_error"):
                     self.box_id_error.configure(text="Genau 3 Ziffern")
-                self.box_id_entry.focus_set()
                 logger.warning(f"Ungültige Box-ID verworfen: {box_id!r}")
                 return
             self.config_data["box_id"] = box_id
