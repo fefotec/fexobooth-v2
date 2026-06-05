@@ -40,11 +40,12 @@ class SystemTestDialog(ctk.CTkToplevel):
     Hat einen globalen Timeout und Abbrechen-Button für den Notfall.
     """
 
-    def __init__(self, parent, app, on_complete: callable):
+    def __init__(self, parent, app, on_complete: callable, on_adjust_print: callable = None):
         super().__init__(parent)
 
         self.app = app
         self._on_complete = on_complete
+        self._on_adjust_print = on_adjust_print
         self._test_photos: List[Image.Image] = []
         self._test_result: Optional[Image.Image] = None
         self._test_file: Optional[Path] = None
@@ -190,6 +191,30 @@ class SystemTestDialog(ctk.CTkToplevel):
             hover_color=COLORS["primary_hover"],
             corner_radius=SIZES["corner_radius"],
             command=self._close
+        )
+
+        self.adjust_print_btn = ctk.CTkButton(
+            self._btn_frame,
+            text="Druck korrigieren",
+            font=FONTS["button_large"],
+            width=220,
+            height=50,
+            fg_color=COLORS["primary"],
+            hover_color=COLORS["primary_hover"],
+            corner_radius=SIZES["corner_radius"],
+            command=self._open_print_adjustment
+        )
+
+        self.new_event_btn = ctk.CTkButton(
+            self._btn_frame,
+            text="Jetzt herunterfahren",
+            font=FONTS["button_large"],
+            width=260,
+            height=50,
+            fg_color=COLORS["warning"],
+            hover_color="#ff6600",
+            corner_radius=SIZES["corner_radius"],
+            command=self._shutdown_for_new_event
         )
 
     def _update_step(self, index: int, status: str, error_msg: str = ""):
@@ -602,7 +627,40 @@ class SystemTestDialog(ctk.CTkToplevel):
             logger.warning(f"System-Test: FEHLGESCHLAGEN - {self._errors}")
 
         self.result_label.pack(pady=(10, 5))
+        if not self._errors:
+            self.adjust_print_btn.pack(pady=(5, 0))
+            self.new_event_btn.pack(pady=(5, 0))
         self.ok_btn.pack(pady=(5, 20))
+
+    def _open_print_adjustment(self):
+        """Schließt den Testdialog und öffnet die eingeschränkte Druckkorrektur."""
+        self._destroyed = True
+        self._cancelled.set()
+        callback = self._on_adjust_print
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+        self.destroy()
+        if callback:
+            callback()
+
+    def _shutdown_for_new_event(self):
+        """Fährt Windows nach einem erfolgreichen Event-Test herunter."""
+        import subprocess
+
+        self.result_label.configure(
+            text="Windows wird heruntergefahren...",
+            text_color=COLORS["warning"]
+        )
+        self.adjust_print_btn.configure(state="disabled")
+        self.new_event_btn.configure(state="disabled")
+        self.ok_btn.configure(state="disabled")
+        logger.info("System-Test: Herunterfahren bestätigt")
+        subprocess.Popen(
+            ["shutdown", "/s", "/f", "/t", "5", "/c", "FexoBooth: Neues Event bereit"],
+            creationflags=0x08000000
+        )
 
     def _close(self):
         """Dialog schließen"""

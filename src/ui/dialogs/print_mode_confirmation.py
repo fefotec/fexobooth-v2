@@ -15,11 +15,20 @@ logger = get_logger(__name__)
 class PrintModeConfirmationDialog(ctk.CTkToplevel):
     """Druck-Modus Bestätigung - Fullscreen Overlay"""
 
-    def __init__(self, parent, print_enabled: bool, booking_id: str = "",
-                 on_confirm: callable = None):
+    def __init__(
+        self,
+        parent,
+        print_enabled: bool,
+        booking_id: str = "",
+        on_confirm: callable = None,
+        on_adjust_print: callable = None,
+        on_shutdown: callable = None
+    ):
         super().__init__(parent)
 
         self._on_confirm = on_confirm
+        self._on_adjust_print = on_adjust_print
+        self._on_shutdown = on_shutdown
         self._print_enabled = print_enabled
 
         # Fullscreen Overlay
@@ -117,10 +126,45 @@ class PrintModeConfirmationDialog(ctk.CTkToplevel):
         )
         bar.pack(fill="x", padx=40, pady=(4, 16))
 
-        # OK-Button
         btn_w = min(280, int(card_w * 0.6))
         btn_h = max(50, min(60, int(screen_h * 0.07)))
-        ctk.CTkButton(
+
+        if self._on_adjust_print or self._on_shutdown:
+            actions_frame = ctk.CTkFrame(card, fg_color="transparent")
+            actions_frame.pack(pady=(0, 12))
+
+            if self._on_adjust_print:
+                self.adjust_print_btn = ctk.CTkButton(
+                    actions_frame,
+                    text="Druck korrigieren",
+                    font=FONTS["button"],
+                    width=btn_w,
+                    height=btn_h,
+                    fg_color=COLORS["primary"],
+                    hover_color=COLORS["primary_hover"],
+                    text_color="#ffffff",
+                    corner_radius=SIZES["corner_radius"],
+                    command=self._adjust_print
+                )
+                self.adjust_print_btn.pack(pady=(0, 8))
+
+            if self._on_shutdown:
+                self.shutdown_btn = ctk.CTkButton(
+                    actions_frame,
+                    text="Jetzt herunterfahren",
+                    font=FONTS["button"],
+                    width=btn_w,
+                    height=btn_h,
+                    fg_color=COLORS["warning"],
+                    hover_color="#ff6600",
+                    text_color="#ffffff",
+                    corner_radius=SIZES["corner_radius"],
+                    command=self._shutdown
+                )
+                self.shutdown_btn.pack()
+
+        # OK-Button
+        self.ok_btn = ctk.CTkButton(
             card,
             text="OK",
             font=FONTS["button_large"],
@@ -131,7 +175,30 @@ class PrintModeConfirmationDialog(ctk.CTkToplevel):
             text_color="#ffffff",
             corner_radius=SIZES["corner_radius"],
             command=self._confirm
-        ).pack(pady=(0, 28))
+        )
+        self.ok_btn.pack(pady=(0, 28))
+
+    def _adjust_print(self):
+        """Dialog schließen und Druckkorrektur erneut öffnen."""
+        logger.info("Druck-Modus: Druckkorrektur geöffnet")
+        callback = self._on_adjust_print
+        self.grab_release()
+        self.destroy()
+        if callback:
+            callback()
+
+    def _shutdown(self):
+        """Windows herunterfahren."""
+        logger.info("Druck-Modus: Herunterfahren bestätigt")
+        if hasattr(self, "shutdown_btn"):
+            self.shutdown_btn.configure(text="Fährt herunter...")
+        for attr in ("adjust_print_btn", "shutdown_btn", "ok_btn"):
+            btn = getattr(self, attr, None)
+            if btn:
+                btn.configure(state="disabled")
+        callback = self._on_shutdown
+        if callback:
+            callback()
 
     def _confirm(self):
         """OK gedrückt - Dialog schließen und Callback aufrufen"""
