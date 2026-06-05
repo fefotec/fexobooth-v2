@@ -24,6 +24,24 @@ if errorlevel 1 (
 echo Deaktiviere Windows Update...
 echo.
 
+set "LOCKDOWN_SCRIPT=%~dp0..\..\setup\disable_windows_update.ps1"
+if not exist "%LOCKDOWN_SCRIPT%" set "LOCKDOWN_SCRIPT=%~dp0..\setup\disable_windows_update.ps1"
+if not exist "%LOCKDOWN_SCRIPT%" set "LOCKDOWN_SCRIPT=C:\FexoBooth\setup\disable_windows_update.ps1"
+
+if exist "%LOCKDOWN_SCRIPT%" (
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%LOCKDOWN_SCRIPT%" -InstallDir "C:\FexoBooth"
+    set "LOCKDOWN_EXIT=%ERRORLEVEL%"
+    echo.
+    echo PowerShell-Lockdown beendet mit Code %LOCKDOWN_EXIT%.
+    echo Details: C:\FexoBooth\logs\windows_update_lockdown.log
+    echo.
+    pause
+    exit /b %LOCKDOWN_EXIT%
+)
+
+echo [INFO] Neues Lockdown-Script nicht gefunden, nutze alten Fallback.
+echo.
+
 :: ─────────────────────────────────────────────
 :: 1. Windows Update Dienst stoppen und deaktivieren
 :: ─────────────────────────────────────────────

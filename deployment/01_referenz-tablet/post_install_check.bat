@@ -100,11 +100,29 @@ if %AUTOSTART_FOUND%==1 (
 :: Windows Update pruefen (muss deaktiviert sein!)
 :: ─────────────────────────────────────────────
 
+set "WU_START="
+set "WU_POLICY_OK=0"
+set "WU_LOCAL_SOURCE_OK=0"
+set "WU_LOCKDOWN_TASK_OK=0"
+set "WU_LOCKDOWN_OK=0"
+
 for /f "tokens=3" %%A in ('sc qc wuauserv 2^>nul ^| findstr START_TYPE') do set WU_START=%%A
-if "%WU_START%"=="DISABLED" (
-    echo [OK] Windows Update Dienst ist deaktiviert
+reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" /v NoAutoUpdate 2>nul | findstr /I "0x1" >nul
+if not errorlevel 1 set "WU_POLICY_OK=1"
+
+reg query "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" /v WUServer 2>nul | findstr /I "127.0.0.1:9" >nul
+if not errorlevel 1 set "WU_LOCAL_SOURCE_OK=1"
+
+schtasks /Query /TN "FexoBooth Windows Update Lockdown Startup" >nul 2>&1
+if not errorlevel 1 set "WU_LOCKDOWN_TASK_OK=1"
+
+if "%WU_START%"=="DISABLED" if "%WU_POLICY_OK%"=="1" if "%WU_LOCAL_SOURCE_OK%"=="1" if "%WU_LOCKDOWN_TASK_OK%"=="1" set "WU_LOCKDOWN_OK=1"
+
+if "%WU_LOCKDOWN_OK%"=="1" (
+    echo [OK] Windows Update Lockdown aktiv
 ) else (
-    echo [FEHLER] Windows Update ist NICHT deaktiviert!
+    echo [FEHLER] Windows Update Lockdown ist NICHT vollstaendig aktiv!
+    echo          Dienst: %WU_START% ^| Policy: %WU_POLICY_OK% ^| Local-WSUS: %WU_LOCAL_SOURCE_OK% ^| Re-Assert-Task: %WU_LOCKDOWN_TASK_OK%
     echo          Fuehre windows_update_deaktivieren.bat als Admin aus
     set /a ERRORS+=1
 )
