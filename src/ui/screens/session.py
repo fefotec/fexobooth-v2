@@ -45,6 +45,9 @@ class SessionScreen(ctk.CTkFrame):
         self._resuming_after_video = False  # Flag: Session nach Video fortsetzen
         self._redo_visible = False  # Redo-Button sichtbar?
         self._capture_in_progress = False  # Capture läuft im Hintergrund
+        self._camera_restore_in_progress = False  # Preview-Auflösung wird im Hintergrund wiederhergestellt
+        self._waiting_for_restore_countdown = False
+        self._capture_visible_started_at = 0.0
 
         # Performance-Einstellungen
         self._low_perf = self.config.get("low_performance_mode", {})
@@ -273,8 +276,8 @@ class SessionScreen(ctk.CTkFrame):
                 self.after(self._frame_delay_ms, self._update_live_view)
             return
 
-        # Kein Kamera-Zugriff während Capture im Hintergrund (Race Condition vermeiden)
-        if not self._capture_in_progress:
+        # Kein Kamera-Zugriff während Capture/Restore im Hintergrund (Race Condition vermeiden)
+        if not self._capture_in_progress and not self._camera_restore_in_progress:
             frame = self.app.camera_manager.get_frame()
             if frame is not None:
                 # Kamera-Frame aufbereiten (spiegeln, rotieren)
@@ -578,6 +581,14 @@ class SessionScreen(ctk.CTkFrame):
 
     def _start_countdown(self):
         """Startet den Countdown"""
+        if self._camera_restore_in_progress:
+            if not self._waiting_for_restore_countdown:
+                logger.info("Countdown wartet auf Preview-Restore")
+                self._waiting_for_restore_countdown = True
+            self.after(100, self._start_countdown)
+            return
+
+        self._waiting_for_restore_countdown = False
         logger.info(f"=== Starte Countdown für Foto {self.app.current_photo_index + 1}/{self.total_photos} ===")
         self.is_countdown_active = True
         self.countdown_value = self.config.get("countdown_time", 5)
@@ -613,6 +624,7 @@ class SessionScreen(ctk.CTkFrame):
         # Flash ausschalten, Kamera-Zugriff für LiveView pausieren
         self.show_flash = False
         self._capture_in_progress = True
+        self._capture_visible_started_at = time.perf_counter()
 
         # Lade-Anzeige während Capture im Hintergrund läuft
         self._capture_dots = 0
@@ -649,6 +661,7 @@ class SessionScreen(ctk.CTkFrame):
 
     def _capture_photo_worker(self):
         """Worker-Thread: Führt den blockierenden Kamera-Capture durch"""
+        worker_started_at = time.perf_counter()
         photo = None
 
         try:
@@ -678,7 +691,15 @@ class SessionScreen(ctk.CTkFrame):
                 logger.info(f"Webcam Capture: {capture_w}x{capture_h}")
 
                 if hasattr(self.app.camera_manager, 'get_high_res_frame'):
-                    frame = self.app.camera_manager.get_high_res_frame(capture_w, capture_h)
+                    try:
+                        frame = self.app.camera_manager.get_high_res_frame(
+                            capture_w,
+                            capture_h,
+                            restore_preview=False
+                        )
+                    except TypeError:
+                        # Kompatibilität mit Kamera-Managern ohne restore_preview-Parameter.
+                        frame = self.app.camera_manager.get_high_res_frame(capture_w, capture_h)
                     if frame is not None:
                         logger.info(f"High-Res: {frame.shape[1]}x{frame.shape[0]}")
                     else:
@@ -697,12 +718,23 @@ class SessionScreen(ctk.CTkFrame):
         except Exception as e:
             logger.error(f"Capture-Worker Fehler: {e}")
 
+        worker_ms = (time.perf_counter() - worker_started_at) * 1000
+        logger.info(
+            "Capture-Worker Timing: "
+            f"total={worker_ms:.0f}ms, photo={'ok' if photo is not None else 'failed'}"
+        )
+
         # Ergebnis zurück auf UI-Thread geben
         self.after(0, lambda p=photo: self._on_capture_complete(p))
 
     def _on_capture_complete(self, photo: Optional[Image.Image]):
         """Callback auf UI-Thread nach abgeschlossenem Capture"""
         self._capture_in_progress = False
+        if self._capture_visible_started_at > 0:
+            visible_ms = (time.perf_counter() - self._capture_visible_started_at) * 1000
+            logger.info(f"Sichtbare Capture-Wartezeit bis Fotoanzeige: {visible_ms:.0f}ms")
+            self._capture_visible_started_at = 0.0
+
         # Lade-Anzeige aufräumen
         self.preview_label.configure(text="", font=("Segoe UI", 1))
         if hasattr(self, '_loading_label'):
@@ -729,9 +761,40 @@ class SessionScreen(ctk.CTkFrame):
             # WICHTIG: Timer immer setzen (auch wenn Button-Leiste fehlschlägt)
             self.photo_display_until = time.time() + display_time
             logger.info(f"Foto-Anzeige für {display_time}s (buttons={self._redo_visible})")
+
+            # Webcam nach der sichtbaren Fotoaufnahme zurück auf Preview-Auflösung
+            # schalten. Das passiert parallel während der Fotoanzeige.
+            self._restore_preview_after_capture()
         else:
             logger.error("Foto-Aufnahme fehlgeschlagen")
+            self._restore_preview_after_capture()
             self._next_photo_or_finish()
+
+    def _restore_preview_after_capture(self):
+        """Stellt die Preview-Auflösung nachgelagert im Hintergrund wieder her."""
+        if not hasattr(self.app.camera_manager, 'restore_preview_resolution'):
+            return
+        if self._camera_restore_in_progress:
+            return
+
+        self._camera_restore_in_progress = True
+        logger.info("Preview-Restore: Background-Task gestartet")
+
+        def _restore():
+            ok = False
+            try:
+                ok = self.app.camera_manager.restore_preview_resolution()
+            except Exception as e:
+                logger.error(f"Preview-Restore Fehler: {e}")
+            finally:
+                self.after(0, lambda success=ok: self._on_preview_restore_complete(success))
+
+        threading.Thread(target=_restore, daemon=True).start()
+
+    def _on_preview_restore_complete(self, success: bool):
+        """UI-Thread Callback nach Preview-Restore."""
+        self._camera_restore_in_progress = False
+        logger.info(f"Preview-Restore abgeschlossen: {'ok' if success else 'nicht bestätigt'}")
 
     def _save_photo_async(self, photo: Image.Image, index: int):
         """Speichert Foto im Hintergrund"""
