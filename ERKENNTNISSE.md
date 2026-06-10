@@ -304,6 +304,24 @@ Betrifft: `_display_preview()`, `_build_flash_cache()`, `_show_main_preview()`, 
 
 ## Lessons Learned
 
+### Hotline-KI: Template/Layout ≠ Live-View Overlay
+
+| | |
+|---|---|
+| **Problem** | Nach V2-Rollout fragten Kunden häufig nach „Layout", „1 statt 4 Bilder", „Wunsch-Template" oder „falschem Template". Felix leitete dabei teilweise fälschlich zu `Live-View Overlay` an |
+| **Ursache** | Der Prompt kannte nur wenige PIN-2015-Menüpunkte und vermischte Live-View-Anzeige mit Drucklayout/Template-Auswahl |
+| **Lösung** | Prompt trennt jetzt strikt: `Live-View Overlay` nur für Kamerabild ohne Vorschau-Rahmen; Einzelbild/Multiprint sind kostenpflichtige Upgrades; fehlendes Wunsch-Template ist Callback; Default-Template/4 Bilder kann über `Template wählen` behandelt werden |
+| **Merke** | Hotline-Prompts müssen Produktlogik und UI-Funktionen exakt trennen. Ein Menüpunkt mit ähnlichem Namen darf nicht als allgemeine Lösung für Layout-/Template-Probleme genutzt werden |
+
+### Hotline-KI: „Limit erreicht" ist nicht automatisch ein Druckerfehler
+
+| | |
+|---|---|
+| **Problem** | Kunden meldeten „Limit erreicht" teils zusammen mit Druckproblemen; Felix interpretierte das als technische Störung |
+| **Ursache** | Die Meldung bedeutet im Normalfall, dass nur ein Ausdruck erlaubt ist und bereits 1× gedruckt wurde |
+| **Lösung** | Prompt erklärt „Limit erreicht" als Hinweis auf Druckanzahl/MultiPrint. Nur wenn der Drucker tatsächlich gar nicht druckt, wird zum Drucker-Runbook gewechselt |
+| **Merke** | Display-Meldungen nach Geschäftslogik und Hardwarefehler trennen. Sonst löst der Assistent kostenpflichtige Feature-Grenzen mit falschem Troubleshooting |
+
 ### Hotspot: Tethering API braucht mindestens EIN gespeichertes WLAN-Profil
 
 | | |

@@ -4,6 +4,24 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-06-10
+
+### Hotline-Prompt „Felix" nach V2-Anrufauswertung nachgeschärft
+
+Auswertung der Gmail/Fonio-Anrufe mit Betreff „Anruf bei Technik-KI" seit V2-Rollout am 2026-05-20. Der Prompt unter [support/HOTLINE_PROMPT_FELIX.md](support/HOTLINE_PROMPT_FELIX.md) wurde anhand der bestätigten Support-Regeln aktualisiert:
+
+- **Template/Layout getrennt von Live-View Overlay:** Felix darf `Live-View Overlay` nicht mehr als Lösung für Drucklayout, Wunsch-Template oder 1-statt-4-Bilder nennen
+- **Einzelbild & Multiprint:** Als kostenpflichtige Aufpreisfunktionen dokumentiert, nachträglich im Kundenbereich buchbar; Kunde wurde per Mail bei Ankunft der Box informiert
+- **Wunsch-Template fehlt:** Kein Service-Menü-Fix, sondern Callback, weil Mitarbeiter prüfen müssen
+- **Default-Template erklärt:** 4 Bilder ohne eigenes Template können normal sein, wenn kein Template ausgewählt wurde; dann `Template wählen` anbieten
+- **Service-Menü PIN 2015 erweitert:** `Template wählen` und `Template neu einlesen` aufgenommen; `Druck-Korrektur` bewusst noch nicht anbieten
+- **USB-Speicherung:** Nach Port-/Neustartversuchen E-Mail an `problem@fexobox.de`; Bilder werden von der Festplatte gesichert und als Download bereitgestellt
+- **„Limit erreicht":** Als Hinweis auf 1 erlaubten Ausdruck/MultiPrint-Upgrade behandelt, nicht als Papier- oder Druckerfehler
+- **Dauerlicht statt Blitz:** Fotos dunkel/„Blitz geht nicht" führt zum weißen Drehschalter für Dauerlicht in der Box
+- **Callback-Erfassung:** Rückrufnummer wird nicht mehr abgefragt, Rückruf erfolgt automatisch an die anrufende Nummer
+
+---
+
 ## 2026-05-20
 
 ### Hotline-Prompt „Felix" auf V2-only umgestellt

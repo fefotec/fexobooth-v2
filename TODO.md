@@ -12,6 +12,7 @@ Aufgabenliste mit Prioritäten.
 
 ## Mittel 🟡
 
+- [ ] Hotline-Prompt: `Druck-Korrektur` erst aufnehmen, wenn die Funktion offiziell ausgerollt und der Supportablauf bestätigt ist
 - [ ] Admin-Menü: "Buchung zurücksetzen" Button
 - [ ] Canon DSLR Live-View optimieren (EVF_INTERNAL_ERROR Retry-Logik)
 - [ ] Print-Queue Anzeige
