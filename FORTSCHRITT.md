@@ -4,6 +4,26 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-06-11
+
+### v2.4.6 – Box-ID update-sicher außerhalb des Installationsordners
+
+**Problem aus dem Test:** Trotz des v2.4.5-Hotfixes ging die Box-ID beim WLAN-Update von GitHub erneut verloren.
+
+**Diagnose:** Selbst-Updater-Bootstrap-Problem. Das ersetzende BAT-Script wird von der *alten*, laufenden Version erzeugt ([src/updater.py](src/updater.py#L397)). Beim Update v2.4.4 → v2.4.5 lief also noch das fehlerhafte BAT von v2.4.4, das die in `_internal/config.json` liegende Box-ID nicht rettete. Der v2.4.5-Schutz greift prinzipbedingt erst beim *übernächsten* Update.
+
+**Lösung (in [src/config/config.py](src/config/config.py)):**
+- Neue Funktionen `_persistent_store_path()`, `_read_persistent_identity()`, `_write_persistent_identity()`, `_recover_identity_from_store()`
+- Box-ID wird zusätzlich nach `C:\ProgramData\FexoBox\box_id.json` gespiegelt (Dev/macOS: `~/.fexobooth/box_id.json`) — ein Ort, den kein Update-Script anfasst
+- `save_config()` spiegelt jede gültige Box-ID dorthin
+- `load_config()` holt die Box-ID von dort zurück, wenn `config.json` keine enthält, und schreibt sie zurück in `config.json`
+- Leere ID überschreibt den Speicher nie
+- Version-Bump auf 2.4.6, CHANGELOG + ERKENNTNISSE aktualisiert
+
+**Hinweis:** Boxen, die ihre ID schon beim v2.4.5-Update verloren haben, müssen sie einmalig neu setzen — danach dauerhaft geschützt. Logik mit isoliertem Smoke-Test verifiziert (alle 4 Fälle grün).
+
+---
+
 ## 2026-06-10
 
 ### Hotline-Prompt „Felix" nach V2-Anrufauswertung nachgeschärft

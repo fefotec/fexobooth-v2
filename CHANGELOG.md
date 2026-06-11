@@ -6,6 +6,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.6] - 2026-06-11 - Box-ID update-sicher außerhalb des Installationsordners
+
+### Behoben
+
+- **Box-ID konnte beim Update auf v2.4.5 trotzdem verloren gehen.** Ursache: Das Script, das beim OTA-Update die Dateien ersetzt, wird immer von der **alten, laufenden Version** erzeugt — nicht von der neuen. Eine Box, die von v2.4.4 (oder älter) auf v2.4.5 aktualisiert, führt also noch das fehlerhafte BAT-Script von v2.4.4 aus. Der v2.4.5-Schutz greift damit erst beim übernächsten Update (Selbst-Updater-Bootstrap-Problem).
+
+### Neu
+
+- **Box-ID wird zusätzlich außerhalb des Installationsordners gespeichert** (`C:\ProgramData\FexoBox\box_id.json`). Dieser Ort wird von keinem Update-Script jemals angefasst.
+- Beim Speichern der Box-ID (Admin-Menü) wird sie automatisch dorthin gespiegelt.
+- Beim Start wird die Box-ID von dort wiederhergestellt, falls `config.json` keine enthält — z.B. nach einem fehlerhaften Update.
+- Damit überlebt die Box-ID **jedes** Update, unabhängig davon, welche Version das ersetzende Script erzeugt hat oder ob künftig ein Fehler im Updater auftritt.
+
+> **Hinweis:** Boxen, die ihre ID bereits beim Update auf v2.4.5 verloren haben, müssen sie einmalig neu setzen. Danach ist sie dauerhaft geschützt.
+
+---
+
 ## [2.4.5] - 2026-06-11 - Hotfix: Box-ID bleibt bei Updates erhalten
 
 ### Behoben

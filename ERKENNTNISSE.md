@@ -6,6 +6,16 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### Selbst-Updater-Bootstrap: Der Fix wirkt erst beim NÄCHSTEN Update
+
+| | |
+|---|---|
+| **Problem** | v2.4.5 sollte den Box-ID-Verlust beim OTA-Update beheben, im Test ging die Box-ID aber **trotzdem** verloren |
+| **Ursache** | Beim OTA-Update erzeugt die **laufende (alte) Version** das BAT-Script, das danach die Dateien ersetzt (`create_update_script` in `src/updater.py`). Beim Update von v2.4.4 → v2.4.5 läuft also noch das **fehlerhafte** BAT von v2.4.4, das nur `config.json` im Root sicherte (nicht die Legacy-Config in `_internal/`). Der korrigierte BAT-Code aus v2.4.5 kommt erst beim übernächsten Update zum Einsatz |
+| **Entscheidung** | Identität (Box-ID) **außerhalb des Installationsordners** persistieren: `C:\ProgramData\FexoBox\box_id.json`. Dieser Pfad wird von keinem Update-Script angefasst. `save_config()` spiegelt die ID dorthin, `load_config()` holt sie zurück wenn `config.json` keine hat |
+| **Alternativen** | Windows-Registry (gleiche Wirkung, aber weniger transparent als eine Datei); nur BAT-Härtung (greift prinzipbedingt nie beim einführenden Update) |
+| **Merke** | Bei selbst-aktualisierenden Programmen gilt: Ein Fix am Update-Mechanismus schützt **nie** das Update, das ihn ausliefert — immer erst das danach. Kritische Daten (Lizenzschlüssel, Geräte-IDs, Seriennummern) deshalb grundsätzlich außerhalb des ersetzbaren Programmverzeichnisses ablegen |
+
 ### DirectShow-Enumeration: PnP-Reihenfolge ≠ OpenCV-Reihenfolge
 
 | | |

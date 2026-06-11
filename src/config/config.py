@@ -26,6 +26,88 @@ _LEGACY_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config.json"
 _IDENTITY_KEYS = ("box_id",)
 
 
+def _persistent_store_path() -> Path:
+    """Pfad zum update-sicheren Box-ID-Speicher AUSSERHALB des Installationsordners.
+
+    Hintergrund: config.json liegt im Installationsordner (neben der EXE bzw. in
+    alten Builds in _internal/). Beide können bei einem fehlerhaften OTA-Update
+    verloren gehen — genau das passiert beim Update FROM einer Version mit altem
+    BAT-Script, weil das ersetzende BAT immer von der ALTEN laufenden Version
+    erzeugt wird (Selbst-Updater-Bootstrap-Problem).
+
+    Deshalb spiegeln wir die Box-ID zusätzlich an einen Ort, den kein Update-BAT
+    jemals anfasst:
+    - Windows: %PROGRAMDATA%\\FexoBox\\box_id.json  (i.d.R. C:\\ProgramData\\FexoBox)
+    - sonst (Dev/macOS/Linux): ~/.fexobooth/box_id.json
+    """
+    if os.name == "nt":
+        base = os.environ.get("PROGRAMDATA") or os.environ.get("ALLUSERSPROFILE") or r"C:\ProgramData"
+        return Path(base) / "FexoBox" / "box_id.json"
+    return Path.home() / ".fexobooth" / "box_id.json"
+
+
+def _read_persistent_identity() -> Dict[str, Any]:
+    """Liest die im update-sicheren Speicher abgelegten Identity-Werte (Box-ID)."""
+    path = _persistent_store_path()
+    try:
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+    except Exception as e:
+        print(f"Persistenter Box-ID-Speicher nicht lesbar ({path}): {e}")
+    return {}
+
+
+def _write_persistent_identity(config: Dict[str, Any]) -> None:
+    """Spiegelt eine gültige Box-ID in den update-sicheren Speicher.
+
+    Wird bei jedem Speichern und beim Start aufgerufen. Schreibt NUR, wenn eine
+    nicht-leere Box-ID vorhanden ist — eine leere ID darf den vorhandenen
+    Speicher niemals überschreiben (sonst ginge der Schutz verloren).
+    """
+    identity = {
+        key: config.get(key)
+        for key in _IDENTITY_KEYS
+        if str(config.get(key, "") or "").strip()
+    }
+    if not identity:
+        return
+    path = _persistent_store_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(identity, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"Persistenter Box-ID-Speicher nicht schreibbar ({path}): {e}")
+
+
+def _recover_identity_from_store(config: Dict[str, Any]) -> bool:
+    """Holt fehlende Identity-Werte (Box-ID) aus dem update-sicheren Speicher.
+
+    Greift nur, wenn die geladene Config KEINE Box-ID hat — typischerweise nach
+    einem Update, das config.json im Installationsordner verloren hat.
+
+    Returns:
+        True, wenn eine Box-ID wiederhergestellt wurde.
+    """
+    if _has_identity(config):
+        return False
+
+    stored = _read_persistent_identity()
+    recovered = False
+    for key in _IDENTITY_KEYS:
+        value = str(stored.get(key, "") or "").strip()
+        if value:
+            config[key] = value
+            recovered = True
+
+    if recovered:
+        print(f"Box-ID aus update-sicherem Speicher wiederhergestellt: {config.get('box_id')!r}")
+    return recovered
+
+
 def load_config() -> Dict[str, Any]:
     """Lädt die Konfiguration"""
     global _config
@@ -45,9 +127,25 @@ def load_config() -> Dict[str, Any]:
     if usb_config:
         _deep_merge(config, usb_config, preserve_identity=True)
 
+    # Update-sicherer Box-ID-Speicher (ProgramData): Wenn weder lokale noch
+    # USB-Config eine Box-ID liefern, aber im update-sicheren Speicher eine steht,
+    # diese zurückholen. Schützt vor Box-ID-Verlust durch fehlerhafte Updates.
+    recovered = _recover_identity_from_store(config)
+
     apply_locale_to_config(config)
-    
+
     _config = config
+
+    if recovered:
+        # Wiederhergestellte Box-ID dauerhaft zurück in config.json schreiben,
+        # damit der Rest der App (und das Backup künftiger Updates) sie wieder sieht.
+        # save_config() spiegelt sie zugleich erneut in den update-sicheren Speicher.
+        save_config(config)
+    else:
+        # Gültige Box-ID in den update-sicheren Speicher spiegeln (z.B. beim ersten
+        # Start einer Version mit diesem Schutz, oder nach manuellem Setzen).
+        _write_persistent_identity(config)
+
     return config
 
 
@@ -61,6 +159,9 @@ def save_config(config: Dict[str, Any]) -> bool:
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
         _config = config
+        # Box-ID zusätzlich in den update-sicheren Speicher spiegeln, damit sie
+        # jedes Update überlebt — egal welche Version das ersetzende BAT erzeugt.
+        _write_persistent_identity(config)
         return True
     except Exception as e:
         print(f"Fehler beim Speichern der Config: {e}")
