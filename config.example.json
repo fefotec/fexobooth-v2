@@ -61,5 +61,5 @@
   "admin_button_alpha": 0.1,
   "hide_finish_button": true,
   "rotate_180": false,
-  "flash_duration": 300
+  "flash_duration": 100
 }

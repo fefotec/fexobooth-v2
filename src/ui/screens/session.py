@@ -48,6 +48,7 @@ class SessionScreen(ctk.CTkFrame):
         self._camera_restore_in_progress = False  # Preview-Auflösung wird im Hintergrund wiederhergestellt
         self._waiting_for_restore_countdown = False
         self._capture_visible_started_at = 0.0
+        self._shutter_flash_overlay = None
 
         # Performance-Einstellungen
         self._low_perf = self.config.get("low_performance_mode", {})
@@ -231,6 +232,7 @@ class SessionScreen(ctk.CTkFrame):
         self.is_live = False
         self.is_countdown_active = False
         self._hide_redo_button()
+        self._hide_shutter_flash()
         # Template-Overlay Cache freigeben (wird bei nächstem on_show neu gebaut)
         self._cached_template_composite = None
         self._cached_template_boxes_scaled = []
@@ -616,7 +618,7 @@ class SessionScreen(ctk.CTkFrame):
         # bevor die blocking Kamera-Aufnahme startet
         self.update_idletasks()
 
-        flash_duration = self.config.get("flash_duration", 300)
+        flash_duration = self.config.get("flash_duration", 100)
         self.after(flash_duration, self._capture_photo)
 
     def _capture_photo(self):
@@ -626,6 +628,9 @@ class SessionScreen(ctk.CTkFrame):
         self._capture_in_progress = True
         self._capture_visible_started_at = time.perf_counter()
 
+        # Kurzer echter Auslöse-Blitz: reines Tk-Overlay, keine Bildberechnung im LiveView.
+        self._show_shutter_flash()
+
         # Lade-Anzeige während Capture im Hintergrund läuft
         self._capture_dots = 0
         self._show_capture_loading()
@@ -633,6 +638,30 @@ class SessionScreen(ctk.CTkFrame):
         # Capture in Background-Thread starten (blockiert nicht die UI)
         thread = threading.Thread(target=self._capture_photo_worker, daemon=True)
         thread.start()
+
+    def _show_shutter_flash(self):
+        """Zeigt beim eigentlichen Capture einen sehr leichten White-Flash."""
+        try:
+            if self._shutter_flash_overlay is None:
+                self._shutter_flash_overlay = tk.Frame(
+                    self.preview_container,
+                    bg="#ffffff",
+                    bd=0,
+                    highlightthickness=0
+                )
+
+            self._shutter_flash_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+            self._shutter_flash_overlay.tkraise()
+            self.after(90, self._hide_shutter_flash)
+        except Exception as e:
+            logger.debug(f"Shutter-Flash konnte nicht angezeigt werden: {e}")
+
+    def _hide_shutter_flash(self):
+        try:
+            if self._shutter_flash_overlay is not None:
+                self._shutter_flash_overlay.place_forget()
+        except Exception:
+            pass
 
     def _show_capture_loading(self):
         """Animierte Lade-Anzeige während Webcam-Capture"""

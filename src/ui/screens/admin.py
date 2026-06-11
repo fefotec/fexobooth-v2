@@ -48,6 +48,7 @@ class AdminDialog(ctk.CTkToplevel):
         self.parent_window = parent
         self._kiosk_mode = kiosk_mode
         self._initial_customer_screen = initial_customer_screen
+        self._restore_dialog = None
 
         # Modal machen
         self.transient(parent)
@@ -1243,17 +1244,82 @@ class AdminDialog(ctk.CTkToplevel):
         self.destroy()
 
     def _minimize_to_taskbar(self):
-        """Minimiert den Admin-Dialog (nur im Kiosk-Modus)"""
-        # Taskleiste kurz einblenden damit der Nutzer sie sieht
+        """Blendet den Admin-Dialog kiosk-sicher aus."""
         app = getattr(self.parent_window, '_photobooth_app', None)
         if app:
-            app._show_taskbar()
-        self.iconify()
-        # Wenn wieder hergestellt: Taskleiste wieder verstecken
-        def on_deiconify(event=None):
-            if app:
-                app._hide_taskbar()
-        self.bind("<Map>", on_deiconify)
+            app._hide_taskbar()
+
+        try:
+            self.grab_release()
+        except Exception:
+            pass
+
+        self.withdraw()
+        self._show_restore_button(app)
+
+    def _show_restore_button(self, app=None):
+        """Kleiner Restore-Button innerhalb des Kiosk-Fullscreens."""
+        try:
+            if self._restore_dialog and self._restore_dialog.winfo_exists():
+                self._restore_dialog.lift()
+                return
+        except Exception:
+            self._restore_dialog = None
+
+        restore = ctk.CTkToplevel(self.parent_window)
+        self._restore_dialog = restore
+        restore.overrideredirect(True)
+        restore.configure(fg_color="#0a0a10")
+        restore.attributes("-topmost", True)
+        restore.transient(self.parent_window)
+
+        width = 170
+        height = 52
+        screen_w = restore.winfo_screenwidth()
+        x = max(10, screen_w - width - 18)
+        y = 18
+        restore.geometry(f"{width}x{height}+{x}+{y}")
+
+        def restore_admin():
+            self._restore_from_minimized(app)
+
+        restore.bind("<Control-Shift-Q>", lambda e: self._emergency_quit_from_dialog())
+        restore.bind("<Control-Shift-q>", lambda e: self._emergency_quit_from_dialog())
+
+        ctk.CTkButton(
+            restore,
+            text="Admin öffnen",
+            font=("Segoe UI", 14, "bold"),
+            width=150,
+            height=36,
+            fg_color=COLORS["primary"],
+            hover_color=COLORS["primary_hover"],
+            text_color=COLORS["text_primary"],
+            corner_radius=10,
+            command=restore_admin
+        ).pack(expand=True, padx=10, pady=8)
+
+        restore.lift()
+
+    def _restore_from_minimized(self, app=None):
+        if app:
+            app._hide_taskbar()
+
+        try:
+            if self._restore_dialog and self._restore_dialog.winfo_exists():
+                self._restore_dialog.destroy()
+        except Exception:
+            pass
+        self._restore_dialog = None
+
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+        self.attributes("-topmost", True)
+        try:
+            self.grab_set()
+        except Exception:
+            pass
 
     def _show_settings(self):
         """Zeigt Einstellungen - mit Lazy Loading für schnelleren Start"""
@@ -3353,6 +3419,12 @@ class AdminDialog(ctk.CTkToplevel):
             self.grab_release()
         except Exception:
             pass
+        try:
+            if self._restore_dialog and self._restore_dialog.winfo_exists():
+                self._restore_dialog.destroy()
+        except Exception:
+            pass
+        self._restore_dialog = None
         super().destroy()
 
     def _quit_app(self):

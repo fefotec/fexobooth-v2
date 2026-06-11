@@ -14,6 +14,7 @@ import time
 from typing import Optional, TYPE_CHECKING
 
 from src.ui.theme import COLORS, FONTS
+from src.ui.error_images import load_printer_error_image
 from src.utils.logging import get_logger
 from src.i18n import t
 
@@ -88,6 +89,9 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
         self._animation_frame = 0
         self._reset_started = False
         self._checking = False  # Verhindert doppelte Prüfungen
+        self._error_ctk_image = None
+        self._error_image_label = None
+        self._error_image_size = (0, 0)
 
         logger.info(
             f"PrinterErrorOverlay erstellt: '{error_text}' "
@@ -160,9 +164,25 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
         self.main_frame = ctk.CTkFrame(self, fg_color="#0a0a10", corner_radius=0)
         self.main_frame.pack(fill="both", expand=True)
 
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        compact = screen_w <= 1280 or screen_h <= 800
+        card_w = min(760, max(420, screen_w - 80))
+        text_w = max(320, card_w - 80)
+        icon_size = 58 if compact else 72
+        title_size = 29 if compact else 36
+        error_size = 17 if compact else 20
+        status_size = 16 if compact else 18
+        hint_size = 11 if compact else 13
+        top_pad = 18 if compact else 36
+        bottom_pad = 16 if compact else 32
+        image_size = 118 if compact else 156
+        self._error_image_size = (image_size, image_size)
+
         # Zentrierte Karte
         self.card = ctk.CTkFrame(
             self.main_frame,
+            width=card_w,
             fg_color=COLORS["bg_medium"],
             border_color=COLORS["error"],
             border_width=3,
@@ -182,20 +202,23 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
             subtitle = self._get_instruction_text()
             title_color = COLORS["error"]
 
-        # Icon groß
-        ctk.CTkLabel(
-            self.card,
-            text=icon_text,
-            font=("Segoe UI", 72),
-            text_color=title_color
-        ).pack(pady=(40, 10))
+        # Fehlerbild ersetzt das grosse Emoji, falls ein passendes Asset existiert.
+        if not self._create_error_image(top_pad):
+            ctk.CTkLabel(
+                self.card,
+                text=icon_text,
+                font=("Segoe UI", icon_size),
+                text_color=title_color
+            ).pack(pady=(top_pad, 8))
 
         # Titel
         self.title_label = ctk.CTkLabel(
             self.card,
             text=title_text,
-            font=("Segoe UI", 36, "bold"),
-            text_color=title_color
+            font=("Segoe UI", title_size, "bold"),
+            text_color=title_color,
+            wraplength=text_w,
+            justify="center"
         )
         self.title_label.pack(pady=(0, 5))
 
@@ -203,30 +226,32 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
         self.error_label = ctk.CTkLabel(
             self.card,
             text=self.error_text,
-            font=("Segoe UI", 20),
-            text_color=COLORS["text_secondary"]
+            font=("Segoe UI", error_size, "bold"),
+            text_color=COLORS["text_secondary"],
+            wraplength=text_w,
+            justify="center"
         )
-        self.error_label.pack(pady=(0, 15))
+        self.error_label.pack(pady=(0, 8 if compact else 12), padx=35)
 
         # Status/Anweisung
         self.status_label = ctk.CTkLabel(
             self.card,
             text=subtitle,
-            font=("Segoe UI", 18),
+            font=("Segoe UI", status_size),
             text_color=COLORS["text_primary"],
-            wraplength=450,
+            wraplength=text_w,
             justify="center"
         )
-        self.status_label.pack(pady=(0, 10))
+        self.status_label.pack(pady=(0, 8 if compact else 10))
 
         # Animations-Bereich (für Reset)
         self.animation_label = ctk.CTkLabel(
             self.card,
             text="",
-            font=("Segoe UI", 28),
+            font=("Segoe UI", 24 if compact else 28),
             text_color=COLORS["warning"]
         )
-        self.animation_label.pack(pady=(5, 5))
+        self.animation_label.pack(pady=(3 if compact else 5, 3 if compact else 5))
 
         # Progress-Bar (für Reset)
         self.progress_bar = ctk.CTkProgressBar(
@@ -246,12 +271,12 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
         self.confirm_btn = ctk.CTkButton(
             self.card,
             text=self._get_button_text(),
-            font=("Segoe UI", 22, "bold"),
+            font=("Segoe UI", 20 if compact else 22, "bold"),
             fg_color=COLORS["success"],
             hover_color="#1a8f3a",
             text_color="#ffffff",
-            height=60,
-            width=400,
+            height=56 if compact else 60,
+            width=min(400, card_w - 100),
             corner_radius=12,
             command=self._on_confirm
         )
@@ -265,10 +290,51 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
         self.hint_label = ctk.CTkLabel(
             self.card,
             text=hint_text,
-            font=("Segoe UI", 13),
-            text_color=COLORS["text_muted"]
+            font=("Segoe UI", hint_size),
+            text_color=COLORS["text_muted"],
+            wraplength=text_w,
+            justify="center"
         )
-        self.hint_label.pack(pady=(5, 35), padx=50)
+        self.hint_label.pack(pady=(5, bottom_pad), padx=50)
+
+    def _create_error_image(self, top_pad: int) -> bool:
+        """Creates the compact error illustration if an asset is available."""
+        self._error_ctk_image = load_printer_error_image(
+            self.error_text,
+            self._error_image_size
+        )
+        if not self._error_ctk_image:
+            return False
+
+        frame_size = self._error_image_size[0] + 16
+        image_frame = ctk.CTkFrame(
+            self.card,
+            width=frame_size,
+            height=frame_size,
+            fg_color="#ffffff",
+            corner_radius=14
+        )
+        image_frame.pack(pady=(top_pad, 8))
+        image_frame.pack_propagate(False)
+
+        self._error_image_label = ctk.CTkLabel(
+            image_frame,
+            text="",
+            image=self._error_ctk_image,
+            fg_color="#ffffff"
+        )
+        self._error_image_label.place(relx=0.5, rely=0.5, anchor="center")
+        return True
+
+    def _refresh_error_image(self):
+        """Refreshes the illustration after the printer reports a new error."""
+        if not self._error_image_label:
+            return
+
+        image = load_printer_error_image(self.error_text, self._error_image_size)
+        if image:
+            self._error_ctk_image = image
+            self._error_image_label.configure(image=image, text="")
 
     def _get_instruction_text(self) -> str:
         """Gibt Anweisungstext je nach Fehler zurück"""
@@ -409,6 +475,8 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
         else:
             # Fehler besteht noch
             logger.warning(f"Drucker meldet noch Fehler: '{error}'")
+            self.error_text = error
+            self._refresh_error_image()
             self.error_label.configure(text=error)
             self.status_label.configure(
                 text=t(self.config, "printer.still_error", instruction=self._get_instruction_text()),

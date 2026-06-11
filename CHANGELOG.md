@@ -6,6 +6,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.4] - 2026-06-11 - Tablet-UI, Filter-Timeout und Fehlerbilder
+
+### Neu
+
+- **Filter-Screen läuft nach Inaktivität automatisch weiter:** Nach 15 Sekunden ohne Touch-/Maus-Aktivität wird automatisch fortgesetzt. Sobald der Gast Filter antippt oder den Touchscreen berührt, startet der Timer neu.
+- **Kompakter Filter-Screen für 10"-Tablets:** Die Template-Vorschau ist größer und die Filterauswahl liegt auf kleinen Displays als kompakte Leiste darunter.
+- **Fehlerbilder für Druckerfehler:** Der große Drucker-Fehlerscreen und die kleine Warnung vor dem Druck zeigen passende Illustrationen aus `assets/error_images/`, wenn vorhanden.
+- **Auslöse-Blitz:** Beim tatsächlichen Capture erscheint ein sehr kurzer weißer Flash über dem LiveView, damit der Gast den Aufnahmezeitpunkt erkennt.
+
+### Behoben
+
+- **Drucker-Fehlerscreen schnitt Text ab:** Karte, Schriftgrößen und Textumbrüche sind jetzt responsiver, damit Fehlertext, Anweisung und Button auf 1280x800 sichtbar bleiben.
+- **QR-Code überlappte Template-Anzeige:** Der Startscreen verkleinert Template-Karten und QR-Banner auf kompakten Displays, wenn Galerie-QR aktiv ist.
+- **Admin-Minimieren ohne Funktion:** Der Admin-Dialog kann jetzt kiosk-sicher ausgeblendet und über einen kleinen Restore-Button wieder geöffnet werden, ohne Windows/Taskleiste freizugeben.
+- **Finalscreen-Druckerwarnung ordnet Papier/Kassette/Tinte konsistenter zu:** `KEIN PAPIER / KASSETTE!` wird nicht mehr als "Drucker aus" behandelt.
+
+### Geändert
+
+- **Default für Auslösebild-Anzeigedauer:** `flash_duration` ist für neue Installationen jetzt `100 ms` statt `300 ms`. Bestehende `config.json`-Werte werden dadurch nicht überschrieben.
+
+---
+
 ## [2.4.3] - 2026-05-04 - BAT-Script-Härtung + Update-Überspringen-Button
 
 ### Neu — Druck-Defaults: +30 / +30 / 103 %

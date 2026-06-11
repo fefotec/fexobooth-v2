@@ -175,6 +175,9 @@ class StartScreen(ctk.CTkFrame):
         self._sizes = get_sizes()
         self._fonts = get_fonts()
         self._is_small = is_small_screen()
+        self._screen_w = self.winfo_screenwidth()
+        self._screen_h = self.winfo_screenheight()
+        self._is_compact = self._is_small or (self._screen_w <= 1280 and self._screen_h <= 800)
 
         self._setup_ui()
 
@@ -281,18 +284,24 @@ class StartScreen(ctk.CTkFrame):
 
         # Responsive Kartengrößen basierend auf Anzahl
         card_count = self._count_expected_cards()
+        qr_active = self._is_gallery_banner_enabled()
+        compact_qr = qr_active and self._is_compact
+
         if card_count == 1:
-            card_w = 360 if self._is_small else 420
-            card_h = 280 if self._is_small else 330
+            card_w = 315 if compact_qr else (360 if self._is_small else 420)
+            card_h = 220 if compact_qr else (280 if self._is_small else 330)
         elif card_count == 2:
-            card_w = 270 if self._is_small else 320
-            card_h = 230 if self._is_small else 270
+            card_w = 235 if compact_qr else (270 if self._is_small else 320)
+            card_h = 180 if compact_qr else (230 if self._is_small else 270)
         else:
             card_w = self._sizes["card_width"]
             card_h = self._sizes["card_height"]
+            if compact_qr:
+                card_w = min(card_w, 210)
+                card_h = min(card_h, 165)
 
         # Responsive Abstand zwischen Karten
-        card_padx = 6 if self._is_small else 10
+        card_padx = 5 if compact_qr else (6 if self._is_small else 10)
 
         # Aktives Template (vom User gewählt oder USB auto-aktiviert)
         cached = self.app.cached_usb_template
@@ -400,6 +409,9 @@ class StartScreen(ctk.CTkFrame):
             self.subtitle_label.configure(text=t(self.config, "start.tap_option"))
 
         logger.info(f"Erstellte Karten: {list(self.cards.keys())}")
+
+    def _is_gallery_banner_enabled(self) -> bool:
+        return _is_gallery_enabled(self.app) and self.config.get("gallery_show_qr", True)
     
     def _resolve_template_path(self, template_path: str) -> Optional[str]:
         """Löst Template-Pfad auf (relativ oder absolut)"""
@@ -860,9 +872,11 @@ class StartScreen(ctk.CTkFrame):
             ssid = gallery_config.get("hotspot_ssid", "fexobox-gallery")
             password = gallery_config.get("hotspot_password", "fotobox123")
 
+            compact = self._is_compact
+
             # App-Pairing-QR generieren. Der Payload enthaelt API-URL, Box/Event
             # und Pairing-Token fuer die spaetere Smartphone-App.
-            qr_size = 118 if not self._is_small else 108
+            qr_size = 86 if compact else 118
             qr_img = generate_qr_code(qr_payload, size=qr_size)
             if not qr_img:
                 logger.warning("QR-Code konnte nicht generiert werden")
@@ -870,8 +884,11 @@ class StartScreen(ctk.CTkFrame):
                 return
 
             # Banner wieder anzeigen falls es versteckt war
-            banner_pady = (0, 5) if self._is_small else (0, 8)
-            self.gallery_banner.pack(side="bottom", fill="x", pady=banner_pady)
+            banner_pady = (0, 2) if compact else ((0, 5) if self._is_small else (0, 8))
+            try:
+                self.gallery_banner.pack(side="bottom", fill="x", pady=banner_pady, before=self.start_btn)
+            except Exception:
+                self.gallery_banner.pack(side="bottom", fill="x", pady=banner_pady)
 
             # Horizontales Banner mit Pink-Rahmen
             outer_banner = ctk.CTkFrame(
@@ -879,7 +896,7 @@ class StartScreen(ctk.CTkFrame):
                 fg_color=COLORS["primary"],
                 corner_radius=12
             )
-            outer_banner.pack(padx=20, pady=5)
+            outer_banner.pack(padx=10 if compact else 20, pady=3 if compact else 5)
 
             # Innerer Banner-Container
             banner = ctk.CTkFrame(
@@ -891,11 +908,11 @@ class StartScreen(ctk.CTkFrame):
 
             # Horizontales Layout: QR links, Info rechts
             content = ctk.CTkFrame(banner, fg_color="transparent")
-            content.pack(padx=15, pady=10)
+            content.pack(padx=10 if compact else 15, pady=6 if compact else 10)
 
             # QR-Code links (weißer Hintergrund)
             qr_container = ctk.CTkFrame(content, fg_color="#ffffff", corner_radius=8)
-            qr_container.pack(side="left", padx=(0, 20))
+            qr_container.pack(side="left", padx=(0, 12 if compact else 20))
 
             self.qr_ctk_image = ctk.CTkImage(light_image=qr_img, size=(qr_size, qr_size))
             self.qr_label = ctk.CTkLabel(
@@ -914,7 +931,7 @@ class StartScreen(ctk.CTkFrame):
             ctk.CTkLabel(
                 info_frame,
                 text=t(self.config, "gallery.banner_title"),
-                font=("Segoe UI", 20, "bold"),
+                font=("Segoe UI", 16 if compact else 20, "bold"),
                 text_color=COLORS["primary"]
             ).pack(anchor="w")
 
@@ -925,24 +942,25 @@ class StartScreen(ctk.CTkFrame):
             ctk.CTkLabel(
                 wifi_info,
                 text=t(self.config, "gallery.banner_wifi", ssid=ssid),
-                font=("Segoe UI", 18, "bold"),
+                font=("Segoe UI", 14 if compact else 18, "bold"),
                 text_color=COLORS["text_primary"]
             ).pack(anchor="w")
 
             ctk.CTkLabel(
                 wifi_info,
                 text=t(self.config, "gallery.banner_password", password=password),
-                font=("Segoe UI", 18),
+                font=("Segoe UI", 14 if compact else 18),
                 text_color=COLORS["text_primary"]
             ).pack(anchor="w", pady=(2, 0))
 
             # Anleitung
-            ctk.CTkLabel(
-                info_frame,
-                text=t(self.config, "gallery.banner_steps"),
-                font=("Segoe UI", 15),
-                text_color=COLORS["text_secondary"]
-            ).pack(anchor="w", pady=(10, 0))
+            if not compact:
+                ctk.CTkLabel(
+                    info_frame,
+                    text=t(self.config, "gallery.banner_steps"),
+                    font=("Segoe UI", 15),
+                    text_color=COLORS["text_secondary"]
+                ).pack(anchor="w", pady=(10, 0))
 
             logger.info(f"✅ App-Galerie-QR angezeigt: {url}")
 

@@ -7,9 +7,10 @@ import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageEnhance
 from typing import TYPE_CHECKING, Optional, Dict
 import threading
+import time
 
 from src.filters import FilterManager, AVAILABLE_FILTERS
-from src.ui.theme import COLORS, FONTS, get_sizes, get_fonts, is_small_screen
+from src.ui.theme import COLORS, FONTS, get_sizes, get_fonts, get_screen_size, is_small_screen
 from src.utils.logging import get_logger
 from src.i18n import t
 
@@ -17,6 +18,8 @@ if TYPE_CHECKING:
     from src.app import PhotoboothApp
 
 logger = get_logger(__name__)
+
+FILTER_INACTIVITY_SECONDS = 15.0
 
 # Filter-Emojis für visuelles Flair
 FILTER_EMOJIS = {
@@ -38,14 +41,15 @@ class FilterCard(ctk.CTkFrame):
 
     def __init__(self, parent, filter_key: str, filter_name: str,
                  preview_image: Optional[Image.Image] = None, on_click=None,
-                 card_width: int = 0, card_height: int = 0):
+                 card_width: int = 0, card_height: int = 0,
+                 compact: Optional[bool] = None):
         # Dynamische Größen (von FilterScreen berechnet) oder Fallback
         sizes = get_sizes()
         self._card_width = card_width or sizes["filter_card_width"]
         self._card_height = card_height or sizes["filter_card_height"]
         self._thumb_width = max(60, self._card_width - 20)
         self._thumb_height = max(40, self._card_height - 35)
-        self._is_small = is_small_screen()
+        self._is_small = is_small_screen() if compact is None else compact
 
         super().__init__(
             parent,
@@ -187,11 +191,17 @@ class FilterScreen(ctk.CTkFrame):
         self.selected_filter = "none"
         self.filter_buttons: Dict[str, FilterCard] = {}
         self.preview_cache: Dict[str, Image.Image] = {}
+        self._auto_continue_job = None
+        self._auto_continue_until = 0.0
+        self._auto_continue_seconds = 0.0
+        self._activity_bindings = []
 
         # Responsive Einstellungen
         self._sizes = get_sizes()
         self._fonts = get_fonts()
-        self._is_small = is_small_screen()
+        self._screen_w, self._screen_h, _ = get_screen_size()
+        self._is_compact = is_small_screen() or (self._screen_w <= 1280 and self._screen_h <= 800)
+        self._is_small = self._is_compact
 
         self._setup_ui()
 
@@ -199,9 +209,9 @@ class FilterScreen(ctk.CTkFrame):
         """Erstellt die UI - responsive und modern"""
         # Header mit Titel und Untertitel
         header = ctk.CTkFrame(self, fg_color="transparent")
-        header.pack(fill="x", pady=(10 if self._is_small else 15, 5))
+        header.pack(fill="x", pady=(6 if self._is_compact else 15, 2 if self._is_compact else 5))
 
-        title_size = 28 if self._is_small else 32
+        title_size = 24 if self._is_compact else 32
         title = ctk.CTkLabel(
             header,
             text=t(self.config, "filter.choose_style"),
@@ -210,7 +220,7 @@ class FilterScreen(ctk.CTkFrame):
         )
         title.pack()
 
-        if not self._is_small:
+        if not self._is_compact:
             subtitle = ctk.CTkLabel(
                 header,
                 text=t(self.config, "filter.hint"),
@@ -221,53 +231,48 @@ class FilterScreen(ctk.CTkFrame):
 
         # Hauptbereich
         main_frame = ctk.CTkFrame(self, fg_color="transparent")
-        main_frame.pack(fill="both", expand=True, padx=10 if self._is_small else 20, pady=8)
-        main_frame.grid_columnconfigure(0, weight=1 if self._is_small else 2)
-        main_frame.grid_columnconfigure(1, weight=3)
-        main_frame.grid_rowconfigure(0, weight=1)
+        main_frame.pack(fill="both", expand=True, padx=8 if self._is_compact else 20, pady=(4, 6) if self._is_compact else 8)
 
-        # Filter-Grid (links) - ohne Scrollbalken, dynamische Größen
-        filter_container = ctk.CTkFrame(
-            main_frame,
-            fg_color=COLORS["bg_medium"],
-            corner_radius=12 if not self._is_small else 10
-        )
-        filter_container.grid(row=0, column=0, sticky="nsew", padx=(0, 10 if self._is_small else 15))
-
-        filter_inner = ctk.CTkFrame(filter_container, fg_color="transparent")
-        filter_inner.pack(fill="both", expand=True, padx=4 if self._is_small else 8, pady=4 if self._is_small else 8)
-
-        # Filter-Buttons als Grid (responsive, kein Scrollbalken)
-        self._create_filter_grid(filter_inner)
+        if self._is_compact:
+            main_frame.grid_columnconfigure(0, weight=1)
+            main_frame.grid_rowconfigure(0, weight=1)
+            main_frame.grid_rowconfigure(1, weight=0)
+        else:
+            main_frame.grid_columnconfigure(0, weight=0)
+            main_frame.grid_columnconfigure(1, weight=1)
+            main_frame.grid_rowconfigure(0, weight=1)
 
         # Vorschau-Bereich (rechts) - größer
         preview_container = ctk.CTkFrame(
             main_frame,
             fg_color=COLORS["bg_medium"],
-            corner_radius=12 if not self._is_small else 10
+            corner_radius=12 if not self._is_compact else 10
         )
-        preview_container.grid(row=0, column=1, sticky="nsew")
+        if self._is_compact:
+            preview_container.grid(row=0, column=0, sticky="nsew")
+        else:
+            preview_container.grid(row=0, column=1, sticky="nsew")
 
         # Vorschau-Titel
-        preview_title_size = 18 if self._is_small else 20
+        preview_title_size = 16 if self._is_compact else 20
         preview_title = ctk.CTkLabel(
             preview_container,
             text=t(self.config, "filter.preview"),
             font=("Segoe UI", preview_title_size, "bold"),
             text_color=COLORS["text_primary"]
         )
-        if not self._is_small:
+        if not self._is_compact:
             preview_title.pack(pady=(15, 5))
 
         # Aktueller Filter-Name
-        filter_label_size = 16 if self._is_small else 18
+        filter_label_size = 15 if self._is_compact else 18
         self.current_filter_label = ctk.CTkLabel(
             preview_container,
             text=f"✨ {t(self.config, 'filter.none')}",
             font=("Segoe UI", filter_label_size),
             text_color=COLORS["primary"]
         )
-        self.current_filter_label.pack(pady=(4 if self._is_small else 0, 4 if self._is_small else 8))
+        self.current_filter_label.pack(pady=(6 if self._is_compact else 0, 4 if self._is_compact else 8))
 
         # Großes Vorschau-Bild
         self.preview_label = ctk.CTkLabel(
@@ -276,15 +281,42 @@ class FilterScreen(ctk.CTkFrame):
             fg_color=COLORS["bg_dark"],
             corner_radius=8
         )
-        self.preview_label.pack(expand=True, fill="both", padx=12 if self._is_small else 20, pady=(0, 12 if self._is_small else 20))
+        self.preview_label.pack(expand=True, fill="both", padx=10 if self._is_compact else 20, pady=(0, 10 if self._is_compact else 20))
+
+        # Filter-Grid: auf 10"-Tablets unten als kompakte Leiste, sonst links.
+        filter_container = ctk.CTkFrame(
+            main_frame,
+            fg_color=COLORS["bg_medium"],
+            corner_radius=12 if not self._is_compact else 10
+        )
+        if self._is_compact:
+            filter_container.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        else:
+            filter_container.grid(row=0, column=0, sticky="nsw", padx=(0, 15))
+
+        filter_inner = ctk.CTkFrame(filter_container, fg_color="transparent")
+        filter_inner.pack(fill="both", expand=True, padx=4 if self._is_compact else 8, pady=4 if self._is_compact else 8)
+
+        # Filter-Buttons als Grid (responsive, kein Scrollbalken)
+        self._create_filter_grid(filter_inner)
+
+        self.auto_progress = ctk.CTkProgressBar(
+            self,
+            height=4,
+            fg_color=COLORS["bg_light"],
+            progress_color=COLORS["primary"],
+            corner_radius=2
+        )
+        self.auto_progress.pack(fill="x", padx=10 if self._is_compact else 20, pady=(0, 2 if self._is_compact else 4))
+        self.auto_progress.set(1.0)
 
         # Button-Leiste unten
         button_frame = ctk.CTkFrame(self, fg_color="transparent")
-        button_frame.pack(fill="x", padx=10 if self._is_small else 20, pady=(5, 10 if self._is_small else 15))
+        button_frame.pack(fill="x", padx=10 if self._is_compact else 20, pady=(3, 8 if self._is_compact else 15))
 
         # Zurück-Button (links)
-        back_btn_width = 130 if self._is_small else 160
-        back_btn_height = 45 if self._is_small else 55
+        back_btn_width = 120 if self._is_compact else 160
+        back_btn_height = 42 if self._is_compact else 55
         back_btn = ctk.CTkButton(
             button_frame,
             text=t(self.config, "filter.back_redo"),
@@ -300,9 +332,9 @@ class FilterScreen(ctk.CTkFrame):
         back_btn.pack(side="left")
 
         # Weiter-Button (rechts) - prominent
-        continue_btn_width = 170 if self._is_small else 200
-        continue_btn_height = 50 if self._is_small else 60
-        continue_font_size = 18 if self._is_small else 20
+        continue_btn_width = 155 if self._is_compact else 200
+        continue_btn_height = 46 if self._is_compact else 60
+        continue_font_size = 17 if self._is_compact else 20
         self.continue_btn = ctk.CTkButton(
             button_frame,
             text=t(self.config, "filter.continue"),
@@ -319,17 +351,22 @@ class FilterScreen(ctk.CTkFrame):
     def _create_filter_grid(self, parent):
         """Erstellt das Filter-Grid - feste Kartengrößen, kein Resize-Flackern"""
         filters = list(AVAILABLE_FILTERS.items())
-        num_cols = 2
+        num_cols = 4 if self._is_compact else 2
         num_rows = (len(filters) + num_cols - 1) // num_cols
-        pad = 3 if self._is_small else 4
+        pad = 3 if self._is_compact else 4
 
         # Dynamische Kartengrößen aus verfügbarer Bildschirmhöhe berechnen
-        screen_h = parent.winfo_screenheight()
-        # Abzüge: Top-Bar(~65) + Header(~80) + Buttons(~65) + Padding(~50)
-        overhead = 260 if self._is_small else 280
-        available_h = screen_h - overhead
-        card_h = max(70, (available_h - (num_rows + 1) * pad * 2) // num_rows)
-        card_w = max(80, int(card_h * 1.1))
+        if self._is_compact:
+            available_w = max(360, parent.winfo_screenwidth() - 80)
+            card_w = min(128, max(104, (available_w - (num_cols + 1) * pad * 2) // num_cols))
+            card_h = 72
+        else:
+            screen_h = parent.winfo_screenheight()
+            # Abzüge: Top-Bar(~65) + Header(~80) + Buttons(~65) + Padding(~50)
+            overhead = 280
+            available_h = screen_h - overhead
+            card_h = max(72, (available_h - (num_rows + 1) * pad * 2) // num_rows)
+            card_w = max(88, int(card_h * 1.1))
 
         # Grid-Gewichtung: alle Zellen gleich (Platz verteilen)
         for r in range(num_rows):
@@ -347,7 +384,8 @@ class FilterScreen(ctk.CTkFrame):
                 filter_name=display_name if display_name != f"filter.{key}" else name,
                 on_click=lambda b: self._select_filter(b),
                 card_width=card_w,
-                card_height=card_h
+                card_height=card_h,
+                compact=self._is_compact
             )
             # KEIN sticky="nsew" - Karten behalten ihre feste Größe (kein Resize-Flackern)
             card.grid(row=row, column=col, padx=pad, pady=pad)
@@ -373,6 +411,9 @@ class FilterScreen(ctk.CTkFrame):
         # Große Vorschau aktualisieren
         self._update_main_preview()
 
+        # Jede Interaktion gibt dem Gast wieder die volle Auswahlzeit.
+        self._reset_auto_continue_timer()
+
         logger.debug(f"Filter ausgewählt: {self.selected_filter}")
 
     def _update_main_preview(self):
@@ -394,7 +435,7 @@ class FilterScreen(ctk.CTkFrame):
                         self.app.filter_manager.apply(photo, filter_key)
                         for photo in self.app.photos_taken
                     ]
-                    max_preview_size = 500
+                    max_preview_size = 900 if self._is_compact else 800
                     preview = self.app.renderer.render_preview(
                         filtered_photos,
                         self.app.template_boxes,
@@ -411,10 +452,26 @@ class FilterScreen(ctk.CTkFrame):
 
     def _show_main_preview(self, preview: Image.Image):
         """Zeigt die Main-Preview an"""
-        # CTkImage size in logischen Pixeln (DPI-korrigiert)
         scaling = self._get_widget_scaling()
-        logical_size = (int(preview.size[0] / scaling), int(preview.size[1] / scaling))
-        ctk_img = ctk.CTkImage(light_image=preview, size=logical_size)
+        container_w = self.preview_label.winfo_width()
+        container_h = self.preview_label.winfo_height()
+        if container_w < 100 or container_h < 100:
+            container_w = int(self._screen_w * 0.8)
+            container_h = int(self._screen_h * 0.58)
+
+        logical_w = max(100, int(container_w / scaling))
+        logical_h = max(100, int(container_h / scaling))
+
+        img_ratio = preview.width / preview.height
+        container_ratio = logical_w / logical_h
+        if img_ratio > container_ratio:
+            display_w = logical_w
+            display_h = max(1, int(logical_w / img_ratio))
+        else:
+            display_h = logical_h
+            display_w = max(1, int(logical_h * img_ratio))
+
+        ctk_img = ctk.CTkImage(light_image=preview, size=(display_w, display_h))
         self.preview_label.configure(image=ctk_img)
         self.preview_label.image = ctk_img
 
@@ -442,16 +499,84 @@ class FilterScreen(ctk.CTkFrame):
 
     def _on_back(self):
         """Zurück - neue Fotos machen"""
+        self._cancel_auto_continue_timer()
         logger.info(f"Filter-Screen: Zurück (Fotos verworfen, Filter war '{self.selected_filter}')")
         self.app.photos_taken = []
         self.app.current_photo_index = 0
         self.app.show_screen("session")
 
-    def _on_continue(self):
+    def _on_continue(self, auto: bool = False):
         """Weiter zum Final-Screen"""
-        logger.info(f"Filter gewählt: {self.selected_filter}")
+        self._cancel_auto_continue_timer()
+        logger.info(f"Filter gewählt: {self.selected_filter}{' (Auto-Weiter)' if auto else ''}")
         self.app.current_filter = self.selected_filter
         self.app.show_screen("final")
+
+    def _get_auto_continue_seconds(self) -> float:
+        """Fester Inaktivitäts-Timeout für die Filter-Auswahl."""
+        return FILTER_INACTIVITY_SECONDS
+
+    def _on_user_activity(self, event=None):
+        """Jede Touch-/Maus-Aktivität gibt wieder volle Auswahlzeit."""
+        if getattr(self.app, "current_screen_name", None) != "filter":
+            return
+        self._reset_auto_continue_timer()
+
+    def _bind_activity_events(self):
+        """Bindet Touch-Aktivität nur während der Filter-Screen sichtbar ist."""
+        self._unbind_activity_events()
+        root = self.winfo_toplevel()
+        for sequence in ("<ButtonPress-1>", "<ButtonRelease-1>", "<B1-Motion>"):
+            try:
+                bind_id = root.bind(sequence, self._on_user_activity, add="+")
+                if bind_id:
+                    self._activity_bindings.append((root, sequence, bind_id))
+            except Exception as e:
+                logger.debug(f"Filter-Aktivitätsbindung fehlgeschlagen ({sequence}): {e}")
+
+    def _unbind_activity_events(self):
+        for widget, sequence, bind_id in self._activity_bindings:
+            try:
+                widget.unbind(sequence, bind_id)
+            except Exception:
+                pass
+        self._activity_bindings = []
+
+    def _reset_auto_continue_timer(self):
+        self._cancel_auto_continue_timer()
+        seconds = self._get_auto_continue_seconds()
+        if seconds <= 0:
+            self.auto_progress.set(0.0)
+            return
+
+        self._auto_continue_seconds = seconds
+        self._auto_continue_until = time.time() + seconds
+        self.auto_progress.set(1.0)
+        self._auto_continue_job = self.after(100, self._tick_auto_continue)
+
+    def _cancel_auto_continue_timer(self):
+        job = self._auto_continue_job
+        self._auto_continue_job = None
+        if job is not None:
+            try:
+                self.after_cancel(job)
+            except Exception:
+                pass
+
+    def _tick_auto_continue(self):
+        self._auto_continue_job = None
+        if not self.winfo_ismapped():
+            return
+
+        remaining = self._auto_continue_until - time.time()
+        if remaining <= 0:
+            self.auto_progress.set(0.0)
+            self._on_continue(auto=True)
+            return
+
+        if self._auto_continue_seconds > 0:
+            self.auto_progress.set(max(0.0, min(1.0, remaining / self._auto_continue_seconds)))
+        self._auto_continue_job = self.after(100, self._tick_auto_continue)
 
     def on_show(self):
         """Screen wird angezeigt"""
@@ -480,6 +605,12 @@ class FilterScreen(ctk.CTkFrame):
         # Filter-Previews im Hintergrund generieren
         threading.Thread(target=self._generate_filter_previews, daemon=True).start()
 
+        # Ohne Eingabe automatisch nach fester Inaktivitätsdauer weiter.
+        self._bind_activity_events()
+        self._reset_auto_continue_timer()
+
     def on_hide(self):
         """Screen wird verlassen"""
+        self._unbind_activity_events()
+        self._cancel_auto_continue_timer()
         self.preview_cache = {}

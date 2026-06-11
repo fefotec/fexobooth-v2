@@ -10,6 +10,7 @@ from pathlib import Path
 import time
 
 from src.ui.theme import COLORS, FONTS, SIZES
+from src.ui.error_images import load_printer_error_image
 from src.utils.logging import get_logger
 from src.i18n import t
 
@@ -461,21 +462,26 @@ class FinalScreen(ctk.CTkFrame):
 
             if error:
                 # Fehlermeldung je nach Problem
-                if "AUS" in error or "FEHLT" in error or "KEIN" in error:
-                    msg = t(self.config, "final.printer_off")
-                elif "PAPIER" in error and "STAU" in error:
+                if "PAPIER" in error and "STAU" in error:
                     msg = t(self.config, "final.paper_jam")
                 elif "PAPIER" in error:
                     msg = t(self.config, "final.no_paper")
-                elif "KASSETTE" in error:
+                elif "KASSETTE" in error or "TINTE" in error:
                     msg = t(self.config, "final.cassette_empty")
                 elif "KLAPPE" in error:
                     msg = t(self.config, "final.cover_open")
+                elif (
+                    "AUS" in error
+                    or "FEHLT" in error
+                    or "OFFLINE" in error
+                    or "KEIN DRUCKER" in error
+                ):
+                    msg = t(self.config, "final.printer_off")
                 else:
                     msg = t(self.config, "final.printer_reports", error=error)
 
                 logger.warning(f"Drucken abgebrochen - Drucker nicht bereit: {error}")
-                self._show_printer_warning(msg)
+                self._show_printer_warning(msg, error)
                 return True
 
         except Exception as e:
@@ -483,21 +489,63 @@ class FinalScreen(ctk.CTkFrame):
 
         return False
 
-    def _show_printer_warning(self, message: str):
+    def _show_printer_warning(self, message: str, error_text: str = ""):
         """Zeigt Drucker-Warnung als Overlay über dem Final-Screen"""
-        overlay = ctk.CTkFrame(self, fg_color="rgba(0,0,0,0.85)" if hasattr(ctk, 'TRANSPARENT') else "#1a1a1a")
+        overlay = ctk.CTkFrame(
+            self,
+            fg_color=(
+                "rgba(0,0,0,0.85)"
+                if hasattr(ctk, 'TRANSPARENT')
+                else "#1a1a1a"
+            )
+        )
         overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
 
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        compact = screen_w <= 1280 or screen_h <= 800
+        image_size = 104 if compact else 124
+        warning_image = load_printer_error_image(
+            error_text or message,
+            (image_size, image_size)
+        )
+        overlay._printer_warning_image = warning_image
+
         # Zentrierter Container
-        container = ctk.CTkFrame(overlay, fg_color=COLORS["bg_card"], corner_radius=20, width=500, height=280)
+        container_w = min(500, max(360, screen_w - 90))
+        container_h = 320 if warning_image else 280
+        container = ctk.CTkFrame(
+            overlay,
+            fg_color=COLORS["bg_card"],
+            corner_radius=20,
+            width=container_w,
+            height=container_h
+        )
         container.place(relx=0.5, rely=0.5, anchor="center")
         container.pack_propagate(False)
 
-        # Drucker-Icon
-        ctk.CTkLabel(
-            container, text="🖨️", font=("Segoe UI", 48),
-            fg_color="transparent"
-        ).pack(pady=(30, 10))
+        # Drucker-Bild oder Fallback-Icon
+        if warning_image:
+            image_frame = ctk.CTkFrame(
+                container,
+                width=image_size + 14,
+                height=image_size + 14,
+                fg_color="#ffffff",
+                corner_radius=12
+            )
+            image_frame.pack(pady=(22, 10))
+            image_frame.pack_propagate(False)
+            ctk.CTkLabel(
+                image_frame,
+                text="",
+                image=warning_image,
+                fg_color="#ffffff"
+            ).place(relx=0.5, rely=0.5, anchor="center")
+        else:
+            ctk.CTkLabel(
+                container, text="🖨️", font=("Segoe UI", 48),
+                fg_color="transparent"
+            ).pack(pady=(30, 10))
 
         # Meldung
         ctk.CTkLabel(
@@ -505,8 +553,9 @@ class FinalScreen(ctk.CTkFrame):
             font=("Segoe UI", 16, "bold"),
             text_color=COLORS["warning"],
             fg_color="transparent",
-            wraplength=400
-        ).pack(pady=(0, 20))
+            wraplength=container_w - 80,
+            justify="center"
+        ).pack(pady=(0, 16 if warning_image else 20), padx=35)
 
         def close_warning():
             overlay.destroy()
@@ -517,10 +566,14 @@ class FinalScreen(ctk.CTkFrame):
             font=("Segoe UI", 16, "bold"),
             width=200, height=45,
             fg_color=COLORS["primary"],
-            hover_color=COLORS["primary_hover"] if "primary_hover" in COLORS else COLORS["primary"],
+            hover_color=(
+                COLORS["primary_hover"]
+                if "primary_hover" in COLORS
+                else COLORS["primary"]
+            ),
             corner_radius=12,
             command=close_warning
-        ).pack(pady=(0, 20))
+        ).pack(pady=(0, 18))
 
         # Auto-schließen nach 8 Sekunden
         overlay.after(8000, lambda: overlay.destroy() if overlay.winfo_exists() else None)
