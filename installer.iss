@@ -70,7 +70,7 @@ Source: "assets\fexobooth.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
 ; BAT-Dateien für verschiedene Modi
 Source: "installer_files\start_fexobooth.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "installer_files\start_dev.bat"; DestDir: "{app}"; Flags: ignoreversion
-Source: "installer_files\update_from_github.bat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "update_from_github.bat"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Setup-Skripte
 Source: "setup\*"; DestDir: "{app}\setup"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -143,15 +143,24 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var
   ExampleConfig: String;
   ActualConfig: String;
+  LegacyConfig: String;
 begin
   if CurStep = ssPostInstall then
   begin
     ExampleConfig := ExpandConstant('{app}\config.example.json');
     ActualConfig := ExpandConstant('{app}\config.json');
+    LegacyConfig := ExpandConstant('{app}\_internal\config.json');
 
     if not FileExists(ActualConfig) then
     begin
-      FileCopy(ExampleConfig, ActualConfig, False);
+      if FileExists(LegacyConfig) then
+      begin
+        FileCopy(LegacyConfig, ActualConfig, False);
+      end
+      else
+      begin
+        FileCopy(ExampleConfig, ActualConfig, False);
+      end;
     end;
 
     // Shell benachrichtigen: Icon-Cache neu laden (SHCNE_ASSOCCHANGED)

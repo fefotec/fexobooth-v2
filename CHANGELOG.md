@@ -6,6 +6,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.5] - 2026-06-11 - Hotfix: Box-ID bleibt bei Updates erhalten
+
+### Behoben
+
+- **Box-ID/Seriennummer konnte beim GitHub-Update verloren gehen.** Ursache war ein Pfadproblem im PyInstaller-Build: Die App speicherte `config.json` je nach Laufzeit unter `_internal\config.json`, der OTA-Updater schützte aber nur `C:\FexoBooth\config.json`. Da `_internal` beim Update ersetzt wird, konnte die dort gespeicherte Box-ID verschwinden.
+- `config.json` wird im EXE-Build künftig dauerhaft neben der EXE im Installationsordner gespeichert (`C:\FexoBooth\config.json`) und nicht mehr in `_internal`.
+- Beim Start wird eine alte `_internal\config.json` automatisch erkannt, bevorzugt wenn sie eine Box-ID enthält, und in den neuen sicheren Pfad migriert.
+- Der OTA-Updater und das manuelle `update_from_github.bat` sichern vor dem Ersetzen von `_internal` jetzt sowohl Root- als auch Legacy-Config und stellen die beste vorhandene Config nach dem Update wieder her.
+- Der Installer übernimmt eine vorhandene Legacy-Config aus `_internal`, falls noch keine Root-Config existiert.
+
+---
+
 ## [2.4.4] - 2026-06-11 - Tablet-UI, Filter-Timeout und Fehlerbilder
 
 ### Neu

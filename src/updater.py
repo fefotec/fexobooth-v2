@@ -447,6 +447,8 @@ set "ZIP_FILE={zip_path}"
 set "EXTRACT_DIR={extract_dir}"
 set "PROCESS_NAME={process_name}"
 set "CONFIG_BACKUP=%TEMP%\\fexobooth_config_backup_%RANDOM%.json"
+set "CONFIG_ROOT=%INSTALL_DIR%\\config.json"
+set "CONFIG_LEGACY=%INSTALL_DIR%\\_internal\\config.json"
 
 :: Warte bis die App beendet ist (max 15 Sekunden — sollte sofort wegen os._exit)
 echo Warte auf Beendigung von %PROCESS_NAME%...
@@ -477,10 +479,10 @@ echo.
 :: Druck-Korrekturwerte (print_adjustment.offset_x/y/zoom), Drucker-Auswahl etc.
 :: liegen in config.json. Falls beim Update etwas schiefgeht und die App
 :: config.json mit Defaults neu erzeugt → Werte weg. Backup vor jedem Eingriff.
-if exist "%INSTALL_DIR%\\config.json" (
-    copy /Y "%INSTALL_DIR%\\config.json" "%CONFIG_BACKUP%" >nul 2>&1
-    echo - config.json gesichert nach %CONFIG_BACKUP%
-)
+:: Bug v2.4.4: alte Builds speicherten config.json teils in _internal/.
+:: _internal wird beim OTA ersetzt, deshalb muessen wir auch diese Legacy-Config
+:: vor dem Move retten. Root gewinnt, wenn dort eine Box-ID steht; sonst Legacy.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$root=$env:CONFIG_ROOT; $legacy=$env:CONFIG_LEGACY; $out=$env:CONFIG_BACKUP; $best=$null; $rootHasId=$false; if(Test-Path -LiteralPath $root) {{ try {{ $j=Get-Content -LiteralPath $root -Raw | ConvertFrom-Json; $rootHasId=($j.box_id -match '^\\d\\d\\d$') }} catch {{}} }}; if($rootHasId) {{ $best=$root }} elseif(Test-Path -LiteralPath $legacy) {{ try {{ $j=Get-Content -LiteralPath $legacy -Raw | ConvertFrom-Json; if($j.box_id -match '^\\d\\d\\d$') {{ $best=$legacy }} }} catch {{}} }}; if(-not $best -and (Test-Path -LiteralPath $root)) {{ $best=$root }}; if(-not $best -and (Test-Path -LiteralPath $legacy)) {{ $best=$legacy }}; if($best) {{ Copy-Item -LiteralPath $best -Destination $out -Force; Write-Host ('- config.json gesichert von ' + $best) }}"
 
 :: Altes Extract-Verzeichnis löschen
 if exist "%EXTRACT_DIR%" rmdir /s /q "%EXTRACT_DIR%"
@@ -685,9 +687,10 @@ echo - assets/*.png/jpg (User-Bilder, z.B. Auslose-Bild)
 :: stellen wir sie aus dem Backup wieder her, falls sie verloren ging oder
 :: kleiner als das Backup wurde (Manipulation/Korruption durch teilweises Update).
 if exist "%CONFIG_BACKUP%" (
-    if not exist "%INSTALL_DIR%\\config.json" (
-        echo - config.json fehlt - stelle aus Backup wieder her
-        copy /Y "%CONFIG_BACKUP%" "%INSTALL_DIR%\\config.json" >nul 2>&1
+    echo - config.json wird wiederhergestellt
+    copy /Y "%CONFIG_BACKUP%" "%CONFIG_ROOT%" >nul 2>&1
+    if exist "%INSTALL_DIR%\\_internal" (
+        copy /Y "%CONFIG_BACKUP%" "%CONFIG_LEGACY%" >nul 2>&1
     )
     del "%CONFIG_BACKUP%" 2>nul
 )
@@ -730,9 +733,10 @@ echo.
 echo === Update fehlgeschlagen — alte Version wird neu gestartet ===
 :: config.json restoren falls weg
 if exist "%CONFIG_BACKUP%" (
-    if not exist "%INSTALL_DIR%\\config.json" (
-        echo - config.json wird aus Backup wiederhergestellt
-        copy /Y "%CONFIG_BACKUP%" "%INSTALL_DIR%\\config.json" >nul 2>&1
+    echo - config.json wird aus Backup wiederhergestellt
+    copy /Y "%CONFIG_BACKUP%" "%CONFIG_ROOT%" >nul 2>&1
+    if exist "%INSTALL_DIR%\\_internal" (
+        copy /Y "%CONFIG_BACKUP%" "%CONFIG_LEGACY%" >nul 2>&1
     )
     del "%CONFIG_BACKUP%" 2>nul
 )

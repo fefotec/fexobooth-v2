@@ -2,6 +2,8 @@
 
 import json
 import os
+import shutil
+import sys
 from pathlib import Path
 from typing import Dict, Any, Optional
 from copy import deepcopy
@@ -13,8 +15,15 @@ from src.i18n import apply_locale_to_config
 _config: Optional[Dict[str, Any]] = None
 
 # Pfade
-BASE_PATH = Path(__file__).parent.parent.parent
+if getattr(sys, "frozen", False):
+    # PyInstaller one-folder: config.json muss neben der EXE liegen, nicht in
+    # _internal/. _internal wird bei OTA-Updates ersetzt.
+    BASE_PATH = Path(sys.executable).resolve().parent
+else:
+    BASE_PATH = Path(__file__).resolve().parents[2]
 CONFIG_PATH = BASE_PATH / "config.json"
+_LEGACY_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config.json"
+_IDENTITY_KEYS = ("box_id",)
 
 
 def load_config() -> Dict[str, Any]:
@@ -24,19 +33,17 @@ def load_config() -> Dict[str, Any]:
     # Mit Defaults starten
     config = deepcopy(DEFAULT_CONFIG)
     
-    # Lokale Config laden
-    if CONFIG_PATH.exists():
-        try:
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                local_config = json.load(f)
-            _deep_merge(config, local_config)
-        except Exception as e:
-            print(f"Fehler beim Laden der Config: {e}")
+    # Lokale Config laden. Bei alten Builds lag config.json unter _internal/.
+    # Falls dort noch eine Box-ID steht, wird diese Legacy-Config bevorzugt und
+    # in den neuen, update-sicheren Root-Pfad migriert.
+    local_config = _load_local_config()
+    if local_config:
+        _deep_merge(config, local_config)
     
     # USB-Config prüfen (überschreibt lokale)
     usb_config = _find_usb_config()
     if usb_config:
-        _deep_merge(config, usb_config)
+        _deep_merge(config, usb_config, preserve_identity=True)
 
     apply_locale_to_config(config)
     
@@ -50,6 +57,7 @@ def save_config(config: Dict[str, Any]) -> bool:
     
     try:
         apply_locale_to_config(config)
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
         _config = config
@@ -67,11 +75,73 @@ def get_config() -> Dict[str, Any]:
     return _config
 
 
-def _deep_merge(base: Dict, update: Dict) -> Dict:
+def _load_local_config() -> Optional[Dict[str, Any]]:
+    candidates = []
+    seen = set()
+    for path in (CONFIG_PATH, _LEGACY_CONFIG_PATH):
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if path.exists():
+            candidates.append((path, _read_config_file(path)))
+
+    valid = [(path, data) for path, data in candidates if isinstance(data, dict)]
+    if not valid:
+        return None
+
+    selected_path, selected_config = valid[0]
+    canonical_has_identity = _has_identity(selected_config)
+
+    if selected_path == CONFIG_PATH and not canonical_has_identity:
+        for path, data in valid[1:]:
+            if _has_identity(data):
+                selected_path, selected_config = path, data
+                break
+
+    if selected_path != CONFIG_PATH:
+        _migrate_legacy_config(selected_path)
+
+    return selected_config
+
+
+def _read_config_file(path: Path) -> Optional[Dict[str, Any]]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Fehler beim Laden der Config {path}: {e}")
+        return None
+
+
+def _has_identity(config: Dict[str, Any]) -> bool:
+    return any(str(config.get(key, "") or "").strip() for key in _IDENTITY_KEYS)
+
+
+def _migrate_legacy_config(source_path: Path) -> None:
+    try:
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, CONFIG_PATH)
+        print(f"Legacy-Config migriert: {source_path} -> {CONFIG_PATH}")
+    except Exception as e:
+        print(f"Legacy-Config konnte nicht migriert werden: {e}")
+
+
+def _deep_merge(base: Dict, update: Dict, preserve_identity: bool = False) -> Dict:
     """Merged zwei Dicts rekursiv"""
     for key, value in update.items():
+        if (
+            preserve_identity
+            and key in _IDENTITY_KEYS
+            and str(base.get(key, "") or "").strip()
+            and not str(value or "").strip()
+        ):
+            continue
         if key in base and isinstance(base[key], dict) and isinstance(value, dict):
-            _deep_merge(base[key], value)
+            _deep_merge(base[key], value, preserve_identity=preserve_identity)
         else:
             base[key] = value
     return base

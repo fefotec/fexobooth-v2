@@ -71,9 +71,13 @@ echo Download-URL: %DOWNLOAD_URL%
 echo.
 
 :: Backup der config.json
-if exist "%SCRIPT_DIR%config.json" (
-    echo Sichere aktuelle config.json...
-    copy "%SCRIPT_DIR%config.json" "%SCRIPT_DIR%config.json.backup" /Y >nul
+:: Alte Builds speicherten config.json teils in _internal\. Diese Datei muss
+:: vor dem Update gerettet werden, weil _internal komplett ersetzt wird.
+set "CONFIG_BACKUP=%SCRIPT_DIR%config.json.backup"
+set "CONFIG_ROOT=%SCRIPT_DIR%config.json"
+set "CONFIG_LEGACY=%SCRIPT_DIR%_internal\config.json"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$root=$env:CONFIG_ROOT; $legacy=$env:CONFIG_LEGACY; $out=$env:CONFIG_BACKUP; $best=$null; $rootHasId=$false; if(Test-Path -LiteralPath $root) { try { $j=Get-Content -LiteralPath $root -Raw | ConvertFrom-Json; $rootHasId=($j.box_id -match '^\d\d\d$') } catch {} }; if($rootHasId) { $best=$root } elseif(Test-Path -LiteralPath $legacy) { try { $j=Get-Content -LiteralPath $legacy -Raw | ConvertFrom-Json; if($j.box_id -match '^\d\d\d$') { $best=$legacy } } catch {} }; if(-not $best -and (Test-Path -LiteralPath $root)) { $best=$root }; if(-not $best -and (Test-Path -LiteralPath $legacy)) { $best=$legacy }; if($best) { Copy-Item -LiteralPath $best -Destination $out -Force; Write-Host ('Config gesichert von ' + $best) }"
+if exist "%CONFIG_BACKUP%" (
     echo OK
     echo.
 )
@@ -168,10 +172,14 @@ if exist "%SOURCE_DIR%\config.example.json" (
 )
 
 :: config.json wiederherstellen
-if exist "%SCRIPT_DIR%config.json.backup" (
+if exist "%CONFIG_BACKUP%" (
     echo.
     echo Stelle config.json wieder her...
-    move /Y "%SCRIPT_DIR%config.json.backup" "%SCRIPT_DIR%config.json" >nul
+    copy /Y "%CONFIG_BACKUP%" "%CONFIG_ROOT%" >nul
+    if exist "%SCRIPT_DIR%_internal" (
+        copy /Y "%CONFIG_BACKUP%" "%CONFIG_LEGACY%" >nul
+    )
+    del "%CONFIG_BACKUP%" 2>nul
     echo OK
 )
 
