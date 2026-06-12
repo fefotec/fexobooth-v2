@@ -925,7 +925,7 @@ SERVICE_TRANSLATIONS = {
         "service.language_button": "LANG / Sprache: {locale}",
         "service.language_title": "LANG / Sprache",
         "service.language_subtitle": "Diese Sprache sehen Gäste an der Fotobox.",
-        "service.reload_template": "Template neu einlesen",
+        "service.reload_template": "Event-Neu Einlesen",
         "service.print_adjustment": "Druck-Korrektur",
         "service.fix_paper_jam": "Druckstau beheben",
         "service.restart_windows": "Windows Neustart",

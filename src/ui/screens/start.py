@@ -9,19 +9,22 @@ from pathlib import Path
 from PIL import Image
 import os
 import shutil
+import time
 
 from src.templates.loader import TemplateLoader
 from src.templates.default import create_default_template
 from src.config.config import find_usb_template
 from src.ui.theme import COLORS, FONTS, SIZES, get_sizes, get_fonts, is_small_screen
 from src.utils.logging import get_logger
-from src.ui.screens.video import is_vlc_warm, _vlc_available
+from src.ui.screens.video import is_vlc_warm, warmup_vlc, _vlc_available
 from src.i18n import t
 
 if TYPE_CHECKING:
     from src.app import PhotoboothApp
 
 logger = get_logger(__name__)
+
+MIN_LOADING_SCREEN_SECONDS = 4.0
 
 
 def _is_gallery_enabled(app: "PhotoboothApp") -> bool:
@@ -250,6 +253,8 @@ class StartScreen(ctk.CTkFrame):
         # Loading-Overlay (wird über allem angezeigt während VLC lädt)
         self._loading_overlay = None
         self._loading_visible = False
+        self._loading_shown_at = 0.0
+        self._vlc_warmup_after_id = None
 
         # Initiale Karten erstellen
         self._create_template_cards()
@@ -633,6 +638,10 @@ class StartScreen(ctk.CTkFrame):
         self.config = self.app.config
         self.start_btn.configure(text=f"▶  {t(self.config, 'common.start')}")
 
+        if _vlc_available and not is_vlc_warm():
+            self._show_loading_overlay()
+            self._schedule_vlc_warmup()
+
         # === USB-Stick Template erkennen (getrennt vom aktiven Template) ===
         real_usb = find_usb_template(include_cache=False)  # Nur echte USB-Sticks
 
@@ -705,9 +714,10 @@ class StartScreen(ctk.CTkFrame):
         # QR-Code für Galerie anzeigen/ausblenden
         self._update_qr_code()
 
-        # Loading-Overlay wenn VLC noch nicht warm ist
+        # Loading-Overlay sichtbar halten/entfernen nachdem alle Karten aktualisiert sind.
         if _vlc_available and not is_vlc_warm():
-            self._show_loading_overlay()
+            if self._loading_overlay is not None:
+                self._loading_overlay.lift()
         else:
             self._hide_loading_overlay()
 
@@ -717,6 +727,7 @@ class StartScreen(ctk.CTkFrame):
             return
 
         self._loading_visible = True
+        self._loading_shown_at = time.monotonic()
 
         # Overlay-Frame über allem
         self._loading_overlay = ctk.CTkFrame(self, fg_color=COLORS["bg_dark"])
@@ -737,7 +748,10 @@ class StartScreen(ctk.CTkFrame):
         # Persönliche Willkommensnachricht wenn Kundenname vorhanden
         first_name = ""
         if self.app.booking_manager and self.app.booking_manager.is_loaded:
-            first_name = self.app.booking_manager.settings.shipping_first_name
+            settings = self.app.booking_manager.settings
+            first_name = (settings.shipping_first_name or "").strip()
+            if not first_name and settings.customer_name:
+                first_name = settings.customer_name.strip().split()[0]
 
         if first_name:
             ctk.CTkLabel(
@@ -805,12 +819,35 @@ class StartScreen(ctk.CTkFrame):
         # Polling: Prüfe alle 500ms ob VLC warm ist
         self._check_vlc_ready()
 
+        try:
+            self._loading_overlay.lift()
+            self.update_idletasks()
+        except Exception:
+            pass
+
+    def _schedule_vlc_warmup(self):
+        """Startet den VLC-Warmup erst nach dem ersten sichtbaren UI-Frame."""
+        if self._vlc_warmup_after_id is not None:
+            return
+
+        self._vlc_warmup_after_id = self.after(250, self._start_vlc_warmup)
+
+    def _start_vlc_warmup(self):
+        self._vlc_warmup_after_id = None
+        warmup_vlc()
+
     def _check_vlc_ready(self):
         """Prüft ob VLC warm ist und entfernt Loading-Overlay"""
         if not self._loading_visible:
             return
 
         if is_vlc_warm():
+            elapsed = time.monotonic() - self._loading_shown_at
+            if elapsed < MIN_LOADING_SCREEN_SECONDS:
+                remaining_ms = int((MIN_LOADING_SCREEN_SECONDS - elapsed) * 1000)
+                self.after(max(100, remaining_ms), self._check_vlc_ready)
+                return
+
             logger.info("VLC-Warmup fertig - Ladebildschirm entfernen")
             self._hide_loading_overlay()
         else:
@@ -825,6 +862,14 @@ class StartScreen(ctk.CTkFrame):
                 pass
             self._loading_overlay = None
         self._loading_visible = False
+        self._loading_shown_at = 0.0
+
+        if self._vlc_warmup_after_id is not None:
+            try:
+                self.after_cancel(self._vlc_warmup_after_id)
+            except Exception:
+                pass
+            self._vlc_warmup_after_id = None
 
         # Start-Button wieder freigeben (wenn Option gewählt)
         if self.selected_option:

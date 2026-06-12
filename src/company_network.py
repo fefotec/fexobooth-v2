@@ -43,6 +43,7 @@ def get_active_ssid() -> Optional[str]:
             capture_output=True,
             timeout=5,
             check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
         logger.debug(f"netsh wlan show interfaces fehlgeschlagen: {e}")

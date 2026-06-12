@@ -3504,6 +3504,7 @@ class AdminDialog(ctk.CTkToplevel):
                 self.config_data["gallery"]["port"] = int(self.gallery_port.get())
             except ValueError:
                 self.config_data["gallery"]["port"] = 8080
+            self.config_data["gallery_port"] = self.config_data["gallery"]["port"]
             
             logger.info(f"Galerie: enabled={self.config_data.get('gallery_enabled')}, "
                         f"ssid={self.config_data['gallery'].get('hotspot_ssid')}, "

@@ -88,6 +88,9 @@ Name: "{app}\BILDER"
 Name: "{app}\BILDER\Prints"
 Name: "{app}\BILDER\Single"
 Name: "{app}\logs"
+; Update-sichere Box-Daten. Muss auch fuer den normalen Kiosk-Benutzer
+; beschreibbar sein, wenn der Installer als Administrator lief.
+Name: "{commonappdata}\FexoBox"; Permissions: users-modify; Flags: uninsneveruninstall
 ; .booking_cache wird NICHT vorab erstellt — entsteht erst im Produktionsbetrieb
 ; wenn ein USB-Stick mit Event-Daten eingesteckt wird
 
@@ -169,11 +172,9 @@ begin
 end;
 
 [InstallDelete]
-; Bei Neuinstallation: Statistiken und Druckerzähler zurücksetzen (sauberer Start)
-Type: files; Name: "{app}\fexobooth_statistics.json"
-Type: files; Name: "{app}\printer_lifetime.json"
-Type: files; Name: "{app}\_internal\fexobooth_statistics.json"
-Type: files; Name: "{app}\_internal\printer_lifetime.json"
+; Statistik und Drucker-Lifetime werden ab v2.4.7 nach ProgramData migriert.
+; Alte Dateien im Installationsordner NICHT loeschen, damit der erste App-Start
+; sie noch migrieren kann.
 ; Booking-Cache an BEIDEN möglichen Pfaden löschen (App-Root UND PyInstaller _internal)
 Type: filesandordirs; Name: "{app}\.booking_cache"
 Type: filesandordirs; Name: "{app}\_internal\.booking_cache"
@@ -183,7 +184,3 @@ Type: filesandordirs; Name: "{app}\_internal\.booking_cache"
 Type: filesandordirs; Name: "{app}\logs"
 Type: filesandordirs; Name: "{app}\.booking_cache"
 Type: filesandordirs; Name: "{app}\_internal\.booking_cache"
-Type: files; Name: "{app}\fexobooth_statistics.json"
-Type: files; Name: "{app}\printer_lifetime.json"
-Type: files; Name: "{app}\_internal\fexobooth_statistics.json"
-Type: files; Name: "{app}\_internal\printer_lifetime.json"

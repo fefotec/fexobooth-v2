@@ -41,7 +41,7 @@ _SIGNATURE_PREFIX = "hmac_sha256:"
 _HMAC_SOFT_MODE = True
 
 
-def _verify_signature(data: Dict[str, Any]) -> Tuple[bool, str]:
+def _verify_signature(data: Dict[str, Any], log_unsigned: bool = True) -> Tuple[bool, str]:
     """Validiert die _signature der settings.json.
 
     Returns:
@@ -56,10 +56,11 @@ def _verify_signature(data: Dict[str, Any]) -> Tuple[bool, str]:
 
     if sig is None:
         if _HMAC_SOFT_MODE:
-            logger.warning(
-                "⚠️  settings.json ohne Signatur — Soft-Mode akzeptiert "
-                "(in v2.5.0 wird das abgelehnt)"
-            )
+            if log_unsigned:
+                logger.warning(
+                    "⚠️  settings.json ohne Signatur — Soft-Mode akzeptiert "
+                    "(in v2.5.0 wird das abgelehnt)"
+                )
             return (True, "unsigned")
         return (False, "unsigned_strict")
 
@@ -310,7 +311,7 @@ class BookingManager:
                     # Signatur prüfen — manipulierte/falsch signierte JSONs überspringen.
                     # Soft-Mode lässt unsignierte durch, hartes Reject nur bei
                     # falscher Signatur (echter Manipulationsversuch).
-                    sig_valid, _ = _verify_signature(data)
+                    sig_valid, _ = _verify_signature(data, log_unsigned=False)
                     if not sig_valid:
                         continue
 
@@ -354,7 +355,7 @@ class BookingManager:
                 data = json.load(f)
 
             # Signatur prüfen — manipulierte JSONs nicht als "neue Buchung" melden
-            valid, reason = _verify_signature(data)
+            valid, reason = _verify_signature(data, log_unsigned=False)
             if not valid:
                 logger.error(
                     f"❌ check_usb: {settings_path.name} abgelehnt ({reason})"

@@ -8,13 +8,13 @@ Erfasst pro Buchung:
 """
 
 import json
-import os
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field, asdict
 
 from src.utils.logging import get_logger
+from src.storage.paths import legacy_data_paths, persistent_data_path
 
 logger = get_logger(__name__)
 
@@ -96,8 +96,8 @@ class StatisticsManager:
             booking_id: Buchungsnummer (aus settings.json)
             save_path: IGNORIERT - Statistik wird IMMER lokal gespeichert!
         """
-        # Speicherpfad: IMMER im Software-Ordner (nicht auf USB - geht Kunden nichts an!)
-        self._stats_file_path = Path(__file__).parent.parent.parent / STATS_FILENAME
+        # Speicherpfad: IMMER lokal in ProgramData (nicht auf USB - geht Kunden nichts an!)
+        self._stats_file_path = persistent_data_path(STATS_FILENAME)
 
         # Existierende Statistiken laden
         self._load_existing_stats()
@@ -287,16 +287,9 @@ class StatisticsManager:
         return result
     
     def _auto_load_stats(self):
-        """Versucht Statistiken aus dem Software-Ordner zu laden"""
+        """Versucht Statistiken aus ProgramData oder alten lokalen Pfaden zu laden"""
         # Mögliche Pfade durchsuchen (NUR lokal, nicht USB!)
-        search_paths = [
-            # Projekt-Root (Hauptspeicherort)
-            Path(__file__).parent.parent.parent / STATS_FILENAME,
-            # Aktuelles Verzeichnis
-            Path.cwd() / STATS_FILENAME,
-            # Windows Standard-Installation
-            Path("C:/fexobooth/fexobooth-v2") / STATS_FILENAME,
-        ]
+        search_paths = [persistent_data_path(STATS_FILENAME), *legacy_data_paths(STATS_FILENAME)]
         
         logger.info(f"📊 Suche Statistik-Datei in: {[str(p) for p in search_paths]}")
         

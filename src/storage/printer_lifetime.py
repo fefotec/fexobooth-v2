@@ -5,14 +5,14 @@ des Druckers. Wird NICHT durch Event-Wechsel oder Statistik-Reset zurückgesetzt
 
 Reset nur über Service-PIN (6588) im Admin-Menü möglich.
 
-Speicherort: printer_lifetime.json (im Software-Ordner, neben fexobooth_statistics.json)
+Speicherort: ProgramData/FexoBox/printer_lifetime.json
 """
 
 import json
-from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any
 
+from src.storage.paths import persistent_data_path
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -24,7 +24,7 @@ class PrinterLifetimeCounter:
     """Persistenter Lifetime-Zähler für Drucke"""
 
     def __init__(self):
-        self._file_path = Path(__file__).parent.parent.parent / LIFETIME_FILENAME
+        self._file_path = persistent_data_path(LIFETIME_FILENAME)
         self._data: Dict[str, Any] = self._load()
 
     def _load(self) -> Dict[str, Any]:

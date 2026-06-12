@@ -6,6 +6,33 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.7] - 2026-06-12 - Produktions-Defaults und persistente Box-Daten
+
+### Behoben
+
+- **OTA-Updates konnten Videos, Auslösebild und Produktions-Defaults verlieren.** Beim Start stellt die Software jetzt die festen Produktionswerte wieder her: Countdown `7 s`, Foto-Anzeige `3 s`, Auto-Return `20 s`, Auslösebild `100 ms`, max. Drucke `1`, Single-Foto aus, Performance-Modus an, Vollbild beim Start an, Fertig-Button ausgeblendet und Drucken aktiv.
+- **Default-Medien sind fest verdrahtet:** Start-/Zwischenvideos, End-Video und Auslösebild werden auf die eingebauten Assets gesetzt und im PyInstaller-Build automatisch auf den echten `_internal\assets\...` Pfad aufgelöst.
+- **WLAN-Hotspot bleibt auf Produktionsstandard:** SSID `fexobox-gallery`, Passwort `fotobox123`, Port `8080`.
+- **Druck-Anpassung wird wieder auf Produktionswert gesetzt:** `X +40 px`, `Y +30 px`, `Zoom 103 %`, `Bleed 3 mm`.
+- **Kunden-Begrüßungsscreen beim Start ist wieder sichtbar und bleibt mindestens 4 Sekunden stehen.** Zusätzlich erscheint ein früher Ladescreen direkt nach dem Kiosk-Fensteraufbau, während Kamera, USB, Templates und VLC vorbereitet werden.
+- **Kurzes Konsolenfenster beim Firmen-WLAN-Check verhindert:** `netsh wlan show interfaces` läuft jetzt versteckt.
+- **Statistik-Speichern nach OTA/Installer robuster:** `C:\ProgramData\FexoBox` wird vom Installer für den Kiosk-Benutzer beschreibbar gesetzt; falls eine alte Installation bereits falsche Rechte hinterlassen hat, nutzt die App einen update-sicheren lokalen Fallback.
+- **USB-Sync-Check startet nicht mehr vor der Tk-Hauptschleife.** Dadurch verschwindet der Logfehler `main thread is not in main loop` beim Start.
+- **Wiederholte Signatur-Warnungen reduziert:** Die periodische USB-Prüfung loggt unsignierte `settings.json` nicht mehr jede Sekunde, der Hinweis bleibt beim echten Laden der Buchung sichtbar.
+
+### Geändert
+
+- **Druck-Anpassung wird bei jedem Eventwechsel zurückgesetzt.** Auch wenn vorher im Admin-Menü anders kalibriert wurde, startet jedes neue Event wieder mit `X +40`, `Y +30`, `103 %`.
+- **Box-spezifische Maschinenwerte werden nach ProgramData ausgelagert:** Box-ID, Drucker-Auswahl und Kamera-Grundwerte werden nach `C:\ProgramData\FexoBox\machine_settings.json` gespiegelt und nach Updates zurückgeholt.
+- **Statistik und Drucker-Lifetime liegen update-sicher in ProgramData:** `fexobooth_statistics.json` und `printer_lifetime.json` werden nach `C:\ProgramData\FexoBox\` migriert.
+- Der Installer löscht alte Statistik-/Lifetime-Dateien im Installationsordner nicht mehr, damit der erste Start von v2.4.7 sie migrieren kann.
+- Die Begrüßung nutzt jetzt als Fallback den ersten Teil aus `customer.name`, wenn `shipping_first_name` in der `settings.json` fehlt.
+- Im Kunden-Menü `2015` heißt `Template neu einlesen` jetzt `Event-Neu Einlesen`.
+
+> Hinweis: Falls eine alte OTA-Version Statistikdateien bereits vor dem ersten Start von v2.4.7 gelöscht hat, kann die Software diese Werte nicht rekonstruieren. Ab v2.4.7 werden sie nicht mehr im ersetzten Installationsordner gespeichert.
+
+---
+
 ## [2.4.6] - 2026-06-11 - Box-ID update-sicher außerhalb des Installationsordners
 
 ### Behoben

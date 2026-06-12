@@ -14,7 +14,7 @@ import threading
 import random
 import atexit
 
-from src.config.config import load_config, save_config
+from src.config.config import load_config, reset_event_defaults, save_config
 from src.camera import get_camera_manager, CANON_AVAILABLE
 from src.storage.local import get_shared_usb_manager
 from src.storage.local import LocalStorage
@@ -50,6 +50,7 @@ class PhotoboothApp:
 
         # App-Referenz am Root speichern (für Service-Menü Zugriff)
         self.root._photobooth_app = self
+        self._mainloop_started = False
         
         # Bildschirmgröße ermitteln
         screen_width = self.root.winfo_screenwidth()
@@ -78,11 +79,18 @@ class PhotoboothApp:
         # Notfall-Shortcut: Ctrl+Shift+Q beendet die App sofort (auch im Kiosk-Modus)
         self.root.bind("<Control-Shift-Q>", lambda e: self._emergency_quit())
         self.root.bind("<Control-Shift-q>", lambda e: self._emergency_quit())
-        
+
+        self.booking_manager = get_booking_manager()
+        self._startup_loading_frame = None
+        self._startup_loading_name_label = None
+        self._startup_loading_status_label = None
+        self._show_startup_loading_screen()
+
         # Manager initialisieren
         camera_type = config.get("camera_type", "webcam")
         self.camera_manager = get_camera_manager(camera_type)
         logger.info(f"Kamera-Typ: {camera_type} (Canon verfügbar: {CANON_AVAILABLE})")
+        self._pump_startup_loading_screen()
 
         # Webcam: Automatisch beste EXTERNE Kamera wählen
         # Interne Tablet-Kameras werden ignoriert (physisch verdeckt)
@@ -104,8 +112,9 @@ class PhotoboothApp:
                         config["camera_index"] = -1
             except Exception as e:
                 logger.debug(f"Kamera Auto-Auswahl fehlgeschlagen: {e}")
+        self._pump_startup_loading_screen()
+
         self.usb_manager = get_shared_usb_manager()
-        self.booking_manager = get_booking_manager()
         self.statistics = get_statistics_manager()
         self.local_storage = LocalStorage()
         self.filter_manager = FilterManager()
@@ -113,6 +122,7 @@ class PhotoboothApp:
             canvas_width=config.get("canvas_width", 1800),
             canvas_height=config.get("canvas_height", 1200)
         )
+        self._pump_startup_loading_screen()
         
         # Session-Status
         self.photos_taken: List[Image.Image] = []
@@ -137,6 +147,7 @@ class PhotoboothApp:
 
         # USB-Sync Dialog State
         self._sync_dialog_open: bool = False  # Verhindert mehrfache Dialoge
+        self._sync_offer_deferred: bool = False
 
         # Event-Wechsel & FEXOSAFE Dialog State
         self._pending_event_change: Optional[str] = None   # Neue booking_id
@@ -167,7 +178,8 @@ class PhotoboothApp:
         # WICHTIG: Settings ZUERST laden, BEVOR UI erstellt wird!
         # Sonst zeigt die UI falsche Optionen (z.B. Single-Foto obwohl deaktiviert)
         self._load_settings_from_usb_immediately()
-        
+        self._pump_startup_loading_screen()
+
         # Settings auf Config anwenden (VOR UI-Setup!)
         if self.booking_manager.is_loaded:
             logger.info(f"📂 Buchung aktiv: {self.booking_manager.booking_id}")
@@ -179,9 +191,13 @@ class PhotoboothApp:
             # BookingSettings auf Config anwenden (allow_single_mode, gallery_enabled, etc.)
             self.booking_manager.apply_settings_to_config(self.config)
 
+        self._refresh_startup_loading_screen()
+        self._pump_startup_loading_screen()
+
         # Gecachtes Template VOR UI-Erstellung laden, damit StartScreen sofort
         # das richtige Template anzeigt (nicht kurz "Standard 2x2" flashen)
         self._restore_cached_template()
+        self._pump_startup_loading_screen()
 
         # Log aktuelle Config nach Settings-Anwendung
         logger.info(f"📋 Config nach Settings-Load:")
@@ -195,11 +211,13 @@ class PhotoboothApp:
 
         # UI Setup (NACH Settings, damit korrekte Optionen angezeigt werden!)
         self._setup_ui()
+        self._hide_startup_loading_screen()
 
-        # VLC vorwärmen (verhindert 57s Freeze beim ersten Video)
+        # VLC erst nach dem ersten UI-Frame vorwärmen, damit der Kunden-
+        # Begrüßungsscreen sichtbar bleibt während VLC seine Plugins lädt.
         try:
             from src.ui.screens.video import warmup_vlc
-            warmup_vlc()
+            self.root.after(500, warmup_vlc)
         except Exception as e:
             logger.debug(f"VLC-Warmup übersprungen: {e}")
 
@@ -260,6 +278,122 @@ class PhotoboothApp:
                 logger.debug(f"Firmennetzwerk-Trigger fehlgeschlagen: {e}")
 
         logger.info("PhotoboothApp initialisiert")
+
+    def _show_startup_loading_screen(self):
+        """Zeigt sehr früh einen einfachen Ladescreen im Kiosk-Fenster."""
+        if self._startup_loading_frame is not None:
+            return
+
+        frame = ctk.CTkFrame(self.root, fg_color=COLORS["bg_dark"], corner_radius=0)
+        frame.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+        content = ctk.CTkFrame(frame, fg_color="transparent")
+        content.place(relx=0.5, rely=0.45, anchor="center")
+
+        ctk.CTkLabel(
+            content,
+            text="FEXOBOOTH",
+            font=("Segoe UI", 38, "bold"),
+            text_color=COLORS["primary"],
+        ).pack(pady=(0, 20))
+
+        self._startup_loading_name_label = ctk.CTkLabel(
+            content,
+            text="",
+            font=("Segoe UI", 30, "bold"),
+            text_color=COLORS["text_primary"],
+        )
+        self._startup_loading_name_label.pack(pady=(0, 5))
+
+        self._startup_loading_status_label = ctk.CTkLabel(
+            content,
+            text="",
+            font=("Segoe UI", 18),
+            text_color=COLORS["text_secondary"],
+            justify="center",
+        )
+        self._startup_loading_status_label.pack(pady=(0, 25))
+
+        progress = ctk.CTkProgressBar(
+            content,
+            width=300,
+            height=6,
+            fg_color=COLORS["bg_light"],
+            progress_color=COLORS["primary"],
+            corner_radius=3,
+            mode="indeterminate",
+        )
+        progress.pack(pady=(0, 10))
+        progress.start()
+
+        self._startup_loading_frame = frame
+        self._refresh_startup_loading_screen()
+
+        try:
+            self.root.update_idletasks()
+            self.root.update()
+        except Exception:
+            pass
+
+    def _refresh_startup_loading_screen(self):
+        if self._startup_loading_frame is None:
+            return
+
+        first_name = self._get_startup_first_name()
+        if first_name:
+            self._startup_loading_name_label.configure(
+                text=t(self.config, "start.greeting_named", name=first_name)
+            )
+            self._startup_loading_status_label.configure(
+                text=(
+                    f"{t(self.config, 'start.greeting_thanks')}\n\n"
+                    f"{t(self.config, 'start.greeting_warmup')}\n"
+                    f"{t(self.config, 'start.loading_wait')}"
+                )
+            )
+        else:
+            self._startup_loading_name_label.configure(
+                text=t(self.config, "start.loading_software")
+            )
+            self._startup_loading_status_label.configure(text=t(self.config, "start.loading_wait"))
+
+        try:
+            self.root.update_idletasks()
+        except Exception:
+            pass
+
+    def _pump_startup_loading_screen(self):
+        if self._startup_loading_frame is None:
+            return
+        try:
+            self.root.update_idletasks()
+            self.root.update()
+        except Exception:
+            pass
+
+    def _hide_startup_loading_screen(self):
+        if self._startup_loading_frame is None:
+            return
+
+        try:
+            self._startup_loading_frame.destroy()
+        except Exception:
+            pass
+
+        self._startup_loading_frame = None
+        self._startup_loading_name_label = None
+        self._startup_loading_status_label = None
+
+    def _get_startup_first_name(self) -> str:
+        if not self.booking_manager or not self.booking_manager.is_loaded:
+            return ""
+        settings = self.booking_manager.settings
+        if not settings:
+            return ""
+        first_name = (settings.shipping_first_name or "").strip()
+        if not first_name and settings.customer_name:
+            first_name = settings.customer_name.strip().split()[0]
+        return first_name
 
     def _record_boot_drives(self):
         """Merkt sich alle Wechseldatenträger die beim Boot schon da sind.
@@ -480,7 +614,7 @@ class PhotoboothApp:
             gallery_path = self.local_storage.get_images_path()
 
             if gallery_path:
-                port = self.config.get("gallery_port", 8080)
+                port = int(gallery_config.get("port") or self.config.get("gallery_port", 8080))
                 start_server(
                     gallery_path,
                     port=port,
@@ -594,7 +728,7 @@ class PhotoboothApp:
             gallery_path = self.local_storage.get_images_path()
 
             if gallery_path:
-                port = self.config.get("gallery_port", 8080)
+                port = int(gallery_config.get("port") or self.config.get("gallery_port", 8080))
                 start_server(
                     gallery_path,
                     port=port,
@@ -1203,6 +1337,13 @@ class PhotoboothApp:
         from src.storage.local import LocalStorage
         import threading
 
+        if not getattr(self, "_mainloop_started", False):
+            if not self._sync_offer_deferred:
+                self._sync_offer_deferred = True
+                logger.debug("USB-Sync: Warte bis Hauptschleife laeuft")
+                self.root.after(1000, self._run_deferred_sync_offer)
+            return
+
         local_path = LocalStorage.get_images_path()
         if not local_path.exists():
             logger.warning(f"USB-Sync: local_path existiert nicht: {local_path}")
@@ -1231,6 +1372,10 @@ class PhotoboothApp:
                     self.root.after(0, lambda: self._show_sync_dialog(pending_count, local_path))
 
         threading.Thread(target=check_missing, daemon=True).start()
+
+    def _run_deferred_sync_offer(self):
+        self._sync_offer_deferred = False
+        self._offer_sync_dialog()
 
     def _show_sync_dialog(self, missing_count: int, local_path):
         """Zeigt Dialog: X Bilder auf USB kopieren? Mit Fortschritt und Abbrechen."""
@@ -1994,6 +2139,7 @@ class PhotoboothApp:
         if self.booking_manager.load_from_usb(usb_root, force=True):
             self._update_booking_display()
             self.booking_manager.apply_settings_to_config(self.config)
+            reset_event_defaults(self.config)
             logger.info(f"Neue Buchung geladen: {new_booking_id}")
 
         # 2. Alle Bilder auf Tablet löschen
@@ -2520,7 +2666,11 @@ class PhotoboothApp:
     def run(self):
         """Startet die Anwendung"""
         logger.info("Starte Hauptschleife")
-        self.root.mainloop()
+        self._mainloop_started = True
+        try:
+            self.root.mainloop()
+        finally:
+            self._mainloop_started = False
     
     def _emergency_quit(self):
         """Notfall-Beenden über Ctrl+Shift+Q - funktioniert IMMER, auch im Kiosk-Modus."""

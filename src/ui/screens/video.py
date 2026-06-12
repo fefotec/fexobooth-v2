@@ -81,8 +81,11 @@ def warmup_vlc():
     if not _vlc_available or _vlc_warm:
         return
 
+    if _vlc_warmup_thread is not None and _vlc_warmup_thread.is_alive():
+        return
+
     def _do_warmup():
-        global _vlc_warm
+        global _vlc_warm, _vlc_warmup_thread
         try:
             logger.info("VLC-Warmup: Lade Plugin-Cache...")
             start = time.time()
@@ -95,6 +98,7 @@ def warmup_vlc():
         except Exception as e:
             logger.warning(f"VLC-Warmup fehlgeschlagen: {e}")
         _vlc_warm = True
+        _vlc_warmup_thread = None
 
     _vlc_warmup_thread = threading.Thread(target=_do_warmup, daemon=True, name="VLC-Warmup")
     _vlc_warmup_thread.start()

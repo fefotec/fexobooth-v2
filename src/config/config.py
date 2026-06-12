@@ -24,6 +24,76 @@ else:
 CONFIG_PATH = BASE_PATH / "config.json"
 _LEGACY_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config.json"
 _IDENTITY_KEYS = ("box_id",)
+_MISSING = object()
+
+_PRODUCTION_PRINT_ADJUSTMENT = {
+    "offset_x": 40,
+    "offset_y": 30,
+    "zoom": 103,
+    "bleed_mm": 3,
+}
+
+_PRODUCTION_DEFAULT_OVERRIDES = {
+    "countdown_time": 7,
+    "single_display_time": 3,
+    "final_time": 20,
+    "flash_duration": 100,
+    "max_prints_per_session": 1,
+    "allow_single_mode": False,
+    "performance_mode": True,
+    "start_fullscreen": True,
+    "hide_finish_button": True,
+    "print_enabled": True,
+    "template1_enabled": True,
+    "template2_enabled": False,
+    "template_paths": {
+        "template1": "assets/templates/Fexobox Standard.zip",
+        "template2": "",
+    },
+    "gallery_port": 8080,
+    "gallery": {
+        "hotspot_ssid": "fexobox-gallery",
+        "hotspot_password": "fotobox123",
+        "port": 8080,
+    },
+    "video_start": "assets/videos/Fexon - Fotobox Tutorial 1 By Videoboost.Undefined.mp4",
+    "video_after_1": "assets/videos/Fexon - Fotobox Tutorial 3 By Videoboost.Undefined.mp4",
+    "video_after_2": "assets/videos/Fexon - Fotobox Tutorial 4 By Videoboost.Undefined.mp4",
+    "video_after_3": "assets/videos/Fexon - Fotobox Tutorial 5 By Videoboost.Undefined.mp4",
+    "video_end": "assets/videos/Fexon - Fotobox Tutorial 7 By Videoboost.Undefined.mp4",
+    "flash_image": "assets/icons/foto-screen.jpeg",
+    "print_adjustment": _PRODUCTION_PRINT_ADJUSTMENT,
+}
+
+_BUILTIN_ASSET_KEYS = (
+    ("video_start",),
+    ("video_after_1",),
+    ("video_after_2",),
+    ("video_after_3",),
+    ("video_end",),
+    ("flash_image",),
+    ("template_paths", "template1"),
+    ("template_paths", "template2"),
+)
+
+_MACHINE_SETTINGS_KEYS = (
+    ("box_id",),
+    ("printer_name",),
+    ("camera_type",),
+    ("camera_index",),
+    ("rotate_180",),
+    ("liveview_template_overlay",),
+    ("camera_settings", "single_photo_width"),
+    ("camera_settings", "single_photo_height"),
+    ("camera_settings", "live_view_resolution"),
+)
+
+
+def _programdata_base_path() -> Path:
+    if os.name == "nt":
+        base = os.environ.get("PROGRAMDATA") or os.environ.get("ALLUSERSPROFILE") or r"C:\ProgramData"
+        return Path(base) / "FexoBox"
+    return Path.home() / ".fexobooth"
 
 
 def _persistent_store_path() -> Path:
@@ -40,10 +110,11 @@ def _persistent_store_path() -> Path:
     - Windows: %PROGRAMDATA%\\FexoBox\\box_id.json  (i.d.R. C:\\ProgramData\\FexoBox)
     - sonst (Dev/macOS/Linux): ~/.fexobooth/box_id.json
     """
-    if os.name == "nt":
-        base = os.environ.get("PROGRAMDATA") or os.environ.get("ALLUSERSPROFILE") or r"C:\ProgramData"
-        return Path(base) / "FexoBox" / "box_id.json"
-    return Path.home() / ".fexobooth" / "box_id.json"
+    return _programdata_base_path() / "box_id.json"
+
+
+def _machine_settings_path() -> Path:
+    return _programdata_base_path() / "machine_settings.json"
 
 
 def _read_persistent_identity() -> Dict[str, Any]:
@@ -81,6 +152,78 @@ def _write_persistent_identity(config: Dict[str, Any]) -> None:
             json.dump(identity, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print(f"Persistenter Box-ID-Speicher nicht schreibbar ({path}): {e}")
+
+
+def _read_machine_settings() -> Dict[str, Any]:
+    """Liest update-sichere Maschinenwerte aus ProgramData.
+
+    Diese Datei enthaelt nur box-spezifische Werte, keine Event-/Kundenwerte.
+    """
+    path = _machine_settings_path()
+    data: Dict[str, Any] = {}
+    try:
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                data.update(loaded)
+    except Exception as e:
+        print(f"Machine-Settings nicht lesbar ({path}): {e}")
+
+    # Migration/Kompatibilitaet: v2.4.6 speicherte nur box_id.json.
+    identity = _read_persistent_identity()
+    for key in _IDENTITY_KEYS:
+        if not str(data.get(key, "") or "").strip() and str(identity.get(key, "") or "").strip():
+            data[key] = identity[key]
+
+    return data
+
+
+def _write_machine_settings(config: Dict[str, Any]) -> None:
+    """Spiegelt stabile Maschinenwerte in ProgramData.
+
+    Leere Strings ueberschreiben vorhandene Werte nicht. So kann eine durch ein
+    Update geleerte config.json keine Maschinenwerte loeschen.
+    """
+    path = _machine_settings_path()
+    existing_data = _read_machine_settings()
+    data: Dict[str, Any] = {}
+
+    for key_path in _MACHINE_SETTINGS_KEYS:
+        value = _get_nested(config, key_path)
+        if value is _MISSING or (isinstance(value, str) and not value.strip()):
+            value = _get_nested(existing_data, key_path)
+            if value is _MISSING:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+        _set_nested(data, key_path, value)
+
+    if not data:
+        return
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"Machine-Settings nicht schreibbar ({path}): {e}")
+
+
+def _recover_machine_settings(config: Dict[str, Any]) -> bool:
+    """Wendet gespeicherte ProgramData-Maschinenwerte auf die Config an."""
+    data = _read_machine_settings()
+    changed = False
+
+    for key_path in _MACHINE_SETTINGS_KEYS:
+        value = _get_nested(data, key_path)
+        if value is _MISSING:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        changed |= _assign_if_changed(config, key_path, value)
+
+    return changed
 
 
 def _recover_identity_from_store(config: Dict[str, Any]) -> bool:
@@ -127,24 +270,33 @@ def load_config() -> Dict[str, Any]:
     if usb_config:
         _deep_merge(config, usb_config, preserve_identity=True)
 
+    changed = False
+
+    # Produktions-Defaults aus v2.4.7 wiederherstellen. Diese Werte wurden bei
+    # manchen OTA-Updates durch eine neu erzeugte config.json verloren.
+    changed |= _apply_production_defaults(config)
+
+    # Box-spezifische Maschinenwerte aus ProgramData zurueckholen.
+    changed |= _recover_machine_settings(config)
+
     # Update-sicherer Box-ID-Speicher (ProgramData): Wenn weder lokale noch
     # USB-Config eine Box-ID liefern, aber im update-sicheren Speicher eine steht,
     # diese zurückholen. Schützt vor Box-ID-Verlust durch fehlerhafte Updates.
-    recovered = _recover_identity_from_store(config)
+    changed |= _recover_identity_from_store(config)
 
     apply_locale_to_config(config)
 
     _config = config
 
-    if recovered:
-        # Wiederhergestellte Box-ID dauerhaft zurück in config.json schreiben,
-        # damit der Rest der App (und das Backup künftiger Updates) sie wieder sieht.
-        # save_config() spiegelt sie zugleich erneut in den update-sicheren Speicher.
+    if changed:
+        # Wiederhergestellte Werte dauerhaft zurück in config.json schreiben,
+        # damit der Rest der App und kuenftige Update-Backups sie wieder sehen.
         save_config(config)
     else:
         # Gültige Box-ID in den update-sicheren Speicher spiegeln (z.B. beim ersten
         # Start einer Version mit diesem Schutz, oder nach manuellem Setzen).
         _write_persistent_identity(config)
+        _write_machine_settings(config)
 
     return config
 
@@ -162,6 +314,7 @@ def save_config(config: Dict[str, Any]) -> bool:
         # Box-ID zusätzlich in den update-sicheren Speicher spiegeln, damit sie
         # jedes Update überlebt — egal welche Version das ersetzende BAT erzeugt.
         _write_persistent_identity(config)
+        _write_machine_settings(config)
         return True
     except Exception as e:
         print(f"Fehler beim Speichern der Config: {e}")
@@ -229,6 +382,138 @@ def _migrate_legacy_config(source_path: Path) -> None:
         print(f"Legacy-Config migriert: {source_path} -> {CONFIG_PATH}")
     except Exception as e:
         print(f"Legacy-Config konnte nicht migriert werden: {e}")
+
+
+def reset_event_defaults(config: Dict[str, Any]) -> bool:
+    """Setzt Werte zurueck, die bei jedem Event neu auf Produktionsstandard sollen."""
+    return _assign_if_changed(config, ("print_adjustment",), _PRODUCTION_PRINT_ADJUSTMENT)
+
+
+def _apply_production_defaults(config: Dict[str, Any]) -> bool:
+    """Erzwingt Produktions-Defaults, die durch Updates nicht verloren gehen duerfen."""
+    changed = False
+    for key, value in _PRODUCTION_DEFAULT_OVERRIDES.items():
+        changed |= _assign_if_changed(config, (key,), _production_default_value(key, value))
+
+    # Top-Level-Port und Admin-Galerie-Port synchron halten.
+    gallery_port = _get_nested(config, ("gallery", "port"))
+    if gallery_port is not _MISSING:
+        changed |= _assign_if_changed(config, ("gallery_port",), gallery_port)
+
+    changed |= _resolve_builtin_asset_paths(config)
+    return changed
+
+
+def _production_default_value(key: str, value):
+    expected = deepcopy(value)
+    if key in {"video_start", "video_after_1", "video_after_2", "video_after_3", "video_end", "flash_image"}:
+        return _resolve_builtin_asset_path(str(expected))
+
+    if key == "template_paths" and isinstance(expected, dict):
+        for template_key, template_value in expected.items():
+            if template_value:
+                expected[template_key] = _resolve_builtin_asset_path(str(template_value))
+
+    return expected
+
+
+def _resolve_builtin_asset_paths(config: Dict[str, Any]) -> bool:
+    changed = False
+    for key_path in _BUILTIN_ASSET_KEYS:
+        value = _get_nested(config, key_path)
+        if not value:
+            continue
+        resolved = _resolve_builtin_asset_path(str(value))
+        if resolved != value:
+            changed |= _assign_if_changed(config, key_path, resolved)
+    return changed
+
+
+def _resolve_builtin_asset_path(value: str) -> str:
+    """Mappt assets/... auf den echten Pfad im Dev- oder PyInstaller-Build."""
+    raw = str(value).strip()
+    if not raw:
+        return raw
+
+    path = Path(raw)
+    if path.is_absolute() and path.exists():
+        return raw
+
+    suffix = _extract_asset_suffix(raw)
+    if not suffix:
+        return raw
+
+    for base in _asset_base_candidates():
+        candidate = base / Path(*suffix.split("/"))
+        if candidate.exists():
+            return str(candidate)
+
+    return raw
+
+
+def _extract_asset_suffix(value: str) -> Optional[str]:
+    normalized = value.replace("\\", "/")
+    idx = normalized.lower().find("assets/")
+    if idx < 0:
+        return None
+    return normalized[idx:]
+
+
+def _asset_base_candidates():
+    candidates = []
+
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(Path(meipass))
+
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates.extend([exe_dir / "_internal", exe_dir])
+
+    candidates.extend([
+        BASE_PATH,
+        Path(__file__).resolve().parents[2],
+        Path.cwd(),
+    ])
+
+    seen = set()
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        yield candidate
+
+
+def _get_nested(data: Dict[str, Any], key_path):
+    current = data
+    for key in key_path:
+        if not isinstance(current, dict) or key not in current:
+            return _MISSING
+        current = current[key]
+    return current
+
+
+def _set_nested(data: Dict[str, Any], key_path, value) -> None:
+    current = data
+    for key in key_path[:-1]:
+        child = current.get(key)
+        if not isinstance(child, dict):
+            child = {}
+            current[key] = child
+        current = child
+    current[key_path[-1]] = deepcopy(value)
+
+
+def _assign_if_changed(data: Dict[str, Any], key_path, value) -> bool:
+    current = _get_nested(data, key_path)
+    if current == value:
+        return False
+    _set_nested(data, key_path, value)
+    return True
 
 
 def _deep_merge(base: Dict, update: Dict, preserve_identity: bool = False) -> Dict:

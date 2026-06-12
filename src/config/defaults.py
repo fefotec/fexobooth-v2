@@ -5,13 +5,13 @@ DEFAULT_CONFIG = {
     "admin_pin": "3198",
     
     # Timing
-    "countdown_time": 5,
-    "single_display_time": 2,
+    "countdown_time": 7,
+    "single_display_time": 3,
     "final_time": 20,
     "flash_duration": 100,  # Auslöse-Bild Dauer in Millisekunden
     
     # Modi
-    "allow_single_mode": True,
+    "allow_single_mode": False,
     "performance_mode": True,
     "start_fullscreen": True,
     
@@ -19,6 +19,11 @@ DEFAULT_CONFIG = {
     "gallery_enabled": False,
     "gallery_port": 8080,
     "gallery_show_qr": True,  # QR-Code auf Final-Screen anzeigen
+    "gallery": {
+        "hotspot_ssid": "fexobox-gallery",
+        "hotspot_password": "fotobox123",
+        "port": 8080,
+    },
     
     # Templates
     "template1_enabled": True,
@@ -49,11 +54,8 @@ DEFAULT_CONFIG = {
     "max_prints_per_session": 1,
     "print_adjustment": {
         # Default-Kalibrierung Canon SELPHY CP1000 (10x15cm, randlos):
-        # +30/+30/103 hat sich als Standard-Wert etabliert, der auf den meisten
-        # Boxen ohne weitere Anpassung passt. Wer's anders braucht, ändert's
-        # im Admin → Druck. Bestehende config.json wird beim Update NICHT
-        # überschrieben — diese Defaults gelten nur für FRESH-Installs.
-        "offset_x": 30,     # Fein-Offset in Pixeln (horizontal)
+        # X+40, Y+30 und 103% werden bei jedem Eventwechsel wiederhergestellt.
+        "offset_x": 40,     # Fein-Offset in Pixeln (horizontal)
         "offset_y": 30,     # Fein-Offset in Pixeln (vertikal)
         "zoom": 103,        # Zoom in Prozent (103% für randlosen Druck empfohlen)
         "bleed_mm": 3       # Überdrucken in mm pro Seite (für randlosen Druck)
@@ -73,8 +75,12 @@ DEFAULT_CONFIG = {
     },
     
     # Videos
-    "video_start": "assets/videos/start.mp4",
-    "video_end": "assets/videos/end.mp4",
+    "video_start": "assets/videos/Fexon - Fotobox Tutorial 1 By Videoboost.Undefined.mp4",
+    "video_after_1": "assets/videos/Fexon - Fotobox Tutorial 3 By Videoboost.Undefined.mp4",
+    "video_after_2": "assets/videos/Fexon - Fotobox Tutorial 4 By Videoboost.Undefined.mp4",
+    "video_after_3": "assets/videos/Fexon - Fotobox Tutorial 5 By Videoboost.Undefined.mp4",
+    "video_end": "assets/videos/Fexon - Fotobox Tutorial 7 By Videoboost.Undefined.mp4",
+    "flash_image": "assets/icons/foto-screen.jpeg",
     
     # Canvas
     "canvas_width": 1800,
