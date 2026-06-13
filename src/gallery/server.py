@@ -81,18 +81,44 @@ def _get_display_event_code(context: Optional[Dict[str, Any]] = None) -> str:
     return _six_digit_code_from_value(data.get("event_pin", ""))
 
 
+def _current_template_fingerprint() -> str:
+    """Fingerprint der aktuell gecachten Template-ZIP (fuer App-Verifikation nach Upload)."""
+    try:
+        from src.storage.booking import get_booking_manager
+        return get_booking_manager().cached_template_fingerprint()
+    except Exception:
+        return ""
+
+
 def _build_app_pairing_url(base_url: str) -> str:
-    """Baut den kompakten App-Pairing-Payload fuer eine konkrete Base-URL."""
+    """Baut den kompakten App-Pairing-Payload fuer eine konkrete Base-URL.
+
+    Schema (siehe docs/FEXOBOX-APP-API.md):
+        fexobox://g?v=1&a=<api>&t=<token>&l=<locale>&b=<box_id>&e=<booking>&s=<ssid>&p=<password>
+
+    Die WLAN-Daten (s/p) werden mitgegeben, damit die App das richtige Box-WLAN
+    kennt – auch wenn eine Box eine von den Defaults abweichende SSID/Passwort hat.
+    """
     event_code = _get_display_event_code()
     params = {
         "v": "1",
         "a": f"{base_url}/api/v1",
         "t": _gallery_pairing_token,
     }
+    locale = _gallery_context.get("locale", "") or _gallery_locale
+    if locale:
+        params["l"] = locale
+    box_id = _gallery_context.get("box_id", "")
+    if box_id:
+        params["b"] = box_id
     if event_code:
         params["c"] = event_code
     elif _gallery_context.get("booking_id", ""):
         params["e"] = _gallery_context.get("booking_id", "")
+    ssid = _gallery_context.get("hotspot_ssid", "")
+    if ssid:
+        params["s"] = ssid
+        params["p"] = _gallery_context.get("hotspot_password", "")
     return f"fexobox://g?{urlencode(params, safe=':/')}"
 
 
@@ -122,6 +148,20 @@ def _create_flask_app(locale: str = "de-DE"):
 
     set_locale(locale)
     app = Flask(__name__)
+
+    # Upload-Limit fuer App-Uploads (Template-ZIP/Settings). Schuetzt die
+    # schwache Box-Hardware vor zu grossen Uploads -> Flask antwortet sonst 413.
+    app.config['MAX_CONTENT_LENGTH'] = 30 * 1024 * 1024  # 30 MB
+
+    @app.errorhandler(413)
+    def _too_large(_e):
+        return jsonify({
+            "app": "fexobox-gallery",
+            "api_version": 1,
+            "ok": False,
+            "error": "too_large",
+            "message": "Datei zu gross (max. 30 MB).",
+        }), 413
 
     @app.after_request
     def add_api_headers(response):
@@ -533,6 +573,9 @@ def _create_flask_app(locale: str = "de-DE"):
                 "booking_id": context.get("booking_id", ""),
                 "code": _get_display_event_code(context),
             },
+            "template": {
+                "fingerprint": _current_template_fingerprint(),
+            },
             "capabilities": {
                 "photos": True,
                 "thumbnails": True,
@@ -541,6 +584,8 @@ def _create_flask_app(locale: str = "de-DE"):
                 "since_filter": True,
                 "folders": ["Prints", "Single"],
                 "auth": "pairing-token",
+                "upload_settings": True,
+                "upload_template": True,
             },
             "endpoints": {
                 "status": "/api/v1/status",
@@ -551,6 +596,8 @@ def _create_flask_app(locale: str = "de-DE"):
                 "thumb": "/api/v1/thumb/{folder}/{filename}",
                 "image": "/api/v1/image/{folder}/{filename}",
                 "download": "/api/v1/download/{folder}/{filename}",
+                "upload_settings": "/api/v1/upload/settings",
+                "upload_template": "/api/v1/upload/template",
                 "legacy_gallery": "/",
                 "legacy_photos": "/api/photos",
             },
@@ -821,7 +868,111 @@ def _create_flask_app(locale: str = "de-DE"):
     def app_landing():
         """HTTP-Testpunkt fuer App-Entwicklung und QR-Fallback."""
         return jsonify(_build_manifest(include_private=_is_api_authorized()))
-    
+
+    # ------------------------------------------------------------------
+    # App-Upload: korrigierte Settings/Template aus dem Dashboard via App
+    # ------------------------------------------------------------------
+
+    def _api_error(error: str, message: str, status: int):
+        """Einheitliche, strukturierte Fehlerantwort fuer die App (Debug-tauglich)."""
+        return jsonify({
+            "app": "fexobox-gallery",
+            "api_version": 1,
+            "ok": False,
+            "error": error,
+            "message": message,
+        }), status
+
+    @app.route('/api/v1/upload/settings', methods=['POST', 'OPTIONS'])
+    def api_v1_upload_settings():
+        """Empfaengt eine korrigierte settings.json (JSON-Body) von der App."""
+        if request.method == 'OPTIONS':
+            return ("", 204)
+        auth_error = _require_api_token()
+        if auth_error:
+            return auth_error
+
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return _api_error(
+                "invalid_json",
+                "Body muss eine settings.json (JSON-Objekt) sein.",
+                400,
+            )
+
+        try:
+            from src.storage.booking import get_booking_manager
+            bm = get_booking_manager()
+            ok, info = bm.ingest_uploaded_settings(data)
+        except Exception as e:
+            logger.error(f"Upload settings Fehler: {e}")
+            return _api_error("server_error", f"Interner Fehler: {e}", 500)
+
+        if not ok:
+            return _api_error("settings_rejected", info, 422)
+
+        bm.request_apply(settings=True)
+        logger.info("📲 Settings-Upload akzeptiert, Apply angefordert")
+        return jsonify({
+            "app": "fexobox-gallery",
+            "api_version": 1,
+            "ok": True,
+            "applied": "queued",
+            "booking_id": info,
+            "message": "Einstellungen empfangen. Werden uebernommen, sobald die Box im Startbildschirm ist.",
+        })
+
+    @app.route('/api/v1/upload/template', methods=['POST', 'OPTIONS'])
+    def api_v1_upload_template():
+        """Empfaengt eine korrigierte Template-ZIP (multipart Feld 'file') von der App."""
+        if request.method == 'OPTIONS':
+            return ("", 204)
+        auth_error = _require_api_token()
+        if auth_error:
+            return auth_error
+
+        upload = request.files.get('file') or request.files.get('template')
+        if upload is None or not (upload.filename or "").strip():
+            return _api_error(
+                "no_file",
+                "Keine Template-Datei empfangen (multipart Feld 'file').",
+                400,
+            )
+
+        import tempfile
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp:
+                upload.save(tmp.name)
+                tmp_path = Path(tmp.name)
+
+            from src.storage.booking import get_booking_manager
+            bm = get_booking_manager()
+            ok, info = bm.ingest_uploaded_template(tmp_path)
+        except Exception as e:
+            logger.error(f"Upload template Fehler: {e}")
+            return _api_error("server_error", f"Interner Fehler: {e}", 500)
+        finally:
+            if tmp_path is not None:
+                try:
+                    tmp_path.unlink()
+                except Exception:
+                    pass
+
+        if not ok:
+            return _api_error("template_rejected", info, 422)
+
+        bm.request_apply(template=True)
+        logger.info("📲 Template-Upload akzeptiert, Apply angefordert")
+        return jsonify({
+            "app": "fexobox-gallery",
+            "api_version": 1,
+            "ok": True,
+            "applied": "queued",
+            "template_fingerprint": bm.cached_template_fingerprint(),
+            "message": "Template empfangen. Wird uebernommen, sobald die Box im Startbildschirm ist.",
+        })
+
     return app
 
 

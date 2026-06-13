@@ -29,6 +29,9 @@ logger = get_logger(__name__)
 CACHE_DIR = Path(__file__).parent.parent.parent / ".booking_cache"
 BOOKING_CACHE_FILE = CACHE_DIR / "last_booking.json"
 TEMPLATE_CACHE_FILE = CACHE_DIR / "cached_template.zip"
+# Marker fuer "per App-Upload empfangene Settings/Template noch uebernehmen".
+# Wird vom Galerie-Server-Thread geschrieben und vom Main-Thread (UI) abgearbeitet.
+UPLOAD_APPLY_MARKER = CACHE_DIR / ".apply_pending.json"
 
 # HMAC-Geheimnis für settings.json-Signatur. Muss identisch im Laravel-Backend
 # als ENV SETTINGS_HMAC_SECRET gesetzt sein, damit signierte JSONs akzeptiert werden.
@@ -617,6 +620,126 @@ class BookingManager:
             "event_date": self._settings.event_date,
             "status": "Geladen"
         }
+
+    # ------------------------------------------------------------------
+    # App-Upload (settings.json / Template-ZIP ueber das Box-WLAN)
+    # ------------------------------------------------------------------
+    # Diese Methoden werden vom Galerie-Server-Thread aufgerufen. Sie mutieren
+    # NICHT self._settings (das macht der Main-Thread via reload_from_cache),
+    # sondern schreiben nur atomar in den Cache. So bleibt die Box-State im
+    # Besitz des UI-Threads und es gibt keine Thread-Races.
+
+    def ingest_uploaded_settings(self, data: Dict[str, Any]) -> Tuple[bool, str]:
+        """Validiert eine per App hochgeladene settings.json und legt sie in den Cache.
+
+        Gleiche Sicherheitsregeln wie beim USB-Import (HMAC-Signatur, Soft-Mode).
+
+        Returns:
+            (True, booking_id) bei Erfolg, sonst (False, Fehlergrund)
+        """
+        valid, reason = _verify_signature(data)
+        if not valid:
+            return False, reason
+
+        if not (data.get("booking_id") or data.get("customer_name")):
+            return False, "settings.json enthaelt weder booking_id noch customer_name"
+
+        # Muss als BookingSettings parsebar sein, sonst lehnen wir ab.
+        try:
+            BookingSettings.from_dict(data)
+        except Exception as e:  # pragma: no cover - defensiv
+            return False, f"settings.json nicht verwertbar: {e}"
+
+        try:
+            CACHE_DIR.mkdir(exist_ok=True)
+            tmp = BOOKING_CACHE_FILE.with_suffix(".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            tmp.replace(BOOKING_CACHE_FILE)
+        except Exception as e:
+            return False, f"Cache-Schreiben fehlgeschlagen: {e}"
+
+        booking_id = data.get("booking_id", "") or ""
+        logger.info(f"📲 Settings per App empfangen und gecached: {booking_id or '(ohne booking_id)'}")
+        return True, booking_id
+
+    def ingest_uploaded_template(self, src_path: Path) -> Tuple[bool, str]:
+        """Validiert eine per App hochgeladene Template-ZIP und legt sie in den Cache.
+
+        Nutzt dieselbe Validierung wie der USB-Import (_is_valid_template_zip):
+        muss gueltige Bilder enthalten und darf keine Programmdateien (.exe/.dll)
+        enthalten -> schuetzt davor, dass ueber "Template" Code eingeschleust wird.
+
+        Returns:
+            (True, "") bei Erfolg, sonst (False, Fehlergrund)
+        """
+        try:
+            if not src_path.exists() or src_path.stat().st_size == 0:
+                return False, "Leere oder fehlende Template-Datei"
+            from src.config.config import _is_valid_template_zip
+            if not _is_valid_template_zip(str(src_path)):
+                return False, "Ungueltige Template-ZIP (keine gueltigen Bilder oder enthaelt Programmdateien)"
+            CACHE_DIR.mkdir(exist_ok=True)
+            tmp = TEMPLATE_CACHE_FILE.with_suffix(".tmp")
+            shutil.copy2(src_path, tmp)
+            tmp.replace(TEMPLATE_CACHE_FILE)
+        except Exception as e:
+            return False, f"Template-Cache fehlgeschlagen: {e}"
+
+        logger.info("📲 Template per App empfangen und gecached")
+        return True, ""
+
+    def reload_from_cache(self) -> bool:
+        """Laedt die (ggf. neu hochgeladene) Buchung aus dem Cache in den Speicher.
+
+        Vom Main-Thread aufzurufen, nachdem ein App-Upload eingegangen ist.
+        """
+        return self._load_from_cache()
+
+    def cached_template_fingerprint(self) -> str:
+        """Kurzer Fingerprint (mtime-size) der gecachten Template-ZIP zur Verifikation."""
+        try:
+            if TEMPLATE_CACHE_FILE.exists():
+                st = TEMPLATE_CACHE_FILE.stat()
+                return f"{int(st.st_mtime)}-{st.st_size}"
+        except Exception:
+            pass
+        return ""
+
+    def request_apply(self, settings: bool = False, template: bool = False) -> None:
+        """Setzt/erweitert den Apply-Marker (vom Server-Thread aufgerufen)."""
+        try:
+            existing: Dict[str, Any] = {}
+            if UPLOAD_APPLY_MARKER.exists():
+                try:
+                    existing = json.loads(UPLOAD_APPLY_MARKER.read_text(encoding="utf-8"))
+                except Exception:
+                    existing = {}
+            existing["settings"] = bool(existing.get("settings")) or settings
+            existing["template"] = bool(existing.get("template")) or template
+            CACHE_DIR.mkdir(exist_ok=True)
+            tmp = UPLOAD_APPLY_MARKER.with_suffix(".tmp")
+            tmp.write_text(json.dumps(existing), encoding="utf-8")
+            tmp.replace(UPLOAD_APPLY_MARKER)
+        except Exception as e:
+            logger.warning(f"Apply-Marker schreiben fehlgeschlagen: {e}")
+
+    def peek_apply_request(self) -> Optional[Dict[str, Any]]:
+        """Liest den Apply-Marker (ohne ihn zu loeschen). Main-Thread."""
+        try:
+            if UPLOAD_APPLY_MARKER.exists():
+                return json.loads(UPLOAD_APPLY_MARKER.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+        return None
+
+    def clear_apply_request(self) -> None:
+        """Loescht den Apply-Marker nach erfolgreicher Uebernahme. Main-Thread."""
+        try:
+            if UPLOAD_APPLY_MARKER.exists():
+                UPLOAD_APPLY_MARKER.unlink()
+        except Exception:
+            pass
 
 
 # Singleton-Instanz

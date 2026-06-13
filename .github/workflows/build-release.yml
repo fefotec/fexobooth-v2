@@ -1,0 +1,122 @@
+name: Build & Release (Windows .exe)
+
+# Baut die Fexobooth-Windows-.exe in der Cloud (Windows-Runner) und legt ein
+# GitHub-Release mit fexobooth.zip an, das die Box per OTA-Updater automatisch zieht.
+#
+# Nutzung: GitHub → Tab "Actions" → "Build & Release (Windows .exe)" → "Run workflow"
+#          → neue Version eingeben (z.B. 2.4.8, muss höher sein als die auf der Box).
+#
+# Ersetzt das manuelle build_installer.bat + release.bat auf dem Windows-PC.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Neue Version X.Y.Z (muss höher sein als auf der Box, aktuell 2.4.7)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Als Vorab-Release markieren (Box zieht nur das neueste echte Release)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # für Versions-Commit, Tag und Release
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Code auschecken
+        uses: actions/checkout@v4
+
+      - name: Version-Format prüfen
+        shell: pwsh
+        run: |
+          if ('${{ inputs.version }}' -notmatch '^\d+\.\d+\.\d+$') {
+            Write-Error 'Version muss das Format X.Y.Z haben, z.B. 2.4.8'
+            exit 1
+          }
+
+      - name: Python 3.11 einrichten
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Abhängigkeiten installieren
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install "pyinstaller>=6.0.0"
+
+      - name: Version in src/__init__.py + installer.iss setzen
+        shell: pwsh
+        run: |
+          $v = '${{ inputs.version }}'
+          (Get-Content 'src/__init__.py') -replace '__version__ = ".*"', "__version__ = ""$v""" | Set-Content 'src/__init__.py' -Encoding utf8
+          $iss = ($v -split '\.')[0..1] -join '.'
+          (Get-Content 'installer.iss') -replace '#define MyAppVersion ".*"', "#define MyAppVersion ""$iss""" | Set-Content 'installer.iss' -Encoding utf8
+          Write-Host "Version gesetzt: $v (Installer: $iss)"
+
+      - name: PyInstaller-Build
+        shell: pwsh
+        run: pyinstaller fexobooth.spec --noconfirm --distpath installer_output
+
+      - name: Videos-Ordner + START.bat ergänzen (wie build_installer.bat)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path 'installer_output/fexobooth/assets/videos' | Out-Null
+          if (Test-Path 'assets/videos/start.mp4') { Copy-Item 'assets/videos/start.mp4' 'installer_output/fexobooth/assets/videos/' -Force }
+          if (Test-Path 'assets/videos/end.mp4')   { Copy-Item 'assets/videos/end.mp4'   'installer_output/fexobooth/assets/videos/' -Force }
+          $start = "@echo off`r`ncd /d `"%~dp0`"`r`nstart `"`" fexobooth.exe`r`n"
+          Set-Content -Path 'installer_output/fexobooth/START.bat' -Value $start -Encoding ascii -NoNewline
+
+      - name: Windows-Installer (Inno Setup, best effort)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          $iss = ('${{ inputs.version }}' -split '\.')[0..1] -join '.'
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=$iss installer.iss
+
+      - name: OTA-ZIP erstellen (fexobooth.zip)
+        shell: pwsh
+        run: |
+          Compress-Archive -Path 'installer_output/fexobooth/*' -DestinationPath 'installer_output/fexobooth.zip' -Force
+          $size = [math]::Round((Get-Item 'installer_output/fexobooth.zip').Length / 1MB, 1)
+          Write-Host "fexobooth.zip erstellt ($size MB)"
+
+      - name: Version-Bump zurück nach main committen
+        shell: pwsh
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add src/__init__.py installer.iss
+          if (-not (git diff --cached --quiet 2>$null; $LASTEXITCODE)) {
+            git commit -m "release: v${{ inputs.version }}"
+            git push origin HEAD:main
+          } else {
+            Write-Host 'Keine Versionsänderung zu committen'
+          }
+
+      - name: Git-Tag erstellen und pushen
+        shell: pwsh
+        run: |
+          git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
+          git push origin "v${{ inputs.version }}"
+
+      - name: GitHub-Release anlegen (+ fexobooth.zip Asset)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ inputs.version }}
+          name: v${{ inputs.version }}
+          prerelease: ${{ inputs.prerelease }}
+          generate_release_notes: true
+          files: |
+            installer_output/fexobooth.zip
+            installer_output/FexoBooth_Setup_*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1146,7 +1146,11 @@ class PhotoboothApp:
     def _check_usb_status(self):
         """Prüft USB-Status - BLINKEND wenn nicht vorhanden, Dialog bei Pending-Files"""
         from pathlib import Path
-        
+
+        # App-Upload (korrigierte Settings/Template über das Box-WLAN) übernehmen,
+        # sobald die Box idle ist. Foto-sicher, läuft hier im Main-Thread.
+        self._check_pending_upload_apply()
+
         # Prüfen ob USB wieder verfügbar und Dateien pending sind
         is_available = self.usb_manager.is_available()
         pending_count = self.usb_manager.get_pending_count()
@@ -1268,6 +1272,63 @@ class PhotoboothApp:
 
         # Schnellerer Check für Blink-Effekt
         self.root.after(1000, self._check_usb_status)
+
+    def _check_pending_upload_apply(self):
+        """Übernimmt per App hochgeladene Settings/Template – nur wenn die Box idle ist.
+
+        Läuft im Main-Thread (aus _check_usb_status). Foto-SICHER: löscht KEINE
+        Bilder und setzt KEINE Session zurück. Ist die Box gerade nicht im
+        Startbildschirm, bleibt der Marker liegen und wir versuchen es später.
+        """
+        req = self.booking_manager.peek_apply_request()
+        if not req:
+            return
+
+        # Nur im Startbildschirm übernehmen (kein Eingriff in laufende Session).
+        if self.current_screen_name != "start":
+            return
+
+        applied = []
+        try:
+            if req.get("settings"):
+                if self.booking_manager.reload_from_cache():
+                    self.booking_manager.apply_settings_to_config(self.config)
+                    self._update_booking_display()
+                    applied.append("Einstellungen")
+
+            if req.get("template"):
+                TemplateLoader.clear_cache()
+                self.cached_usb_template = None
+                self._cached_scaled_overlay = None
+                self._cached_overlay_scale = 0.0
+                self._cached_overlay_source_size = None
+                if self.booking_manager.apply_cached_template_to_config(self.config):
+                    if self.load_template("usb_template"):
+                        applied.append("Template")
+
+            if applied:
+                save_config(self.config)
+                # Galerie-App-Kontext aktualisieren, damit /status die neue
+                # booking_id und den neuen Template-Fingerprint meldet.
+                try:
+                    from src.gallery import set_gallery_app_context
+                    set_gallery_app_context(self._get_gallery_app_context())
+                except Exception:
+                    pass
+                # Startbildschirm neu rendern (zeigt neues Template/Settings)
+                if self.current_screen and hasattr(self.current_screen, "on_show"):
+                    self.current_screen.config = self.config
+                    self.current_screen.on_show()
+                logger.info(f"📲 App-Upload übernommen: {', '.join(applied)}")
+            else:
+                logger.warning("📲 App-Upload-Marker vorhanden, aber nichts angewendet")
+
+            # Marker immer löschen wenn wir im Startbildschirm waren – sonst
+            # Endlosschleife bei einem kaputten/leeren Marker.
+            self.booking_manager.clear_apply_request()
+        except Exception as e:
+            logger.error(f"App-Upload-Apply fehlgeschlagen: {e}")
+            self.booking_manager.clear_apply_request()
 
     def _check_fullscreen_restore(self):
         """Sicherheitsnetz: Stellt Kiosk-Modus wieder her falls er verloren geht.
