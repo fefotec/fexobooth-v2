@@ -1,28 +1,27 @@
-name: Build & Release (Windows .exe)
+name: Build Windows .exe (Test, kein Release)
 
-# Baut die Fexobooth-Windows-.exe in der Cloud (Windows-Runner) und legt ein
-# GitHub-Release mit fexobooth.zip an, das die Box per OTA-Updater automatisch zieht.
+# Baut die Fexobooth-Windows-.exe (Installer) in der Cloud auf einem Windows-Runner
+# und legt sie als HERUNTERLADBARES ARTEFAKT ab.
 #
-# Nutzung: GitHub → Tab "Actions" → "Build & Release (Windows .exe)" → "Run workflow"
-#          → neue Version eingeben (z.B. 2.4.8, muss höher sein als die auf der Box).
+# WICHTIG: Es wird KEIN GitHub-Release und KEIN Tag erstellt -> die Box zieht
+# über ihren OTA-Updater NICHTS automatisch. Du lädst die .exe manuell von der
+# Actions-Run-Seite herunter und spielst sie selbst auf die Box.
 #
-# Ersetzt das manuelle build_installer.bat + release.bat auf dem Windows-PC.
+# Nutzung: GitHub → Tab "Actions" → "Build Windows .exe (Test, kein Release)"
+#          → "Run workflow" → Version eingeben (z.B. 2.4.8) → Run.
+#          Nach ein paar Minuten unten auf der Run-Seite unter "Artifacts" laden.
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Neue Version X.Y.Z (muss höher sein als auf der Box, aktuell 2.4.7)'
+        description: 'Version X.Y.Z (nur für Dateiname/Anzeige; kein Release)'
         required: true
+        default: '2.4.8'
         type: string
-      prerelease:
-        description: 'Als Vorab-Release markieren (Box zieht nur das neueste echte Release)'
-        required: false
-        type: boolean
-        default: false
 
 permissions:
-  contents: write   # für Versions-Commit, Tag und Release
+  contents: read
 
 jobs:
   build:
@@ -52,14 +51,14 @@ jobs:
           pip install -r requirements.txt
           pip install "pyinstaller>=6.0.0"
 
-      - name: Version in src/__init__.py + installer.iss setzen
+      - name: Version in src/__init__.py + installer.iss setzen (nur lokal im Build)
         shell: pwsh
         run: |
           $v = '${{ inputs.version }}'
           (Get-Content 'src/__init__.py') -replace '__version__ = ".*"', "__version__ = ""$v""" | Set-Content 'src/__init__.py' -Encoding utf8
           $iss = ($v -split '\.')[0..1] -join '.'
           (Get-Content 'installer.iss') -replace '#define MyAppVersion ".*"', "#define MyAppVersion ""$iss""" | Set-Content 'installer.iss' -Encoding utf8
-          Write-Host "Version gesetzt: $v (Installer: $iss)"
+          Write-Host "Version gesetzt: $v"
 
       - name: PyInstaller-Build
         shell: pwsh
@@ -74,49 +73,40 @@ jobs:
           $start = "@echo off`r`ncd /d `"%~dp0`"`r`nstart `"`" fexobooth.exe`r`n"
           Set-Content -Path 'installer_output/fexobooth/START.bat' -Value $start -Encoding ascii -NoNewline
 
-      - name: Windows-Installer (Inno Setup, best effort)
+      - name: Windows-Installer bauen (Inno Setup)
+        id: installer
         continue-on-error: true
         shell: pwsh
         run: |
           choco install innosetup --no-progress -y
           $iss = ('${{ inputs.version }}' -split '\.')[0..1] -join '.'
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=$iss installer.iss
+          if (Test-Path "installer_output/FexoBooth_Setup_$iss.exe") {
+            Write-Host "Installer gebaut: FexoBooth_Setup_$iss.exe"
+          } else {
+            Write-Warning 'Installer-.exe wurde nicht gefunden – ZIP-Fallback im Artefakt nutzen.'
+          }
 
-      - name: OTA-ZIP erstellen (fexobooth.zip)
+      - name: OTA-ZIP als Fallback erstellen
         shell: pwsh
         run: |
           Compress-Archive -Path 'installer_output/fexobooth/*' -DestinationPath 'installer_output/fexobooth.zip' -Force
           $size = [math]::Round((Get-Item 'installer_output/fexobooth.zip').Length / 1MB, 1)
           Write-Host "fexobooth.zip erstellt ($size MB)"
 
-      - name: Version-Bump zurück nach main committen
-        shell: pwsh
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email 'github-actions[bot]@users.noreply.github.com'
-          git add src/__init__.py installer.iss
-          if (-not (git diff --cached --quiet 2>$null; $LASTEXITCODE)) {
-            git commit -m "release: v${{ inputs.version }}"
-            git push origin HEAD:main
-          } else {
-            Write-Host 'Keine Versionsänderung zu committen'
-          }
-
-      - name: Git-Tag erstellen und pushen
-        shell: pwsh
-        run: |
-          git tag -a "v${{ inputs.version }}" -m "Release v${{ inputs.version }}"
-          git push origin "v${{ inputs.version }}"
-
-      - name: GitHub-Release anlegen (+ fexobooth.zip Asset)
-        uses: softprops/action-gh-release@v2
+      - name: Download-Artefakt hochladen (Installer-.exe + ZIP)
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: v${{ inputs.version }}
-          name: v${{ inputs.version }}
-          prerelease: ${{ inputs.prerelease }}
-          generate_release_notes: true
-          files: |
-            installer_output/fexobooth.zip
+          name: FexoBooth-${{ inputs.version }}
+          path: |
             installer_output/FexoBooth_Setup_*.exe
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            installer_output/fexobooth.zip
+          if-no-files-found: warn
+
+      - name: Hinweis
+        shell: pwsh
+        run: |
+          Write-Host '──────────────────────────────────────────────'
+          Write-Host ' Fertig. KEIN Release erstellt – Box zieht nichts.'
+          Write-Host ' Download: Run-Seite oben → Abschnitt "Artifacts" → FexoBooth-${{ inputs.version }}'
+          Write-Host '──────────────────────────────────────────────'
