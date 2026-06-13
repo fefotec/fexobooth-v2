@@ -320,18 +320,23 @@ class BookingManager:
             Pfad zur besten Settings-Datei oder None
         """
         try:
-            # Alle JSON-Dateien im Root finden
-            json_files = list(usb_root.glob("*.json"))
-            
+            # Alle JSON-Dateien im Root finden.
+            # WICHTIG: macOS legt auf FAT/exFAT-Sticks versteckte "._"-Begleit-
+            # dateien an (AppleDouble, binär). Die MÜSSEN gefiltert werden – sonst
+            # wirft das Einlesen einen UnicodeDecodeError, der früher die KOMPLETTE
+            # Suche abbrach ("keine gültige settings.json", obwohl die echte da ist).
+            json_files = [p for p in usb_root.glob("*.json") if not p.name.startswith("._")]
+
             if not json_files:
                 return None
-            
+
             # Gültige Settings-Dateien filtern (müssen booking_id enthalten)
             # KEIN Logging hier - wird sehr oft aufgerufen!
             valid_files = []
             for json_path in json_files:
                 try:
-                    with open(json_path, "r", encoding="utf-8") as f:
+                    # utf-8-sig: toleriert ein evtl. vorhandenes BOM (Windows-Editoren)
+                    with open(json_path, "r", encoding="utf-8-sig") as f:
                         data = json.load(f)
 
                     # Prüfen ob es eine gültige Settings-Datei ist
@@ -348,7 +353,9 @@ class BookingManager:
 
                     mtime = json_path.stat().st_mtime
                     valid_files.append((json_path, mtime))
-                except (json.JSONDecodeError, KeyError, IOError):
+                except Exception:
+                    # EINE kaputte/fremde Datei darf die Suche NIE abbrechen
+                    # (macOS "._"-Reste, Binärdateien, BOM, defektes JSON, …).
                     continue
             
             if not valid_files:
@@ -382,7 +389,7 @@ class BookingManager:
             return None
         
         try:
-            with open(settings_path, "r", encoding="utf-8") as f:
+            with open(settings_path, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
 
             # Signatur prüfen — manipulierte JSONs nicht als "neue Buchung" melden
@@ -426,7 +433,7 @@ class BookingManager:
             return False
         
         try:
-            with open(settings_path, "r", encoding="utf-8") as f:
+            with open(settings_path, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
 
             # Signatur prüfen (Soft-Mode: unsigniert wird akzeptiert, Manipulation nicht)
@@ -477,7 +484,8 @@ class BookingManager:
         wie find_usb_template() in config.py.
         """
         try:
-            zip_files = list(usb_root.glob("*.zip"))
+            # macOS "._"-Begleitdateien ausfiltern (sind keine echten ZIPs)
+            zip_files = [p for p in usb_root.glob("*.zip") if not p.name.startswith("._")]
             if not zip_files:
                 logger.debug("Keine ZIP-Dateien auf USB gefunden")
                 return False
