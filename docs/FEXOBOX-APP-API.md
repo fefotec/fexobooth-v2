@@ -11,7 +11,7 @@ Der sichtbare QR-Code enthaelt keinen Browser-Link mehr, sondern ein kurzes
 Custom-Scheme:
 
 ```text
-fexobox://g?v=1&a=http%3A%2F%2F192.168.137.1%3A8080%2Fapi%2Fv1&t=<token>&l=de-DE&b=006&e=NX-123456&s=fexobox-gallery&p=fotobox123
+fexobox://g?v=1&a=http://192.168.137.1:8080/api/v1&t=<token>&c=123456
 ```
 
 Parameter:
@@ -19,9 +19,13 @@ Parameter:
 - `v`: QR-Schema-Version, aktuell `1`
 - `a`: Base URL der lokalen API, z. B. `http://192.168.137.1:8080/api/v1`
 - `t`: Pairing-Token, muss die App bei privaten API-Endpunkten mitsenden
+- `c`: 6-stelliger Event-Code fuer die App, falls als Event-PIN in den Buchungsdaten vorhanden; kein Auth-Token
+
+Optionale/fallback Parameter:
+
 - `l`: Locale der Box, z. B. `de-DE`
-- `b`: dreistellige Box-ID, falls gesetzt
-- `e`: aktuelle Booking-ID, falls geladen
+- `b`: dreistellige Box-ID
+- `e`: aktuelle Booking-ID, wird nur statt `c` genutzt, wenn kein Event-Code vorhanden ist
 - `s`: Hotspot-SSID
 - `p`: Hotspot-Passwort
 
@@ -49,6 +53,7 @@ aber kein Passwort und kein Token.
 GET /api/v1/status
 GET /api/v1/manifest
 GET /api/v1/pairing
+POST /api/v1/pair-by-code
 GET /api/v1/event
 GET /api/v1/photos?limit=100&offset=0&since=0&folder=Prints
 GET /api/v1/thumb/{folder}/{filename}
@@ -61,15 +66,28 @@ GET /.well-known/fexobox-gallery.json
 `since` ist ein Unix-Timestamp und liefert nur spaeter geaenderte Bilder.
 `limit` ist auf maximal 500 begrenzt.
 
+`POST /api/v1/pair-by-code` erwartet JSON `{ "code": "123456" }`. Wenn der
+Code zur aktuell geladenen Buchung passt, liefert die Box dasselbe private
+Manifest wie `/api/v1/pairing`, inklusive Pairing-Token. Das ist fuer den
+manuellen Event-Code in der App gedacht und funktioniert nur, wenn das Handy
+die Box im lokalen Hotspot erreichen kann.
+
 ## App-Verhalten
 
 Empfohlener Ablauf:
 
 1. QR scannen.
-2. Falls noch nicht im Hotspot: SSID/Passwort aus QR anzeigen oder per OS-API verbinden.
+2. Falls noch nicht im Hotspot: Produktionswerte `fexobox-gallery` /
+   `fotobox123` anzeigen oder per OS-API verbinden.
 3. `GET {a}/pairing` mit Token aufrufen.
 4. Fotos ueber `GET {a}/photos` pollen.
 5. Bilder ueber die `api.url`, `api.thumb` und `api.download` Felder laden.
+
+Fallback bei manuellem Event-Code:
+
+1. Event-Code gegen die Cloud pruefen.
+2. Im Box-WLAN `POST http://192.168.137.1:8080/api/v1/pair-by-code` aufrufen.
+3. Bei Erfolg lokale Box-Verbindung speichern und Live-Galerie oeffnen.
 
 Die Box macht keine schwere Hintergrundarbeit. Bilder werden erst gelesen, wenn
 die App sie anfragt.

@@ -637,6 +637,9 @@ class PhotoboothApp:
         """Kontext fuer Pairing-QR und Smartphone-App API."""
         gallery_config = self.config.get("gallery", {})
         booking_id = self.booking_manager.booking_id if self.booking_manager.is_loaded else ""
+        event_pin = ""
+        if self.booking_manager.is_loaded and self.booking_manager.settings:
+            event_pin = getattr(self.booking_manager.settings, "event_pin", "") or ""
         try:
             from src import __version__ as software_version
         except Exception:
@@ -645,6 +648,7 @@ class PhotoboothApp:
         return {
             "box_id": self.config.get("box_id", ""),
             "booking_id": booking_id,
+            "event_pin": event_pin,
             "locale": self.config.get("locale", "de-DE"),
             "software_version": software_version,
             "hotspot_ssid": gallery_config.get("hotspot_ssid", ""),

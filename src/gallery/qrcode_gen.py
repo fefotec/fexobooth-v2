@@ -9,7 +9,7 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-def generate_qr_code(url: str, size: int = 200, border: int = 2) -> Optional[Image.Image]:
+def generate_qr_code(url: str, size: int = 200, border: int = 4) -> Optional[Image.Image]:
     """Generiert einen QR-Code als PIL Image
     
     Args:
@@ -36,8 +36,9 @@ def generate_qr_code(url: str, size: int = 200, border: int = 2) -> Optional[Ima
         # Als PIL Image
         img = qr.make_image(fill_color="black", back_color="white")
         
-        # Auf gewünschte Größe skalieren
-        img = img.resize((size, size), Image.Resampling.LANCZOS)
+        # QR-Module muessen hartkantig bleiben, sonst scannen Handy-Kameras
+        # bei kleinen Displays und Spiegelungen deutlich schlechter.
+        img = img.resize((size, size), Image.Resampling.NEAREST)
         
         logger.debug(f"QR-Code generiert für: {url}")
         return img

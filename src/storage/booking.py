@@ -41,6 +41,13 @@ _SIGNATURE_PREFIX = "hmac_sha256:"
 _HMAC_SOFT_MODE = True
 
 
+def _normalize_six_digit_code(value: Any) -> str:
+    """Return a six digit event code, or an empty string if the value is unusable."""
+    text = str(value or "").strip()
+    digits = "".join(ch for ch in text if ch.isdigit())
+    return digits if len(digits) == 6 else ""
+
+
 def _verify_signature(data: Dict[str, Any], log_unsigned: bool = True) -> Tuple[bool, str]:
     """Validiert die _signature der settings.json.
 
@@ -111,6 +118,7 @@ class BookingSettings:
     customer_name: str = ""
     shipping_first_name: str = ""  # Vorname für persönliche Begrüßung
     event_date: str = ""
+    event_pin: str = ""  # 6-stelliger App/Event-Code, falls vom Dashboard geliefert
     
     # Metadaten
     version: str = ""
@@ -125,8 +133,25 @@ class BookingSettings:
         template = data.get("template", {})
         features = data.get("features", {})
         customer = data.get("customer", {})
+        event = data.get("event", {})
+        gallery = data.get("gallery", {})
+        extensions = data.get("extensions", {})
         
         raw_locale = data.get("locale", data.get("language"))
+        event_pin = _normalize_six_digit_code(
+            data.get("event_pin")
+            or data.get("event_code")
+            or data.get("pin")
+            or event.get("event_pin")
+            or event.get("pin")
+            or event.get("code")
+            or gallery.get("event_pin")
+            or gallery.get("event_code")
+            or gallery.get("pin")
+            or extensions.get("event_pin")
+            or extensions.get("event_code")
+            or extensions.get("pin")
+        )
 
         return cls(
             booking_id=data.get("booking_id", ""),
@@ -144,9 +169,10 @@ class BookingSettings:
             customer_name=customer.get("name", ""),
             shipping_first_name=data.get("shipping_first_name", "") or customer.get("first_name", ""),
             event_date=customer.get("event_date", ""),
+            event_pin=event_pin,
             version=data.get("_version", ""),
             generated_at=data.get("_generated_at", ""),
-            extensions=data.get("extensions", {})
+            extensions=extensions
         )
     
     def is_loaded(self) -> bool:
@@ -180,6 +206,8 @@ class BookingSettings:
             "_generated_at": self.generated_at,
             "extensions": self.extensions,
         }
+        if self.event_pin:
+            result["event_pin"] = self.event_pin
         if self.locale:
             result["locale"] = self.locale
         return result

@@ -69,22 +69,31 @@ def set_app_context(context: Optional[Dict[str, Any]] = None) -> None:
     )
 
 
+def _six_digit_code_from_value(value: Any) -> str:
+    text = str(value or "").strip()
+    digits = "".join(ch for ch in text if ch.isdigit())
+    return digits if len(digits) == 6 else ""
+
+
+def _get_display_event_code(context: Optional[Dict[str, Any]] = None) -> str:
+    """Six digit code shown below the QR code for the smartphone app."""
+    data = context if context is not None else _gallery_context
+    return _six_digit_code_from_value(data.get("event_pin", ""))
+
+
 def _build_app_pairing_url(base_url: str) -> str:
     """Baut den kompakten App-Pairing-Payload fuer eine konkrete Base-URL."""
+    event_code = _get_display_event_code()
     params = {
         "v": "1",
         "a": f"{base_url}/api/v1",
         "t": _gallery_pairing_token,
-        "l": _gallery_locale,
     }
-    optional_params = {
-        "b": _gallery_context.get("box_id", ""),
-        "e": _gallery_context.get("booking_id", ""),
-        "s": _gallery_context.get("hotspot_ssid", ""),
-        "p": _gallery_context.get("hotspot_password", ""),
-    }
-    params.update({key: value for key, value in optional_params.items() if value})
-    return f"fexobox://g?{urlencode(params)}"
+    if event_code:
+        params["c"] = event_code
+    elif _gallery_context.get("booking_id", ""):
+        params["e"] = _gallery_context.get("booking_id", "")
+    return f"fexobox://g?{urlencode(params, safe=':/')}"
 
 
 def get_app_pairing_url(port: int = DEFAULT_PORT) -> str:
@@ -95,6 +104,11 @@ def get_app_pairing_url(port: int = DEFAULT_PORT) -> str:
     WLAN-Daten, ohne die Box erneut aktualisieren zu muessen.
     """
     return _build_app_pairing_url(get_gallery_url(port))
+
+
+def get_app_display_code() -> str:
+    """6-stelliger Event-Code fuer die Anzeige unter dem QR-Code."""
+    return _get_display_event_code()
 
 
 def get_app_landing_url(port: int = DEFAULT_PORT) -> str:
@@ -113,7 +127,7 @@ def _create_flask_app(locale: str = "de-DE"):
     def add_api_headers(response):
         """Erlaubt spaetere native/WebView-Apps ohne extra Server-Setup."""
         response.headers.setdefault("Access-Control-Allow-Origin", "*")
-        response.headers.setdefault("Access-Control-Allow-Methods", "GET, OPTIONS")
+        response.headers.setdefault("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         response.headers.setdefault(
             "Access-Control-Allow-Headers",
             "Authorization, Content-Type, X-FexoBox-Token, X-FexoBox-App"
@@ -517,6 +531,7 @@ def _create_flask_app(locale: str = "de-DE"):
             },
             "event": {
                 "booking_id": context.get("booking_id", ""),
+                "code": _get_display_event_code(context),
             },
             "capabilities": {
                 "photos": True,
@@ -677,6 +692,27 @@ def _create_flask_app(locale: str = "de-DE"):
             return auth_error
         return jsonify(_build_manifest(include_private=True))
 
+    @app.route('/api/v1/pair-by-code', methods=['POST', 'OPTIONS'])
+    def api_v1_pair_by_code():
+        """Pairing per 6-stelligem Event-Code fuer die Smartphone-App."""
+        if request.method == 'OPTIONS':
+            return ("", 204)
+
+        payload = request.get_json(silent=True) or {}
+        submitted_code = _six_digit_code_from_value(
+            payload.get('code') or payload.get('pin') or request.args.get('code', '')
+        )
+        expected_code = _get_display_event_code()
+        if not expected_code or not secrets.compare_digest(submitted_code, expected_code):
+            return jsonify({
+                'app': 'fexobox-gallery',
+                'api_version': 1,
+                'error': 'invalid_event_code',
+                'message': 'Event-Code passt nicht zu dieser FexoBox',
+            }), 403
+
+        return jsonify(_build_manifest(include_private=True))
+
     @app.route('/api/v1/event')
     def api_v1_event():
         """Aktuelle Event-Information fuer App-Anzeige und Sync."""
@@ -694,6 +730,7 @@ def _create_flask_app(locale: str = "de-DE"):
             },
             'event': {
                 'booking_id': _gallery_context.get('booking_id', ''),
+                'code': _get_display_event_code(),
             },
         })
 

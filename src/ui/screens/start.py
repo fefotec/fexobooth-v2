@@ -188,10 +188,10 @@ class StartScreen(ctk.CTkFrame):
         """Erstellt die UI mit pack()-Layout - responsive Design"""
         self.qr_label: Optional[ctk.CTkLabel] = None
 
-        # Galerie-Banner ZUERST (unten) - reserviert Platz
-        banner_pady = (0, 5) if self._is_small else (0, 8)
+        # Galerie-Banner wird bei Bedarf unten rechts eingeblendet.
+        # Es reserviert keinen Layout-Platz, damit die Template-Auswahl frei bleibt.
         self.gallery_banner = ctk.CTkFrame(self, fg_color="transparent")
-        self.gallery_banner.pack(side="bottom", fill="x", pady=banner_pady)
+        self.gallery_banner.place_forget()
 
         # Start-Button DIREKT ueber Galerie-Banner packen (nicht im inner_frame!)
         # So kann er nicht vom zentrierten Inhalt verdeckt werden wenn die
@@ -876,8 +876,19 @@ class StartScreen(ctk.CTkFrame):
             self._enable_start_button()
 
 
+    def _hide_gallery_banner(self):
+        """Versteckt das Galerie-Banner unabhaengig vom aktuellen Geometry-Manager."""
+        try:
+            self.gallery_banner.place_forget()
+        except Exception:
+            pass
+        try:
+            self.gallery_banner.pack_forget()
+        except Exception:
+            pass
+
     def _update_qr_code(self):
-        """Zeigt horizontales Galerie-Banner am unteren Rand"""
+        """Zeigt das Galerie-Banner unten rechts."""
         # Alte Elemente entfernen
         if self.qr_label:
             self.qr_label.destroy()
@@ -889,19 +900,19 @@ class StartScreen(ctk.CTkFrame):
         # Prüfen ob Galerie aktiv
         if not _is_gallery_enabled(self.app):
             logger.debug("Galerie nicht aktiv - Banner verstecken")
-            # WICHTIG: Banner komplett verstecken wenn nicht aktiv!
-            self.gallery_banner.pack_forget()
+            self._hide_gallery_banner()
             return
 
         # Prüfen ob gallery_show_qr aktiv (default: True)
         if not self.config.get("gallery_show_qr", True):
             logger.debug("QR-Code Anzeige deaktiviert - Banner verstecken")
-            self.gallery_banner.pack_forget()
+            self._hide_gallery_banner()
             return
 
         try:
             from src.gallery import (
                 generate_qr_code,
+                get_app_display_code,
                 get_app_pairing_url,
                 get_gallery_url,
                 set_gallery_app_context,
@@ -914,6 +925,7 @@ class StartScreen(ctk.CTkFrame):
                 set_gallery_app_context(self.app._get_gallery_app_context())
             url = get_gallery_url(port)
             qr_payload = get_app_pairing_url(port)
+            event_code = get_app_display_code()
             ssid = gallery_config.get("hotspot_ssid", "fexobox-gallery")
             password = gallery_config.get("hotspot_password", "fotobox123")
 
@@ -921,19 +933,12 @@ class StartScreen(ctk.CTkFrame):
 
             # App-Pairing-QR generieren. Der Payload enthaelt API-URL, Box/Event
             # und Pairing-Token fuer die spaetere Smartphone-App.
-            qr_size = 86 if compact else 118
+            qr_size = 164 if compact else 196
             qr_img = generate_qr_code(qr_payload, size=qr_size)
             if not qr_img:
                 logger.warning("QR-Code konnte nicht generiert werden")
-                self.gallery_banner.pack_forget()
+                self._hide_gallery_banner()
                 return
-
-            # Banner wieder anzeigen falls es versteckt war
-            banner_pady = (0, 2) if compact else ((0, 5) if self._is_small else (0, 8))
-            try:
-                self.gallery_banner.pack(side="bottom", fill="x", pady=banner_pady, before=self.start_btn)
-            except Exception:
-                self.gallery_banner.pack(side="bottom", fill="x", pady=banner_pady)
 
             # Horizontales Banner mit Pink-Rahmen
             outer_banner = ctk.CTkFrame(
@@ -941,7 +946,7 @@ class StartScreen(ctk.CTkFrame):
                 fg_color=COLORS["primary"],
                 corner_radius=12
             )
-            outer_banner.pack(padx=10 if compact else 20, pady=3 if compact else 5)
+            outer_banner.pack()
 
             # Innerer Banner-Container
             banner = ctk.CTkFrame(
@@ -951,13 +956,16 @@ class StartScreen(ctk.CTkFrame):
             )
             banner.pack(padx=2, pady=2)
 
-            # Horizontales Layout: QR links, Info rechts
+            # Vertikales Layout: schmal genug fuer den rechten unteren Bereich.
             content = ctk.CTkFrame(banner, fg_color="transparent")
-            content.pack(padx=10 if compact else 15, pady=6 if compact else 10)
+            content.pack(padx=8 if compact else 12, pady=7 if compact else 10)
 
-            # QR-Code links (weißer Hintergrund)
-            qr_container = ctk.CTkFrame(content, fg_color="#ffffff", corner_radius=8)
-            qr_container.pack(side="left", padx=(0, 12 if compact else 20))
+            qr_column = ctk.CTkFrame(content, fg_color="transparent")
+            qr_column.pack(anchor="center")
+
+            # QR-Code links (weisser Hintergrund)
+            qr_container = ctk.CTkFrame(qr_column, fg_color="#ffffff", corner_radius=8)
+            qr_container.pack()
 
             self.qr_ctk_image = ctk.CTkImage(light_image=qr_img, size=(qr_size, qr_size))
             self.qr_label = ctk.CTkLabel(
@@ -966,37 +974,53 @@ class StartScreen(ctk.CTkFrame):
                 text="",
                 fg_color="#ffffff"
             )
-            self.qr_label.pack(padx=6, pady=6)
+            self.qr_label.pack(padx=5 if compact else 7, pady=5 if compact else 7)
 
-            # Info-Bereich rechts
+            if event_code:
+                ctk.CTkLabel(
+                    qr_column,
+                    text=t(self.config, "gallery.banner_code", code=event_code),
+                    font=("Segoe UI", 20 if compact else 30, "bold"),
+                    text_color=COLORS["primary"],
+                    anchor="center"
+                ).pack(pady=(5 if compact else 8, 0))
+
+            # Info-Bereich unter dem QR: schmal halten, damit auf 10" nichts ueberlappt.
             info_frame = ctk.CTkFrame(content, fg_color="transparent")
-            info_frame.pack(side="left", fill="y")
+            info_frame.pack(anchor="center", pady=(6 if compact else 10, 0))
 
             # Titel
             ctk.CTkLabel(
                 info_frame,
                 text=t(self.config, "gallery.banner_title"),
-                font=("Segoe UI", 16 if compact else 20, "bold"),
-                text_color=COLORS["primary"]
-            ).pack(anchor="w")
+                font=("Segoe UI", 13 if compact else 20, "bold"),
+                text_color=COLORS["primary"],
+                anchor="center"
+            ).pack(anchor="center")
 
             # WLAN-Info (größer und lesbarer)
             wifi_info = ctk.CTkFrame(info_frame, fg_color="transparent")
-            wifi_info.pack(anchor="w", pady=(8, 0))
+            wifi_info.pack(anchor="center", pady=(4 if compact else 8, 0))
 
             ctk.CTkLabel(
                 wifi_info,
                 text=t(self.config, "gallery.banner_wifi", ssid=ssid),
-                font=("Segoe UI", 14 if compact else 18, "bold"),
-                text_color=COLORS["text_primary"]
-            ).pack(anchor="w")
+                font=("Segoe UI", 11 if compact else 18, "bold"),
+                text_color=COLORS["text_primary"],
+                wraplength=190 if compact else 260,
+                justify="center",
+                anchor="center"
+            ).pack(anchor="center")
 
             ctk.CTkLabel(
                 wifi_info,
                 text=t(self.config, "gallery.banner_password", password=password),
-                font=("Segoe UI", 14 if compact else 18),
-                text_color=COLORS["text_primary"]
-            ).pack(anchor="w", pady=(2, 0))
+                font=("Segoe UI", 11 if compact else 18),
+                text_color=COLORS["text_primary"],
+                wraplength=190 if compact else 260,
+                justify="center",
+                anchor="center"
+            ).pack(anchor="center", pady=(2, 0))
 
             # Anleitung
             if not compact:
@@ -1006,6 +1030,11 @@ class StartScreen(ctk.CTkFrame):
                     font=("Segoe UI", 15),
                     text_color=COLORS["text_secondary"]
                 ).pack(anchor="w", pady=(10, 0))
+
+            pad_x = 14 if compact else 24
+            pad_y = 14 if compact else 22
+            self.gallery_banner.place(relx=1.0, rely=1.0, x=-pad_x, y=-pad_y, anchor="se")
+            self.gallery_banner.lift()
 
             logger.info(f"✅ App-Galerie-QR angezeigt: {url}")
 
