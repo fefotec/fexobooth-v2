@@ -239,8 +239,13 @@ class PhotoboothApp:
             # Verzögert anzeigen damit UI vollständig geladen ist
             self.root.after(500, lambda: self._show_event_change_dialog(booking_id))
 
-        # Galerie-Server starten wenn aktiviert (NACH Settings-Anwendung!)
-        self._init_gallery_server()
+        # Galerie-Server starten wenn aktiviert (NACH Settings-Anwendung!).
+        # BEWUSST verzoegert: Der Flask-Server laedt sonst GLEICHZEITIG mit dem
+        # ersten Begruessungs-Video -> GIL-Contention -> der VLC-Status-Check auf
+        # dem Main-Thread blockiert (Symptom: Box "friert nach dem ersten Video
+        # ein", ein Touch loest es wieder). 4s spaeter ist die Wiedergabe stabil.
+        # Hotspot/Server kommen nur Sekunden spaeter hoch (unkritisch).
+        self.root.after(4000, self._init_gallery_server)
 
         # Developer Mode: Performance Overlay
         self._init_performance_overlay()
@@ -1297,14 +1302,24 @@ class PhotoboothApp:
                     applied.append("Einstellungen")
 
             if req.get("template"):
+                # Caches leeren, damit die NEUE cached_template.zip frisch geladen
+                # wird (sonst greift der mtime-Cache / die alte Vorschau).
                 TemplateLoader.clear_cache()
                 self.cached_usb_template = None
+                self._usb_stick_template = None
                 self._cached_scaled_overlay = None
                 self._cached_overlay_scale = 0.0
                 self._cached_overlay_source_size = None
-                if self.booking_manager.apply_cached_template_to_config(self.config):
-                    if self.load_template("usb_template"):
-                        applied.append("Template")
+                self.booking_manager.apply_cached_template_to_config(self.config)
+                # WICHTIG: cached_usb_template NEU fuellen – DARAUS rendert der
+                # StartScreen die Template-Vorschau. Vorher wurde nur overlay_image
+                # gesetzt (load_template), die Vorschau blieb auf dem alten Template
+                # haengen -> Template wechselte beim 2. Upload nicht.
+                self._restore_cached_template()
+                if self.cached_usb_template:
+                    self.overlay_image = self.cached_usb_template["overlay"]
+                    self.template_boxes = self.cached_usb_template["boxes"]
+                    applied.append("Template")
 
             if applied:
                 save_config(self.config)

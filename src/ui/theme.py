@@ -6,22 +6,25 @@ Responsive Design - passt sich automatisch an Bildschirmgröße an
 import tkinter as tk
 
 # Farbpalette - Modern Dark mit Pink Akzent
+# (Refresh 2026-06: Hintergründe vertieft + Borders subtiler -> mehr Tiefe und
+#  Premium-Look; Pink-Markenfarbe bleibt unverändert. Reine Farb-Tokens, kein
+#  Layout-Einfluss, performance-neutral.)
 COLORS = {
-    # Primärfarben
+    # Primärfarben (Marke – NICHT ändern)
     "primary": "#e00675",           # Fexobox Pink
     "primary_hover": "#ff1493",
     "primary_dark": "#b8005e",
 
-    # Hintergrund
-    "bg_dark": "#0d0d12",           # Sehr dunkles Schwarz-Blau
-    "bg_medium": "#1a1a24",         # Dunkles Panel
-    "bg_light": "#252532",          # Helleres Panel
-    "bg_card": "#2a2a3a",           # Karten-Hintergrund
+    # Hintergrund – tiefer gestaffelt für mehr Kontrast/Tiefe
+    "bg_dark": "#08080c",           # Fast-Schwarz (tiefer als vorher)
+    "bg_medium": "#14141c",         # Dunkles Panel
+    "bg_light": "#1f1f29",          # Helleres Panel
+    "bg_card": "#212130",           # Karten-Hintergrund
 
     # Text
     "text_primary": "#ffffff",
-    "text_secondary": "#a0a0b0",
-    "text_muted": "#606070",
+    "text_secondary": "#a6a6b6",
+    "text_muted": "#5c5c6c",
 
     # Akzente
     "success": "#00d26a",
@@ -29,9 +32,9 @@ COLORS = {
     "error": "#ff4757",
     "info": "#3498db",
 
-    # Borders
-    "border": "#3a3a4a",
-    "border_light": "#4a4a5a",
+    # Borders – subtiler, damit der Pink-Akzent stärker führt
+    "border": "#2c2c3a",
+    "border_light": "#3a3a48",
 }
 
 

@@ -565,7 +565,12 @@ class FilterScreen(ctk.CTkFrame):
 
     def _tick_auto_continue(self):
         self._auto_continue_job = None
+        # Beim ERSTEN Anzeigen ist das CTkFrame evtl. noch nicht gemappt -> NICHT
+        # abbrechen, sondern neu schedulen. Sonst startete der Auto-Ablauf erst
+        # nach dem ersten manuellen Filter-Wechsel (Bug). on_hide() cancelt den
+        # Job -> kein Zombie-Timer.
         if not self.winfo_ismapped():
+            self._auto_continue_job = self.after(100, self._tick_auto_continue)
             return
 
         remaining = self._auto_continue_until - time.time()
