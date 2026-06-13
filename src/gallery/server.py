@@ -939,12 +939,19 @@ def _create_flask_app(locale: str = "de-DE"):
                 400,
             )
 
+        # WICHTIG (Windows): NICHT NamedTemporaryFile + save(name) verwenden – die
+        # Datei ist dann noch offen, und upload.save() scheitert mit
+        # [WinError 32] (Zugriff verweigert). Stattdessen mkstemp, sofort
+        # schliessen, dann beschreiben. (Erklaert: Settings-Upload klappt,
+        # Template-Upload schlug auf der Box fehl.)
+        import os
         import tempfile
         tmp_path = None
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp:
-                upload.save(tmp.name)
-                tmp_path = Path(tmp.name)
+            fd, tmp_name = tempfile.mkstemp(suffix='.zip')
+            os.close(fd)
+            tmp_path = Path(tmp_name)
+            upload.save(str(tmp_path))
 
             from src.storage.booking import get_booking_manager
             bm = get_booking_manager()
