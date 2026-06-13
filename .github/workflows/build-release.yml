@@ -73,6 +73,18 @@ jobs:
           $start = "@echo off`r`ncd /d `"%~dp0`"`r`nstart `"`" fexobooth.exe`r`n"
           Set-Content -Path 'installer_output/fexobooth/START.bat' -Value $start -Encoding ascii -NoNewline
 
+      - name: installer_files vorbereiten (Produktions-Launcher, gitignored)
+        shell: pwsh
+        run: |
+          # installer_files/ ist gitignored (liegt nur auf dem Windows-PC). Wir
+          # erzeugen die Produktions-Launcher, die die installierte fexobooth.exe
+          # starten (nicht das Python-Quellscript wie die Root-Bats).
+          New-Item -ItemType Directory -Force -Path 'installer_files' | Out-Null
+          $prod = "@echo off`r`ncd /d `"%~dp0`"`r`nstart `"`" fexobooth.exe`r`n"
+          Set-Content -Path 'installer_files/start_fexobooth.bat' -Value $prod -Encoding ascii -NoNewline
+          $dev = "@echo off`r`ncd /d `"%~dp0`"`r`nstart `"`" fexobooth.exe --dev`r`n"
+          Set-Content -Path 'installer_files/start_dev.bat' -Value $dev -Encoding ascii -NoNewline
+
       - name: Windows-Installer bauen (Inno Setup)
         id: installer
         continue-on-error: true
