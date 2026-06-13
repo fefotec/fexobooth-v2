@@ -4,6 +4,13 @@ Aufgabenliste mit Prioritäten.
 
 ---
 
+## Bugs 🐞 (beim nächsten Software-Update nebenbei mitfixen)
+
+- [ ] **Filter-Screen läuft nicht automatisch ab.** Der Filter-Screen soll automatisch weiterlaufen/ablaufen, tut das aber erst, nachdem man **einmal den Filter gewechselt** hat. (Wahrscheinlich startet der Auto-Ablauf-Timer erst beim ersten Filter-Wechsel statt direkt beim Anzeigen des Screens.)
+- [ ] **Box friert nach dem ersten Video ein.** Nach dem ersten Video hängt die Software; ein Tipp auf den Touchscreen löst sie wieder. Vermutlich UI-Thread / Video-Handling (evtl. Zusammenhang mit dem Galerie-Server prüfen). Muss stabilisiert werden.
+
+---
+
 ## Hoch 🔴
 
 - [x] KRITISCH: Canon DSLR Freeze bei Host-Download behoben (EdsSetObjectEventHandler blockierte Message-Pump)
