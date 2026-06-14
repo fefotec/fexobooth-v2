@@ -662,7 +662,10 @@ class StartScreen(ctk.CTkFrame):
                             "boxes": boxes
                         }
                         logger.info(f"USB-Stick Template geladen: {template_name} ({len(boxes)} Slots)")
-                        self._persist_template_to_disk(real_usb)
+                        if not self.app._user_template_override:
+                            self._persist_template_to_disk(real_usb)
+                        else:
+                            logger.info("USB-Template nicht in Cache kopiert: App-Template hat Vorrang")
                 except Exception as e:
                     logger.error(f"USB-Template laden fehlgeschlagen: {e}")
             else:

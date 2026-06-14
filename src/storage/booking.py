@@ -681,6 +681,10 @@ class BookingManager:
         )
         return True
 
+    def is_cache_from_app_upload(self) -> bool:
+        """True, wenn der aktive Booking-/Template-Cache zuletzt per App kam."""
+        return self._load_cache_source().get("source") == "app"
+
     # ------------------------------------------------------------------
     # App-Upload (settings.json / Template-ZIP ueber das Box-WLAN)
     # ------------------------------------------------------------------
