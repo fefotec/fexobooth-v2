@@ -6,6 +6,50 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-06-14
 
+### App-Plattform-Fundament gebaut (Box-Seite) – „dünne Box, dicke App"
+
+**Ziel:** Einmaliger, zukunftssicherer Box-Umbau, damit danach Features rein per
+**App-Update** kommen (App ändern = billig, Box ändern = teuer). Strategie:
+[../fexobox-app/PLATTFORM-STRATEGIE.md](../fexobox-app/PLATTFORM-STRATEGIE.md). Alles **additiv**,
+performance-neutral, mit Dev-Logging; auf macOS per Flask-`test_client` verifiziert (35 Checks grün)
+und durch ein Multi-Agent-Review geprüft (0 kritische/hohe Findings; 5 Findings behoben).
+
+**1. KEYSTONE – lokaler Service-Kanal dauerhaft + entkoppelt:** Hotspot + Flask-API
+([src/app.py](src/app.py) `_init_gallery_server`, `_start_gallery_if_needed`) laufen ab jetzt
+**immer** (4 s verzögert), unabhängig von `gallery_enabled`. Damit ist Template-/Settings-Korrektur
+auch **ohne** gebuchte Galerie möglich. Die beiden Event-Caller (Admin-Speichern, Event-Wechsel)
+stellen den Kanal immer sicher; der Hotspot wird nicht mehr abgewürgt.
+
+**2. Foto-Feature serverseitig gegated (Produkt-/Sicherheitsregel):** Neues Modul-Flag
+`_gallery_feature_enabled` + `set_gallery_feature_enabled()` in [src/gallery/server.py](src/gallery/server.py).
+Alle 9 foto-ausliefernden Routes liefern **403**, wenn keine Galerie gebucht ist; Web-Root zeigt eine
+**neutrale fexobox-Seite**. Support-/Infrastruktur-Routes (status, manifest, pairing, pair-by-code,
+event, upload/apply) laufen **immer**. Der **Box-Screen bleibt unverändert** – [start.py](src/ui/screens/start.py)
+**nicht angefasst**, QR/Banner weiter strikt an `gallery_enabled`.
+
+**3. `GET /api/v1/status` erweitert:** meldet jetzt `software_version`, `gallery_enabled` und eine
+Capability-Liste (`settings_patch`, `template_upload`, `asset_upload`, `software_ota`,
+`feature_flags:[live_gallery, print_enabled, print_singles, dslr_camera, max_prints]`) →
+App bietet nur an, was DIESE Box kann (Vorwärtskompatibilität).
+
+**4. Generische Apply-Endpunkte:** `apply/settings` + `apply/template` (Aliase auf die bestehenden
+`upload/*`), `apply/assets` (sicheres ZIP-Staging: kein Path-Traversal, keine ausführbaren Dateien),
+`apply/software` (OTA). Soft-Mode ignoriert unbekannte Settings-Keys → neues „Schalter"-Upgrade = null Box-Code.
+
+**5. App-OTA (`POST apply/software` | `upload/software`):** SHA256-Verifikation
+([booking.py](src/storage/booking.py) `stage_software_update`, streamend) **vor** dem Anwenden, dann der
+**bestehende** Updater (Backup + Rollback + Neustart) via Apply-Marker **nur im Idle**, danach harter Exit.
+Staff-Auth = **Service-PIN 6588 als HMAC-SHA256(key=PIN, msg=Nonce)** im Header `X-FexoBox-Service-Auth`
+(PIN nicht im Klartext, Nonce pro Server-Start gegen Replay) – **nicht** der Kunden-Pairing-Token.
+
+**6. Soft-Mode bleibt bewusst** (keine Signaturpflicht, siehe PLATTFORM-STRATEGIE.md §2); die alte
+Log-Warnung „in v2.5.0 wird das abgelehnt" entschärft.
+
+**Wichtig:** Teure Box-Änderung → vor dem Flotten-Rollout auf **einer echten Box** testen. Build =
+GitHub-Actions-**Artefakt** (kein Release/Tag), damit keine Box ungewollt per OTA zieht.
+
+---
+
 ### Verbindliche Regel: Dev-Mode-Logging bei jeder Änderung mitziehen
 
 **Prozess-Regel** (kein Code): Ab sofort gilt in [ARBEITSWEISE.md](ARBEITSWEISE.md) als

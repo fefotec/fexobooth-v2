@@ -10,6 +10,8 @@ from .server import (
     get_app_landing_url,
     set_app_context as set_gallery_app_context,
     set_locale as set_gallery_locale,
+    set_gallery_feature_enabled,
+    is_gallery_feature_enabled,
 )
 from .qrcode_gen import generate_qr_code, generate_qr_with_label
 from .hotspot import start_hotspot, stop_hotspot, is_hotspot_active, ensure_hotspot_state
@@ -24,6 +26,8 @@ __all__ = [
     'get_app_landing_url',
     'set_gallery_app_context',
     'set_gallery_locale',
+    'set_gallery_feature_enabled',
+    'is_gallery_feature_enabled',
     'generate_qr_code',
     'generate_qr_with_label',
     'start_hotspot',

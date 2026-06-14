@@ -619,15 +619,26 @@ class PhotoboothApp:
                 logger.debug(f"Drucker-Init übersprungen: {e}")
 
     def _init_gallery_server(self):
-        """Startet den Galerie-Webserver und Hotspot wenn aktiviert"""
-        if not self.config.get("gallery_enabled", False):
-            logger.debug("Galerie-Server deaktiviert")
-            # Hotspot stoppen wenn Galerie deaktiviert
-            self._stop_hotspot_if_running()
-            return
+        """Startet den permanenten lokalen Service-Kanal (Hotspot + Flask-API).
 
+        APP-PLATTFORM-FUNDAMENT: Hotspot + Server laufen ab jetzt IMMER (Support,
+        Settings-/Template-Korrektur, Software-OTA) — entkoppelt von der gebuchten
+        Galerie. Das ZAHLENDE Foto-Feature bleibt serverseitig an `gallery_enabled`
+        gekoppelt (`set_gallery_feature_enabled`). Am Box-SCREEN aendert sich fuer
+        Nicht-Galerie-Kunden NICHTS (QR/Banner bleiben strikt an `gallery_enabled`,
+        siehe start.py). Start weiterhin 4 s verzoegert (Boot-Ruckler).
+        """
+        gallery_enabled = self.config.get("gallery_enabled", False)
+        logger.info(
+            f"🔌 Lokaler Service-Kanal startet (Foto-Feature={'an' if gallery_enabled else 'aus'})"
+        )
         try:
-            from src.gallery import start_server, get_gallery_url, start_hotspot
+            from src.gallery import (
+                start_server,
+                get_gallery_url,
+                start_hotspot,
+                set_gallery_feature_enabled,
+            )
             from pathlib import Path
 
             # Hotspot im Hintergrund starten (blockiert sonst ~6s)
@@ -636,7 +647,7 @@ class PhotoboothApp:
             hs_password = gallery_config.get("hotspot_password", "")
             def _start_hs():
                 try:
-                    logger.info("📶 Starte Hotspot für Galerie...")
+                    logger.info("📶 Starte Hotspot (Service-Kanal)...")
                     start_hotspot(ssid=hs_ssid, password=hs_password)
                 except Exception as e:
                     logger.warning(f"Hotspot-Start fehlgeschlagen: {e}")
@@ -653,17 +664,22 @@ class PhotoboothApp:
                     locale=self.config.get("locale", "de-DE"),
                     app_context=self._get_gallery_app_context()
                 )
+                # Foto-Feature serverseitig gaten (zahlendes Feature, an gallery_enabled).
+                set_gallery_feature_enabled(gallery_enabled)
 
                 # URL für QR-Code speichern
                 self.gallery_url = get_gallery_url(port)
-                logger.info(f"🌐 Galerie verfügbar: {self.gallery_url}")
+                logger.info(
+                    f"🌐 Service-Kanal verfügbar: {self.gallery_url} "
+                    f"(Foto-Feature={'an' if gallery_enabled else 'aus'})"
+                )
             else:
-                logger.warning("Kein Bilder-Pfad für Galerie verfügbar")
+                logger.warning("Kein Bilder-Pfad für Service-Kanal verfügbar")
 
         except ImportError as e:
             logger.warning(f"Galerie-Modul nicht verfügbar: {e}")
         except Exception as e:
-            logger.error(f"Galerie-Server Start fehlgeschlagen: {e}")
+            logger.error(f"Service-Kanal Start fehlgeschlagen: {e}")
 
     def _get_gallery_app_context(self) -> Dict[str, Any]:
         """Kontext fuer Pairing-QR und Smartphone-App API."""
@@ -708,9 +724,12 @@ class PhotoboothApp:
         }
 
     def _prepare_gallery_app_context(self) -> None:
-        """Setzt App-Metadaten auch dann, wenn der Server noch nicht laeuft."""
-        if not self.config.get("gallery_enabled", False):
-            return
+        """Setzt App-Metadaten auch dann, wenn der Server noch nicht laeuft.
+
+        Plattform-Fundament: laeuft unabhaengig von `gallery_enabled`, damit
+        `/api/v1/status` schon vor dem (4 s verzoegerten) Server-Start die
+        software_version/box_id melden kann.
+        """
         try:
             from src.gallery import set_gallery_app_context, set_gallery_locale
             set_gallery_locale(self.config.get("locale", "de-DE"))
@@ -719,7 +738,16 @@ class PhotoboothApp:
             logger.debug(f"Galerie-App-Kontext konnte nicht vorbereitet werden: {e}")
 
     def _stop_hotspot_if_running(self):
-        """Stoppt den Hotspot wenn er läuft (Galerie deaktiviert) - im Hintergrund"""
+        """Stoppt den Hotspot im Hintergrund, falls er laeuft.
+
+        ⚠️ NICHT MEHR im "Galerie deaktiviert"-Pfad aufrufen! Seit dem
+        App-Plattform-Fundament laeuft der lokale Service-Kanal (Hotspot + Flask)
+        DAUERHAFT, entkoppelt von `gallery_enabled` (siehe `_init_gallery_server`).
+        Den Hotspot abzuwuergen, nur weil keine Galerie gebucht ist, wuerde die
+        Template-/Settings-Korrektur und die App-OTA fuer Nicht-Galerie-Kunden
+        kaputtmachen. Diese Methode bleibt nur fuer einen echten, bewussten
+        Shutdown erhalten und wird aktuell nicht aufgerufen.
+        """
         def _do_stop():
             try:
                 from src.gallery import is_hotspot_active, stop_hotspot
@@ -758,26 +786,35 @@ class PhotoboothApp:
         self.statistics.start_event(booking_id=booking_id, save_path=save_path)
 
     def _start_gallery_if_needed(self):
-        """Startet Galerie + Hotspot wenn noch nicht gestartet"""
+        """Stellt sicher, dass der lokale Service-Kanal (Hotspot + Server) laeuft.
+
+        Laeuft ab jetzt unabhaengig von `gallery_enabled` (Plattform-Fundament).
+        Das ZAHLENDE Foto-Feature wird separat ueber `set_gallery_feature_enabled`
+        an `gallery_enabled` gekoppelt — Server an, Fotos aber nur wenn gebucht.
+        """
         try:
             from src.gallery import (
                 is_running,
                 set_gallery_app_context,
                 start_server,
                 get_gallery_url,
-                start_hotspot
+                start_hotspot,
+                set_gallery_feature_enabled,
             )
 
-            # Hotspot starten (auch wenn Galerie schon läuft - Hotspot könnte aus sein)
+            # Hotspot starten (auch wenn Server schon läuft - Hotspot könnte aus sein)
             gallery_config = self.config.get("gallery", {})
             start_hotspot(
                 ssid=gallery_config.get("hotspot_ssid", ""),
                 password=gallery_config.get("hotspot_password", "")
             )
 
+            gallery_enabled = self.config.get("gallery_enabled", False)
+
             if is_running():
                 set_gallery_app_context(self._get_gallery_app_context())
-                logger.debug("Galerie läuft bereits")
+                set_gallery_feature_enabled(gallery_enabled)
+                logger.debug(f"Service-Kanal läuft bereits (Foto-Feature={gallery_enabled})")
                 return
 
             # Galerie-Pfad = immer lokal (damit Löschen sofort wirkt)
@@ -791,10 +828,29 @@ class PhotoboothApp:
                     locale=self.config.get("locale", "de-DE"),
                     app_context=self._get_gallery_app_context()
                 )
+                set_gallery_feature_enabled(gallery_enabled)
                 self.gallery_url = get_gallery_url(port)
-                logger.info(f"🌐 Galerie gestartet: {self.gallery_url}")
+                logger.info(
+                    f"🌐 Service-Kanal gestartet: {self.gallery_url} "
+                    f"(Foto-Feature={gallery_enabled})"
+                )
         except Exception as e:
-            logger.error(f"Galerie-Start fehlgeschlagen: {e}")
+            logger.error(f"Service-Kanal Start fehlgeschlagen: {e}")
+
+    def _push_gallery_feature_flag(self):
+        """Meldet den aktuellen `gallery_enabled`-Wert an den Server (Foto-Feature-Gate).
+
+        Leichtgewichtig: aendert nur das serverseitige Flag, ohne den Server neu
+        zu starten. Wird bei jeder moeglichen Aenderung von `gallery_enabled`
+        aufgerufen (Event-Wechsel, Admin-Speichern, App-Settings-Apply).
+        """
+        try:
+            from src.gallery import set_gallery_feature_enabled
+            enabled = self.config.get("gallery_enabled", False)
+            set_gallery_feature_enabled(enabled)
+            logger.debug(f"Foto-Feature-Flag an Server gemeldet: {enabled}")
+        except Exception as e:
+            logger.debug(f"Foto-Feature-Flag konnte nicht gemeldet werden: {e}")
 
     def _set_window_icon(self):
         """Setzt das Fenster-Icon (Taskbar + Titelleiste)"""
@@ -1332,12 +1388,24 @@ class PhotoboothApp:
         Bilder und setzt KEINE Session zurück. Ist die Box gerade nicht im
         Startbildschirm, bleibt der Marker liegen und wir versuchen es später.
         """
+        # Laeuft bereits ein OTA (App wird gleich hart beendet)? Dann nichts mehr
+        # anwenden — sonst koennte in den ~1,2 s bis zum Exit noch ein Settings-/
+        # Template-Apply config.json mitten im Schreiben abschneiden (torn write).
+        if getattr(self, "_software_update_in_progress", False):
+            return
+
         req = self.booking_manager.peek_apply_request()
         if not req:
             return
 
         # Nur im Startbildschirm übernehmen (kein Eingriff in laufende Session).
         if self.current_screen_name != "start":
+            return
+
+        # Software-OTA zuerst: ersetzt die GANZE App -> Neustart. Settings/Template
+        # bleiben als Marker liegen und greifen automatisch nach dem Neustart.
+        if bool(req.get("software")):
+            self._apply_pending_software_update()
             return
 
         applied = []
@@ -1419,6 +1487,70 @@ class PhotoboothApp:
                 )
             else:
                 self.booking_manager.clear_apply_request(settings=True, template=True)
+
+    def _apply_pending_software_update(self):
+        """Wendet ein per App hochgeladenes + SHA256-verifiziertes Software-Update an.
+
+        Nur im Idle (Aufrufer hat current_screen_name == "start" bereits geprueft).
+        SHA256 wurde beim Empfang verifiziert (booking.stage_software_update). Hier
+        nutzen wir den BESTEHENDEN Updater (Backup + Rollback + Neustart) — wir
+        erfinden den Apply-Mechanismus nicht neu. Danach wird die App HART beendet,
+        damit das BAT-Script das _internal-Paket tauschen kann (gelockte DLLs sonst).
+        """
+        meta = self.booking_manager.peek_software_update()
+        if not meta:
+            logger.warning("📲 Software-Apply angefordert, aber kein verifiziertes Paket vorhanden")
+            self.booking_manager.clear_apply_request(software=True)
+            return
+
+        zip_path = Path(meta.get("path", ""))
+        if not zip_path.exists():
+            logger.error(f"📲 Software-ZIP nicht gefunden: {zip_path}")
+            self.booking_manager.clear_software_update()
+            self.booking_manager.clear_apply_request(software=True)
+            return
+
+        try:
+            logger.info(
+                f"📲 Wende Software-Update an (Idle): {zip_path.name} "
+                f"sha256={str(meta.get('sha256', ''))[:12]}…"
+            )
+            from src import updater
+
+            # Ab hier laeuft der OTA: weitere Apply-Ticks (Settings/Template) sperren,
+            # damit kurz vor dem Hard-Exit kein torn write von config.json passiert.
+            self._software_update_in_progress = True
+
+            # Marker VOR dem Neustart bestaetigen, damit nach dem Reboot kein
+            # Re-Apply-Loop entsteht (das neue Paket ist dann ja schon installiert).
+            # Das ZIP NICHT loeschen — das BAT-Script braucht es noch zum Entpacken.
+            self.booking_manager.clear_apply_request(software=True)
+
+            updater.apply_update_and_restart(zip_path)
+            logger.info("📲 Update-Script gestartet — App wird fuer den Tausch HART beendet…")
+            # Kurz warten, damit das letzte Log + die HTTP-Antwort flushen, dann
+            # hart beenden (wie UpdateProgressDialog._quit_for_update): os._exit(0),
+            # sonst halten Kamera-/Flask-/USB-Threads den Prozess am Leben und das
+            # BAT-Script kollidiert mit gelockten DLLs.
+            self.root.after(1200, self._hard_exit_for_update)
+        except Exception as e:
+            logger.error(f"📲 Software-Update fehlgeschlagen: {e}", exc_info=True)
+            # Fehlgeschlagen -> Sperre wieder loesen, damit Settings/Template-Applies
+            # (und ein erneuter Versuch) wieder moeglich sind.
+            self._software_update_in_progress = False
+            # Bei Fehler Paket + Marker entfernen, damit es nicht endlos retryt.
+            self.booking_manager.clear_software_update()
+            self.booking_manager.clear_apply_request(software=True)
+
+    def _hard_exit_for_update(self):
+        """Beendet den Prozess SOFORT (os._exit), damit das Update-BAT uebernehmen kann."""
+        logger.info("App wird HART beendet (os._exit) fuer App-OTA…")
+        import logging as _logging
+        try:
+            _logging.shutdown()
+        except Exception:
+            pass
+        os._exit(0)
 
     def _log_template_debug_state(self, label: str):
         try:
@@ -2248,12 +2380,10 @@ class PhotoboothApp:
             except Exception as e:
                 logger.debug(f"Monitoring-Sofortmeldung nach Admin-Speichern fehlgeschlagen: {e}")
 
-            # Galerie/Hotspot starten oder stoppen je nach Einstellung
-            if self.config.get("gallery_enabled", False):
-                self._start_gallery_if_needed()
-            else:
-                # Galerie deaktiviert -> Hotspot stoppen
-                self._stop_hotspot_if_running()
+            # Service-Kanal laeuft IMMER (Plattform-Fundament) — Hotspot bleibt an,
+            # auch ohne gebuchte Galerie. Nur das Foto-Feature folgt gallery_enabled.
+            self._start_gallery_if_needed()
+            self._push_gallery_feature_flag()
 
         # StartScreen IMMER aktualisieren nach Dialog-Schließung
         # (auch nach Kunden-Menü 2015 Template-Wechsel, nicht nur nach Admin-Settings)
@@ -2389,11 +2519,9 @@ class PhotoboothApp:
         # 8. Neues Statistik-Event
         self._start_statistics_event(usb_root)
 
-        # 9. Galerie starten/stoppen je nach Settings
-        if self.config.get("gallery_enabled", False):
-            self._start_gallery_if_needed()
-        else:
-            self._stop_hotspot_if_running()
+        # 9. Service-Kanal sicherstellen (laeuft IMMER) + Foto-Feature an gallery_enabled
+        self._start_gallery_if_needed()
+        self._push_gallery_feature_flag()
 
         # 10. Config speichern
         save_config(self.config)

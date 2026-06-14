@@ -6,10 +6,11 @@ Persistenz-Strategie:
 - Wechsel nur bei ANDERER booking_id oder manuellem Reset
 
 Sicherheit (ab v2.4.0):
-- settings.json kann mit HMAC-SHA256 signiert sein (Feld _signature)
-- Soft-Mode: unsignierte JSONs werden mit Warning akzeptiert (Migration)
-- Strict-Mode (geplant v2.5.0): nur signierte JSONs werden akzeptiert
-- Manipulationsversuche (Signatur falsch) werden IMMER abgelehnt, auch im Soft-Mode
+- settings.json KANN mit HMAC-SHA256 signiert sein (Feld _signature)
+- Soft-Mode ist eine bewusste Plattform-Entscheidung (siehe
+  fexobox-app/PLATTFORM-STRATEGIE.md §2): im lokalen Box-WLAN wird der App
+  vertraut; eine harte Signaturpflicht ist NICHT geplant.
+- Manipulationsversuche (Signatur VORHANDEN, aber falsch) werden IMMER abgelehnt.
 """
 
 import hashlib
@@ -41,14 +42,24 @@ UPLOAD_APPLY_MARKER = CACHE_DIR / ".apply_pending.json"
 # duerfen nicht direkt wieder vom Stick ueberschrieben werden.
 APP_UPLOAD_META_FILE = CACHE_DIR / ".app_upload_meta.json"
 
+# App-Plattform-Fundament: generische Apply-Kanaele (Assets + Software-OTA).
+# Beide werden vom Galerie-Server-Thread bereitgestellt und erst im Idle vom
+# Main-Thread (UI) angewendet. Die ZIPs liegen eindeutig benannt im Cache, die
+# Meta-Datei zeigt jeweils auf die aktive Datei.
+APP_ASSETS_PREFIX = "app_assets_"
+APP_SOFTWARE_PREFIX = "app_software_"
+ASSETS_META_FILE = CACHE_DIR / ".app_assets_meta.json"
+SOFTWARE_UPDATE_META = CACHE_DIR / ".app_software_update.json"
+
 # HMAC-Geheimnis für settings.json-Signatur. Muss identisch im Laravel-Backend
 # als ENV SETTINGS_HMAC_SECRET gesetzt sein, damit signierte JSONs akzeptiert werden.
 # Bei Build-Zeit-Override via PyInstaller in eine .env oder direkte Patch-Konstante
 # auslagern, sobald Laravel signiert.
 _HMAC_SECRET = b"fexobox-settings-hmac-2026-CHANGE-ME-IN-PROD"
 _SIGNATURE_PREFIX = "hmac_sha256:"
-# Soft-Mode: True = unsignierte JSONs werden akzeptiert (Übergangsphase v2.4.x).
-# False = Strict-Mode, alle JSONs müssen signiert sein (v2.5.0+).
+# Soft-Mode (bewusst dauerhaft, siehe PLATTFORM-STRATEGIE.md §2): True = unsignierte
+# JSONs werden akzeptiert. Im lokalen Box-WLAN wird der App vertraut; eine harte
+# Signaturpflicht ist nicht geplant. Falsch signierte JSONs werden weiter abgelehnt.
 _HMAC_SOFT_MODE = True
 
 
@@ -75,9 +86,9 @@ def _verify_signature(data: Dict[str, Any], log_unsigned: bool = True) -> Tuple[
     if sig is None:
         if _HMAC_SOFT_MODE:
             if log_unsigned:
-                logger.warning(
-                    "⚠️  settings.json ohne Signatur — Soft-Mode akzeptiert "
-                    "(in v2.5.0 wird das abgelehnt)"
+                logger.info(
+                    "settings.json ohne Signatur — Soft-Mode akzeptiert "
+                    "(bewusste Plattform-Entscheidung, keine Signaturpflicht geplant)"
                 )
             return (True, "unsigned")
         return (False, "unsigned_strict")
@@ -817,6 +828,166 @@ class BookingManager:
         logger.info("📲 Template per App empfangen und gecached")
         return True, ""
 
+    # ------------------------------------------------------------------
+    # App-Plattform-Fundament: generische Apply-Kanaele (Assets + Software-OTA)
+    # ------------------------------------------------------------------
+
+    def ingest_uploaded_assets(self, src_path: Path) -> Tuple[bool, str]:
+        """Nimmt ein generisches Asset-ZIP (Videos/Overlays/...) entgegen.
+
+        Prueft auf Sicherheit (kein Path-Traversal, keine ausfuehrbaren Dateien)
+        und legt es sicher ab. v1: reine Ablage = generischer Kanal fuer
+        Typ-B-Upgrades; ein konkreter Box-seitiger Verbraucher wird mit dem
+        jeweiligen Feature nachgezogen (siehe PLATTFORM-STRATEGIE.md §4.3/§5).
+
+        Returns:
+            (True, pfad) bei Erfolg, sonst (False, Fehlergrund)
+        """
+        import zipfile
+
+        # Ausfuehrbare/skriptfaehige Dateitypen ablehnen -> verhindert, dass ueber
+        # ein "Asset"-ZIP Code auf die Box kommt (gleicher Gedanke wie Template-ZIP).
+        blocked_ext = {
+            ".exe", ".dll", ".bat", ".cmd", ".ps1", ".vbs", ".scr", ".com",
+            ".msi", ".js", ".jar", ".sh", ".py", ".pyc", ".lnk", ".reg",
+        }
+        try:
+            if not src_path.exists() or src_path.stat().st_size == 0:
+                return False, "Leere oder fehlende Asset-Datei"
+            if not zipfile.is_zipfile(str(src_path)):
+                return False, "Asset-Datei ist kein gueltiges ZIP"
+
+            with zipfile.ZipFile(str(src_path)) as zf:
+                for name in zf.namelist():
+                    parts = Path(name).parts
+                    # Absolute Pfade / Path-Traversal / Laufwerksbuchstaben ablehnen
+                    if name.startswith("/") or name.startswith("\\") or ".." in parts \
+                            or (len(name) > 1 and name[1] == ":"):
+                        return False, f"Unsicherer Pfad im Asset-ZIP: {name}"
+                    if Path(name).suffix.lower() in blocked_ext:
+                        return False, f"Ausfuehrbare Datei im Asset-ZIP abgelehnt: {name}"
+
+            CACHE_DIR.mkdir(exist_ok=True)
+            final_path = CACHE_DIR / f"{APP_ASSETS_PREFIX}{int(time.time() * 1000)}.zip"
+            tmp = CACHE_DIR / f".{final_path.name}.tmp"
+            shutil.copy2(src_path, tmp)
+            tmp.replace(final_path)
+
+            # Aeltere Asset-Pakete aufraeumen (nur das neueste behalten)
+            for old in CACHE_DIR.glob(f"{APP_ASSETS_PREFIX}*.zip"):
+                if old != final_path:
+                    try:
+                        old.unlink()
+                    except Exception:
+                        pass
+
+            meta = {"path": str(final_path), "received_at": time.time()}
+            tmpm = ASSETS_META_FILE.with_suffix(".tmp")
+            tmpm.write_text(json.dumps(meta), encoding="utf-8")
+            tmpm.replace(ASSETS_META_FILE)
+        except Exception as e:
+            return False, f"Asset-Staging fehlgeschlagen: {e}"
+
+        logger.info(
+            "📲 Asset-Paket per App empfangen und sicher abgelegt "
+            "(v1: Staging, Box-Verbraucher folgt mit dem jeweiligen Feature)"
+        )
+        return True, str(final_path)
+
+    def stage_software_update(self, src_path: Path, expected_sha256: str) -> Tuple[bool, str]:
+        """Verifiziert die SHA256 eines per App hochgeladenen Software-ZIP und legt es bereit.
+
+        SICHERHEIT (kritisch, siehe PLAN-APP-OTA.md §5): Ein kaputtes/abgebrochenes
+        Paket darf NIE angewendet werden. Deshalb wird hier — VOR jedem Anwenden —
+        die SHA256 streamend (RAM-schonend) gegen den von der App gelieferten
+        Erwartungswert geprueft. Das eigentliche Anwenden (App beenden, _internal
+        tauschen, Rollback bei Fehler, Neustart) macht erst der Main-Thread im Idle
+        ueber den bestehenden updater.apply_update_and_restart().
+
+        Returns:
+            (True, sha256) bei Erfolg, sonst (False, Fehlergrund)
+        """
+        try:
+            if not src_path.exists() or src_path.stat().st_size == 0:
+                return False, "Leere oder fehlende Software-Datei"
+
+            expected = (expected_sha256 or "").strip().lower()
+            if len(expected) != 64 or any(c not in "0123456789abcdef" for c in expected):
+                return False, "Ungueltiger oder fehlender SHA256-Erwartungswert"
+
+            # SHA256 streamend berechnen (schwache Box-HW: kein Full-Load in RAM)
+            h = hashlib.sha256()
+            with open(src_path, "rb") as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                    h.update(chunk)
+            actual = h.hexdigest().lower()
+
+            if not hmac.compare_digest(actual, expected):
+                return False, (
+                    f"SHA256 stimmt nicht (erwartet {expected[:12]}…, ist {actual[:12]}…)"
+                )
+
+            CACHE_DIR.mkdir(exist_ok=True)
+            final_path = CACHE_DIR / f"{APP_SOFTWARE_PREFIX}{int(time.time() * 1000)}.zip"
+            tmp = CACHE_DIR / f".{final_path.name}.tmp"
+            shutil.copy2(src_path, tmp)
+            tmp.replace(final_path)
+            self._cleanup_old_software_updates(keep_path=final_path)
+
+            meta = {"path": str(final_path), "sha256": actual, "received_at": time.time()}
+            tmpm = SOFTWARE_UPDATE_META.with_suffix(".tmp")
+            tmpm.write_text(json.dumps(meta), encoding="utf-8")
+            tmpm.replace(SOFTWARE_UPDATE_META)
+        except Exception as e:
+            return False, f"Software-Staging fehlgeschlagen: {e}"
+
+        logger.info(
+            "📲 Software-Update per App empfangen, SHA256 verifiziert — bereit fuer Idle-Apply"
+        )
+        return True, actual
+
+    def peek_software_update(self) -> Optional[Dict[str, Any]]:
+        """Liest die Meta des bereitgestellten Software-Updates (Main-Thread)."""
+        try:
+            if SOFTWARE_UPDATE_META.exists():
+                data = json.loads(SOFTWARE_UPDATE_META.read_text(encoding="utf-8"))
+                if data.get("path") and Path(data["path"]).exists():
+                    return data
+        except Exception:
+            pass
+        return None
+
+    def clear_software_update(self) -> None:
+        """Entfernt das bereitgestellte Software-Paket + Meta (Fehler-/Abschluss-Pfad)."""
+        try:
+            meta = None
+            try:
+                if SOFTWARE_UPDATE_META.exists():
+                    meta = json.loads(SOFTWARE_UPDATE_META.read_text(encoding="utf-8"))
+            except Exception:
+                meta = None
+            if meta and meta.get("path"):
+                try:
+                    Path(meta["path"]).unlink()
+                except Exception:
+                    pass
+            if SOFTWARE_UPDATE_META.exists():
+                SOFTWARE_UPDATE_META.unlink()
+        except Exception:
+            pass
+
+    def _cleanup_old_software_updates(self, keep_path: Path) -> None:
+        """Loescht alte App-Software-ZIPs (nur das neueste behalten)."""
+        try:
+            for old in CACHE_DIR.glob(f"{APP_SOFTWARE_PREFIX}*.zip"):
+                if old != keep_path:
+                    try:
+                        old.unlink()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
     def _load_cache_source(self) -> Dict[str, Any]:
         try:
             if APP_UPLOAD_META_FILE.exists():
@@ -908,8 +1079,14 @@ class BookingManager:
             pass
         return ""
 
-    def request_apply(self, settings: bool = False, template: bool = False) -> None:
-        """Setzt/erweitert den Apply-Marker (vom Server-Thread aufgerufen)."""
+    def request_apply(self, settings: bool = False, template: bool = False,
+                      software: bool = False) -> None:
+        """Setzt/erweitert den Apply-Marker (vom Server-Thread aufgerufen).
+
+        `software` triggert ein per App hochgeladenes + SHA256-verifiziertes
+        Software-Update (App-OTA). Es wird wie Settings/Template erst im Idle
+        (Startbildschirm) vom Main-Thread angewendet — danach Neustart.
+        """
         try:
             with self._apply_marker_lock:
                 existing: Dict[str, Any] = {}
@@ -920,6 +1097,7 @@ class BookingManager:
                         existing = {}
                 existing["settings"] = bool(existing.get("settings")) or bool(settings)
                 existing["template"] = bool(existing.get("template")) or bool(template)
+                existing["software"] = bool(existing.get("software")) or bool(software)
                 existing["updated_at"] = time.time()
                 CACHE_DIR.mkdir(exist_ok=True)
                 tmp = UPLOAD_APPLY_MARKER.with_suffix(".tmp")
@@ -934,18 +1112,20 @@ class BookingManager:
             with self._apply_marker_lock:
                 if UPLOAD_APPLY_MARKER.exists():
                     data = json.loads(UPLOAD_APPLY_MARKER.read_text(encoding="utf-8"))
-                    if bool(data.get("settings")) or bool(data.get("template")):
+                    if any(bool(data.get(k)) for k in ("settings", "template", "software")):
                         return data
         except Exception:
             pass
         return None
 
-    def clear_apply_request(self, settings: bool = False, template: bool = False) -> None:
+    def clear_apply_request(self, settings: bool = False, template: bool = False,
+                            software: bool = False) -> None:
         """Bestaetigt nur die verarbeiteten Marker-Teile.
 
         Settings und Template kommen in zwei HTTP-Requests. Wenn waehrend eines
         Settings-Applys erst danach das Template eintrifft, darf dieser spaetere
-        Template-Marker nicht mitgeloescht werden.
+        Template-Marker nicht mitgeloescht werden. Gleiches gilt fuer den
+        `software`-Teil (App-OTA).
         """
         try:
             with self._apply_marker_lock:
@@ -963,8 +1143,10 @@ class BookingManager:
                     current["settings"] = False
                 if template:
                     current["template"] = False
+                if software:
+                    current["software"] = False
 
-                if bool(current.get("settings")) or bool(current.get("template")):
+                if any(bool(current.get(k)) for k in ("settings", "template", "software")):
                     current["updated_at"] = time.time()
                     tmp = UPLOAD_APPLY_MARKER.with_suffix(".tmp")
                     tmp.write_text(json.dumps(current), encoding="utf-8")

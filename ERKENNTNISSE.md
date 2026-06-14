@@ -6,6 +6,32 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### App-Plattform-Fundament: „Infrastruktur immer an" vs „Feature verkauft" sauber trennen
+
+| | |
+|---|---|
+| **Kontext** | Bisher hing **alles** am Schalter `gallery_enabled`: Hotspot, Flask-Server, Foto-Routes UND die Box-Screen-UI. Folge: ohne gebuchte Galerie lief der lokale Kanal gar nicht → Template-/Settings-Korrektur unmöglich. Für das App-Fundament muss der Kanal **dauerhaft** laufen. |
+| **Problem** | Sobald der Server immer läuft, wären die Foto-Routes (zahlendes Feature) auch für Nicht-Galerie-Kunden erreichbar – Produkt-/Sicherheitsverstoß. |
+| **Entscheidung** | **Drei Ebenen entkoppeln:** (1) Infrastruktur (Hotspot+Flask) läuft immer; (2) das zahlende Foto-Feature wird **serverseitig pro Route** an einem eigenen Flag `_gallery_feature_enabled` gegated (403 wenn aus); (3) die **Box-Screen-UI** (QR/Banner) bleibt strikt an `gallery_enabled` – `start.py` gar nicht angefasst. Support-Routes (status/pairing/upload/apply) sind bewusst **immer** offen. |
+| **Merke** | Ein „Kanal/Server läuft" ist NICHT dasselbe wie „Feature ist verkauft". Beim Entkoppeln eines Always-on-Kanals JEDE datenausliefernde Route einzeln gaten (nicht darauf verlassen, dass der Server vorher nur bei gebuchtem Feature lief). Sichtbarkeit am Gerät (Screen-UI) getrennt vom Netzwerk-Zugriff (Routes) absichern. |
+
+### Vorwärtskompatible Feature-Flags: gemeldete Namen = settings.json-`features`-Keys, NICHT interne Config-Keys
+
+| | |
+|---|---|
+| **Kontext** | `GET /api/v1/status` meldet eine `feature_flags`-Liste; die App liest sie und sendet gewünschte Flags per `apply/settings` als `{"features": {...}}` zurück. |
+| **Falle** | Zuerst stand `allow_single_mode` in der Liste – das ist aber der **interne Config-Key**. `BookingSettings.from_dict` liest aus `features` nur `print_singles` und mappt das auf `config["allow_single_mode"]`. Hätte die App `allow_single_mode` gesendet, wäre es **stillschweigend ignoriert** worden. |
+| **Entscheidung** | In der gemeldeten Flag-Liste ausschließlich die **JSON-Keys aus settings.json → `features`** führen, die `from_dict` wirklich liest: `live_gallery, print_enabled, print_singles, dslr_camera, max_prints`. |
+| **Merke** | Bei „Box meldet, was sie kann" muss der gemeldete Name 1:1 dem Eingabe-Key entsprechen, den der Parser auswertet – sonst entsteht ein Flag, das die App anbietet, das aber nie wirkt. Interne Config-Namen ≠ API-/settings.json-Namen. |
+
+### App-OTA: den bestehenden Updater wiederverwenden, im Idle über den Apply-Marker anwenden, hart beenden
+
+| | |
+|---|---|
+| **Kontext** | Box-Software per App lokal updaten (statt USB / unzuverlässigem Firmen-WLAN-OTA). |
+| **Entscheidung** | Den Update-Mechanismus **nicht neu erfinden**: Der Server verifiziert nur die **SHA256** (streamend) und stellt das ZIP bereit (`stage_software_update`), setzt einen `software`-Apply-Marker. Der **Main-Thread** wendet es nur im **Idle** (Startbildschirm) über den **bestehenden** `updater.apply_update_and_restart()` (Backup+Rollback+BAT) an. Marker **vor** dem Neustart löschen (kein Re-Apply-Loop), ZIP **nicht** vorzeitig löschen (BAT braucht es). Danach **harter Exit** (`os._exit`), sonst halten Kamera-/Flask-/USB-Threads den Prozess am Leben und das BAT kollidiert mit gelockten DLLs. |
+| **Merke** | Bei selbst-ersetzender Software gilt: Verifikation und Anwendung trennen (Empfang im Server-Thread, Anwendung im UI-Thread/Idle). Ein laufendes OTA muss alle anderen Apply-Ticks sperren (`_software_update_in_progress`), damit kurz vor dem Exit kein torn write von `config.json` passiert. Staff-Auth über HMAC(PIN, Nonce) hält die PIN aus dem Klartext, ist aber bei 4-stelliger PIN nur ein Schutz im lokalen Hotspot (bewusst, Soft-Mode-Philosophie). |
+
 ### Selbst-Updater-Bootstrap: Der Fix wirkt erst beim NÄCHSTEN Update
 
 | | |

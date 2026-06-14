@@ -50,19 +50,74 @@ aber kein Passwort und kein Token.
 ## Endpunkte
 
 ```text
-GET /api/v1/status
-GET /api/v1/manifest
-GET /api/v1/pairing
+# Support / Infrastruktur — laufen IMMER (auch ohne gebuchte Galerie)
+GET  /api/v1/status
+GET  /api/v1/manifest
+GET  /api/v1/pairing
 POST /api/v1/pair-by-code
-GET /api/v1/event
-GET /api/v1/photos?limit=100&offset=0&since=0&folder=Prints
-GET /api/v1/thumb/{folder}/{filename}
-GET /api/v1/image/{folder}/{filename}
-GET /api/v1/download/{folder}/{filename}
-POST /api/v1/upload/settings
-POST /api/v1/upload/template
-GET /.well-known/fexobox-gallery.json
+GET  /api/v1/event
+POST /api/v1/apply/settings      (Alias: /api/v1/upload/settings)
+POST /api/v1/apply/template      (Alias: /api/v1/upload/template)
+POST /api/v1/apply/assets
+POST /api/v1/apply/software      (Alias: /api/v1/upload/software)   — Staff-Auth, siehe unten
+GET  /.well-known/fexobox-gallery.json
+
+# Foto-Feature — nur bei GEBUCHTER Galerie, sonst HTTP 403 (gallery_disabled)
+GET  /api/v1/photos?limit=100&offset=0&since=0&folder=Prints
+GET  /api/v1/thumb/{folder}/{filename}
+GET  /api/v1/image/{folder}/{filename}
+GET  /api/v1/download/{folder}/{filename}
 ```
+
+## Plattform-Trennung: Service-Kanal immer an, Foto-Feature gegated
+
+Der lokale Service-Kanal (Box-Hotspot + diese API) läuft **dauerhaft**, entkoppelt von der
+gebuchten Galerie — damit die App auch ohne Galerie Korrekturen/Updates übertragen kann.
+
+Das **zahlende Foto-Feature** bleibt aber serverseitig gegated: Ist keine Galerie gebucht,
+liefern alle foto-ausliefernden Routes `403` mit `{"error": "gallery_disabled"}`, und der
+Web-Root `/` zeigt eine neutrale Hinweisseite statt der Galerie. Am Box-Bildschirm ändert sich
+für Nicht-Galerie-Kunden nichts (kein QR, kein Banner).
+
+Die App erkennt den Zustand an `/api/v1/status`:
+
+- `gallery_enabled` (bool) — ob das Foto-Feature gebucht/freigeschaltet ist
+- `software_version` (string) — laufende Box-Version (Anzeige + Update-Vergleich)
+- `capabilities.photos|thumbnails|downloads` — folgen `gallery_enabled` (App blendet den
+  Galerie-Tab aus, wenn `false`)
+- `capabilities.settings_patch|template_upload|asset_upload|software_ota` — immer `true`
+- `capabilities.feature_flags` — Liste der settings.json-`features`-Keys, die diese Box versteht:
+  `live_gallery, print_enabled, print_singles, dslr_camera, max_prints`. Die App bietet nur an,
+  was hier steht (Vorwärtskompatibilität); per `apply/settings` als `{"features": {...}}` zurücksenden.
+
+## Generische Apply-Endpunkte
+
+- `POST /api/v1/apply/settings` — beliebige Config-Werte als settings.json (JSON-Body). Soft-Mode
+  ignoriert unbekannte Schlüssel → ein reines „Schalter"-Upgrade braucht keinen neuen Box-Code.
+- `POST /api/v1/apply/template` — Template-ZIP (multipart Feld `file`).
+- `POST /api/v1/apply/assets` — generisches Asset-ZIP (Videos/Overlays; multipart `file`). Die Box
+  validiert es sicher (kein Path-Traversal, keine ausführbaren Dateien) und legt es ab; ein konkreter
+  Verbraucher kommt mit dem jeweiligen Feature.
+- `apply/settings`/`apply/template` sind die kanonischen Namen; `upload/settings`/`upload/template`
+  bleiben als Alias erhalten. Upload-Limit für diese Routen: 30 MB.
+
+## App-OTA: `POST /api/v1/apply/software` (Alias `upload/software`)
+
+Software-Update der Box per App. **Staff-Auth = Service-PIN 6588**, NICHT der Kunden-Pairing-Token.
+
+1. `GET /api/v1/status` liefert `software_update.nonce` (+ `auth_scheme: "hmac-sha256"`,
+   `auth_header: "X-FexoBox-Service-Auth"`, `max_bytes`).
+2. Die App berechnet `HMAC-SHA256(key=Service-PIN, msg=nonce)` (hex) und sendet ihn im Header
+   `X-FexoBox-Service-Auth`. Die PIN geht damit nicht im Klartext über die Leitung; der pro
+   Server-Start wechselnde Nonce begrenzt Replay.
+3. Upload: multipart Feld `file` (Software-ZIP) + Feld `sha256` (oder Header `X-FexoBox-SHA256`) =
+   erwartete Prüfsumme. Limit 300 MB.
+4. Die Box verifiziert die SHA256 **vor** dem Anwenden und legt das Paket bereit. Angewendet wird es
+   über den bestehenden Updater (Backup + Rollback + Neustart) **nur im Idle** (Startbildschirm),
+   danach startet die Box neu. Antwort: `{"ok": true, "applied": "queued", "sha256": "..."}`.
+
+Fehlerantworten: `401 staff_auth_required` (Header fehlt), `403 staff_auth_invalid` (falsche PIN),
+`422 software_rejected` (SHA256 stimmt nicht), `413 too_large`.
 
 `folder` ist optional und aktuell auf `Prints` oder `Single` begrenzt.
 `since` ist ein Unix-Timestamp und liefert nur spaeter geaenderte Bilder.

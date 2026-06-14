@@ -6,6 +6,33 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [Unreleased] - App-Plattform-Fundament (Box-Seite)
+
+Einmaliger, zukunftssicherer Box-Umbau, damit künftige Features rein per App-Update kommen.
+Alles additiv und performance-neutral; die gebuchte Galerie verhält sich unverändert.
+
+### Neu
+
+- **Lokaler Service-Kanal läuft dauerhaft.** Hotspot und lokale API laufen jetzt immer (4 s verzögert),
+  entkoppelt von der gebuchten Galerie. Dadurch sind Template-/Settings-Korrektur und Software-Update
+  per App auch ohne gebuchte Online-Galerie möglich.
+- **`GET /api/v1/status`** meldet zusätzlich `software_version`, `gallery_enabled` und eine Capability-Liste
+  (`settings_patch`, `template_upload`, `asset_upload`, `software_ota`, `feature_flags`), damit die App nur
+  anbietet, was diese Box kann (Vorwärtskompatibilität).
+- **Generische Apply-Endpunkte:** `POST /api/v1/apply/settings`, `apply/template` (Aliase auf die bestehenden
+  `upload/*`), `apply/assets` (sicheres ZIP-Staging) und `apply/software` (Software-Update per App).
+- **Software-Update per App (App-OTA):** `POST /api/v1/apply/software` mit SHA256-Verifikation und dem
+  bestehenden Rollback; angewendet nur im Idle, abgesichert mit der Service-PIN 6588 (als HMAC, nicht im
+  Klartext). Ersetzt das unzuverlässige Firmen-WLAN-OTA / USB-Hantieren.
+
+### Geändert
+
+- **Foto-Galerie bleibt zahlendes Feature.** Obwohl der Server immer läuft, liefern alle Foto-/Galerie-Routes
+  ohne gebuchte Galerie weiterhin nur eine Sperrseite bzw. 403. Am Box-Bildschirm ändert sich für
+  Nicht-Galerie-Kunden nichts (kein QR, kein Banner).
+- **Soft-Mode für settings.json bleibt bewusst aktiv** (keine Signaturpflicht); die irreführende
+  Log-Warnung „in v2.5.0 wird das abgelehnt" wurde entfernt.
+
 ## [2.4.7] - 2026-06-12 - Produktions-Defaults und persistente Box-Daten
 
 ### Behoben

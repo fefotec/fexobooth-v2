@@ -8,6 +8,46 @@ Aufgabenliste mit Prioritäten.
 
 - [ ] **Filter-Screen läuft nicht automatisch ab.** Der Filter-Screen soll automatisch weiterlaufen/ablaufen, tut das aber erst, nachdem man **einmal den Filter gewechselt** hat. (Wahrscheinlich startet der Auto-Ablauf-Timer erst beim ersten Filter-Wechsel statt direkt beim Anzeigen des Screens.)
 - [ ] **Box friert nach dem ersten Video ein.** Nach dem ersten Video hängt die Software; ein Tipp auf den Touchscreen löst sie wieder. Vermutlich UI-Thread / Video-Handling (evtl. Zusammenhang mit dem Galerie-Server prüfen). Muss stabilisiert werden.
+- [ ] **Drucker-Status-Log entspammen** (nur Loghygiene, kein Verhaltensfehler). Bei ausgeschaltetem Drucker loggt die Box `DRUCKER AUS!` + „Overlay wird gezeigt / kein Overlay" **jede Sekunde** (im Dev-Log aus 2026-06-14: tausende identische Zeilen über ~40 Min) und verdeckt echte Events. Fix: nur bei **Status-WECHSEL** loggen (in `src/app.py` Drucker-Status-Check + `src/printer/controller.py get_error`), Poll-/Klassifizierungs-/Overlay-Logik unverändert lassen. Die INFO-Zeile „Drucker-Fehler erkannt → Overlay wird gezeigt" ist zudem irreführend (danach folgt „kein Overlay (other)") → mitklären. **Erst im Dev-Mode testen** (Kernprinzip 8), nicht in einen Same-Day-Flotten-Build.
+
+---
+
+## App-Plattform-Fundament (kommendes Box-Update) 🧱
+
+> Einmaliges, zukunftssicheres Fundament, damit danach Features rein per **App-Update**
+> kommen können (App ändern = billig, Box ändern = teuer). Strategie + Begründung:
+> [../fexobox-app/PLATTFORM-STRATEGIE.md](../fexobox-app/PLATTFORM-STRATEGIE.md).
+>
+> **PRODUKTREGEL (wichtig):** Kunden OHNE gebuchte Galerie dürfen auf dem Box-Screen
+> **NICHTS** Zusätzliches sehen (kein QR, kein Banner) – sonst denken sie „ist hier was
+> versteckt?". Der Kanal läuft **unsichtbar im Hintergrund**; Verbinden ohne Galerie
+> läuft komplett über die App (Event-Code + SSID/PW in der App).
+
+**Box-Seite gebaut + verifiziert am 2026-06-14** (Flask `test_client` + Multi-Agent-Review,
+0 kritische/hohe Findings). Build/Test auf echter Box steht noch aus (siehe unten).
+
+- [x] **Lokalen Kanal entkoppeln + dauerhaft:** Hotspot + Flask-API laufen unabhängig von
+  `gallery_enabled`, Start weiterhin 4 s verzögert. Screen-UI (QR/Banner) unverändert an `gallery_enabled`.
+- [x] **Verbinden ohne Galerie nur über App:** `/api/v1/pair-by-code` läuft jetzt immer (Support-Route),
+  die Box zeigt nichts an. (App-Seite „Verbinden OHNE QR" bleibt fexobox-app-TODO.)
+- [x] **`GET /api/v1/status` erweitert:** `software_version` + `gallery_enabled` + Capability-Liste
+  (`settings_patch`, `template_upload`, `asset_upload`, `software_ota`,
+  `feature_flags:[live_gallery, print_enabled, print_singles, dslr_camera, max_prints]`).
+- [x] **Generische Apply-Endpunkte:** `apply/settings` + `apply/template` (Aliase auf `upload/*`),
+  `apply/assets` (sicheres ZIP-Staging) + `apply/software` (OTA). `upload/settings`+`upload/template` bleiben.
+- [x] **Feature-Flag-Registry + ehrliche Meldung in `/status`** (Mechanismus steht). _Hinweis:_ Box-UI
+  rendert die heute bekannten Flags bereits; konkrete UI für **neue** Flags kommt mit dem jeweiligen Feature.
+- [x] **App-OTA-Upload:** `POST apply/software` mit SHA256-Verifikation + bestehendem Rollback,
+  Staff-Auth Service-PIN 6588 (als HMAC), nur im Idle. Detailplan: [PLAN-APP-OTA.md](PLAN-APP-OTA.md).
+- [x] **Soft-Mode bleibt** – keine Signatur-Prüfung; Log-Warnung „in v2.5.0…" entschärft.
+
+**Noch offen (folgt mit den jeweiligen Features / App-Seite):**
+- [ ] **`apply/assets`-Verbraucher:** Endpunkt nimmt Asset-ZIPs sicher entgegen + legt sie ab (Staging).
+  Ein konkreter Box-seitiger Verbraucher (z. B. neues Loading-Video übernehmen) wird mit dem Feature nachgezogen.
+- [ ] **App-OTA auf einer echten Box testen** (M4 aus PLAN-APP-OTA.md): inkl. absichtlich kaputter ZIP →
+  Rollback muss greifen (kein Brick). Vorher: M0 lokale Bandbreite messen.
+- [ ] **Optional härter:** Service-PIN für OTA ist 4-stellig (HMAC schützt vor Klartext, nicht vor
+  Brute-Force im lokalen Netz). Falls je nötig: zusätzlich Pairing-Token verlangen oder PIN verlängern.
 
 ---
 

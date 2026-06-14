@@ -11,6 +11,8 @@ UX; Download funktioniert weiterhin, natives File-Sharing fällt per JS zurück.
 
 import io
 import os
+import hashlib
+import hmac
 import secrets
 import ssl
 import ipaddress
@@ -37,10 +39,68 @@ _gallery_context: Dict[str, Any] = {}
 _gallery_pairing_token = secrets.token_urlsafe(12)
 _gallery_server_started_at = int(time.time())
 
+# --- App-Plattform-Fundament -------------------------------------------------
+# Der lokale Service-Kanal (Hotspot + dieser Flask-Server) laeuft ab jetzt IMMER
+# (Support, Settings-/Template-Korrektur, Software-OTA) — entkoppelt von der
+# gebuchten Galerie. Dieses Flag steuert NUR das ZAHLENDE Foto-Feature:
+#   _gallery_feature_enabled == False  -> Foto-/Galerie-Routes liefern 403,
+#                                         Support-/Infrastruktur-Routes laufen weiter.
+# Gesetzt wird es vom Main-Thread ueber set_gallery_feature_enabled().
+_gallery_feature_enabled = False
+
+# Pro Server-Start neuer Nonce fuer die Staff-Auth der Software-OTA. Nicht geheim
+# (steht im /status). Die Sicherheit liegt in der Service-PIN als HMAC-Schluessel;
+# der wechselnde Nonce begrenzt Replay auf die laufende Server-Session.
+_software_auth_nonce = secrets.token_hex(16)
+
+# Feature-Flags, die DIESE Box-Version versteht. Die App liest die Liste aus
+# /api/v1/status und bietet nur an, was die Box kann (Vorwaertskompatibilitaet).
+# Grosszuegig/generisch halten -> ein neues "Schalter"-Upgrade = Flag hier listen
+# + per apply/settings kippen, ohne neuen Box-Code.
+# WICHTIG: Das sind die JSON-Keys aus settings.json -> "features", die die Box
+# per apply/settings versteht (NICHT die internen Config-Keys). Nur was hier steht
+# UND von BookingSettings.from_dict gelesen wird, kann die App per Flag kippen.
+KNOWN_FEATURE_FLAGS = [
+    "live_gallery",   # lokale/Online-Galerie (zahlendes Foto-Feature)
+    "print_enabled",  # Drucken an/aus ("Ohne Druck")
+    "print_singles",  # Einzelbilder drucken erlaubt (Config: allow_single_mode)
+    "dslr_camera",    # DSLR statt Webcam
+    "max_prints",     # numerisches Drucklimit pro Session
+]
+
 # Standard-Konfiguration
 DEFAULT_PORT = 8080
 DEFAULT_HOST = "0.0.0.0"  # Alle Interfaces (wichtig für Hotspot)
 THUMBNAIL_SIZE = (300, 300)
+
+# Upload-Limits. Settings/Template/Assets sind klein (Box-HW schonen). Die
+# Software-OTA (ganzes _internal-Paket) braucht deutlich mehr -> globales Flask-
+# Limit auf das groesste Paket setzen, kleinere Limits pro Route manuell pruefen.
+MAX_UPLOAD_BYTES = 30 * 1024 * 1024        # 30 MB: Settings/Template/Assets
+MAX_SOFTWARE_BYTES = 300 * 1024 * 1024     # 300 MB: Software-OTA
+
+
+def set_gallery_feature_enabled(enabled: bool) -> None:
+    """Schaltet das ZAHLENDE Galerie-Foto-Feature an/aus (serverseitiges Gate).
+
+    WICHTIG (Plattform-Trennung): Der lokale Service-Kanal (Hotspot + Flask)
+    laeuft unabhaengig davon weiter. Dieses Flag entscheidet nur, ob die
+    Foto-/Galerie-Routes ausgeliefert werden. Ohne gebuchte Galerie liefern sie
+    403; Support-/Infrastruktur-Routes (status, pairing, upload/apply) bleiben an.
+    """
+    global _gallery_feature_enabled
+    new_val = bool(enabled)
+    if new_val != _gallery_feature_enabled:
+        logger.info(
+            f"🔀 Galerie-Foto-Feature {'aktiviert' if new_val else 'deaktiviert'} "
+            "(Service-Kanal laeuft unveraendert weiter)"
+        )
+    _gallery_feature_enabled = new_val
+
+
+def is_gallery_feature_enabled() -> bool:
+    """True, wenn das zahlende Foto-Feature freigeschaltet ist."""
+    return _gallery_feature_enabled
 
 
 def set_locale(locale: str) -> None:
@@ -149,9 +209,10 @@ def _create_flask_app(locale: str = "de-DE"):
     set_locale(locale)
     app = Flask(__name__)
 
-    # Upload-Limit fuer App-Uploads (Template-ZIP/Settings). Schuetzt die
-    # schwache Box-Hardware vor zu grossen Uploads -> Flask antwortet sonst 413.
-    app.config['MAX_CONTENT_LENGTH'] = 30 * 1024 * 1024  # 30 MB
+    # Globale Obergrenze = groesstes erlaubtes Paket (Software-OTA). Kleinere
+    # Limits (Settings/Template/Assets = 30 MB) werden pro Route manuell geprueft,
+    # weil Flask MAX_CONTENT_LENGTH nur global kennt. GET-Routes haben keinen Body.
+    app.config['MAX_CONTENT_LENGTH'] = MAX_SOFTWARE_BYTES
 
     @app.errorhandler(413)
     def _too_large(_e):
@@ -160,7 +221,7 @@ def _create_flask_app(locale: str = "de-DE"):
             "api_version": 1,
             "ok": False,
             "error": "too_large",
-            "message": "Datei zu gross (max. 30 MB).",
+            "message": "Datei zu gross.",
         }), 413
 
     @app.after_request
@@ -511,7 +572,50 @@ def _create_flask_app(locale: str = "de-DE"):
 </body>
 </html>
 '''
-    
+
+    # Neutrale Seite fuer Besucher, wenn KEINE Galerie gebucht ist. Bewusst
+    # schlicht/freundlich: kein technischer Fehler, kein Hinweis auf "versteckte"
+    # Funktionen (Produktregel). Praktisch erreicht sie ohnehin kaum jemand, weil
+    # der Box-Screen ohne gebuchte Galerie keinen QR/kein Banner zeigt.
+    GALLERY_DISABLED_HTML = '''
+<!DOCTYPE html>
+<html lang="{{ i18n.html_lang }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>fexobox</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh; color: #fff;
+            display: flex; align-items: center; justify-content: center; padding: 24px;
+        }
+        .card {
+            text-align: center; max-width: 420px; width: 100%;
+            background: rgba(255,255,255,0.06); border-radius: 18px; padding: 36px 28px;
+        }
+        .logo { font-size: 1.6em; font-weight: 700; letter-spacing: .5px; }
+        .logo .dot { color: #e00675; }
+        .msg { color: #cfd3e0; margin-top: 14px; line-height: 1.5; font-size: 1.02em; }
+        .link {
+            display: inline-block; margin-top: 22px; padding: 12px 22px;
+            background: #e00675; color: #fff; text-decoration: none;
+            border-radius: 25px; font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="logo">fexo<span class="dot">box</span></div>
+        <p class="msg">Für diese FexoBox ist keine Online-Galerie gebucht.</p>
+        <a class="link" href="https://fexobox.de/" target="_blank" rel="noopener">fexobox.de besuchen</a>
+    </div>
+</body>
+</html>
+'''
+
     def _resolve_gallery_file(filename: str) -> Optional[Path]:
         if not _gallery_path:
             return None
@@ -563,7 +667,13 @@ def _create_flask_app(locale: str = "de-DE"):
             "server_time": int(time.time()),
             "started_at": _gallery_server_started_at,
             "locale": _gallery_locale,
-            "gallery_ready": bool(_gallery_path and _gallery_path.exists()),
+            # Foto-Feature (zahlende Galerie). Der Service-Kanal selbst laeuft immer.
+            "gallery_enabled": _gallery_feature_enabled,
+            "gallery_ready": bool(
+                _gallery_feature_enabled and _gallery_path and _gallery_path.exists()
+            ),
+            # Top-Level fuer einfache App-Anzeige/Vergleich (auch in box.* vorhanden).
+            "software_version": context.get("software_version", ""),
             "requires_pairing_token": True,
             "box": {
                 "id": context.get("box_id", ""),
@@ -584,27 +694,52 @@ def _create_flask_app(locale: str = "de-DE"):
                 "user_template_override": bool(context.get("user_template_override", False)),
             },
             "capabilities": {
-                "photos": True,
-                "thumbnails": True,
-                "downloads": True,
-                "polling": True,
+                # Foto-Feature (zahlende Galerie) — nur True, wenn gebucht. So
+                # bietet die App den Galerie-Tab gar nicht erst an, wenn er gesperrt ist.
+                "photos": _gallery_feature_enabled,
+                "thumbnails": _gallery_feature_enabled,
+                "downloads": _gallery_feature_enabled,
+                "polling": _gallery_feature_enabled,
                 "since_filter": True,
                 "folders": ["Prints", "Single"],
                 "auth": "pairing-token",
+                # Plattform-/Support-Faehigkeiten — laufen IMMER (App-Vorwaertskompat).
+                "settings_patch": True,
+                "template_upload": True,
+                "asset_upload": True,
+                "software_ota": True,
+                "feature_flags": list(KNOWN_FEATURE_FLAGS),
+                # Rueckwaertskompatibel zu frueheren App-Versionen:
                 "upload_settings": True,
                 "upload_template": True,
+            },
+            # Staff-Auth-Info fuer die Software-OTA. Die App rechnet
+            #   X-FexoBox-Service-Auth = HMAC-SHA256(key=Service-PIN, msg=nonce)
+            # -> die PIN geht NICHT im Klartext ueber die Leitung. Nonce nicht geheim.
+            "software_update": {
+                "auth_scheme": "hmac-sha256",
+                "auth_header": "X-FexoBox-Service-Auth",
+                "nonce": _software_auth_nonce,
+                "max_bytes": MAX_SOFTWARE_BYTES,
             },
             "endpoints": {
                 "status": "/api/v1/status",
                 "manifest": "/api/v1/manifest",
                 "pairing": "/api/v1/pairing",
+                "pair_by_code": "/api/v1/pair-by-code",
                 "event": "/api/v1/event",
                 "photos": "/api/v1/photos",
                 "thumb": "/api/v1/thumb/{folder}/{filename}",
                 "image": "/api/v1/image/{folder}/{filename}",
                 "download": "/api/v1/download/{folder}/{filename}",
+                # Generische Apply-Kanaele (Keimzelle: upload/settings + upload/template)
+                "apply_settings": "/api/v1/apply/settings",
+                "apply_template": "/api/v1/apply/template",
+                "apply_assets": "/api/v1/apply/assets",
+                "apply_software": "/api/v1/apply/software",
                 "upload_settings": "/api/v1/upload/settings",
                 "upload_template": "/api/v1/upload/template",
+                "upload_software": "/api/v1/upload/software",
                 "legacy_gallery": "/",
                 "legacy_photos": "/api/photos",
             },
@@ -673,18 +808,31 @@ def _create_flask_app(locale: str = "de-DE"):
 
     @app.route('/')
     def gallery():
-        """Haupt-Galerie-Seite — zeigt Prints + Einzelbilder"""
-        photos = _collect_photos(limit=50)
+        """Haupt-Galerie-Seite — zeigt Prints + Einzelbilder.
 
+        Ohne gebuchte Galerie (Foto-Feature aus) wird eine neutrale Hinweisseite
+        statt der Foto-Galerie ausgeliefert (zahlendes Feature bleibt gated).
+        """
+        if not _gallery_feature_enabled:
+            logger.debug("🔒 Web-Root ohne gebuchte Galerie -> neutrale Hinweisseite")
+            return render_template_string(
+                GALLERY_DISABLED_HTML,
+                i18n=get_gallery_texts(_gallery_locale)
+            )
+
+        photos = _collect_photos(limit=50)
         return render_template_string(
             GALLERY_HTML,
             photos=photos,
             i18n=get_gallery_texts(_gallery_locale)
         )  # Max 50 Bilder
-    
+
     @app.route('/thumb/<path:filename>')
     def thumbnail(filename):
         """Generiert und liefert Thumbnail"""
+        gate = _require_gallery_feature()
+        if gate:
+            return gate
         img_path = _resolve_gallery_file(filename)
         if not img_path:
             abort(404)
@@ -706,24 +854,33 @@ def _create_flask_app(locale: str = "de-DE"):
     @app.route('/image/<path:filename>')
     def full_image(filename):
         """Liefert Bild in voller Größe"""
+        gate = _require_gallery_feature()
+        if gate:
+            return gate
         img_path = _resolve_gallery_file(filename)
         if not img_path:
             abort(404)
-        
+
         return send_file(img_path)
-    
+
     @app.route('/download/<path:filename>')
     def download_image(filename):
         """Download mit korrektem Dateinamen"""
+        gate = _require_gallery_feature()
+        if gate:
+            return gate
         img_path = _resolve_gallery_file(filename)
         if not img_path:
             abort(404)
-        
+
         return send_file(img_path, as_attachment=True, download_name=img_path.name)
-    
+
     @app.route('/api/photos')
     def api_photos():
         """Legacy JSON-API für Foto-Liste."""
+        gate = _require_gallery_feature()
+        if gate:
+            return gate
         photos = _collect_photos(limit=50)
         return jsonify({'photos': photos, 'count': len(photos), 'api_version': 1})
 
@@ -794,6 +951,9 @@ def _create_flask_app(locale: str = "de-DE"):
         auth_error = _require_api_token()
         if auth_error:
             return auth_error
+        gate = _require_gallery_feature()
+        if gate:
+            return gate
 
         try:
             limit = max(1, min(int(request.args.get('limit', 100)), 500))
@@ -833,6 +993,9 @@ def _create_flask_app(locale: str = "de-DE"):
         auth_error = _require_api_token()
         if auth_error:
             return auth_error
+        gate = _require_gallery_feature()
+        if gate:
+            return gate
 
         img_path = _resolve_gallery_file(filename)
         if not img_path:
@@ -854,6 +1017,9 @@ def _create_flask_app(locale: str = "de-DE"):
         auth_error = _require_api_token()
         if auth_error:
             return auth_error
+        gate = _require_gallery_feature()
+        if gate:
+            return gate
 
         img_path = _resolve_gallery_file(filename)
         if not img_path:
@@ -865,6 +1031,9 @@ def _create_flask_app(locale: str = "de-DE"):
         auth_error = _require_api_token()
         if auth_error:
             return auth_error
+        gate = _require_gallery_feature()
+        if gate:
+            return gate
 
         img_path = _resolve_gallery_file(filename)
         if not img_path:
@@ -890,14 +1059,88 @@ def _create_flask_app(locale: str = "de-DE"):
             "message": message,
         }), status
 
+    def _require_gallery_feature():
+        """Sperrt Foto-/Galerie-Routes, wenn die Galerie nicht gebucht ist.
+
+        Der Service-Kanal laeuft zwar immer, aber die Fotos sind das ZAHLENDE
+        Feature -> ohne gebuchte Galerie 403. Gibt None zurueck, wenn erlaubt.
+        """
+        if _gallery_feature_enabled:
+            return None
+        logger.debug("🔒 Foto-Route abgewiesen: Galerie fuer diese Box nicht gebucht")
+        return _api_error(
+            "gallery_disabled",
+            "Diese FexoBox hat keine gebuchte Galerie. Foto-Ansicht ist gesperrt.",
+            403,
+        )
+
+    def _content_too_large(limit_bytes: int):
+        """Lehnt zu grosse Uploads frueh ab (pro-Route-Limit, da Flask nur global kann)."""
+        cl = request.content_length
+        if cl is not None and cl > limit_bytes:
+            return _api_error(
+                "too_large",
+                f"Datei zu gross (max. {limit_bytes // (1024 * 1024)} MB).",
+                413,
+            )
+        return None
+
+    def _service_pin() -> str:
+        """Aktuelle Service-PIN (6588) — Single Source: service.py."""
+        try:
+            from src.ui.screens.service import SERVICE_PIN
+            return str(SERVICE_PIN)
+        except Exception:
+            return "6588"
+
+    def _require_service_auth():
+        """Staff-Auth fuer die Software-OTA (NICHT der Kunden-Pairing-Token!).
+
+        Schema: X-FexoBox-Service-Auth = HMAC-SHA256(key=Service-PIN, msg=nonce),
+        nonce kommt aus /status (software_update.nonce). Die PIN geht damit NICHT
+        im Klartext ueber die Leitung; der pro Server-Start wechselnde Nonce
+        begrenzt Replay. Gibt None zurueck, wenn autorisiert.
+        """
+        provided = (request.headers.get("X-FexoBox-Service-Auth", "") or "").strip().lower()
+        if not provided and request.form:
+            provided = (request.form.get("service_auth", "") or "").strip().lower()
+        if not provided:
+            return _api_error(
+                "staff_auth_required",
+                "Service-Authentifizierung fehlt (Mitarbeiter-PIN 6588).",
+                401,
+            )
+        expected = hmac.new(
+            _service_pin().encode("utf-8"),
+            _software_auth_nonce.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(provided, expected):
+            logger.warning("🛑 Software-OTA: Service-Auth ungueltig (falsche PIN oder Replay)")
+            return _api_error(
+                "staff_auth_invalid",
+                "Service-Authentifizierung ungueltig.",
+                403,
+            )
+        return None
+
+    @app.route('/api/v1/apply/settings', methods=['POST', 'OPTIONS'])
     @app.route('/api/v1/upload/settings', methods=['POST', 'OPTIONS'])
     def api_v1_upload_settings():
-        """Empfaengt eine korrigierte settings.json (JSON-Body) von der App."""
+        """Empfaengt beliebige Config-Werte als settings.json (JSON-Body) von der App.
+
+        Generischer Apply-Kanal: Soft-Mode ignoriert unbekannte Schluessel ->
+        ein neues "Schalter"-Upgrade braucht null Box-Code. `apply/settings` ist
+        der kanonische Name, `upload/settings` bleibt als Alias (Keimzelle).
+        """
         if request.method == 'OPTIONS':
             return ("", 204)
         auth_error = _require_api_token()
         if auth_error:
             return auth_error
+        too_large = _content_too_large(MAX_UPLOAD_BYTES)
+        if too_large:
+            return too_large
 
         data = request.get_json(silent=True)
         if not isinstance(data, dict):
@@ -929,14 +1172,21 @@ def _create_flask_app(locale: str = "de-DE"):
             "message": "Einstellungen empfangen. Werden uebernommen, sobald die Box im Startbildschirm ist.",
         })
 
+    @app.route('/api/v1/apply/template', methods=['POST', 'OPTIONS'])
     @app.route('/api/v1/upload/template', methods=['POST', 'OPTIONS'])
     def api_v1_upload_template():
-        """Empfaengt eine korrigierte Template-ZIP (multipart Feld 'file') von der App."""
+        """Empfaengt eine korrigierte Template-ZIP (multipart Feld 'file') von der App.
+
+        `apply/template` ist der kanonische Name, `upload/template` bleibt Alias.
+        """
         if request.method == 'OPTIONS':
             return ("", 204)
         auth_error = _require_api_token()
         if auth_error:
             return auth_error
+        too_large = _content_too_large(MAX_UPLOAD_BYTES)
+        if too_large:
+            return too_large
 
         upload = request.files.get('file') or request.files.get('template')
         if upload is None or not (upload.filename or "").strip():
@@ -959,6 +1209,15 @@ def _create_flask_app(locale: str = "de-DE"):
             os.close(fd)
             tmp_path = Path(tmp_name)
             upload.save(str(tmp_path))
+
+            # Echte Body-Groesse pruefen (greift auch bei Chunked-Upload ohne
+            # Content-Length-Header, wo _content_too_large nichts sieht).
+            if tmp_path.stat().st_size > MAX_UPLOAD_BYTES:
+                return _api_error(
+                    "too_large",
+                    f"Datei zu gross (max. {MAX_UPLOAD_BYTES // (1024 * 1024)} MB).",
+                    413,
+                )
 
             from src.storage.booking import get_booking_manager
             bm = get_booking_manager()
@@ -993,6 +1252,144 @@ def _create_flask_app(locale: str = "de-DE"):
             "template_fingerprint": fingerprint,
             "template_size": template_size,
             "message": "Template empfangen. Wird uebernommen, sobald die Box im Startbildschirm ist.",
+        })
+
+    @app.route('/api/v1/apply/assets', methods=['POST', 'OPTIONS'])
+    def api_v1_apply_assets():
+        """Empfaengt ein generisches Asset-ZIP (Videos/Overlays/...) von der App.
+
+        Generischer Kanal fuer Typ-B-Upgrades (Dateien). v1: das ZIP wird sicher
+        validiert (kein Path-Traversal, keine ausfuehrbaren Dateien) und abgelegt.
+        Ein konkreter Box-seitiger Verbraucher wird mit dem jeweiligen Feature
+        nachgezogen -> der Kanal existiert generisch und vorwaertskompatibel.
+        """
+        if request.method == 'OPTIONS':
+            return ("", 204)
+        auth_error = _require_api_token()
+        if auth_error:
+            return auth_error
+        too_large = _content_too_large(MAX_UPLOAD_BYTES)
+        if too_large:
+            return too_large
+
+        upload = request.files.get('file') or request.files.get('assets')
+        if upload is None or not (upload.filename or "").strip():
+            return _api_error(
+                "no_file",
+                "Keine Asset-Datei empfangen (multipart Feld 'file').",
+                400,
+            )
+
+        import tempfile
+        tmp_path = None
+        try:
+            fd, tmp_name = tempfile.mkstemp(suffix='.zip')
+            os.close(fd)
+            tmp_path = Path(tmp_name)
+            upload.save(str(tmp_path))
+
+            # Echte Body-Groesse pruefen (greift auch bei Chunked-Upload).
+            if tmp_path.stat().st_size > MAX_UPLOAD_BYTES:
+                return _api_error(
+                    "too_large",
+                    f"Datei zu gross (max. {MAX_UPLOAD_BYTES // (1024 * 1024)} MB).",
+                    413,
+                )
+
+            from src.storage.booking import get_booking_manager
+            bm = get_booking_manager()
+            ok, info = bm.ingest_uploaded_assets(tmp_path)
+        except Exception as e:
+            logger.error(f"Upload assets Fehler: {e}")
+            return _api_error("server_error", f"Interner Fehler: {e}", 500)
+        finally:
+            if tmp_path is not None:
+                try:
+                    tmp_path.unlink()
+                except Exception:
+                    pass
+
+        if not ok:
+            return _api_error("assets_rejected", info, 422)
+
+        logger.info("📲 Asset-Paket akzeptiert und sicher abgelegt")
+        return jsonify({
+            "app": "fexobox-gallery",
+            "api_version": 1,
+            "ok": True,
+            "applied": "staged",
+            "message": "Asset-Paket empfangen und sicher abgelegt.",
+        })
+
+    @app.route('/api/v1/apply/software', methods=['POST', 'OPTIONS'])
+    @app.route('/api/v1/upload/software', methods=['POST', 'OPTIONS'])
+    def api_v1_upload_software():
+        """App-OTA: empfaengt die Box-Software-ZIP (multipart 'file') + erwartete SHA256.
+
+        SICHERHEIT (PLAN-APP-OTA.md §5):
+        - Staff-Auth = Service-PIN 6588 als HMAC (NICHT der Kunden-Pairing-Token).
+        - SHA256 wird VOR dem Anwenden verifiziert (kaputtes Paket wird nie angewendet).
+        - Angewendet wird erst im Idle ueber den bestehenden Updater (Rollback).
+        """
+        if request.method == 'OPTIONS':
+            return ("", 204)
+        # Staff-Auth (Service-PIN), bewusst NICHT der Kunden-Pairing-Token.
+        auth_error = _require_service_auth()
+        if auth_error:
+            return auth_error
+        # Kein pro-Route-Limit noetig: das globale MAX_CONTENT_LENGTH ist bereits
+        # MAX_SOFTWARE_BYTES (300 MB) -> Flask lehnt groessere Uploads selbst mit 413 ab.
+
+        upload = request.files.get('file') or request.files.get('software')
+        if upload is None or not (upload.filename or "").strip():
+            return _api_error(
+                "no_file",
+                "Keine Software-Datei empfangen (multipart Feld 'file').",
+                400,
+            )
+        expected_sha = (
+            request.form.get('sha256', '')
+            or request.headers.get('X-FexoBox-SHA256', '')
+        ).strip()
+        if not expected_sha:
+            return _api_error("no_checksum", "SHA256-Pruefsumme fehlt (Feld 'sha256').", 400)
+
+        import tempfile
+        tmp_path = None
+        try:
+            fd, tmp_name = tempfile.mkstemp(suffix='.zip')
+            os.close(fd)
+            tmp_path = Path(tmp_name)
+            upload.save(str(tmp_path))
+
+            from src.storage.booking import get_booking_manager
+            bm = get_booking_manager()
+            ok, info = bm.stage_software_update(tmp_path, expected_sha)
+        except Exception as e:
+            logger.error(f"Upload software Fehler: {e}")
+            return _api_error("server_error", f"Interner Fehler: {e}", 500)
+        finally:
+            if tmp_path is not None:
+                try:
+                    tmp_path.unlink()
+                except Exception:
+                    pass
+
+        if not ok:
+            return _api_error("software_rejected", info, 422)
+
+        bm.request_apply(software=True)
+        logger.info("📲 Software-OTA akzeptiert + verifiziert, Apply im Idle angefordert")
+        return jsonify({
+            "app": "fexobox-gallery",
+            "api_version": 1,
+            "ok": True,
+            "applied": "queued",
+            "sha256": info,
+            "message": (
+                "Software empfangen und verifiziert. Wird angewendet, sobald die Box "
+                "im Startbildschirm (Idle) ist — danach Neustart."
+            ),
         })
 
     return app
