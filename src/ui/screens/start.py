@@ -230,14 +230,6 @@ class StartScreen(ctk.CTkFrame):
         """Erstellt die UI mit pack()-Layout - responsive Design"""
         self.qr_label: Optional[ctk.CTkLabel] = None
 
-        self.left_accent = ctk.CTkFrame(
-            self,
-            fg_color=COLORS["primary"],
-            width=8,
-            corner_radius=0
-        )
-        self.left_accent.place(relx=0, rely=0, relheight=1, anchor="nw")
-
         # Galerie-Banner wird bei Bedarf unten rechts eingeblendet.
         # Es reserviert keinen Layout-Platz, damit die Template-Auswahl frei bleibt.
         self.gallery_banner = ctk.CTkFrame(self, fg_color="transparent")
@@ -272,19 +264,9 @@ class StartScreen(ctk.CTkFrame):
         self.center_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.center_frame.pack(expand=True, fill="both")
 
-        self.stage_band = ctk.CTkFrame(
-            self.center_frame,
-            fg_color=START_COLORS["surface"],
-            corner_radius=0,
-            height=390 if self._is_compact else 440
-        )
-        self.stage_band.place(relx=0, rely=0.48, relwidth=1, anchor="center")
-
         # Innerer Container für vertikale Zentrierung
         self.inner_frame = ctk.CTkFrame(self.center_frame, fg_color="transparent")
         self._position_main_content()
-        self.inner_frame.lift()
-        self.left_accent.lift()
 
         # Titel - responsive Font
         title_font = ("Segoe UI", 34 if self._is_compact else 40, "bold")
@@ -333,13 +315,15 @@ class StartScreen(ctk.CTkFrame):
             return
 
         qr_active = self._is_gallery_banner_enabled()
-        relx = 0.42 if (qr_active and self._is_compact) else 0.5
+        relx = 0.46 if (qr_active and self._is_compact) else 0.5
         rely = 0.47 if self._is_compact else 0.48
         self.inner_frame.place(relx=relx, rely=rely, anchor="center")
 
     def _active_template_is_app_upload(self) -> bool:
         """App-Uploads sollen das alte USB-Template ersetzen, nicht daneben anzeigen."""
         try:
+            if getattr(self.app, "_app_uploaded_template_active", False):
+                return True
             manager = getattr(self.app, "booking_manager", None)
             if not manager:
                 return False
@@ -349,6 +333,31 @@ class StartScreen(ctk.CTkFrame):
         except Exception as e:
             logger.debug(f"Cache-Quelle konnte nicht geprüft werden: {e}")
             return False
+
+    def _ensure_app_template_active(self) -> bool:
+        """Laedt das App-Template erneut aus dem lokalen Cache, falls USB es verdraengt hat."""
+        if not self._active_template_is_app_upload():
+            return False
+
+        manager = getattr(self.app, "booking_manager", None)
+        cached_path = getattr(manager, "cached_template_path", None) if manager else None
+        if not cached_path:
+            return False
+
+        expected_path = str(cached_path)
+        current_path = (self.app.cached_usb_template or {}).get("path")
+        if current_path != expected_path:
+            logger.info("📲 App-Template erneut aktiviert; USB-Stick bleibt nur Referenz")
+            self.app._restore_cached_template(force=True, use_cache=False)
+
+        if self.app.cached_usb_template:
+            self.app.cached_usb_template["source"] = "app"
+            self.app._user_template_override = True
+            self.app._app_uploaded_template_active = True
+            self._usb_template_path = self.app.cached_usb_template.get("path")
+            return True
+
+        return False
 
     def _count_expected_cards(self):
         """Zählt die erwartete Anzahl Template-Karten für responsive Größenanpassung"""
@@ -708,6 +717,7 @@ class StartScreen(ctk.CTkFrame):
                 # USB-Override zurücksetzen
                 self.app.cached_usb_template = usb_stick
                 self.app._user_template_override = False
+                self.app._app_uploaded_template_active = False
                 logger.info(f"Zurück zum USB-Stick Template: {usb_stick.get('name')}")
             else:
                 logger.error("USB-Stick Template nicht verfügbar!")
@@ -732,6 +742,7 @@ class StartScreen(ctk.CTkFrame):
         self.config = self.app.config
         self.start_btn.configure(text=f"▶  {t(self.config, 'common.start')}")
         self._position_main_content()
+        app_template_active = self._ensure_app_template_active()
 
         if _vlc_available and not is_vlc_warm():
             self._show_loading_overlay()
@@ -757,7 +768,7 @@ class StartScreen(ctk.CTkFrame):
                             "boxes": boxes
                         }
                         logger.info(f"USB-Stick Template geladen: {template_name} ({len(boxes)} Slots)")
-                        if not self.app._user_template_override:
+                        if not app_template_active and not self.app._user_template_override:
                             self._persist_template_to_disk(real_usb)
                         else:
                             logger.info("USB-Template nicht in Cache kopiert: App-Template hat Vorrang")
@@ -767,7 +778,7 @@ class StartScreen(ctk.CTkFrame):
                 logger.info(f"USB-Stick Template unverändert: {template_name}")
 
             # Nur auto-aktivieren wenn User NICHT explizit ein anderes gewählt hat
-            if not self.app._user_template_override:
+            if not app_template_active and not self.app._user_template_override:
                 self.app.cached_usb_template = self.app._usb_stick_template
                 logger.info(f"USB-Template als aktives Template gesetzt (kein User-Override)")
             else:
@@ -791,6 +802,8 @@ class StartScreen(ctk.CTkFrame):
                         logger.error(f"Cache-Template laden fehlgeschlagen: {e}")
 
         # Aktives Template bestimmen
+        self._ensure_app_template_active()
+
         if self.app.cached_usb_template:
             self._usb_template_path = self.app.cached_usb_template.get("path")
         elif self.app._usb_stick_template and not self.app._user_template_override:

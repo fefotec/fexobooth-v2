@@ -690,6 +690,15 @@ class BookingManager:
         meta = self._load_cache_source()
         return meta.get("source") == "app" and bool(meta.get("template"))
 
+    def mark_template_cache_from_app_upload(self) -> None:
+        """Markiert die lokale Template-ZIP dauerhaft als App-Upload-Template."""
+        self._record_cache_source(
+            source="app",
+            booking_id=self.booking_id,
+            template=True,
+            template_fingerprint=self.cached_template_fingerprint(),
+        )
+
     # ------------------------------------------------------------------
     # App-Upload (settings.json / Template-ZIP ueber das Box-WLAN)
     # ------------------------------------------------------------------

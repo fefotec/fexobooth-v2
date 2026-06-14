@@ -144,6 +144,9 @@ class PhotoboothApp:
         self._usb_stick_template: Optional[Dict] = None  # {path, name, overlay, boxes}
         # Flag: User hat explizit ein Template über 2015-Menü gewählt
         self._user_template_override: bool = False
+        # Flag: Aktives Template kam per App-Upload und darf vom USB-Stick nicht
+        # wieder ersetzt werden, solange keine neue USB-Buchung geladen wird.
+        self._app_uploaded_template_active: bool = False
 
         # USB-Sync Dialog State
         self._sync_dialog_open: bool = False  # Verhindert mehrfache Dialoge
@@ -455,6 +458,8 @@ class PhotoboothApp:
                 return
 
             if self.booking_manager.load_from_usb(usb_root, force=True):
+                self._app_uploaded_template_active = False
+                self._user_template_override = False
                 new_booking_id = self.booking_manager.booking_id
                 logger.info(f"✅ Settings vom USB geladen: {new_booking_id}")
 
@@ -516,18 +521,22 @@ class PhotoboothApp:
         try:
             overlay, boxes = TemplateLoader.load(str(cached_path), use_cache=use_cache)
             if boxes:
+                app_template = self.booking_manager.is_template_cache_from_app_upload()
                 self.cached_usb_template = {
                     "path": str(cached_path),
                     "name": cached_path.name,
                     "overlay": overlay,
-                    "boxes": boxes
+                    "boxes": boxes,
+                    "source": "app" if app_template else "cache"
                 }
-                self._usb_stick_template = self.cached_usb_template
+                if not app_template:
+                    self._usb_stick_template = self.cached_usb_template
                 self.template_path = str(cached_path)
                 self.template_boxes = boxes
                 self.overlay_image = overlay
-                if self.booking_manager.is_template_cache_from_app_upload():
+                if app_template:
                     self._user_template_override = True
+                    self._app_uploaded_template_active = True
                     logger.info("📲 App-Template bleibt aktiv; USB-Autoload darf es nicht ersetzen")
                 logger.info(f"📦 Gecachtes Template wiederhergestellt: {cached_path.name} ({len(boxes)} Slots)")
             else:
@@ -555,6 +564,7 @@ class PhotoboothApp:
         try:
             overlay, boxes = TemplateLoader.load(usb_template, use_cache=True)
             if overlay and boxes:
+                self._app_uploaded_template_active = False
                 self.cached_usb_template = {
                     "path": usb_template,
                     "name": os.path.basename(usb_template),
@@ -1326,6 +1336,14 @@ class PhotoboothApp:
                 # haengen -> Template wechselte beim 2. Upload nicht.
                 self._restore_cached_template(force=True, use_cache=False)
                 if self.cached_usb_template:
+                    self.booking_manager.mark_template_cache_from_app_upload()
+                    # Dieser Apply-Pfad kommt nur von POST /upload/template.
+                    # Deshalb das App-Template hier explizit als aktive Vorlage
+                    # festhalten, selbst wenn kurz vorher Settings neu geladen
+                    # wurden oder ein USB-Stick steckt.
+                    self.cached_usb_template["source"] = "app"
+                    self._user_template_override = True
+                    self._app_uploaded_template_active = True
                     self.template_path = self.cached_usb_template["path"]
                     self.overlay_image = self.cached_usb_template["overlay"]
                     self.template_boxes = self.cached_usb_template["boxes"]
@@ -2230,6 +2248,8 @@ class PhotoboothApp:
             self._update_booking_display()
             self.booking_manager.apply_settings_to_config(self.config)
             reset_event_defaults(self.config)
+            self._app_uploaded_template_active = False
+            self._user_template_override = False
             logger.info(f"Neue Buchung geladen: {new_booking_id}")
 
         # 2. Alle Bilder auf Tablet löschen
