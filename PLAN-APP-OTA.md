@@ -27,20 +27,24 @@ Gewinn (kein USB-Hantieren mehr).
 
 | Frage | Entscheidung |
 |---|---|
-| **Verteilung** | **Dashboard** (admin.fexobox.de hostet die ZIP + Version/Checksum) |
+| **Verteilung** | **GitHub-RELEASE → automatisch ins Dashboard.** Ein *echtes* GitHub-Release (`on: release published`) lädt ZIP + Metadaten automatisch ins Dashboard; die App holt es von dort. **Ein Release = Freigabe für die Flotte** – Test-Builds bleiben Artefakt-only und werden NICHT verteilt. |
 | **Ablauf 200 Boxen** | **Einmal laden, viele Boxen** – Handy cached die ZIP, geht Box für Box (kein erneuter Download) |
 | **Voll vs Delta** | **Komplett-ZIP (v1)**; Delta erst v2 (Beschleunigung) |
 | **Anwenden** | **Checksum (SHA256) + bestehendes Rollback, sofort + Neustart** |
-| **Auth** | **Mitarbeiter-Modus in der App via PIN 6588** schaltet die Funktion frei |
+| **Auth** | **Mitarbeiter-Modus in der App via PIN 6588** schaltet die Funktion frei – **und die Box verlangt dieselbe Service-PIN** beim Software-Upload (offline-fähig, kein neues Secret). |
+
+> **Hinweis:** Ein echtes Release triggert auch den bestehenden Box-eigenen GitHub-OTA
+> (Boxen am Firmen-WLAN versuchen sich selbst zu updaten). Das ist okay – genau der
+> unzuverlässige Pfad, den die App-Variante ersetzt; scheitert er, greift später die App.
 
 ---
 
 ## 3. Architektur / End-to-End-Flow
 
 ```
-GitHub-Build (Actions, Windows)
-   └─ erzeugt fexobooth.zip + SHA256 + Version
-   └─ lädt ZIP + Metadaten ins DASHBOARD hoch (Build-Secret)
+GitHub-RELEASE (Actions, on: release published)
+   └─ Build erzeugt fexobooth.zip + SHA256 + Version
+   └─ lädt ZIP + Metadaten AUTOMATISCH ins DASHBOARD (Release = Flotten-Freigabe)
 
 Dashboard (admin.fexobox.de)
    └─ speichert: aktuelle Box-Version, ZIP, SHA256, Größe, Changelog
@@ -72,7 +76,8 @@ Handy hochgeladenen** ZIP statt einem GitHub-Download.
 - [ ] **GET /api/v1/status** um `software_version` erweitern (für App-Vergleich + Anzeige).
 - [ ] **Neuer Endpunkt `POST /api/v1/upload/software`** (server.py):
   - multipart `file` (ZIP), Feld/Header `sha256` = erwarteter Hash.
-  - **Staff-Auth** (nicht der Kunden-Pairing-Token! → eigener Mechanismus, s. §6).
+  - **Staff-Auth = Service-PIN 6588** (NICHT der Kunden-Pairing-Token!): App sendet die PIN
+    (gehasht/HMAC) mit, Box prüft gegen ihre Service-PIN. Offline-fähig, kein neues Secret.
   - Größenlimit hoch (~250 MB; aktuell global 30 MB → für diesen Endpunkt separat).
   - Speichert ZIP nach `%TEMP%`, **verifiziert SHA256**, dann `updater.apply_update_and_restart(zip)`.
   - Nur anwenden, wenn Box **idle** (Startbildschirm), sonst ablehnen/markieren.
@@ -82,8 +87,12 @@ Handy hochgeladenen** ZIP statt einem GitHub-Download.
 
 ### Dashboard (adminFexobox) — additiv, live
 - [ ] Speicher für aktuelle Box-Software: Version, ZIP (Storage/FTP), SHA256, Größe, Changelog.
-- [ ] **Annahme der ZIP vom Build:** Endpunkt `POST /internal/box-software` mit Build-Secret
-  (GitHub-Actions lädt nach dem Build hoch) — ODER manueller Upload im Dashboard-UI.
+- [ ] **Auto-Sync vom GitHub-Release:** GitHub-Action `on: release published` POSTet die ZIP +
+  Metadaten (Version, SHA256, Größe, Changelog) an `POST /internal/box-software` (Build-Secret).
+  Nur echte Releases erreichen die Flotte. (Optional: manueller Dashboard-Upload als Fallback.)
+- [ ] **Build/Release-Workflow:** `build-release.yml` ist aktuell Artefakt-only (kein Release).
+  Für die Flotte einen Release-erzeugenden Weg ergänzen (z.B. `workflow_dispatch`-Flag
+  `create_release: true`) + eine zweite Action `on: release` für den Dashboard-Sync.
 - [ ] **App-API (Mitarbeiter-Auth):**
   - `GET /api/v2/staff/box-software/latest` → `{version, sha256, size, download_url, changelog}`
   - `GET .../box-software/download` → die ZIP (Staff-Auth).
@@ -108,12 +117,14 @@ Handy hochgeladenen** ZIP statt einem GitHub-Download.
 
 ---
 
-## 6. Offene Design-Details (im neuen Chat entscheiden)
-- **Staff-Token-Mechanik:** Wie authentifiziert sich der Mitarbeiter-Modus gegen die
-  **Box** (PIN 6588 → woraus wird der Box-Upload-Token? z.B. die Box akzeptiert einen
-  aus PIN+Box-Secret abgeleiteten Token, oder ein festes Wartungs-Secret) und gegen das
-  **Dashboard** (Admin-Login / Staff-Token)?
-- **Build→Dashboard-Upload:** automatisch per Build-Secret oder manueller Dashboard-Upload?
+## 6. Geklärt ✅ + Rest-Details
+- **Box-Auth: GEKLÄRT** → **Service-PIN 6588.** Die Box verlangt sie beim `/upload/software`,
+  die App sendet sie gehasht. Rest-Detail (neuer Chat): genaues Hash-/HMAC-Schema, damit die
+  PIN nicht im Klartext über die Leitung geht.
+- **Verteilung: GEKLÄRT** → **GitHub-Release → Auto-Sync ins Dashboard.** Rest-Detail:
+  Build-Secret + Dashboard-Tabelle/Storage für die ZIP + die `on: release`-Action.
+- **Dashboard-Auth für die App:** Wie weist sich der Mitarbeiter beim *Download* der ZIP
+  aus dem Dashboard aus (Admin-Login / Staff-Token)? – im neuen Chat festlegen.
 - **Resumability:** für v1 vermutlich unnötig (Nahsignal stabil; Abbruch = neu hochladen,
   da Box erst nach Checksum-OK anwendet).
 
