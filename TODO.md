@@ -97,6 +97,9 @@ Details siehe ROADMAP.md. Datenschutz vorab klären, dann erst angehen.
 
 ## Erledigt ✅
 
+### 2026-06-14
+- [x] App-Template-Push stabilisiert: wiederholte Template-Uploads nutzen eindeutige `app_template_*.zip` Dateien statt gesperrte `cached_template.zip` zu überschreiben; Apply-Marker fuer Settings/Template werden getrennt bestaetigt. Regressionsnotizen in `docs/FEXOBOX-APP-API.md`.
+
 ### 2026-05-20
 - [x] Hotline-Prompt „Felix" auf reinen V2-Modus umgestellt (alle Boxen jetzt auf V2). V1-Blöcke, Versions-Gate und USB-Hub-Lampen-Diagnose aus `support/HOTLINE_PROMPT_FELIX.md` entfernt.
 

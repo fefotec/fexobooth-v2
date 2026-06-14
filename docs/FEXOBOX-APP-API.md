@@ -1,6 +1,6 @@
 # FexoBox App API
 
-Stand: 2026-06-04
+Stand: 2026-06-14
 
 Diese Box-Version bereitet die spaetere Smartphone-App vor. Die App soll keine
 Browser-Galerie oeffnen, sondern lokal im Fotobox-Hotspot mit der Box sprechen.
@@ -59,6 +59,8 @@ GET /api/v1/photos?limit=100&offset=0&since=0&folder=Prints
 GET /api/v1/thumb/{folder}/{filename}
 GET /api/v1/image/{folder}/{filename}
 GET /api/v1/download/{folder}/{filename}
+POST /api/v1/upload/settings
+POST /api/v1/upload/template
 GET /.well-known/fexobox-gallery.json
 ```
 
@@ -91,6 +93,55 @@ Fallback bei manuellem Event-Code:
 
 Die Box macht keine schwere Hintergrundarbeit. Bilder werden erst gelesen, wenn
 die App sie anfragt.
+
+## Settings-/Template-Push per App
+
+Die App schickt Einstellungen und Template als zwei getrennte Requests:
+
+1. `POST /api/v1/upload/settings`
+2. `POST /api/v1/upload/template`
+
+Die Box nimmt beide Requests im Galerie-Server-Thread entgegen und setzt nur
+einen lokalen Apply-Marker. Die eigentliche Uebernahme passiert im UI-Thread,
+wenn die Box im Startbildschirm ist. Dadurch wird keine laufende Foto-Session
+unterbrochen.
+
+### Regressionsschutz
+
+Diese Punkte duerfen bei spaeteren Refactorings nicht entfernt werden:
+
+- **Apply-Marker getrennt behandeln:** Settings und Template koennen zeitlich
+  versetzt ankommen. Ein Settings-Apply darf einen spaeter eintreffenden
+  Template-Apply nicht loeschen. Deshalb bestaetigt
+  `clear_apply_request(settings=..., template=...)` nur die Teile, die der
+  aktuelle UI-Tick wirklich gesehen hat.
+- **App-Template-Dateien nie auf die aktive ZIP ueberschreiben:** Unter Windows
+  kann die aktuell geladene Template-ZIP noch vom Template-Loader/PIL gesperrt
+  sein. Wiederholtes Ersetzen von `cached_template.zip` fuehrte im Live-Test zu
+  `WinError 5 Zugriff verweigert`. App-Uploads werden deshalb als eindeutige
+  Dateien `app_template_*.zip` in `.booking_cache/` gespeichert. Die aktive
+  Datei steht in `.app_upload_meta.json` (`template_path`).
+- **`cached_template.zip` ist Legacy/USB-Cache:** USB-Autoload darf weiterhin
+  diese feste Datei nutzen. App-Korrekturen haben aber Vorrang, wenn die Meta-
+  Datei `source=app` und `template=true` enthaelt.
+- **Aktiv geladenes Template und Datei-Fingerprint unterscheiden:** Logs und
+  `/status` muessen erkennen lassen, ob der Startscreen wirklich das neue
+  Template geladen hat. `loaded_fp` beschreibt den in Memory geladenen Stand,
+  `path_fp/cache_file` beschreibt die Datei auf Disk.
+- **USB-Stick darf App-Korrektur nicht zurueckholen:** Wenn fuer dieselbe
+  Buchung ein App-Template aktiv ist, bleibt der USB-Stick nur Referenz. Erst
+  ein echter Event-Wechsel oder eine bewusste Auswahl im Kunden-/Service-Menue
+  darf das USB-Template wieder aktiv machen.
+
+### Live-Test, der bestanden bleiben muss
+
+- Box mit eingestecktem USB-Stick starten.
+- Template A per App uebertragen; Startscreen muss A zeigen.
+- Ohne Neustart Template B per App uebertragen; Startscreen muss B zeigen.
+- Box neu starten; App-Template B muss aktiv bleiben und darf nicht vom alten
+  USB-Template ersetzt werden.
+- In den Logs darf beim zweiten Upload kein `WinError 5` fuer
+  `.booking_cache/cached_template.*` stehen.
 
 ## Native-App-Voraussetzungen
 
