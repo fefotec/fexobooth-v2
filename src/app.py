@@ -451,6 +451,9 @@ class PhotoboothApp:
 
             # Settings vom USB laden (sucht alle .json Dateien, nimmt neueste)
             logger.info(f"📂 USB gefunden beim Start: {usb_drive}")
+            if self.booking_manager.should_skip_usb_autoload_after_app_upload(usb_root):
+                return
+
             if self.booking_manager.load_from_usb(usb_root, force=True):
                 new_booking_id = self.booking_manager.booking_id
                 logger.info(f"✅ Settings vom USB geladen: {new_booking_id}")

@@ -16,6 +16,7 @@ import hashlib
 import hmac
 import json
 import shutil
+import time
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 from dataclasses import dataclass, field, asdict
@@ -32,6 +33,10 @@ TEMPLATE_CACHE_FILE = CACHE_DIR / "cached_template.zip"
 # Marker fuer "per App-Upload empfangene Settings/Template noch uebernehmen".
 # Wird vom Galerie-Server-Thread geschrieben und vom Main-Thread (UI) abgearbeitet.
 UPLOAD_APPLY_MARKER = CACHE_DIR / ".apply_pending.json"
+# Merkt, ob der aktuelle Cache zuletzt per App oder USB geschrieben wurde.
+# Wichtig beim Neustart mit eingestecktem altem USB-Stick: App-Korrekturen
+# duerfen nicht direkt wieder vom Stick ueberschrieben werden.
+APP_UPLOAD_META_FILE = CACHE_DIR / ".app_upload_meta.json"
 
 # HMAC-Geheimnis für settings.json-Signatur. Muss identisch im Laravel-Backend
 # als ENV SETTINGS_HMAC_SECRET gesetzt sein, damit signierte JSONs akzeptiert werden.
@@ -465,7 +470,13 @@ class BookingManager:
             self._save_to_cache()
             
             # Template cachen falls vorhanden
-            self._cache_template_from_usb(usb_root)
+            template_cached = self._cache_template_from_usb(usb_root)
+            self._record_cache_source(
+                source="usb",
+                booking_id=new_booking_id,
+                settings=True,
+                template=template_cached,
+            )
             
             return True
             
@@ -629,6 +640,47 @@ class BookingManager:
             "status": "Geladen"
         }
 
+    def should_skip_usb_autoload_after_app_upload(self, usb_root: Path) -> bool:
+        """Verhindert, dass ein alter USB-Stick eine App-Korrektur beim Neustart ueberschreibt.
+
+        Gilt nur fuer die gleiche Buchung. Enthält der Stick eine andere booking_id,
+        bleibt der normale Event-Wechsel/Aktualisierungsweg aktiv.
+        """
+        meta = self._load_cache_source()
+        if meta.get("source") != "app":
+            return False
+
+        settings_path = self._find_settings_file(usb_root)
+        if not settings_path:
+            return False
+
+        try:
+            with open(settings_path, "r", encoding="utf-8-sig") as f:
+                data = json.load(f)
+
+            valid, reason = _verify_signature(data, log_unsigned=False)
+            if not valid:
+                logger.error(f"❌ USB-Autoload-Schutz: {settings_path.name} abgelehnt ({reason})")
+                return False
+
+            usb_booking_id = data.get("booking_id", "")
+        except Exception as e:
+            logger.debug(f"USB-Autoload-Schutz konnte Settings nicht lesen: {e}")
+            return False
+
+        current_booking_id = self.booking_id
+        app_booking_id = str(meta.get("booking_id", "") or current_booking_id or "")
+        if usb_booking_id and app_booking_id and usb_booking_id != app_booking_id:
+            return False
+        if usb_booking_id and current_booking_id and usb_booking_id != current_booking_id:
+            return False
+
+        logger.info(
+            "📲 USB-Autoload übersprungen: App-Korrektur im Cache hat Vorrang "
+            f"(booking_id={app_booking_id or usb_booking_id or '-'})"
+        )
+        return True
+
     # ------------------------------------------------------------------
     # App-Upload (settings.json / Template-ZIP ueber das Box-WLAN)
     # ------------------------------------------------------------------
@@ -668,6 +720,7 @@ class BookingManager:
             return False, f"Cache-Schreiben fehlgeschlagen: {e}"
 
         booking_id = data.get("booking_id", "") or ""
+        self._record_cache_source(source="app", booking_id=booking_id, settings=True)
         logger.info(f"📲 Settings per App empfangen und gecached: {booking_id or '(ohne booking_id)'}")
         return True, booking_id
 
@@ -694,8 +747,52 @@ class BookingManager:
         except Exception as e:
             return False, f"Template-Cache fehlgeschlagen: {e}"
 
+        self._record_cache_source(
+            source="app",
+            booking_id=self.booking_id,
+            template=True,
+            template_fingerprint=self.cached_template_fingerprint(),
+        )
         logger.info("📲 Template per App empfangen und gecached")
         return True, ""
+
+    def _load_cache_source(self) -> Dict[str, Any]:
+        try:
+            if APP_UPLOAD_META_FILE.exists():
+                data = json.loads(APP_UPLOAD_META_FILE.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return data
+        except Exception:
+            pass
+        return {}
+
+    def _record_cache_source(
+        self,
+        source: str,
+        booking_id: str = "",
+        settings: bool = False,
+        template: bool = False,
+        template_fingerprint: str = "",
+    ) -> None:
+        try:
+            existing = self._load_cache_source() if source == "app" else {}
+            if booking_id:
+                existing["booking_id"] = booking_id
+            elif self.booking_id and "booking_id" not in existing:
+                existing["booking_id"] = self.booking_id
+            existing["source"] = source
+            existing["updated_at"] = time.time()
+            existing["settings"] = bool(existing.get("settings")) or settings
+            existing["template"] = bool(existing.get("template")) or template
+            if template_fingerprint:
+                existing["template_fingerprint"] = template_fingerprint
+
+            CACHE_DIR.mkdir(exist_ok=True)
+            tmp = APP_UPLOAD_META_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(APP_UPLOAD_META_FILE)
+        except Exception as e:
+            logger.warning(f"Cache-Quelle konnte nicht gespeichert werden: {e}")
 
     def reload_from_cache(self) -> bool:
         """Laedt die (ggf. neu hochgeladene) Buchung aus dem Cache in den Speicher.
