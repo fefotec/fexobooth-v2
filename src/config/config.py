@@ -581,7 +581,25 @@ def find_usb_template(include_cache: bool = True) -> Optional[str]:
     # Fallback: Cache prüfen
     if include_cache:
         from src.storage.paths import persistent_data_path
-        cache_path = persistent_data_path(".booking_cache/cached_template.zip")
+        cache_dir = persistent_data_path(".booking_cache")
+        meta_path = cache_dir / ".app_upload_meta.json"
+        try:
+            if meta_path.exists():
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                if (
+                    isinstance(meta, dict)
+                    and meta.get("source") == "app"
+                    and meta.get("template")
+                    and meta.get("template_path")
+                ):
+                    app_template = Path(str(meta.get("template_path")))
+                    if app_template.exists():
+                        print(f"Gecachtes App-Template gefunden: {app_template}")
+                        return str(app_template)
+        except Exception:
+            pass
+
+        cache_path = cache_dir / "cached_template.zip"
         if cache_path.exists():
             print(f"Gecachtes Template gefunden: {cache_path}")
             return str(cache_path)

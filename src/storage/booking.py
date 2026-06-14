@@ -32,6 +32,7 @@ logger = get_logger(__name__)
 BOOKING_CACHE_FILE = persistent_data_path(".booking_cache/last_booking.json")
 TEMPLATE_CACHE_FILE = persistent_data_path(".booking_cache/cached_template.zip")
 CACHE_DIR = BOOKING_CACHE_FILE.parent
+APP_TEMPLATE_PREFIX = "app_template_"
 # Marker fuer "per App-Upload empfangene Settings/Template noch uebernehmen".
 # Wird vom Galerie-Server-Thread geschrieben und vom Main-Thread (UI) abgearbeitet.
 UPLOAD_APPLY_MARKER = CACHE_DIR / ".apply_pending.json"
@@ -263,8 +264,34 @@ class BookingManager:
     @property
     def cached_template_path(self) -> Optional[Path]:
         """Gibt den Pfad zum gecachten Template zurück (falls vorhanden)"""
+        active_app_template = self._active_app_template_path()
+        if active_app_template:
+            return active_app_template
         if TEMPLATE_CACHE_FILE.exists():
             return TEMPLATE_CACHE_FILE
+        return None
+
+    def _active_app_template_path(self) -> Optional[Path]:
+        """Aktive App-Template-Datei aus der Meta-Datei.
+
+        App-Uploads nutzen bewusst eindeutige Dateinamen. Unter Windows kann die
+        aktuell geladene ZIP noch vom Template-Loader gesperrt sein; ein erneutes
+        Ueberschreiben von cached_template.zip wuerde dann mit WinError 5 scheitern.
+        """
+        meta = self._load_cache_source()
+        if meta.get("source") != "app" or not meta.get("template"):
+            return None
+
+        raw_path = str(meta.get("template_path", "") or "").strip()
+        if not raw_path:
+            return None
+
+        try:
+            path = Path(raw_path)
+            if path.exists() and path.is_file():
+                return path
+        except Exception:
+            pass
         return None
     
     def _load_from_cache(self) -> bool:
@@ -280,8 +307,9 @@ class BookingManager:
             self._settings = BookingSettings.from_dict(data)
             logger.info(f"📂 Buchung aus Cache geladen: {self._settings.booking_id}")
             
-            if TEMPLATE_CACHE_FILE.exists():
-                logger.info(f"   Template-Cache vorhanden: {TEMPLATE_CACHE_FILE.name}")
+            template_path = self.cached_template_path
+            if template_path:
+                logger.info(f"   Template-Cache vorhanden: {template_path.name}")
             
             return True
             
@@ -523,9 +551,10 @@ class BookingManager:
         Für Einbindung in config["template_paths"]["template1"]
         """
         # Gecachtes Template bevorzugen
-        if TEMPLATE_CACHE_FILE.exists():
-            logger.debug(f"Verwende gecachtes Template: {TEMPLATE_CACHE_FILE}")
-            return str(TEMPLATE_CACHE_FILE)
+        template_path = self.cached_template_path
+        if template_path:
+            logger.debug(f"Verwende gecachtes Template: {template_path}")
+            return str(template_path)
         
         return None
     
@@ -622,6 +651,11 @@ class BookingManager:
                     BOOKING_CACHE_FILE.unlink()
                 if TEMPLATE_CACHE_FILE.exists():
                     TEMPLATE_CACHE_FILE.unlink()
+                for template_file in CACHE_DIR.glob(f"{APP_TEMPLATE_PREFIX}*.zip"):
+                    try:
+                        template_file.unlink()
+                    except Exception:
+                        pass
                 logger.info("Cache gelöscht")
             except Exception as e:
                 logger.warning(f"Cache löschen fehlgeschlagen: {e}")
@@ -762,9 +796,13 @@ class BookingManager:
             if not _is_valid_template_zip(str(src_path)):
                 return False, "Ungueltige Template-ZIP (keine gueltigen Bilder oder enthaelt Programmdateien)"
             CACHE_DIR.mkdir(exist_ok=True)
-            tmp = TEMPLATE_CACHE_FILE.with_suffix(".tmp")
+            fingerprint = self.template_file_fingerprint(src_path)
+            digest = (fingerprint.rsplit("-", 1)[0] if fingerprint else "")[:16] or "template"
+            final_name = f"{APP_TEMPLATE_PREFIX}{int(time.time() * 1000)}_{digest}.zip"
+            final_path = CACHE_DIR / final_name
+            tmp = CACHE_DIR / f".{final_name}.tmp"
             shutil.copy2(src_path, tmp)
-            tmp.replace(TEMPLATE_CACHE_FILE)
+            tmp.replace(final_path)
         except Exception as e:
             return False, f"Template-Cache fehlgeschlagen: {e}"
 
@@ -772,8 +810,10 @@ class BookingManager:
             source="app",
             booking_id=self.booking_id,
             template=True,
-            template_fingerprint=self.cached_template_fingerprint(),
+            template_fingerprint=self.template_file_fingerprint(final_path),
+            template_path=str(final_path),
         )
+        self._cleanup_old_app_templates(keep_path=final_path)
         logger.info("📲 Template per App empfangen und gecached")
         return True, ""
 
@@ -794,6 +834,7 @@ class BookingManager:
         settings: bool = False,
         template: bool = False,
         template_fingerprint: str = "",
+        template_path: str = "",
     ) -> None:
         try:
             existing = self._load_cache_source() if source == "app" else {}
@@ -807,6 +848,8 @@ class BookingManager:
             existing["template"] = bool(existing.get("template")) or template
             if template_fingerprint:
                 existing["template_fingerprint"] = template_fingerprint
+            if template_path:
+                existing["template_path"] = template_path
 
             CACHE_DIR.mkdir(exist_ok=True)
             tmp = APP_UPLOAD_META_FILE.with_suffix(".tmp")
@@ -814,6 +857,29 @@ class BookingManager:
             tmp.replace(APP_UPLOAD_META_FILE)
         except Exception as e:
             logger.warning(f"Cache-Quelle konnte nicht gespeichert werden: {e}")
+
+    def _cleanup_old_app_templates(self, keep_path: Optional[Path] = None, keep_count: int = 6) -> None:
+        """Loescht alte App-Template-Dateien best-effort.
+
+        Gesperrte Dateien werden ignoriert. Sie verschwinden spaetestens bei
+        einem spaeteren Upload/Reset und blockieren keinen neuen Upload mehr.
+        """
+        try:
+            keep_resolved = keep_path.resolve() if keep_path else None
+            files = sorted(
+                CACHE_DIR.glob(f"{APP_TEMPLATE_PREFIX}*.zip"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            for path in files[keep_count:]:
+                try:
+                    if keep_resolved and path.resolve() == keep_resolved:
+                        continue
+                    path.unlink()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def reload_from_cache(self) -> bool:
         """Laedt die (ggf. neu hochgeladene) Buchung aus dem Cache in den Speicher.
@@ -824,7 +890,8 @@ class BookingManager:
 
     def cached_template_fingerprint(self) -> str:
         """Fingerprint der gecachten Template-ZIP zur Verifikation durch die App."""
-        return self.template_file_fingerprint(TEMPLATE_CACHE_FILE)
+        template_path = self.cached_template_path
+        return self.template_file_fingerprint(template_path) if template_path else ""
 
     def template_file_fingerprint(self, path: Any) -> str:
         """Fingerprint einer konkreten Template-Datei zur Debug-/Statusanzeige."""
