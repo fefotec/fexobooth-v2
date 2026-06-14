@@ -574,7 +574,14 @@ def _create_flask_app(locale: str = "de-DE"):
                 "code": _get_display_event_code(context),
             },
             "template": {
-                "fingerprint": _current_template_fingerprint(),
+                # fingerprint bleibt fuer alte Apps vorhanden, zeigt ab jetzt aber
+                # die aktive Startscreen-Vorlage, wenn der App-Kontext sie kennt.
+                "fingerprint": context.get("active_template_fingerprint", "") or _current_template_fingerprint(),
+                "active_fingerprint": context.get("active_template_fingerprint", ""),
+                "active_source": context.get("active_template_source", ""),
+                "cached_fingerprint": context.get("cached_template_fingerprint", "") or _current_template_fingerprint(),
+                "app_template_active": bool(context.get("app_template_active", False)),
+                "user_template_override": bool(context.get("user_template_override", False)),
             },
             "capabilities": {
                 "photos": True,

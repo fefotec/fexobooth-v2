@@ -23,13 +23,14 @@ from dataclasses import dataclass, field, asdict
 
 from src.utils.logging import get_logger
 from src.i18n import apply_locale_to_config, normalize_locale
+from src.storage.paths import persistent_data_path
 
 logger = get_logger(__name__)
 
-# Cache-Dateien im Projektverzeichnis
-CACHE_DIR = Path(__file__).parent.parent.parent / ".booking_cache"
-BOOKING_CACHE_FILE = CACHE_DIR / "last_booking.json"
-TEMPLATE_CACHE_FILE = CACHE_DIR / "cached_template.zip"
+# Cache-Dateien update-sicher speichern (nicht in PyInstaller _internal/)
+BOOKING_CACHE_FILE = persistent_data_path(".booking_cache/last_booking.json")
+TEMPLATE_CACHE_FILE = persistent_data_path(".booking_cache/cached_template.zip")
+CACHE_DIR = BOOKING_CACHE_FILE.parent
 # Marker fuer "per App-Upload empfangene Settings/Template noch uebernehmen".
 # Wird vom Galerie-Server-Thread geschrieben und vom Main-Thread (UI) abgearbeitet.
 UPLOAD_APPLY_MARKER = CACHE_DIR / ".apply_pending.json"
@@ -821,11 +822,16 @@ class BookingManager:
 
     def cached_template_fingerprint(self) -> str:
         """Fingerprint der gecachten Template-ZIP zur Verifikation durch die App."""
+        return self.template_file_fingerprint(TEMPLATE_CACHE_FILE)
+
+    def template_file_fingerprint(self, path: Any) -> str:
+        """Fingerprint einer konkreten Template-Datei zur Debug-/Statusanzeige."""
         try:
-            if TEMPLATE_CACHE_FILE.exists():
-                st = TEMPLATE_CACHE_FILE.stat()
+            file_path = Path(path)
+            if file_path.exists():
+                st = file_path.stat()
                 digest = hashlib.md5()
-                with open(TEMPLATE_CACHE_FILE, "rb") as f:
+                with open(file_path, "rb") as f:
                     for chunk in iter(lambda: f.read(1024 * 1024), b""):
                         digest.update(chunk)
                 return f"{digest.hexdigest()}-{st.st_size}"

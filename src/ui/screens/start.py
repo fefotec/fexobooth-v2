@@ -359,6 +359,29 @@ class StartScreen(ctk.CTkFrame):
 
         return False
 
+    def _log_start_template_state(self, label: str):
+        try:
+            cached = self.app.cached_usb_template or {}
+            usb = self.app._usb_stick_template or {}
+            manager = getattr(self.app, "booking_manager", None)
+            fp = manager.template_file_fingerprint if manager else (lambda path: "")
+            logger.info(
+                "📲 TEMPLATE DEBUG START %s | app_active=%s user_override=%s "
+                "cached_card=%s fp=%s source=%s | usb_ref=%s fp=%s | cache_file=%s fp=%s",
+                label,
+                getattr(self.app, "_app_uploaded_template_active", False),
+                getattr(self.app, "_user_template_override", False),
+                cached.get("path", "-"),
+                fp(cached.get("path", "")) if cached.get("path") else "",
+                cached.get("source", "-"),
+                usb.get("path", "-"),
+                fp(usb.get("path", "")) if usb.get("path") else "",
+                str(manager.cached_template_path) if manager and manager.cached_template_path else "-",
+                manager.cached_template_fingerprint() if manager else "",
+            )
+        except Exception as e:
+            logger.debug(f"Template-Debug StartScreen fehlgeschlagen: {e}")
+
     def _count_expected_cards(self):
         """Zählt die erwartete Anzahl Template-Karten für responsive Größenanpassung"""
         count = 0
@@ -413,6 +436,7 @@ class StartScreen(ctk.CTkFrame):
         # Aktives Template (vom User gewählt oder USB auto-aktiviert)
         cached = self.app.cached_usb_template
         if cached:
+            self._log_start_template_state("create-card")
             if cached.get("overlay"):
                 preview = cached.get("overlay")
             else:
@@ -737,6 +761,7 @@ class StartScreen(ctk.CTkFrame):
     def on_show(self):
         """Screen wird angezeigt - Template-Karten neu laden falls Config geändert"""
         logger.info("=== StartScreen on_show ===")
+        self._log_start_template_state("on_show-enter")
 
         # Config könnte sich geändert haben (Admin-Dialog)
         self.config = self.app.config
@@ -803,6 +828,7 @@ class StartScreen(ctk.CTkFrame):
 
         # Aktives Template bestimmen
         self._ensure_app_template_active()
+        self._log_start_template_state("after-usb-decision")
 
         if self.app.cached_usb_template:
             self._usb_template_path = self.app.cached_usb_template.get("path")
@@ -814,6 +840,7 @@ class StartScreen(ctk.CTkFrame):
 
         # Alte Karten entfernen und neu erstellen (setzt auch selected_card = None)
         self._refresh_template_cards()
+        self._log_start_template_state("after-refresh")
 
         # Start-Button deaktivieren bis eine Auswahl getroffen wird
         # (wird in _create_template_cards aktiviert wenn USB-Template vorselektiert)
@@ -1157,9 +1184,9 @@ class StartScreen(ctk.CTkFrame):
     def _persist_template_to_disk(self, usb_template_path: str):
         """Kopiert USB-Template lokal nach .booking_cache/ damit es auch ohne USB verfügbar bleibt"""
         try:
-            cache_dir = Path(__file__).parent.parent.parent.parent / ".booking_cache"
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            cache_path = cache_dir / "cached_template.zip"
+            from src.storage.booking import TEMPLATE_CACHE_FILE
+            cache_path = TEMPLATE_CACHE_FILE
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
 
             shutil.copy2(usb_template_path, cache_path)
             logger.info(f"Template lokal gespeichert: {cache_path}")

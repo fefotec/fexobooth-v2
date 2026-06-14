@@ -669,6 +669,15 @@ class PhotoboothApp:
         except Exception:
             software_version = ""
 
+        active_template_path = ""
+        active_template_source = ""
+        if self.cached_usb_template:
+            active_template_path = self.cached_usb_template.get("path", "") or ""
+            active_template_source = self.cached_usb_template.get("source", "") or ""
+        elif self.template_path:
+            active_template_path = self.template_path
+            active_template_source = "session"
+
         return {
             "box_id": self.config.get("box_id", ""),
             "booking_id": booking_id,
@@ -677,6 +686,13 @@ class PhotoboothApp:
             "software_version": software_version,
             "hotspot_ssid": gallery_config.get("hotspot_ssid", ""),
             "hotspot_password": gallery_config.get("hotspot_password", ""),
+            "active_template_path": active_template_path,
+            "active_template_source": active_template_source,
+            "active_template_fingerprint": self.booking_manager.template_file_fingerprint(active_template_path) if active_template_path else "",
+            "cached_template_path": str(self.booking_manager.cached_template_path or ""),
+            "cached_template_fingerprint": self.booking_manager.cached_template_fingerprint(),
+            "app_template_active": self._app_uploaded_template_active,
+            "user_template_override": self._user_template_override,
         }
 
     def _prepare_gallery_app_context(self) -> None:
@@ -1314,6 +1330,7 @@ class PhotoboothApp:
 
         applied = []
         try:
+            self._log_template_debug_state("before-apply")
             if req.get("settings"):
                 if self.booking_manager.reload_from_cache():
                     self.booking_manager.apply_settings_to_config(self.config)
@@ -1350,6 +1367,7 @@ class PhotoboothApp:
                     applied.append("Template")
 
             if applied:
+                self._log_template_debug_state("after-apply-before-status")
                 save_config(self.config)
                 # Galerie-App-Kontext aktualisieren, damit /status die neue
                 # booking_id und den neuen Template-Fingerprint meldet.
@@ -1362,6 +1380,7 @@ class PhotoboothApp:
                 if self.current_screen and hasattr(self.current_screen, "on_show"):
                     self.current_screen.config = self.config
                     self.current_screen.on_show()
+                self._log_template_debug_state("after-startscreen-on-show")
                 logger.info(f"📲 App-Upload übernommen: {', '.join(applied)}")
             else:
                 logger.warning("📲 App-Upload-Marker vorhanden, aber nichts angewendet")
@@ -1372,6 +1391,31 @@ class PhotoboothApp:
         except Exception as e:
             logger.error(f"App-Upload-Apply fehlgeschlagen: {e}")
             self.booking_manager.clear_apply_request()
+
+    def _log_template_debug_state(self, label: str):
+        try:
+            cached = self.cached_usb_template or {}
+            usb = self._usb_stick_template or {}
+            cache_path = self.booking_manager.cached_template_path
+            logger.info(
+                "📲 TEMPLATE DEBUG APP %s | app_active=%s user_override=%s "
+                "template_path=%s fp=%s | cached_card=%s fp=%s source=%s | "
+                "usb_ref=%s fp=%s | cache_file=%s fp=%s",
+                label,
+                self._app_uploaded_template_active,
+                self._user_template_override,
+                self.template_path or "-",
+                self.booking_manager.template_file_fingerprint(self.template_path) if self.template_path else "",
+                cached.get("path", "-"),
+                self.booking_manager.template_file_fingerprint(cached.get("path", "")) if cached.get("path") else "",
+                cached.get("source", "-"),
+                usb.get("path", "-"),
+                self.booking_manager.template_file_fingerprint(usb.get("path", "")) if usb.get("path") else "",
+                str(cache_path) if cache_path else "-",
+                self.booking_manager.cached_template_fingerprint(),
+            )
+        except Exception as e:
+            logger.debug(f"Template-Debug App fehlgeschlagen: {e}")
 
     def _check_fullscreen_restore(self):
         """Sicherheitsnetz: Stellt Kiosk-Modus wieder her falls er verloren geht.

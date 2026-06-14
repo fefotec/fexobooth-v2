@@ -580,7 +580,8 @@ def find_usb_template(include_cache: bool = True) -> Optional[str]:
     
     # Fallback: Cache prüfen
     if include_cache:
-        cache_path = Path(__file__).parent.parent.parent / ".booking_cache" / "cached_template.zip"
+        from src.storage.paths import persistent_data_path
+        cache_path = persistent_data_path(".booking_cache/cached_template.zip")
         if cache_path.exists():
             print(f"Gecachtes Template gefunden: {cache_path}")
             return str(cache_path)
