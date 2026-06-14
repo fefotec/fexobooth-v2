@@ -647,7 +647,7 @@ class BookingManager:
         bleibt der normale Event-Wechsel/Aktualisierungsweg aktiv.
         """
         meta = self._load_cache_source()
-        if meta.get("source") != "app":
+        if meta.get("source") != "app" or not meta.get("template"):
             return False
 
         settings_path = self._find_settings_file(usb_root)
@@ -684,6 +684,11 @@ class BookingManager:
     def is_cache_from_app_upload(self) -> bool:
         """True, wenn der aktive Booking-/Template-Cache zuletzt per App kam."""
         return self._load_cache_source().get("source") == "app"
+
+    def is_template_cache_from_app_upload(self) -> bool:
+        """True, wenn die aktive Template-ZIP zuletzt per App kam."""
+        meta = self._load_cache_source()
+        return meta.get("source") == "app" and bool(meta.get("template"))
 
     # ------------------------------------------------------------------
     # App-Upload (settings.json / Template-ZIP ueber das Box-WLAN)

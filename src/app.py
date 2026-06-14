@@ -526,7 +526,7 @@ class PhotoboothApp:
                 self.template_path = str(cached_path)
                 self.template_boxes = boxes
                 self.overlay_image = overlay
-                if self.booking_manager.is_cache_from_app_upload():
+                if self.booking_manager.is_template_cache_from_app_upload():
                     self._user_template_override = True
                     logger.info("📲 App-Template bleibt aktiv; USB-Autoload darf es nicht ersetzen")
                 logger.info(f"📦 Gecachtes Template wiederhergestellt: {cached_path.name} ({len(boxes)} Slots)")

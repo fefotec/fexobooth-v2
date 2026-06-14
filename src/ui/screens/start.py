@@ -14,7 +14,7 @@ import time
 from src.templates.loader import TemplateLoader
 from src.templates.default import create_default_template
 from src.config.config import find_usb_template
-from src.ui.theme import COLORS, FONTS, SIZES, get_sizes, get_fonts, is_small_screen
+from src.ui.theme import COLORS, get_sizes, get_fonts, is_small_screen
 from src.utils.logging import get_logger
 from src.ui.screens.video import is_vlc_warm, warmup_vlc, _vlc_available
 from src.i18n import t
@@ -25,6 +25,16 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 MIN_LOADING_SCREEN_SECONDS = 4.0
+
+START_COLORS = {
+    "surface": "#111521",
+    "surface_card": "#181c2a",
+    "surface_card_selected": "#222638",
+    "preview": "#0b0e16",
+    "border": "#343a4f",
+    "border_light": "#58617c",
+    "cyan": "#16d6c7",
+}
 
 
 def _is_gallery_enabled(app: "PhotoboothApp") -> bool:
@@ -51,10 +61,10 @@ class TemplateCard(ctk.CTkFrame):
             parent,
             width=card_width,
             height=card_height,
-            fg_color=COLORS["bg_card"],
-            corner_radius=corner_radius,
+            fg_color=START_COLORS["surface_card"],
+            corner_radius=min(corner_radius, 8),
             border_width=2 if self._is_small else 3,
-            border_color=COLORS["border"]
+            border_color=START_COLORS["border"]
         )
         self.grid_propagate(False)
         self.pack_propagate(False)
@@ -62,6 +72,7 @@ class TemplateCard(ctk.CTkFrame):
         self.title = title
         self.is_selected = False
         self.on_click = on_click
+        self._accent_color_idle = START_COLORS["border_light"]
 
         # Hover-Effekt
         self.bind("<Enter>", self._on_enter)
@@ -73,10 +84,11 @@ class TemplateCard(ctk.CTkFrame):
         pad = max(6, min(12, int(card_width * 0.035)))
         preview_frame = ctk.CTkFrame(
             self,
-            fg_color=COLORS["bg_medium"],
-            corner_radius=sizes["corner_radius_small"],
+            fg_color=START_COLORS["preview"],
+            corner_radius=6,
             height=preview_height
         )
+        self.preview_frame = preview_frame
         preview_frame.pack(fill="x", padx=pad, pady=(pad, 4))
         preview_frame.pack_propagate(False)
         preview_frame.bind("<Button-1>", self._on_click)
@@ -93,16 +105,35 @@ class TemplateCard(ctk.CTkFrame):
             )
             preview_label = ctk.CTkLabel(preview_frame, image=self.preview_ctk, text="")
             preview_label.image = self.preview_ctk  # Referenz halten!
+            preview_label.pack(expand=True)
+            preview_label.bind("<Button-1>", self._on_click)
         else:
-            icon = "📷" if is_single else "🖼️"
-            icon_size = max(30, int(card_height * 0.22))
-            preview_label = ctk.CTkLabel(
-                preview_frame,
-                text=icon,
-                font=("Segoe UI Emoji", icon_size)
-            )
-        preview_label.pack(expand=True)
-        preview_label.bind("<Button-1>", self._on_click)
+            empty_state = ctk.CTkFrame(preview_frame, fg_color="transparent")
+            empty_state.place(relx=0.5, rely=0.5, anchor="center")
+            empty_state.bind("<Button-1>", self._on_click)
+
+            ctk.CTkLabel(
+                empty_state,
+                text="KAMERA" if is_single else "LAYOUT",
+                font=("Segoe UI", max(15, int(card_height * 0.09)), "bold"),
+                text_color=START_COLORS["cyan"]
+            ).pack()
+            ctk.CTkLabel(
+                empty_state,
+                text="1 FOTO" if is_single else "VORLAGE",
+                font=("Segoe UI", max(10, int(card_height * 0.055)), "bold"),
+                text_color=COLORS["text_secondary"]
+            ).pack(pady=(1, 0))
+            preview_label = empty_state
+
+        self.accent_bar = ctk.CTkFrame(
+            self,
+            fg_color=self._accent_color_idle,
+            corner_radius=2,
+            height=4
+        )
+        self.accent_bar.pack(fill="x", padx=pad + 4, pady=(0, 5))
+        self.accent_bar.bind("<Button-1>", self._on_click)
 
         # Titel - responsive Font basierend auf Kartengröße
         if card_width >= 320:
@@ -117,7 +148,8 @@ class TemplateCard(ctk.CTkFrame):
             font=title_font,
             text_color=COLORS["text_primary"]
         )
-        title_label.pack(pady=(4, 2))
+        self.title_label = title_label
+        title_label.pack(pady=(0, 1))
         title_label.bind("<Button-1>", self._on_click)
 
         # Untertitel - responsive Font
@@ -127,18 +159,25 @@ class TemplateCard(ctk.CTkFrame):
             self,
             text=subtitle,
             font=subtitle_font,
-            text_color=COLORS["text_muted"]
+            text_color=COLORS["text_secondary"]
         )
+        self.subtitle_label = subtitle_label
         subtitle_label.pack()
         subtitle_label.bind("<Button-1>", self._on_click)
+
+        if preview_image:
+            return
+
+        for child in preview_label.winfo_children():
+            child.bind("<Button-1>", self._on_click)
     
     def _on_enter(self, event):
         if not self.is_selected:
-            self.configure(border_color=COLORS["border_light"])
+            self.configure(border_color=START_COLORS["border_light"])
 
     def _on_leave(self, event):
         if not self.is_selected:
-            self.configure(border_color=COLORS["border"])
+            self.configure(border_color=START_COLORS["border"])
 
     def _on_click(self, event):
         if self.on_click:
@@ -151,14 +190,18 @@ class TemplateCard(ctk.CTkFrame):
             self.configure(
                 border_color=COLORS["primary"],
                 border_width=border_width,
-                fg_color=COLORS["bg_light"]
+                fg_color=START_COLORS["surface_card_selected"]
             )
+            self.accent_bar.configure(fg_color=COLORS["primary"])
+            self.preview_frame.configure(fg_color="#0f1320")
         else:
             self.configure(
-                border_color=COLORS["border"],
+                border_color=START_COLORS["border"],
                 border_width=border_width - 1,
-                fg_color=COLORS["bg_card"]
+                fg_color=START_COLORS["surface_card"]
             )
+            self.accent_bar.configure(fg_color=self._accent_color_idle)
+            self.preview_frame.configure(fg_color=START_COLORS["preview"])
 
 
 class StartScreen(ctk.CTkFrame):
@@ -176,7 +219,6 @@ class StartScreen(ctk.CTkFrame):
 
         # Responsive Einstellungen
         self._sizes = get_sizes()
-        self._fonts = get_fonts()
         self._is_small = is_small_screen()
         self._screen_w = self.winfo_screenwidth()
         self._screen_h = self.winfo_screenheight()
@@ -188,6 +230,14 @@ class StartScreen(ctk.CTkFrame):
         """Erstellt die UI mit pack()-Layout - responsive Design"""
         self.qr_label: Optional[ctk.CTkLabel] = None
 
+        self.left_accent = ctk.CTkFrame(
+            self,
+            fg_color=COLORS["primary"],
+            width=8,
+            corner_radius=0
+        )
+        self.left_accent.place(relx=0, rely=0, relheight=1, anchor="nw")
+
         # Galerie-Banner wird bei Bedarf unten rechts eingeblendet.
         # Es reserviert keinen Layout-Platz, damit die Template-Auswahl frei bleibt.
         self.gallery_banner = ctk.CTkFrame(self, fg_color="transparent")
@@ -196,10 +246,10 @@ class StartScreen(ctk.CTkFrame):
         # Start-Button DIREKT ueber Galerie-Banner packen (nicht im inner_frame!)
         # So kann er nicht vom zentrierten Inhalt verdeckt werden wenn die
         # Galerie aktiv ist und der inner_frame zu gross wird.
-        btn_font_size = 22 if self._is_small else 28
-        btn_width = 220 if self._is_small else 280
-        btn_height = 55 if self._is_small else 70
-        btn_corner = 28 if self._is_small else 35
+        btn_font_size = 22 if self._is_small else 26
+        btn_width = 230 if self._is_small else 300
+        btn_height = 54 if self._is_small else 62
+        btn_corner = 16 if self._is_small else 18
         self.start_btn = ctk.CTkButton(
             self,
             text=f"▶  {t(self.config, 'common.start')}",
@@ -215,39 +265,57 @@ class StartScreen(ctk.CTkFrame):
             state="disabled",
             command=self._on_start
         )
-        btn_bottom_pad = (5, 8) if self._is_small else (10, 12)
+        btn_bottom_pad = (7, 12) if self._is_small else (10, 18)
         self.start_btn.pack(side="bottom", pady=btn_bottom_pad)
 
         # Zentrierter Hauptcontainer (nimmt restlichen Platz zwischen Top und Button)
-        center_frame = ctk.CTkFrame(self, fg_color="transparent")
-        center_frame.pack(expand=True, fill="both")
+        self.center_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.center_frame.pack(expand=True, fill="both")
+
+        self.stage_band = ctk.CTkFrame(
+            self.center_frame,
+            fg_color=START_COLORS["surface"],
+            corner_radius=0,
+            height=390 if self._is_compact else 440
+        )
+        self.stage_band.place(relx=0, rely=0.48, relwidth=1, anchor="center")
 
         # Innerer Container für vertikale Zentrierung
-        inner_frame = ctk.CTkFrame(center_frame, fg_color="transparent")
-        inner_frame.place(relx=0.5, rely=0.5, anchor="center")
+        self.inner_frame = ctk.CTkFrame(self.center_frame, fg_color="transparent")
+        self._position_main_content()
+        self.inner_frame.lift()
+        self.left_accent.lift()
 
         # Titel - responsive Font
-        title_text = t(self.config, "start.choose_mode")
-        title_font = self._fonts["title"] if not self._is_small else self._fonts["heading"]
+        title_font = ("Segoe UI", 34 if self._is_compact else 40, "bold")
         self.title_label = ctk.CTkLabel(
-            inner_frame,
-            text=title_text,
+            self.inner_frame,
+            text=t(self.config, "start.choose_mode").replace("!", ""),
             font=title_font,
             text_color=COLORS["text_primary"]
         )
-        self.title_label.pack(pady=(0, 3 if self._is_small else 5))
+        self.title_label.pack(pady=(0, 2 if self._is_small else 4))
 
         # Untertitel - responsive Font
         self.subtitle_label = ctk.CTkLabel(
-            inner_frame,
+            self.inner_frame,
             text=t(self.config, "start.tap_option"),
-            font=self._fonts["body"],
-            text_color=COLORS["text_primary"]
+            font=("Segoe UI", 16 if self._is_compact else 18),
+            text_color=COLORS["text_secondary"]
         )
-        self.subtitle_label.pack(pady=(0, 10 if self._is_small else 15))
+        self.subtitle_label.pack(pady=(0, 8 if self._is_small else 10))
+
+        self.title_rule = ctk.CTkFrame(
+            self.inner_frame,
+            fg_color=COLORS["primary"],
+            width=120,
+            height=4,
+            corner_radius=2
+        )
+        self.title_rule.pack(pady=(0, 16 if self._is_compact else 20))
 
         # Karten-Container
-        self.cards_frame = ctk.CTkFrame(inner_frame, fg_color="transparent")
+        self.cards_frame = ctk.CTkFrame(self.inner_frame, fg_color="transparent")
         self.cards_frame.pack()
 
         # Loading-Overlay (wird über allem angezeigt während VLC lädt)
@@ -259,6 +327,29 @@ class StartScreen(ctk.CTkFrame):
         # Initiale Karten erstellen
         self._create_template_cards()
 
+    def _position_main_content(self):
+        """Positioniert die Auswahl so, dass rechts Platz fuer den QR-Code bleibt."""
+        if not hasattr(self, "inner_frame"):
+            return
+
+        qr_active = self._is_gallery_banner_enabled()
+        relx = 0.42 if (qr_active and self._is_compact) else 0.5
+        rely = 0.47 if self._is_compact else 0.48
+        self.inner_frame.place(relx=relx, rely=rely, anchor="center")
+
+    def _active_template_is_app_upload(self) -> bool:
+        """App-Uploads sollen das alte USB-Template ersetzen, nicht daneben anzeigen."""
+        try:
+            manager = getattr(self.app, "booking_manager", None)
+            if not manager:
+                return False
+            if hasattr(manager, "is_template_cache_from_app_upload"):
+                return bool(manager.is_template_cache_from_app_upload())
+            return bool(manager.is_cache_from_app_upload())
+        except Exception as e:
+            logger.debug(f"Cache-Quelle konnte nicht geprüft werden: {e}")
+            return False
+
     def _count_expected_cards(self):
         """Zählt die erwartete Anzahl Template-Karten für responsive Größenanpassung"""
         count = 0
@@ -269,9 +360,11 @@ class StartScreen(ctk.CTkFrame):
             count += 1
             has_custom = True
 
-        # USB-Stick Template als extra Karte wenn User Override aktiv
-        if (self.app._user_template_override and self.app._usb_stick_template
-                and self.app._usb_stick_template != self.app.cached_usb_template):
+        # USB-Stick Template als extra Karte nur bei manueller Auswahl, nicht bei App-Korrektur.
+        usb_stick = self.app._usb_stick_template
+        cached_path = self.app.cached_usb_template.get("path") if self.app.cached_usb_template else None
+        if (self.app._user_template_override and not self._active_template_is_app_upload()
+                and usb_stick and usb_stick.get("path") != cached_path):
             count += 1
 
         if not has_custom:
@@ -293,20 +386,20 @@ class StartScreen(ctk.CTkFrame):
         compact_qr = qr_active and self._is_compact
 
         if card_count == 1:
-            card_w = 315 if compact_qr else (360 if self._is_small else 420)
-            card_h = 220 if compact_qr else (280 if self._is_small else 330)
+            card_w = 360 if compact_qr else (360 if self._is_small else 420)
+            card_h = 260 if compact_qr else (280 if self._is_small else 330)
         elif card_count == 2:
-            card_w = 235 if compact_qr else (270 if self._is_small else 320)
-            card_h = 180 if compact_qr else (230 if self._is_small else 270)
+            card_w = 300 if compact_qr else (280 if self._is_small else 330)
+            card_h = 226 if compact_qr else (230 if self._is_small else 270)
         else:
             card_w = self._sizes["card_width"]
             card_h = self._sizes["card_height"]
             if compact_qr:
-                card_w = min(card_w, 210)
-                card_h = min(card_h, 165)
+                card_w = 230
+                card_h = 190
 
         # Responsive Abstand zwischen Karten
-        card_padx = 5 if compact_qr else (6 if self._is_small else 10)
+        card_padx = 8 if compact_qr else (8 if self._is_small else 12)
 
         # Aktives Template (vom User gewählt oder USB auto-aktiviert)
         cached = self.app.cached_usb_template
@@ -336,6 +429,7 @@ class StartScreen(ctk.CTkFrame):
         # USB-Stick Template als EXTRA Karte wenn User ein anderes gewählt hat
         usb_stick = self.app._usb_stick_template
         if (usb_stick and self.app._user_template_override
+                and not self._active_template_is_app_upload()
                 and usb_stick.get("path") != (cached.get("path") if cached else None)):
             usb_name = usb_stick.get("name", "USB").replace(".zip", "")
             if usb_stick.get("overlay"):
@@ -409,7 +503,7 @@ class StartScreen(ctk.CTkFrame):
             self.title_label.configure(text=t(self.config, "start.print_format"))
             self.subtitle_label.configure(text=t(self.config, "start.tap_to_start"))
         else:
-            default_title = t(self.config, "start.choose_mode")
+            default_title = t(self.config, "start.choose_mode").replace("!", "")
             self.title_label.configure(text=default_title)
             self.subtitle_label.configure(text=t(self.config, "start.tap_option"))
 
@@ -637,6 +731,7 @@ class StartScreen(ctk.CTkFrame):
         # Config könnte sich geändert haben (Admin-Dialog)
         self.config = self.app.config
         self.start_btn.configure(text=f"▶  {t(self.config, 'common.start')}")
+        self._position_main_content()
 
         if _vlc_available and not is_vlc_warm():
             self._show_loading_overlay()
@@ -936,7 +1031,7 @@ class StartScreen(ctk.CTkFrame):
 
             # App-Pairing-QR generieren. Der Payload enthaelt API-URL, Box/Event
             # und Pairing-Token fuer die spaetere Smartphone-App.
-            qr_size = 164 if compact else 196
+            qr_size = 132 if compact else 168
             qr_img = generate_qr_code(qr_payload, size=qr_size)
             if not qr_img:
                 logger.warning("QR-Code konnte nicht generiert werden")
@@ -947,27 +1042,27 @@ class StartScreen(ctk.CTkFrame):
             outer_banner = ctk.CTkFrame(
                 self.gallery_banner,
                 fg_color=COLORS["primary"],
-                corner_radius=12
+                corner_radius=8
             )
             outer_banner.pack()
 
             # Innerer Banner-Container
             banner = ctk.CTkFrame(
                 outer_banner,
-                fg_color=COLORS["bg_medium"],
-                corner_radius=10
+                fg_color=START_COLORS["surface"],
+                corner_radius=6
             )
             banner.pack(padx=2, pady=2)
 
             # Vertikales Layout: schmal genug fuer den rechten unteren Bereich.
             content = ctk.CTkFrame(banner, fg_color="transparent")
-            content.pack(padx=8 if compact else 12, pady=7 if compact else 10)
+            content.pack(padx=9 if compact else 12, pady=9 if compact else 12)
 
             qr_column = ctk.CTkFrame(content, fg_color="transparent")
             qr_column.pack(anchor="center")
 
             # QR-Code links (weisser Hintergrund)
-            qr_container = ctk.CTkFrame(qr_column, fg_color="#ffffff", corner_radius=8)
+            qr_container = ctk.CTkFrame(qr_column, fg_color="#ffffff", corner_radius=6)
             qr_container.pack()
 
             self.qr_ctk_image = ctk.CTkImage(light_image=qr_img, size=(qr_size, qr_size))
@@ -983,10 +1078,10 @@ class StartScreen(ctk.CTkFrame):
                 ctk.CTkLabel(
                     qr_column,
                     text=t(self.config, "gallery.banner_code", code=event_code),
-                    font=("Segoe UI", 20 if compact else 30, "bold"),
+                    font=("Segoe UI", 18 if compact else 24, "bold"),
                     text_color=COLORS["primary"],
                     anchor="center"
-                ).pack(pady=(5 if compact else 8, 0))
+                ).pack(pady=(6 if compact else 8, 0))
 
             # Info-Bereich unter dem QR: schmal halten, damit auf 10" nichts ueberlappt.
             info_frame = ctk.CTkFrame(content, fg_color="transparent")
@@ -996,21 +1091,21 @@ class StartScreen(ctk.CTkFrame):
             ctk.CTkLabel(
                 info_frame,
                 text=t(self.config, "gallery.banner_title"),
-                font=("Segoe UI", 13 if compact else 20, "bold"),
+                font=("Segoe UI", 12 if compact else 16, "bold"),
                 text_color=COLORS["primary"],
                 anchor="center"
             ).pack(anchor="center")
 
-            # WLAN-Info (größer und lesbarer)
+            # WLAN-Info kompakt halten, damit rechts unten nichts ueberlappt.
             wifi_info = ctk.CTkFrame(info_frame, fg_color="transparent")
             wifi_info.pack(anchor="center", pady=(4 if compact else 8, 0))
 
             ctk.CTkLabel(
                 wifi_info,
                 text=t(self.config, "gallery.banner_wifi", ssid=ssid),
-                font=("Segoe UI", 11 if compact else 18, "bold"),
+                font=("Segoe UI", 10 if compact else 15, "bold"),
                 text_color=COLORS["text_primary"],
-                wraplength=190 if compact else 260,
+                wraplength=170 if compact else 230,
                 justify="center",
                 anchor="center"
             ).pack(anchor="center")
@@ -1018,9 +1113,9 @@ class StartScreen(ctk.CTkFrame):
             ctk.CTkLabel(
                 wifi_info,
                 text=t(self.config, "gallery.banner_password", password=password),
-                font=("Segoe UI", 11 if compact else 18),
-                text_color=COLORS["text_primary"],
-                wraplength=190 if compact else 260,
+                font=("Segoe UI", 10 if compact else 15),
+                text_color=COLORS["text_secondary"],
+                wraplength=170 if compact else 230,
                 justify="center",
                 anchor="center"
             ).pack(anchor="center", pady=(2, 0))
