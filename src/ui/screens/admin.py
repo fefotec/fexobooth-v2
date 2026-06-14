@@ -742,7 +742,9 @@ class AdminDialog(ctk.CTkToplevel):
                         "path": zip_path,
                         "name": os.path.basename(zip_path),
                         "overlay": overlay,
-                        "boxes": boxes
+                        "boxes": boxes,
+                        "fingerprint": app.booking_manager.template_file_fingerprint(zip_path),
+                        "source": "usb",
                     }
 
                     # Prüfen ob das gewählte Template das USB-Stick-Template ist

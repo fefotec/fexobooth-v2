@@ -16,6 +16,7 @@ import hashlib
 import hmac
 import json
 import shutil
+import threading
 import time
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
@@ -236,6 +237,7 @@ class BookingManager:
         self._settings_path: Optional[Path] = None
         self._last_check_path: Optional[Path] = None
         self._template_source_path: Optional[Path] = None
+        self._apply_marker_lock = threading.RLock()
         
         # Cache-Verzeichnis erstellen
         CACHE_DIR.mkdir(exist_ok=True)
@@ -842,35 +844,66 @@ class BookingManager:
     def request_apply(self, settings: bool = False, template: bool = False) -> None:
         """Setzt/erweitert den Apply-Marker (vom Server-Thread aufgerufen)."""
         try:
-            existing: Dict[str, Any] = {}
-            if UPLOAD_APPLY_MARKER.exists():
-                try:
-                    existing = json.loads(UPLOAD_APPLY_MARKER.read_text(encoding="utf-8"))
-                except Exception:
-                    existing = {}
-            existing["settings"] = bool(existing.get("settings")) or settings
-            existing["template"] = bool(existing.get("template")) or template
-            CACHE_DIR.mkdir(exist_ok=True)
-            tmp = UPLOAD_APPLY_MARKER.with_suffix(".tmp")
-            tmp.write_text(json.dumps(existing), encoding="utf-8")
-            tmp.replace(UPLOAD_APPLY_MARKER)
+            with self._apply_marker_lock:
+                existing: Dict[str, Any] = {}
+                if UPLOAD_APPLY_MARKER.exists():
+                    try:
+                        existing = json.loads(UPLOAD_APPLY_MARKER.read_text(encoding="utf-8"))
+                    except Exception:
+                        existing = {}
+                existing["settings"] = bool(existing.get("settings")) or bool(settings)
+                existing["template"] = bool(existing.get("template")) or bool(template)
+                existing["updated_at"] = time.time()
+                CACHE_DIR.mkdir(exist_ok=True)
+                tmp = UPLOAD_APPLY_MARKER.with_suffix(".tmp")
+                tmp.write_text(json.dumps(existing), encoding="utf-8")
+                tmp.replace(UPLOAD_APPLY_MARKER)
         except Exception as e:
             logger.warning(f"Apply-Marker schreiben fehlgeschlagen: {e}")
 
     def peek_apply_request(self) -> Optional[Dict[str, Any]]:
         """Liest den Apply-Marker (ohne ihn zu loeschen). Main-Thread."""
         try:
-            if UPLOAD_APPLY_MARKER.exists():
-                return json.loads(UPLOAD_APPLY_MARKER.read_text(encoding="utf-8"))
+            with self._apply_marker_lock:
+                if UPLOAD_APPLY_MARKER.exists():
+                    data = json.loads(UPLOAD_APPLY_MARKER.read_text(encoding="utf-8"))
+                    if bool(data.get("settings")) or bool(data.get("template")):
+                        return data
         except Exception:
             pass
         return None
 
-    def clear_apply_request(self) -> None:
-        """Loescht den Apply-Marker nach erfolgreicher Uebernahme. Main-Thread."""
+    def clear_apply_request(self, settings: bool = False, template: bool = False) -> None:
+        """Bestaetigt nur die verarbeiteten Marker-Teile.
+
+        Settings und Template kommen in zwei HTTP-Requests. Wenn waehrend eines
+        Settings-Applys erst danach das Template eintrifft, darf dieser spaetere
+        Template-Marker nicht mitgeloescht werden.
+        """
         try:
-            if UPLOAD_APPLY_MARKER.exists():
-                UPLOAD_APPLY_MARKER.unlink()
+            with self._apply_marker_lock:
+                if not UPLOAD_APPLY_MARKER.exists():
+                    return
+
+                try:
+                    current = json.loads(UPLOAD_APPLY_MARKER.read_text(encoding="utf-8"))
+                    if not isinstance(current, dict):
+                        current = {}
+                except Exception:
+                    current = {}
+
+                if settings:
+                    current["settings"] = False
+                if template:
+                    current["template"] = False
+
+                if bool(current.get("settings")) or bool(current.get("template")):
+                    current["updated_at"] = time.time()
+                    tmp = UPLOAD_APPLY_MARKER.with_suffix(".tmp")
+                    tmp.write_text(json.dumps(current), encoding="utf-8")
+                    tmp.replace(UPLOAD_APPLY_MARKER)
+                else:
+                    UPLOAD_APPLY_MARKER.unlink()
         except Exception:
             pass
 

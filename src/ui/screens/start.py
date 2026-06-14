@@ -345,13 +345,20 @@ class StartScreen(ctk.CTkFrame):
             return False
 
         expected_path = str(cached_path)
-        current_path = (self.app.cached_usb_template or {}).get("path")
-        if current_path != expected_path:
-            logger.info("📲 App-Template erneut aktiviert; USB-Stick bleibt nur Referenz")
+        cached_card = self.app.cached_usb_template or {}
+        current_path = cached_card.get("path")
+        cache_fingerprint = manager.cached_template_fingerprint() if manager else ""
+        loaded_fingerprint = cached_card.get("fingerprint", "")
+        cache_changed = bool(cache_fingerprint and loaded_fingerprint != cache_fingerprint)
+        if current_path != expected_path or cache_changed:
+            reason = "Cache-Inhalt geändert" if cache_changed else "USB-Stick bleibt nur Referenz"
+            logger.info(f"📲 App-Template erneut aktiviert; {reason}")
+            TemplateLoader.clear_cache()
             self.app._restore_cached_template(force=True, use_cache=False)
 
         if self.app.cached_usb_template:
             self.app.cached_usb_template["source"] = "app"
+            self.app.cached_usb_template["fingerprint"] = manager.cached_template_fingerprint()
             self.app._user_template_override = True
             self.app._app_uploaded_template_active = True
             self._usb_template_path = self.app.cached_usb_template.get("path")
@@ -367,15 +374,18 @@ class StartScreen(ctk.CTkFrame):
             fp = manager.template_file_fingerprint if manager else (lambda path: "")
             logger.info(
                 "📲 TEMPLATE DEBUG START %s | app_active=%s user_override=%s "
-                "cached_card=%s fp=%s source=%s | usb_ref=%s fp=%s | cache_file=%s fp=%s",
+                "cached_card=%s path_fp=%s loaded_fp=%s source=%s | "
+                "usb_ref=%s path_fp=%s loaded_fp=%s | cache_file=%s fp=%s",
                 label,
                 getattr(self.app, "_app_uploaded_template_active", False),
                 getattr(self.app, "_user_template_override", False),
                 cached.get("path", "-"),
                 fp(cached.get("path", "")) if cached.get("path") else "",
+                cached.get("fingerprint", ""),
                 cached.get("source", "-"),
                 usb.get("path", "-"),
                 fp(usb.get("path", "")) if usb.get("path") else "",
+                usb.get("fingerprint", ""),
                 str(manager.cached_template_path) if manager and manager.cached_template_path else "-",
                 manager.cached_template_fingerprint() if manager else "",
             )
@@ -721,7 +731,9 @@ class StartScreen(ctk.CTkFrame):
                         "path": self._usb_template_path,
                         "name": os.path.basename(self._usb_template_path),
                         "overlay": overlay,
-                        "boxes": boxes
+                        "boxes": boxes,
+                        "fingerprint": self.app.booking_manager.template_file_fingerprint(self._usb_template_path),
+                        "source": "usb",
                     }
                     logger.info(f"USB-Template geladen und gecached: {len(boxes)} Foto-Slots")
                 else:
@@ -790,7 +802,9 @@ class StartScreen(ctk.CTkFrame):
                             "path": real_usb,
                             "name": template_name,
                             "overlay": overlay,
-                            "boxes": boxes
+                            "boxes": boxes,
+                            "fingerprint": self.app.booking_manager.template_file_fingerprint(real_usb),
+                            "source": "usb",
                         }
                         logger.info(f"USB-Stick Template geladen: {template_name} ({len(boxes)} Slots)")
                         if not app_template_active and not self.app._user_template_override:
@@ -821,7 +835,9 @@ class StartScreen(ctk.CTkFrame):
                                 "path": cache_template,
                                 "name": os.path.basename(cache_template),
                                 "overlay": overlay,
-                                "boxes": boxes
+                                "boxes": boxes,
+                                "fingerprint": self.app.booking_manager.template_file_fingerprint(cache_template),
+                                "source": "cache",
                             }
                     except Exception as e:
                         logger.error(f"Cache-Template laden fehlgeschlagen: {e}")

@@ -474,7 +474,9 @@ class PhotoboothApp:
                                 "path": usb_template,
                                 "name": os.path.basename(usb_template),
                                 "overlay": overlay,
-                                "boxes": boxes
+                                "boxes": boxes,
+                                "fingerprint": self.booking_manager.template_file_fingerprint(usb_template),
+                                "source": "usb",
                             }
                             self._usb_stick_template = self.cached_usb_template
                             self._persist_template_to_cache(usb_template)
@@ -522,12 +524,14 @@ class PhotoboothApp:
             overlay, boxes = TemplateLoader.load(str(cached_path), use_cache=use_cache)
             if boxes:
                 app_template = self.booking_manager.is_template_cache_from_app_upload()
+                fingerprint = self.booking_manager.template_file_fingerprint(cached_path)
                 self.cached_usb_template = {
                     "path": str(cached_path),
                     "name": cached_path.name,
                     "overlay": overlay,
                     "boxes": boxes,
-                    "source": "app" if app_template else "cache"
+                    "source": "app" if app_template else "cache",
+                    "fingerprint": fingerprint,
                 }
                 if not app_template:
                     self._usb_stick_template = self.cached_usb_template
@@ -569,7 +573,9 @@ class PhotoboothApp:
                     "path": usb_template,
                     "name": os.path.basename(usb_template),
                     "overlay": overlay,
-                    "boxes": boxes
+                    "boxes": boxes,
+                    "fingerprint": self.booking_manager.template_file_fingerprint(usb_template),
+                    "source": "usb",
                 }
                 self._usb_stick_template = self.cached_usb_template
                 self._persist_template_to_cache(usb_template)
@@ -671,12 +677,16 @@ class PhotoboothApp:
 
         active_template_path = ""
         active_template_source = ""
+        active_template_fingerprint = ""
         if self.cached_usb_template:
             active_template_path = self.cached_usb_template.get("path", "") or ""
             active_template_source = self.cached_usb_template.get("source", "") or ""
+            active_template_fingerprint = self.cached_usb_template.get("fingerprint", "") or ""
         elif self.template_path:
             active_template_path = self.template_path
             active_template_source = "session"
+        if active_template_path and not active_template_fingerprint:
+            active_template_fingerprint = self.booking_manager.template_file_fingerprint(active_template_path)
 
         return {
             "box_id": self.config.get("box_id", ""),
@@ -688,7 +698,7 @@ class PhotoboothApp:
             "hotspot_password": gallery_config.get("hotspot_password", ""),
             "active_template_path": active_template_path,
             "active_template_source": active_template_source,
-            "active_template_fingerprint": self.booking_manager.template_file_fingerprint(active_template_path) if active_template_path else "",
+            "active_template_fingerprint": active_template_fingerprint,
             "cached_template_path": str(self.booking_manager.cached_template_path or ""),
             "cached_template_fingerprint": self.booking_manager.cached_template_fingerprint(),
             "app_template_active": self._app_uploaded_template_active,
@@ -1329,15 +1339,17 @@ class PhotoboothApp:
             return
 
         applied = []
+        process_settings = bool(req.get("settings"))
+        process_template = bool(req.get("template"))
         try:
             self._log_template_debug_state("before-apply")
-            if req.get("settings"):
+            if process_settings:
                 if self.booking_manager.reload_from_cache():
                     self.booking_manager.apply_settings_to_config(self.config)
                     self._update_booking_display()
                     applied.append("Einstellungen")
 
-            if req.get("template"):
+            if process_template:
                 # Caches leeren, damit die NEUE cached_template.zip frisch geladen
                 # wird (sonst greift der mtime-Cache / die alte Vorschau).
                 TemplateLoader.clear_cache()
@@ -1359,6 +1371,7 @@ class PhotoboothApp:
                     # festhalten, selbst wenn kurz vorher Settings neu geladen
                     # wurden oder ein USB-Stick steckt.
                     self.cached_usb_template["source"] = "app"
+                    self.cached_usb_template["fingerprint"] = self.booking_manager.cached_template_fingerprint()
                     self._user_template_override = True
                     self._app_uploaded_template_active = True
                     self.template_path = self.cached_usb_template["path"]
@@ -1385,12 +1398,25 @@ class PhotoboothApp:
             else:
                 logger.warning("📲 App-Upload-Marker vorhanden, aber nichts angewendet")
 
-            # Marker immer löschen wenn wir im Startbildschirm waren – sonst
-            # Endlosschleife bei einem kaputten/leeren Marker.
-            self.booking_manager.clear_apply_request()
+            # Nur die Marker-Teile bestaetigen, die dieser Lauf gesehen hat.
+            # Kommt das Template waehrend eines Settings-Applys nach, bleibt es
+            # fuer den naechsten Tick liegen und wird nicht versehentlich geloescht.
+            if process_settings or process_template:
+                self.booking_manager.clear_apply_request(
+                    settings=process_settings,
+                    template=process_template,
+                )
+            else:
+                self.booking_manager.clear_apply_request(settings=True, template=True)
         except Exception as e:
             logger.error(f"App-Upload-Apply fehlgeschlagen: {e}")
-            self.booking_manager.clear_apply_request()
+            if process_settings or process_template:
+                self.booking_manager.clear_apply_request(
+                    settings=process_settings,
+                    template=process_template,
+                )
+            else:
+                self.booking_manager.clear_apply_request(settings=True, template=True)
 
     def _log_template_debug_state(self, label: str):
         try:
@@ -1399,8 +1425,8 @@ class PhotoboothApp:
             cache_path = self.booking_manager.cached_template_path
             logger.info(
                 "📲 TEMPLATE DEBUG APP %s | app_active=%s user_override=%s "
-                "template_path=%s fp=%s | cached_card=%s fp=%s source=%s | "
-                "usb_ref=%s fp=%s | cache_file=%s fp=%s",
+                "template_path=%s fp=%s | cached_card=%s path_fp=%s loaded_fp=%s source=%s | "
+                "usb_ref=%s path_fp=%s loaded_fp=%s | cache_file=%s fp=%s",
                 label,
                 self._app_uploaded_template_active,
                 self._user_template_override,
@@ -1408,9 +1434,11 @@ class PhotoboothApp:
                 self.booking_manager.template_file_fingerprint(self.template_path) if self.template_path else "",
                 cached.get("path", "-"),
                 self.booking_manager.template_file_fingerprint(cached.get("path", "")) if cached.get("path") else "",
+                cached.get("fingerprint", ""),
                 cached.get("source", "-"),
                 usb.get("path", "-"),
                 self.booking_manager.template_file_fingerprint(usb.get("path", "")) if usb.get("path") else "",
+                usb.get("fingerprint", ""),
                 str(cache_path) if cache_path else "-",
                 self.booking_manager.cached_template_fingerprint(),
             )
@@ -2326,7 +2354,9 @@ class PhotoboothApp:
                     "path": usb_template,
                     "name": os.path.basename(usb_template),
                     "overlay": overlay,
-                    "boxes": boxes
+                    "boxes": boxes,
+                    "fingerprint": self.booking_manager.template_file_fingerprint(usb_template),
+                    "source": "usb",
                 }
                 self.cached_usb_template = template_data
                 self._usb_stick_template = template_data
