@@ -37,13 +37,16 @@ RESET_ERRORS = JAM_ERRORS + ["DRUCK BLOCKIERT!", "DRUCKER FEHLER!"]
 TOPBAR_ONLY_ERRORS = ["DRUCKER AUS!", "DRUCKER OFFLINE!", "DRUCKER FEHLT!"]
 
 
-def classify_error(error_text: str) -> str:
+def classify_error(error_text: str, log: bool = True) -> str:
     """Klassifiziert einen Fehlertext in eine Kategorie.
 
     Returns: 'consumable', 'jam', 'other'
     - 'consumable': Overlay anzeigen, warten auf Bestätigung
     - 'jam': Overlay + automatischer Reset
     - 'other': Nur Top-Bar Warnung (offline, etc.)
+
+    log=False unterdrückt die Log-Ausgabe (für den 1x/Sekunde-Poll bei
+    unverändertem Status), ohne das Klassifizierungs-Ergebnis zu ändern.
     """
     if not error_text:
         return "other"
@@ -52,21 +55,25 @@ def classify_error(error_text: str) -> str:
     # Explizit kein Overlay für Offline-Fehler
     for pattern in TOPBAR_ONLY_ERRORS:
         if pattern in upper:
-            logger.debug(f"classify_error('{error_text}') → other (Top-Bar only)")
+            if log:
+                logger.debug(f"classify_error('{error_text}') → other (Top-Bar only)")
             return "other"
 
     for pattern in JAM_ERRORS:
         if pattern in upper:
-            logger.info(f"classify_error('{error_text}') → jam")
+            if log:
+                logger.info(f"classify_error('{error_text}') → jam")
             return "jam"
 
     for pattern in CONSUMABLE_ERRORS:
         if pattern in upper:
-            logger.info(f"classify_error('{error_text}') → consumable")
+            if log:
+                logger.info(f"classify_error('{error_text}') → consumable")
             return "consumable"
 
     # Unbekannter Fehlertext: Im Zweifel als consumable behandeln
-    logger.info(f"classify_error('{error_text}') → consumable (unbekannt)")
+    if log:
+        logger.info(f"classify_error('{error_text}') → consumable (unbekannt)")
     return "consumable"
 
 

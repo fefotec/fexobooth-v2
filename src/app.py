@@ -177,6 +177,8 @@ class PhotoboothApp:
 
         # Overlay-Referenz
         self._printer_error_overlay = None
+        # Letzter geloggter Drucker-Status (nur bei Wechsel loggen → keine Log-Flut)
+        self._last_printer_problem = None
 
         # WICHTIG: Settings ZUERST laden, BEVOR UI erstellt wird!
         # Sonst zeigt die UI falsche Optionen (z.B. Single-Foto obwohl deaktiviert)
@@ -1923,11 +1925,18 @@ class PhotoboothApp:
             return
 
         problem_text = controller.get_error()
+        # Nur beim Statuswechsel loggen (sonst flutet ein dauerhafter Zustand,
+        # z.B. "DRUCKER AUS!", das Log jede Sekunde zu). Overlay + Top-Bar laufen
+        # unverändert jeden Poll weiter.
+        status_changed = problem_text != self._last_printer_problem
 
         if problem_text:
-            logger.info(f"Drucker-Fehler erkannt: '{problem_text}' → Overlay wird gezeigt")
-            # Overlay zeigen (kümmert sich um Canon-Dialog + Bestätigung)
-            self._show_printer_error_overlay(problem_text)
+            if status_changed:
+                logger.info(f"Drucker-Fehler erkannt: '{problem_text}'")
+            # Overlay zeigen (kümmert sich um Canon-Dialog + Bestätigung).
+            # Wird weiterhin jeden Poll aufgerufen (re-zeigt bei anhaltendem
+            # Stau/Verbrauch), aber nur beim Wechsel geloggt.
+            self._show_printer_error_overlay(problem_text, log=status_changed)
 
             # Blinkend in Top-Bar anzeigen
             self._printer_blink_state = not self._printer_blink_state
@@ -1945,33 +1954,43 @@ class PhotoboothApp:
                     fg_color="#ffcc00"
                 )
             self.printer_status.pack(side="right", padx=5)
+            self._last_printer_problem = problem_text
             self.root.after(1000, self._check_printer_status)
         else:
             # Alles OK -> Warnung verstecken
+            if status_changed and self._last_printer_problem is not None:
+                logger.info("Drucker-Status wieder OK")
             self._printer_blink_state = False
             self.printer_status.pack_forget()
+            self._last_printer_problem = None
             self.root.after(5000, self._check_printer_status)
 
-    def _show_printer_error_overlay(self, error_text: str):
+    def _show_printer_error_overlay(self, error_text: str, log: bool = True):
         """Zeigt blockierendes Drucker-Fehler-Overlay
 
         - Papierstau → automatischer Reset mit Animation
         - Verbrauchsmaterial → wartet bis Material gewechselt
         - other → nur Top-Bar (offline, etc.)
+
+        log=False unterdrückt die Log-Ausgaben (bei unverändertem Status), damit
+        ein Dauerzustand das Log nicht jede Sekunde flutet. Das Verhalten
+        (Overlay zeigen/nicht zeigen) bleibt davon unberührt.
         """
         from src.ui.dialogs.printer_error import PrinterErrorOverlay, classify_error
 
-        category = classify_error(error_text)
+        category = classify_error(error_text, log=log)
 
         # "other"-Fehler (offline, etc.) nur in Top-Bar anzeigen, kein Overlay
         if category == "other":
-            logger.debug(f"Drucker-Fehler '{error_text}' → kein Overlay (other)")
+            if log:
+                logger.debug(f"Drucker-Fehler '{error_text}' → kein Overlay (other)")
             return
 
-        logger.info(
-            f">>> DRUCKER-OVERLAY WIRD ANGEZEIGT: '{error_text}' "
-            f"(Kategorie: {category})"
-        )
+        if log:
+            logger.info(
+                f">>> DRUCKER-OVERLAY WIRD ANGEZEIGT: '{error_text}' "
+                f"(Kategorie: {category})"
+            )
         self._printer_error_overlay = PrinterErrorOverlay(
             self.root, self, error_text, category
         )

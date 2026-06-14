@@ -66,20 +66,30 @@ class PrinterController:
         """
         error = self._check_spooler_status()
         if error:
-            logger.debug(f"get_error() → Spooler: '{error}'")
+            self._log_status_change(error, f"get_error() → Spooler: '{error}'")
             return error
 
         error = self._check_job_queue()
         if error:
-            logger.debug(f"get_error() → Job-Queue: '{error}'")
+            self._log_status_change(error, f"get_error() → Job-Queue: '{error}'")
             return error
 
         error = self._detect_canon_error_window()
         if error:
-            logger.debug(f"get_error() → Canon-Dialog: '{error}'")
+            self._log_status_change(error, f"get_error() → Canon-Dialog: '{error}'")
             return error
 
+        self._log_status_change(None, "")
         return None
+
+    def _log_status_change(self, error: Optional[str], message: str) -> None:
+        """Loggt den Drucker-Status nur bei ÄNDERUNG (verhindert Log-Flut, wenn
+        ein Dauerzustand wie 'DRUCKER AUS!' jede Sekunde gepollt wird).
+        Der Rückgabewert von get_error() bleibt davon unberührt."""
+        if getattr(self, "_last_logged_error", "__INIT__") != error:
+            self._last_logged_error = error
+            if error and message:
+                logger.debug(message)
 
     def _check_spooler_status(self) -> Optional[str]:
         """Prüft Spooler-Status-Flags"""
