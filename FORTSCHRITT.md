@@ -4,6 +4,23 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-06-14
+
+### Verbindliche Regel: Dev-Mode-Logging bei jeder Änderung mitziehen
+
+**Prozess-Regel** (kein Code): Ab sofort gilt in [ARBEITSWEISE.md](ARBEITSWEISE.md) als
+**Kernprinzip 8** und als Pflichtanweisung in [CLAUDE.md](CLAUDE.md): Bei **jeder**
+Software-Änderung wird **sofort** das Dev-Mode-Logging mit erweitert (nicht erst, wenn
+etwas nicht funktioniert), und neue Funktionen werden **zuerst im Dev-Mode**
+(`python src/main.py --dev`) getestet, bevor sie als fertig gelten.
+
+**Warum:** 200+ Boxen ohne Internet im Feld – das Log (`logs/fexobooth_*.log`) ist dort
+oft die einzige Fehler-Spur. Logs, die schon beim Bauen mitgeschrieben werden, sparen
+Ferndiagnose. Im Live-Betrieb 0 Overhead (Logging nur im Dev-Mode aktiv, sonst NullHandler).
+Konkreter Pflicht-Ablauf (5 Schritte) steht in ARBEITSWEISE.md Kernprinzip 8.
+
+---
+
 ## 2026-06-11
 
 ### v2.4.6 – Box-ID update-sicher außerhalb des Installationsordners

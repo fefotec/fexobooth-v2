@@ -52,6 +52,47 @@ Ohne Aufforderung aktualisieren:
 - **Stil:** Kurz und prägnant
 - **Niveau:** Anfängerfreundlich erklären
 
+### 8. Dev-Mode-Logging & Test-First (PFLICHT bei jeder Code-Änderung)
+
+**Grundregel:** Bei **jeder** Änderung an der Software wird **sofort** das Dev-Mode-Logging
+mit erweitert – nicht erst, wenn etwas nicht funktioniert. Neue Funktionen werden **immer
+zuerst im Dev-Mode getestet**, bevor sie als fertig gelten.
+
+**Warum:** Im Feld stehen 200+ Boxen ohne Internet. Wenn dort etwas hakt, ist das Log
+(`logs/fexobooth_*.log`) oft die einzige Spur. Logs, die schon **beim Bauen** mitgeschrieben
+werden, sparen später stundenlange Ferndiagnose. Im Produktivbetrieb kosten sie nichts –
+Logging ist dort komplett aus (NullHandler), Overhead = 0.
+
+**So funktioniert der Dev-Mode (Fakten):**
+- Aktivieren: `python src/main.py --dev` (oder `-d`, bzw. `start_dev.bat`). Setzt
+  `config["developer_mode"] = True` ([src/main.py](src/main.py)).
+- Logging ist **nur** im Dev-Mode aktiv → Datei `logs/fexobooth_YYYYMMDD_HHMMSS.log`
+  + Konsole. Im Live-Betrieb: NullHandler, kein RAM-/CPU-Kosten.
+- On-Screen: Performance-Overlay (CPU/RAM, oben rechts) – [src/ui/performance_overlay.py](src/ui/performance_overlay.py).
+
+**Pflicht-Ablauf bei jeder Änderung/neuen Funktion:**
+1. **Funktion schreiben.**
+2. **Logging gleich mit einbauen** – am Dateikopf:
+   ```python
+   from src.utils.logging import get_logger
+   logger = get_logger(__name__)
+   ```
+   Dann an den wichtigen Stellen:
+   - `logger.info(...)` = Einstieg, Erfolg, Status-Wechsel (Meilensteine)
+   - `logger.debug(...)` = Zwischenschritte, Variablen, Hardware-State
+   - `logger.warning(...)` = erwartbare Fehler/Fallbacks (fehlende HW, kaputte Datei)
+   - `logger.error(..., exc_info=True)` = unerwartete Exceptions (mit Stacktrace)
+
+   Logge **das, was beim Fehlersuchen zählt**: welcher Pfad/welche Datei/welcher Wert
+   wirklich genommen wurde (z.B. „lade Template aus USB D:\… statt Cache"). Genau solche
+   Logs lösen Bugs wie „Template wechselt nicht" in Minuten statt Stunden.
+3. **Im Dev-Mode starten** (`--dev`) und die neue Funktion **manuell durchklicken**.
+4. **Log-Output prüfen** – kommt die erwartete Reihenfolge? Tauchen unerwartete
+   Warnungen/Errors auf?
+5. **Erst dann** gilt die Funktion als fertig → `FORTSCHRITT.md`/`CHANGELOG.md` aktualisieren.
+
+**Faustregel:** Wer Code ändert, ohne das passende Log mitzuziehen, ist nicht fertig.
+
 ---
 
 ## Spezielle Regeln für Fexobooth
