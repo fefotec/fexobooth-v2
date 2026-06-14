@@ -485,7 +485,7 @@ class PhotoboothApp:
         except Exception as e:
             logger.warning(f"USB-Check beim Start fehlgeschlagen: {e}")
 
-    def _restore_cached_template(self):
+    def _restore_cached_template(self, force: bool = False, use_cache: bool = True):
         """Stellt gecachtes Template beim App-Start wieder her.
 
         Lädt cached_template.zip in self.cached_usb_template, damit der StartScreen
@@ -497,11 +497,11 @@ class PhotoboothApp:
         USB-Templates werden separat über _load_settings_from_usb_immediately geladen.
         """
         # Schon geladen (z.B. vom USB beim Start)
-        if self.cached_usb_template:
+        if self.cached_usb_template and not force:
             return
 
         # Keine Buchung → kein gecachtes Template nötig
-        if not self.booking_manager.is_loaded:
+        if not self.booking_manager.is_loaded and not force:
             return
 
         # NUR lokalen Cache prüfen (nicht USB durchsuchen!)
@@ -511,8 +511,8 @@ class PhotoboothApp:
             return
 
         try:
-            overlay, boxes = TemplateLoader.load(str(cached_path), use_cache=True)
-            if overlay and boxes:
+            overlay, boxes = TemplateLoader.load(str(cached_path), use_cache=use_cache)
+            if boxes:
                 self.cached_usb_template = {
                     "path": str(cached_path),
                     "name": cached_path.name,
@@ -520,6 +520,9 @@ class PhotoboothApp:
                     "boxes": boxes
                 }
                 self._usb_stick_template = self.cached_usb_template
+                self.template_path = str(cached_path)
+                self.template_boxes = boxes
+                self.overlay_image = overlay
                 logger.info(f"📦 Gecachtes Template wiederhergestellt: {cached_path.name} ({len(boxes)} Slots)")
             else:
                 logger.warning(f"Gecachtes Template konnte nicht geladen werden: {cached_path}")
@@ -1315,8 +1318,9 @@ class PhotoboothApp:
                 # StartScreen die Template-Vorschau. Vorher wurde nur overlay_image
                 # gesetzt (load_template), die Vorschau blieb auf dem alten Template
                 # haengen -> Template wechselte beim 2. Upload nicht.
-                self._restore_cached_template()
+                self._restore_cached_template(force=True, use_cache=False)
                 if self.cached_usb_template:
+                    self.template_path = self.cached_usb_template["path"]
                     self.overlay_image = self.cached_usb_template["overlay"]
                     self.template_boxes = self.cached_usb_template["boxes"]
                     applied.append("Template")

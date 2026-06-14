@@ -971,12 +971,20 @@ def _create_flask_app(locale: str = "de-DE"):
 
         bm.request_apply(template=True)
         logger.info("📲 Template-Upload akzeptiert, Apply angefordert")
+        fingerprint = bm.cached_template_fingerprint()
+        template_size = 0
+        if fingerprint and "-" in fingerprint:
+            try:
+                template_size = int(fingerprint.rsplit("-", 1)[-1])
+            except Exception:
+                template_size = 0
         return jsonify({
             "app": "fexobox-gallery",
             "api_version": 1,
             "ok": True,
             "applied": "queued",
-            "template_fingerprint": bm.cached_template_fingerprint(),
+            "template_fingerprint": fingerprint,
+            "template_size": template_size,
             "message": "Template empfangen. Wird uebernommen, sobald die Box im Startbildschirm ist.",
         })
 

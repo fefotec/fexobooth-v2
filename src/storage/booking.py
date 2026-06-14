@@ -705,11 +705,15 @@ class BookingManager:
         return self._load_from_cache()
 
     def cached_template_fingerprint(self) -> str:
-        """Kurzer Fingerprint (mtime-size) der gecachten Template-ZIP zur Verifikation."""
+        """Fingerprint der gecachten Template-ZIP zur Verifikation durch die App."""
         try:
             if TEMPLATE_CACHE_FILE.exists():
                 st = TEMPLATE_CACHE_FILE.stat()
-                return f"{int(st.st_mtime)}-{st.st_size}"
+                digest = hashlib.md5()
+                with open(TEMPLATE_CACHE_FILE, "rb") as f:
+                    for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                return f"{digest.hexdigest()}-{st.st_size}"
         except Exception:
             pass
         return ""
