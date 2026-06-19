@@ -4,6 +4,31 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-06-19
+
+### Bugfix: Druck-Korrektur (2015er-Menü) überlebt Neustart jetzt dauerhaft
+
+**Problem:** Im 2015er-Kunden-/Service-Menü angepasste Druckwerte (Offset X/Y, Zoom)
+wurden zwar in `config.json` gespeichert, aber bei **jedem Neustart** wieder auf die
+Produktionswerte (40/30/103) zurückgesetzt. Für den Einrichtungsflow fatal: Box wird
+nach dem Test heruntergefahren, Kunde startet neu → Korrektur weg.
+
+**Ursache:** `print_adjustment` stand in `_PRODUCTION_DEFAULT_OVERRIDES`
+([src/config/config.py](src/config/config.py)). Diese Overrides werden bei **jedem**
+`load_config()` über `_apply_production_defaults()` erzwungen – also auch über die
+gerade gespeicherten Werte. Speichern war korrekt, der nächste Start überschrieb es.
+
+**Fix:** `print_adjustment` aus `_PRODUCTION_DEFAULT_OVERRIDES` entfernt. Der Start-Default
+kommt jetzt ausschließlich aus [src/config/defaults.py](src/config/defaults.py) (identische
+40/30/103/3) und wird durch die gespeicherte `config.json` per Deep-Merge überschrieben.
+Der **gewollte** Reset pro Eventwechsel bleibt über `reset_event_defaults()` erhalten.
+Zusätzlich Dev-Logging in `load_config()`: loggt den tatsächlich geladenen `print_adjustment`-Wert.
+
+**Verifiziert:** Skript-Test (Speichern → Neustart simuliert → Werte bleiben; Eventwechsel-Reset
+setzt weiterhin auf 40/30/103 zurück). Alle drei Pfade grün.
+
+---
+
 ## 2026-06-14
 
 ### App-Plattform-Fundament gebaut (Box-Seite) – „dünne Box, dicke App"

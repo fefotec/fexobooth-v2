@@ -340,6 +340,15 @@ Betrifft: `_display_preview()`, `_build_flash_cache()`, `_show_main_preview()`, 
 
 ## Lessons Learned
 
+### „Bei jedem Start erzwungene" Produktions-Defaults dürfen keine vom Nutzer änderbaren Werte enthalten
+
+| | |
+|---|---|
+| **Problem** | Im 2015er-Menü angepasste Druck-Korrektur (`print_adjustment`) wurde zwar in `config.json` gespeichert, aber bei jedem Neustart wieder auf Produktionswerte (40/30/103) zurückgesetzt. Fatal für den Einrichtungsflow (testen → herunterfahren → Kunde startet neu). |
+| **Ursache** | `print_adjustment` stand in `_PRODUCTION_DEFAULT_OVERRIDES`. Diese Liste wird bei **jedem** `load_config()` über `_apply_production_defaults()` per `_assign_if_changed` erzwungen – nach dem Deep-Merge der gespeicherten Config. Der Override gewann also immer gegen den gerade gespeicherten Wert. |
+| **Lösung** | `print_adjustment` aus `_PRODUCTION_DEFAULT_OVERRIDES` entfernt. Start-Default kommt aus `defaults.py` (identische Werte) und wird durch `config.json` überschrieben; der gewollte Reset pro Eventwechsel bleibt über `reset_event_defaults()`. |
+| **Merke** | „Bei-jedem-Start erzwungene" Defaults nur für Werte verwenden, die der Nutzer NICHT ändern darf (z. B. Asset-Pfade, Feature-Flags). Sobald ein Wert über die UI editierbar ist, gehört er NICHT in eine Override-Liste, die nach dem Laden noch zuschlägt – sonst ist „Speichern" wirkungslos. Persistenz immer mit einem echten Neustart-Pfad testen, nicht nur „gespeichert?" prüfen. |
+
 ### Hotline-KI: Template/Layout ≠ Live-View Overlay
 
 | | |

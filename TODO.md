@@ -137,6 +137,9 @@ Details siehe ROADMAP.md. Datenschutz vorab klären, dann erst angehen.
 
 ## Erledigt ✅
 
+### 2026-06-19
+- [x] **Druck-Korrektur (2015er-Menü) wird beim Neustart nicht mehr zurückgesetzt.** `print_adjustment` stand fälschlich in den bei jedem Start erzwungenen Produktions-Overrides (`_PRODUCTION_DEFAULT_OVERRIDES` in `src/config/config.py`) → Override gewann gegen die gespeicherten Werte. Entfernt; Start-Default kommt aus `defaults.py`, Eventwechsel-Reset bleibt über `reset_event_defaults()`. Mit simuliertem Neustart verifiziert.
+
 ### 2026-06-14
 - [x] App-Template-Push stabilisiert: wiederholte Template-Uploads nutzen eindeutige `app_template_*.zip` Dateien statt gesperrte `cached_template.zip` zu überschreiben; Apply-Marker fuer Settings/Template werden getrennt bestaetigt. Regressionsnotizen in `docs/FEXOBOX-APP-API.md`.
 

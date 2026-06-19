@@ -10,6 +10,9 @@ from copy import deepcopy
 
 from .defaults import DEFAULT_CONFIG
 from src.i18n import apply_locale_to_config
+from src.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 # Globale Config-Instanz
 _config: Optional[Dict[str, Any]] = None
@@ -62,7 +65,13 @@ _PRODUCTION_DEFAULT_OVERRIDES = {
     "video_after_3": "assets/videos/Fexon - Fotobox Tutorial 5 By Videoboost.Undefined.mp4",
     "video_end": "assets/videos/Fexon - Fotobox Tutorial 7 By Videoboost.Undefined.mp4",
     "flash_image": "assets/icons/foto-screen.jpeg",
-    "print_adjustment": _PRODUCTION_PRINT_ADJUSTMENT,
+    # WICHTIG: print_adjustment bewusst NICHT hier eintragen!
+    # Diese Overrides werden bei JEDEM Start ueber _apply_production_defaults()
+    # erzwungen. Stuende print_adjustment hier, wuerde jeder Neustart die im
+    # 2015er-Menue gespeicherten Druckwerte wieder auf Produktionswerte
+    # zuruecksetzen (Bug, behoben 2026-06-19).
+    # Der Start-Default kommt aus defaults.py (identische 40/30/103/3); der
+    # gewollte Reset pro Eventwechsel laeuft ueber reset_event_defaults().
 }
 
 _BUILTIN_ASSET_KEYS = (
@@ -287,6 +296,10 @@ def load_config() -> Dict[str, Any]:
     apply_locale_to_config(config)
 
     _config = config
+
+    # Welcher print_adjustment-Wert wurde wirklich geladen? (Feld-Bug-Diagnose:
+    # zeigt, ob die im 2015er-Menue gespeicherten Druckwerte erhalten bleiben.)
+    logger.info(f"Config geladen - print_adjustment={config.get('print_adjustment')}")
 
     if changed:
         # Wiederhergestellte Werte dauerhaft zurück in config.json schreiben,

@@ -33,6 +33,15 @@ Alles additiv und performance-neutral; die gebuchte Galerie verhält sich unver�
 - **Soft-Mode für settings.json bleibt bewusst aktiv** (keine Signaturpflicht); die irreführende
   Log-Warnung „in v2.5.0 wird das abgelehnt" wurde entfernt.
 
+### Behoben
+
+- **Druck-Korrektur aus dem 2015er-Menü bleibt jetzt dauerhaft erhalten.** Bisher wurden im
+  Service-Menü angepasste Druckwerte (Offset X/Y, Zoom) bei jedem Neustart auf die Produktionswerte
+  (40/30/103) zurückgesetzt, weil `print_adjustment` fälschlich in den bei jedem Start erzwungenen
+  Produktions-Overrides stand. Ursache entfernt; der Start-Default kommt weiterhin aus `defaults.py`
+  (identische Werte), der gewollte Reset pro Eventwechsel bleibt über `reset_event_defaults()` aktiv.
+  Wichtig für den Einrichtungsflow (Box testen → herunterfahren → Kunde startet neu).
+
 ## [2.4.7] - 2026-06-12 - Produktions-Defaults und persistente Box-Daten
 
 ### Behoben
