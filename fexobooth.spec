@@ -175,6 +175,7 @@ a = Analysis(
         "src.camera.webcam",
         "src.camera.canon",
         "src.camera.edsdk",
+        "src.camera.nikon",
         "src.filters",
         "src.filters.filters",
         "src.gallery",
