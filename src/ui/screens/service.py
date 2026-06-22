@@ -668,6 +668,9 @@ class ServiceDialog(ctk.CTkToplevel):
     def _refresh_app_after_reload(self):
         """Triggert UI-Refresh nach Template/Settings-Reload (Main-Thread)."""
         try:
+            if hasattr(self.app, "_sync_camera_manager_with_config"):
+                self.app._sync_camera_manager_with_config()
+
             current_screen = getattr(self.app, "current_screen", None)
             if current_screen and hasattr(current_screen, "_refresh_template_cards"):
                 current_screen._refresh_template_cards()

@@ -15,6 +15,7 @@ Diese Datei enthält die Anforderungen und geplanten Features.
 
 - [x] Photobooth-Workflow (Start → Capture → Preview → Final)
 - [x] Webcam + Canon DSLR Support
+- [~] Nikon DSLR Support (D3300) über digiCamControl — Code fertig, **Hardware-Test offen** (siehe unten)
 - [x] USB-Template laden (ZIP vom Stick)
 - [x] Buchungsnummer aus settings.json
 - [x] Lokale Galerie (Flask + QR-Code)
@@ -24,6 +25,29 @@ Diese Datei enthält die Anforderungen und geplanten Features.
 - [x] Admin-Menü
 - [x] Video-Wiedergabe (MSMF Backend)
 - [x] Offline-Hotspot Setup
+
+---
+
+## Nikon D3300 DSLR über digiCamControl (Variante 2) 📷
+
+> Ziel: Nikon-D3300 als DSLR betreiben — wie dslrBooth — **ohne** Nikon Webcam Utility.
+> digiCamControl übernimmt das Tethering als externe Windows-Steuerungsschicht und stellt
+> einen lokalen Webserver bereit (`127.0.0.1:5513`). fexobooth-v2 spricht nur HTTP/Single-Command.
+
+**Technischer Vertrag (implementiert):**
+- `camera_type = "nikon"`, optional `dslr_camera_type = "nikon"` (überlebt Booking-/Event-Reload)
+- LiveView über `/liveview.jpg`, Capture über Single-Command `capture` (Fallback `LiveView_Capture`)
+- Bildübergabe über `session.folder` + `session.filenametemplate` + `lastcaptured` → lokale Datei,
+  sonst `/image/<name>`, zuletzt `/preview.jpg`
+- digiCamControl darf extern installiert sein; **die App startet `CameraControl.exe` beim Programmstart
+  automatisch im Hintergrund** (kein manuelles Vorstarten nötig). Auto-Start aus Standardpfaden.
+- Konfiguration unter `nikon_digicamcontrol` in der Config (Host/Port/app_path/capture_folder/Timeouts)
+- **Einmaliger Installations-Schritt:** in digiCamControl den Webserver aktivieren (Port 5513). Das ist
+  eine persistente digiCamControl-Einstellung; die App startet das Programm, schaltet diese Einstellung
+  aber bewusst nicht bei jedem Start um (würde fremde Tool-Config manipulieren).
+
+**Status:** Code-vollständig + statisch/Unit-verifiziert (kein echtes Nikon-Gerät am Testrechner).
+**Offen:** Hardware-Test mit echter D3300 (LiveView + Capture End-to-End). Siehe [TODO.md](TODO.md).
 
 ---
 

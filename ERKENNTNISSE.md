@@ -6,6 +6,15 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### Nikon-DSLR-Support: digiCamControl als externe Steuerungsschicht (Variante 2), NICHT Nikon Webcam Utility
+
+| | |
+|---|---|
+| **Kontext** | Nikon D3300 soll als DSLR funktionieren wie bei dslrBooth. Zwei Wege: (1) Nikon Webcam Utility (Kamera erscheint als Webcam — aber nur LiveView-Auflösung, kein echtes Vollbild-Capture, kein Tethering-Steuerung), (2) digiCamControl als lokale Windows-Steuerungsschicht mit eigenem Webserver (`127.0.0.1:5513`). |
+| **Entscheidung** | **Variante 2 (digiCamControl).** fexobooth bleibt ein **dünner HTTP-Adapter** (`NikonCameraManager`): LiveView über `/liveview.jpg`, Capture über Single-Command `capture` (Fallback `LiveView_Capture`), Bildübergabe über `session.folder`/`session.filenametemplate`/`lastcaptured` → lokale Datei, sonst `/image/<name>`, zuletzt `/preview.jpg`. digiCamControl darf extern installiert sein; sonst Auto-Start von `CameraControl.exe`. |
+| **Begründung** | Vollbild-Capture in DSLR-Qualität + echtes Tethering ohne nativen Nikon-SDK-Aufwand. Der Adapter ist interface-kompatibel zu `CanonCameraManager` → **Drop-in** für den bestehenden Session-/App-Flow (`capture_photo`, `get_high_res_frame`, `get_frame`, `start/stop_live_view`, `release`, `is_initialized`). Keine native DLL → der Manager ist immer konstruierbar; „verfügbar" heißt nur „digiCamControl-Exe vorhanden ODER Webserver antwortet". |
+| **Merke** | Externe Steuerungs-Tools mit lokalem HTTP-Vertrag (digiCamControl, dslrBooth-Pattern) sind ein sauberer Weg, fremde Hardware anzubinden, ohne den App-Kern aufzublähen. **Aber:** HTTP heißt **blockierende urlopen-Timeouts** — solche Calls niemals naiv auf den Tk-UI-Thread legen (siehe Lessons Learned: Init-Freeze). |
+
 ### App-Plattform-Fundament: „Infrastruktur immer an" vs „Feature verkauft" sauber trennen
 
 | | |
@@ -339,6 +348,33 @@ Betrifft: `_display_preview()`, `_build_flash_cache()`, `_show_main_preview()`, 
 ---
 
 ## Lessons Learned
+
+### Kamera-Manager nach JEDEM Apply-/Reload-Pfad synchronisieren — sonst läuft die Session auf dem falschen Backend
+
+| | |
+|---|---|
+| **Problem** | Beim Nikon-Port kann sich `camera_type` an mehreren Stellen ändern (Admin-Speichern, Event-Wechsel, App-Upload-Reload, **Kundenmenü PIN 2015 „Settings neu laden"**, Service-Reload). Wird der live gehaltene `self.camera_manager` danach nicht neu gebaut, fährt die nächste Session auf dem alten Backend (z. B. noch `WebcamManager`, obwohl `camera_type` jetzt `nikon` ist), und `_check_camera_status` prüft das falsche Objekt. |
+| **Ursache** | `apply_settings_to_config` ändert nur die Config, nicht den Manager. Es gibt **fünf** Apply-/Reload-Pfade; beim ersten Wurf fehlte der Sync ausgerechnet im PIN-2015-Kundenreload (`admin.py do_reload`) — vom Multi-Agent-Review gefunden. |
+| **Lösung** | Zentrale Methode `_sync_camera_manager_with_config()` (rebaut nur bei Typ-Wechsel, sonst nur `update_config`) **an allen fünf** Pfaden aufrufen. Wichtig: `do_reload`/Service-Reload laufen auf einem **Worker-Thread** → den Sync per `self.after(0, ...)` auf den **Main-Thread** marshallen, weil er `release()`/Manager-Neubau macht. |
+| **Merke** | Wenn ein abgeleiteter Laufzeit-Zustand (hier: der Manager) aus einem Config-Wert gebaut wird, muss **jeder** Pfad, der diesen Wert ändern kann, den Zustand nachziehen — am besten über **eine** idempotente Sync-Funktion statt verteilter Rebuild-Logik. Solche „eine Stelle vergessen"-Lücken findet ein adversariales Review zuverlässig (alle Schreibstellen auflisten und gegen die Sync-Aufrufe abgleichen). |
+
+### Defensiver Import: ein optionales Kamera-Backend darf beim Import-Fehler NICHT die ganze Flotte lahmlegen
+
+| | |
+|---|---|
+| **Problem** | `from .nikon import NikonCameraManager` stand zunächst **ungeschützt** am Modulkopf von `src/camera/__init__.py`. Ein künftiger Import-Fehler in `nikon.py` (z. B. jemand fügt `import requests` hinzu) hätte `import src.camera` und damit `app.py:18` zum Absturz gebracht — und damit **alle** Boxen, auch reine Webcam-/Canon-Geräte, die Nikon nie nutzen. |
+| **Ursache** | Canon ist bewusst in `try/except` gekapselt (genau für diese Isolation); Nikon war es anfangs nicht — Asymmetrie. |
+| **Lösung** | Nikon-Import symmetrisch zu Canon in `try/except`, `NIKON_AVAILABLE` aus dem Ergebnis ableiten, Factory mit `NikonCameraManager is not None` absichern → bei kaputtem Import sauberer Fallback auf Webcam statt Komplettausfall. |
+| **Merke** | Optionale/zusätzliche Backends, die am Paket-Top-Level importiert werden, **immer** defensiv importieren — der Import-Graph eines Pakets ist eine geteilte Abhängigkeit. Eine Isolations-Maßnahme (try/except) ist nur so gut wie ihre Symmetrie: ein einziger ungeschützter Geschwister-Import hebt sie auf. |
+
+### digiCamControl/HTTP-Adapter: blockierende `urlopen`-Timeouts gehören NICHT auf den UI-Thread
+
+| | |
+|---|---|
+| **Problem** | `NikonCameraManager.initialize()` kann digiCamControl auto-starten (`CameraControl.exe`) und pollt dann bis zu `startup_timeout_seconds` (Default 15 s) + LiveView-Warten → bis ~24 s. Wird `initialize()` synchron auf dem Tk-UI-Thread aufgerufen (Pre-Init/Session-Start), friert die Kiosk-UI auf schwacher Hardware (4 GB Miix) komplett ein. Auch `_check_camera_status` (UI-Thread) kann im Nikon-Idle-Zweig ~1.5 s in `list_cameras()` (urlopen) hängen, wenn der DCC-Server nicht antwortet. |
+| **Ursache** | HTTP-Calls haben echte Timeouts; anders als die lokale EDSDK-Enumeration (quasi instant) blockiert ein TCP-`urlopen` zu einem (noch) nicht laufenden `127.0.0.1:5513` bis zum Timeout. |
+| **Status/Lösung** | **Entschärft per Auto-Start-Warmup:** Beim App-Start (und bei Wechsel auf Nikon) startet `_warmup_nikon_async()` digiCamControl in einem **Daemon-Thread** vor (`NikonCameraManager.ensure_server_running()`), off dem UI-/Startup-Thread. Damit läuft der Webserver beim ersten Capture i.d.R. schon → `initialize()` trifft den schnellen Pfad und der Betreiber muss DCC nicht manuell vorstarten. Restfall „DCC stirbt zur Laufzeit": dann greift wieder der Auto-Launch in `initialize()` (UI-Thread) — Komplett-Umbau (Init grundsätzlich off-thread) bewusst NICHT gemacht (Vorgabe „keine großen Refactors", Nikon-HW noch nicht ausgerollt). Auf der Hardware messen. |
+| **Merke** | Sobald ein Kamera-/Geräte-Backend über HTTP/Netzwerk spricht, ist „blockiert den UI-Thread" eine reale Gefahr — solche Calls off-thread legen oder hart kurz timeouten. Das Drop-in-Interface war hier korrekt, das **Timing-Verhalten** ist die eigentliche Falle. |
 
 ### „Bei jedem Start erzwungene" Produktions-Defaults dürfen keine vom Nutzer änderbaren Werte enthalten
 

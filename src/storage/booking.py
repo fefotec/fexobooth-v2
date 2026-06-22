@@ -602,7 +602,7 @@ class BookingManager:
         Mapping:
         - print_singles → allow_single_mode
         - live_gallery → gallery_enabled
-        - dslr_camera → camera_type
+        - dslr_camera → camera_type (dslr_camera_type bevorzugt)
         
         Args:
             config: Die App-Config (wird in-place modifiziert)
@@ -628,10 +628,18 @@ class BookingManager:
         config["gallery_enabled"] = self._settings.live_gallery
         logger.info(f"   📋 gallery_enabled = {self._settings.live_gallery}")
         
-        # Kamera-Typ
+        # Kamera-Typ: DSLR aktiviert die bevorzugte DSLR-Kamera (Canon oder Nikon).
+        # Die zuvor im 2015er-Menü gewählte DSLR (dslr_camera_type) bleibt erhalten,
+        # damit ein Booking-/Event-Reload nicht wieder hart auf Canon zurückspringt.
         if self._settings.dslr_camera:
-            config["camera_type"] = "canon"
-            logger.info(f"   📋 camera_type = canon (DSLR)")
+            preferred_dslr = str(
+                config.get("dslr_camera_type") or config.get("camera_type") or "canon"
+            ).lower()
+            if preferred_dslr not in ("canon", "nikon"):
+                preferred_dslr = "canon"
+            config["camera_type"] = preferred_dslr
+            config["dslr_camera_type"] = preferred_dslr
+            logger.info(f"   📋 camera_type = {preferred_dslr} (DSLR)")
         
         # Druckfunktion
         config["print_enabled"] = self._settings.print_enabled

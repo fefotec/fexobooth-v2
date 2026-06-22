@@ -48,7 +48,17 @@ DEFAULT_CONFIG = {
         "single_photo_height": 1080,
         "live_view_resolution": 640
     },
-    
+    # Nikon DSLR über digiCamControl (lokaler Webserver, Variante 2 wie dslrBooth).
+    # Leere app_path/capture_folder = Standardpfade verwenden.
+    "nikon_digicamcontrol": {
+        "host": "127.0.0.1",
+        "port": 5513,
+        "app_path": "",
+        "capture_folder": "",
+        "startup_timeout_seconds": 15,
+        "http_timeout_seconds": 3
+    },
+
     # Druck
     "printer_name": "",
     "max_prints_per_session": 1,

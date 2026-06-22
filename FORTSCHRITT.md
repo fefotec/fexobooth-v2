@@ -4,6 +4,70 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-06-22
+
+### Feature: Nikon D3300 als DSLR über digiCamControl (Variante 2, wie dslrBooth)
+
+**Ziel:** Nikon D3300 als DSLR betreiben — ohne Nikon Webcam Utility. digiCamControl ist die
+externe Windows-Steuerungsschicht und stellt einen lokalen Webserver bereit (`127.0.0.1:5513`);
+fexobooth spricht nur HTTP/Single-Command. Sauberer, **additiver** Port aus `fexobooth-consumer`,
+auf die v2-Architektur angepasst. Canon-/Webcam-Pfade **unverändert**.
+
+**Geändert/Neu:**
+- **NEU [src/camera/nikon.py](src/camera/nikon.py):** `NikonCameraManager` (dünner Adapter um den
+  digiCamControl-Vertrag: LiveView `/liveview.jpg`, Capture via `capture` mit Fallback
+  `LiveView_Capture`, Bildübergabe über `session.folder`+`session.filenametemplate`+`lastcaptured`
+  → lokale Datei, sonst `/image/<name>`, zuletzt `/preview.jpg`; Auto-Start `CameraControl.exe`
+  aus Standardpfaden). Interface-kompatibel zu Canon (Drop-in für Session-/App-Flow).
+- **[src/camera/__init__.py](src/camera/__init__.py):** Factory routet `camera_type=="nikon"` und
+  reicht die Config durch. Nikon-Import **defensiv** (try/except wie Canon) + Factory-Guard
+  `NikonCameraManager is not None` → ein künftiger Import-Fehler in nikon.py legt die Flotte nicht lahm.
+- **[src/config/defaults.py](src/config/defaults.py):** additiver Block `nikon_digicamcontrol`
+  (Host/Port/app_path/capture_folder/Timeouts). (v2 hat keine `config.example.json` — defaults.py ist die Quelle.)
+- **[src/storage/booking.py](src/storage/booking.py):** `apply_settings_to_config` respektiert bei
+  DSLR-Buchungen jetzt `dslr_camera_type` (Fallback `camera_type`, sonst `canon`) **und** schreibt
+  es zurück → Booking-/Event-Reload springt **nicht mehr hart auf Canon** zurück.
+- **[src/app.py](src/app.py):** `NIKON_AVAILABLE` importiert; `camera_type` als `self._camera_type`
+  gemerkt; neue Methode `_sync_camera_manager_with_config()` baut den Manager nur bei Typ-Wechsel neu
+  (sonst nur `update_config`); Sync nach **allen** Apply-/Reload-Pfaden (Init, App-Upload-Reload,
+  Admin-Speichern, Event-Wechsel); Nikon-Statuszweig in `_check_camera_status` (`DCC FEHLT!`/`KEINE NIKON!`).
+- **Auto-Start von digiCamControl ([src/app.py](src/app.py) `_warmup_nikon_async` + [src/camera/nikon.py](src/camera/nikon.py)
+  `ensure_server_running`):** Bei `camera_type=="nikon"` startet die App digiCamControl beim Programmstart
+  (und bei Laufzeit-Wechsel auf Nikon) **automatisch im Hintergrund-Thread** vor. Der Betreiber muss
+  digiCamControl **nicht mehr manuell vor der App starten**; zugleich trifft der erste Capture nicht den
+  Kaltstart-Poll auf dem UI-Thread (entschärft den Major-Freeze des Reviews). Idempotent/no-op, wenn der
+  Webserver schon läuft. *(Der Webserver muss in digiCamControl einmalig aktiviert sein — Port 5513 —
+  das bleibt ein einmaliger Installations-Schritt, siehe TODO.)*
+- **[src/ui/screens/admin.py](src/ui/screens/admin.py):** Nikon im Kameratyp-Dropdown + Kamera-Scan
+  über digiCamControl; Admin-Speichern merkt die bevorzugte DSLR (`dslr_camera_type`); **Kundenmenü
+  „Template/Settings neu laden" (PIN 2015) synchronisiert jetzt ebenfalls den Kamera-Manager**
+  (Main-Thread via `self.after(0, ...)`) — diese Lücke fand das Review.
+- **[src/ui/screens/service.py](src/ui/screens/service.py):** Service-Reload synchronisiert den Kamera-Manager.
+- **[support/HOTLINE_PROMPT_FELIX.md](support/HOTLINE_PROMPT_FELIX.md):** neue Top-Bar-Status-Texte
+  `KEINE NIKON!`/`DCC FEHLT!` zu RUNBOOK C ergänzt (Pflicht laut CLAUDE.md bei Status-Anzeige-Änderungen).
+- **NEU [tools/nikon_smoke_test.py](tools/nikon_smoke_test.py):** statischer Vertrags-Smoke-Test (stdlib-only).
+
+**Verifiziert (statisch, KEIN echtes Nikon-Gerät am Testrechner — NICHT hardware-validiert):**
+- `py_compile` aller geänderten Dateien grün.
+- `tools/nikon_smoke_test.py`: alle Verträge grün.
+- Laufzeit-Import + `NikonCameraManager`: ohne digiCamControl sauberes `is_available()=False`/`list_cameras()=[]`;
+  Factory-Guard fällt bei kaputtem Import sauber auf Webcam zurück.
+- Unit-Test `apply_settings_to_config`: DSLR+nikon bleibt nikon, DSLR ohne Angabe→canon, Müll→canon,
+  kein-DSLR→`camera_type` unangetastet (6/6 Fälle korrekt).
+- **Adversariale Multi-Agent-Review (14 Agenten):** 7 Findings bestätigt, 2 widerlegt. Behoben: fehlender
+  Kamera-Sync im PIN-2015-Reload (minor) + ungeschützter Nikon-Import (minor). Der Major-Freeze
+  (`initialize()` bei digiCamControl-Kaltstart auf dem UI-Thread) ist durch den **Auto-Start-Warmup**
+  (s.o.) entschärft — DCC läuft beim ersten Capture i.d.R. schon. Dokumentiert für den Hardware-Test
+  (alle Nikon-only, 0 Live-Flotten-Impact): ~1.5 s Status-Check-Hitch, Doppel-Capture im Fehlerfall,
+  Capture-Erfolg per Antworttext, sowie der Restfall „DCC stirbt zur Laufzeit" (dann greift wieder der
+  Auto-Launch in `initialize()`). Widerlegt u.a.: `dslr_camera_type` müsse in `_MACHINE_SETTINGS_KEYS`
+  (der `or camera_type`-Fallback + geschütztes `camera_type` garantiert, dass Nikon einen OTA-Verlust übersteht).
+
+**Offen:** Hardware-Test mit echter D3300 (LiveView + Capture End-to-End) + die o.g. Nikon-Runtime-Punkte
+auf dem Testgerät prüfen. Siehe [TODO.md](TODO.md).
+
+---
+
 ## 2026-06-19
 
 ### Bugfix: Druck-Korrektur (2015er-Menü) überlebt Neustart jetzt dauerhaft

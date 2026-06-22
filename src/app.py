@@ -15,7 +15,7 @@ import random
 import atexit
 
 from src.config.config import load_config, reset_event_defaults, save_config
-from src.camera import get_camera_manager, CANON_AVAILABLE
+from src.camera import get_camera_manager, CANON_AVAILABLE, NIKON_AVAILABLE
 from src.storage.local import get_shared_usb_manager
 from src.storage.local import LocalStorage
 from src.storage.booking import get_booking_manager, BookingManager
@@ -88,8 +88,12 @@ class PhotoboothApp:
 
         # Manager initialisieren
         camera_type = config.get("camera_type", "webcam")
-        self.camera_manager = get_camera_manager(camera_type)
-        logger.info(f"Kamera-Typ: {camera_type} (Canon verfügbar: {CANON_AVAILABLE})")
+        self._camera_type = camera_type
+        self.camera_manager = get_camera_manager(camera_type, config=self.config)
+        logger.info(
+            f"Kamera-Typ: {camera_type} "
+            f"(Canon verfügbar: {CANON_AVAILABLE}, Nikon verfügbar: {NIKON_AVAILABLE})"
+        )
         self._pump_startup_loading_screen()
 
         # Webcam: Automatisch beste EXTERNE Kamera wählen
@@ -195,6 +199,8 @@ class PhotoboothApp:
 
             # BookingSettings auf Config anwenden (allow_single_mode, gallery_enabled, etc.)
             self.booking_manager.apply_settings_to_config(self.config)
+            # Buchung kann camera_type überschrieben haben (DSLR) → Manager angleichen.
+            self._sync_camera_manager_with_config()
 
         self._refresh_startup_loading_screen()
         self._pump_startup_loading_screen()
@@ -288,6 +294,64 @@ class PhotoboothApp:
                 logger.debug(f"Firmennetzwerk-Trigger fehlgeschlagen: {e}")
 
         logger.info("PhotoboothApp initialisiert")
+
+        # digiCamControl automatisch vorstarten (nur Nikon) – der Betreiber muss es
+        # NICHT mehr manuell vor der App starten. Läuft im Hintergrund, blockiert
+        # den Startup nicht und entschärft den Kaltstart-Freeze beim ersten Capture.
+        self._warmup_nikon_async()
+
+    def _warmup_nikon_async(self):
+        """Startet digiCamControl im Hintergrund vor (nur wenn camera_type == 'nikon').
+
+        Erspart das manuelle Vorstarten von digiCamControl und verhindert, dass
+        initialize() beim ersten Session-Start den Kaltstart-Poll (bis
+        startup_timeout_seconds) auf dem UI-Thread durchläuft. Komplett im
+        Daemon-Thread – kein Block des UI-/Startup-Threads. Idempotent (no-op,
+        wenn der Webserver schon antwortet oder kein Nikon-Manager aktiv ist).
+        """
+        if self.config.get("camera_type") != "nikon":
+            return
+        manager = self.camera_manager
+        if not hasattr(manager, "ensure_server_running"):
+            return
+
+        def _warmup():
+            try:
+                ok = manager.ensure_server_running()
+                logger.info(f"digiCamControl-Warmup: {'bereit' if ok else 'nicht erreichbar'}")
+            except Exception as e:
+                logger.warning(f"digiCamControl-Warmup fehlgeschlagen: {e}")
+
+        threading.Thread(target=_warmup, daemon=True, name="nikon-warmup").start()
+
+    def _sync_camera_manager_with_config(self):
+        """Baut den Kamera-Manager neu, wenn sich camera_type geändert hat.
+
+        Nötig, weil Buchungs-/Event-Reloads und das Admin-Speichern den
+        camera_type ändern können (z.B. webcam→nikon). Bleibt der Typ gleich,
+        wird nur die Config in den Manager durchgereicht (Nikon braucht sie für
+        die digiCamControl-Pfade) – kein teurer Re-Init.
+        """
+        camera_type = self.config.get("camera_type", "webcam")
+
+        if getattr(self, "_camera_type", None) == camera_type:
+            if hasattr(self.camera_manager, "update_config"):
+                self.camera_manager.update_config(self.config)
+            return
+
+        logger.info(f"Kamera-Typ geändert: {self._camera_type} -> {camera_type}")
+        try:
+            if self.camera_manager and self.camera_manager.is_initialized:
+                self.camera_manager.release()
+        except Exception as e:
+            logger.warning(f"Alte Kamera konnte nicht freigegeben werden: {e}")
+
+        self._camera_type = camera_type
+        self.camera_manager = get_camera_manager(camera_type, config=self.config)
+
+        # Bei Wechsel auf Nikon digiCamControl im Hintergrund vorstarten.
+        if camera_type == "nikon":
+            self._warmup_nikon_async()
 
     def _show_startup_loading_screen(self):
         """Zeigt sehr früh einen einfachen Ladescreen im Kiosk-Fenster."""
@@ -1416,6 +1480,7 @@ class PhotoboothApp:
             if process_settings:
                 if self.booking_manager.reload_from_cache():
                     self.booking_manager.apply_settings_to_config(self.config)
+                    self._sync_camera_manager_with_config()
                     self._update_booking_display()
                     applied.append("Einstellungen")
 
@@ -2176,6 +2241,17 @@ class PhotoboothApp:
                                 _edsdk.EDSDK_DLL.EdsRelease(ref)
                             except Exception:
                                 pass
+            elif camera_type == "nikon":
+                # Nikon läuft über digiCamControl (HTTP). Wenn die Kamera bereits
+                # aktiv ist, KEINE weiteren Anfragen (kein Eingriff in Session).
+                if self.camera_manager.is_initialized:
+                    pass
+                else:
+                    from src.camera.nikon import NikonCameraManager
+                    if not NikonCameraManager.is_available(self.config):
+                        problem_text = "DCC FEHLT!"
+                    elif not NikonCameraManager.list_cameras(self.config):
+                        problem_text = "KEINE NIKON!"
             else:
                 # Webcam: Prüfen ob Kamera erreichbar ist
                 cam_idx = self.config.get("camera_index", 0)
@@ -2363,6 +2439,7 @@ class PhotoboothApp:
             self.config = dialog.result
             apply_locale_to_config(self.config)
             save_config(self.config)
+            self._sync_camera_manager_with_config()
             logger.info("Admin-Einstellungen gespeichert")
 
             try:
@@ -2469,6 +2546,7 @@ class PhotoboothApp:
             self._update_booking_display()
             self.booking_manager.apply_settings_to_config(self.config)
             reset_event_defaults(self.config)
+            self._sync_camera_manager_with_config()
             self._app_uploaded_template_active = False
             self._user_template_override = False
             logger.info(f"Neue Buchung geladen: {new_booking_id}")

@@ -92,7 +92,7 @@ Bei unklarer Aussage („Geht nicht"): „Geht es um den Drucker, das Tablet, od
 | „Box geht nicht an", „Alles dunkel", Tablet/Box ohne Strom | **STROM-GATE** |
 | „Bildschirm schwarz", „Touch reagiert nicht", „Startknopf löst nicht aus" | **RUNBOOK D** |
 | „Druckt nicht", „Papierstau", „Streifen", „Rechtecke auf Bild" | **RUNBOOK A** |
-| „KEINE KAMERA!", „KAMERA FEHLER!" oder „EDSDK FEHLT!" oben am Display | **RUNBOOK C** |
+| „KEINE KAMERA!", „KAMERA FEHLER!", „EDSDK FEHLT!", „KEINE NIKON!" oder „DCC FEHLT!" oben am Display | **RUNBOOK C** |
 | „Speichert nicht", USB-Probleme | **RUNBOOK B** |
 | „Layout", „Template", „Wunsch-Template", „1 statt 4 Bilder", „Limit erreicht", „mehr Ausdrucke" | **RUNBOOK E** |
 | „Fotos dunkel", „Blitz geht nicht", „Licht in der Box aus" | **RUNBOOK F** |
@@ -177,11 +177,13 @@ Frage: „Sehen Sie oben rechts ein USB-Symbol? Ist es grün, oder blinkt es rot
 
 ## RUNBOOK C — KAMERA
 
-Frage: „Sehen Sie oben rechts ein Kamera-Symbol mit einem Text wie 'KEINE KAMERA!', 'KAMERA FEHLER!' oder 'EDSDK FEHLT!'?"
+Frage: „Sehen Sie oben rechts ein Kamera-Symbol mit einem Text wie 'KEINE KAMERA!', 'KAMERA FEHLER!', 'EDSDK FEHLT!', 'KEINE NIKON!' oder 'DCC FEHLT!'?"
 
 - **Ja** → Hard-Reset Tablet (siehe Runbook D), danach erneut prüfen
 - **Symbol weg** → Kamera erkannt, fertig
 - **Symbol bleibt** → **Callback**
+
+(Hinweis: 'KEINE NIKON!' / 'DCC FEHLT!' betreffen nur Boxen mit Nikon-DSLR über digiCamControl. Gleiche Vorgehensweise: Hard-Reset, bleibt es → Callback.)
 
 ---
 

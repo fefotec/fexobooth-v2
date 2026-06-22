@@ -12,6 +12,38 @@ Aufgabenliste mit Prioritäten.
 
 ---
 
+## Nikon D3300 DSLR (digiCamControl) — Hardware-Test offen 📷
+
+> Code-Port ist fertig + statisch/Unit-verifiziert (kein echtes Nikon-Gerät am Testrechner).
+> Vertrag/Details: [ROADMAP.md](ROADMAP.md) → „Nikon D3300 … (Variante 2)".
+
+- [ ] **Windows-Testgerät mit Nikon D3300 vorbereiten:** digiCamControl installieren, Kamera per USB
+  verbinden, in digiCamControl unter *Settings → Webserver* den Webserver aktivieren (Port `5513`).
+  **Webserver-Aktivierung ist ein einmaliger Schritt** (persistente digiCamControl-Einstellung);
+  das **Starten** von digiCamControl übernimmt die App ab jetzt automatisch (kein manuelles Vorstarten).
+- [ ] **In fexobooth-v2 `camera_type = nikon` setzen** (Admin-Menü → Kamera-Typ „nikon") und
+  Box im Dev-Mode starten (`python src/main.py --dev`). Prüfen: Log „digiCamControl-Warmup: bereit"
+  erscheint kurz nach dem Start (= Auto-Start funktioniert), digiCamControl-Fenster kommt hoch.
+- [ ] **LiveView prüfen:** kommt ein Bild im Session-Screen? (Log: „Nikon/digiCamControl bereit: …")
+- [ ] **Capture prüfen:** löst die Kamera aus, kommt das Vollbild zurück? (Single-Command `capture`,
+  Fallback `LiveView_Capture`, dann `lastcaptured`/`/image/`/`/preview.jpg`).
+- [ ] **Erst nach erfolgreichem Hardware-Test** als „hardware-validiert" in ROADMAP/FORTSCHRITT markieren.
+
+**Beim Hardware-Test mit-härten (aus Multi-Agent-Review, alle Nikon-only, 0 Live-Flotten-Impact):**
+- [x] **(major) UI-Freeze in `initialize()`** bis ~24 s beim digiCamControl-Kaltstart — **entschärft per
+  Auto-Start-Warmup** (`_warmup_nikon_async` startet DCC beim App-Start off-thread vor). Auf dem Miix
+  noch **verifizieren** und den Restfall „DCC stirbt zur Laufzeit" prüfen (dann läuft wieder der
+  Auto-Launch in `initialize()` auf dem UI-Thread). Bei Bedarf dort zusätzlich fail-fast/off-thread.
+- [ ] **(minor) Status-Check-Hitch** ~1.5 s: `_check_camera_status`-Nikon-Zweig ruft `list_cameras()` (urlopen)
+  auf dem UI-Thread, wenn DCC-Exe da ist aber Server nicht antwortet. Ggf. kürzeres Timeout/Server-Vorabprobe.
+- [ ] **(minor) Doppel-Capture** im Fehlerfall: schlägt `capture_photo()` mit `None` fehl, ruft der
+  Webcam-Fallthrough in `session.py` `get_high_res_frame()` → erneut `capture_photo()` (bis ~2×10 s).
+  Spiegelt Canon-Verhalten; ggf. DSLR-Pfad autoritativ machen + Log-Zeile.
+- [ ] **(minor) Capture-Erfolg per Antworttext** (`"error" not in response`): leere/OK-Antwort gilt fälschlich
+  als Erfolg → bis Timeout warten vor Fallback. Optional: leere Antwort als Fehler werten.
+
+---
+
 ## App-Plattform-Fundament (kommendes Box-Update) 🧱
 
 > Einmaliges, zukunftssicheres Fundament, damit danach Features rein per **App-Update**

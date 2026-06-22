@@ -915,6 +915,12 @@ class AdminDialog(ctk.CTkToplevel):
                 # Settings auf Config übertragen
                 app.booking_manager.apply_settings_to_config(app.config)
 
+                # Kamera-Manager an evtl. geänderten camera_type angleichen (z.B.
+                # DSLR-Buchung). MUSS auf dem Main-Thread laufen (release()/Rebuild),
+                # daher per self.after(0, ...) marshallen – wie in service.py.
+                if hasattr(app, "_sync_camera_manager_with_config"):
+                    self.after(0, app._sync_camera_manager_with_config)
+
                 # Template in der App neu laden
                 if hasattr(app, "_restore_cached_template"):
                     try:
@@ -2510,16 +2516,19 @@ class AdminDialog(ctk.CTkToplevel):
             text_color=COLORS["text_secondary"]
         ).pack(anchor="w", pady=(5, 5))
         
-        # Prüfen ob Canon EDSDK verfügbar ist
+        # Prüfen ob Canon EDSDK verfügbar ist (Nikon läuft über digiCamControl/HTTP)
         try:
-            from src.camera import CANON_AVAILABLE
+            from src.camera import CANON_AVAILABLE, NIKON_AVAILABLE
         except:
             CANON_AVAILABLE = False
-        
+            NIKON_AVAILABLE = True
+
         camera_types = ["webcam"]
         if CANON_AVAILABLE:
             camera_types.append("canon")
-        
+        if NIKON_AVAILABLE:
+            camera_types.append("nikon")
+
         current_type = self.config_data.get("camera_type", "webcam")
         
         self.camera_type_dropdown = ctk.CTkOptionMenu(
@@ -2655,6 +2664,16 @@ class AdminDialog(ctk.CTkToplevel):
                 logger.info(f"Canon Kameras gefunden: {len(canon_cams)}")
             except Exception as e:
                 logger.warning(f"Canon Kamera-Suche Fehler: {e}")
+        elif camera_type == "nikon":
+            # Nikon Kameras via digiCamControl
+            try:
+                from src.camera.nikon import NikonCameraManager
+                nikon_cams = NikonCameraManager.list_cameras(self.config_data)
+                for cam in nikon_cams:
+                    cameras.append(f"[{cam['index']}] 📷 Nikon/digiCamControl {cam['name']}")
+                logger.info(f"Nikon Kameras gefunden: {len(nikon_cams)}")
+            except Exception as e:
+                logger.warning(f"Nikon Kamera-Suche Fehler: {e}")
         else:
             # Webcams via OpenCV + echte Gerätenamen
             # Interne Kameras und Ghost-Einträge werden ausgefiltert
@@ -2682,7 +2701,10 @@ class AdminDialog(ctk.CTkToplevel):
                 logger.warning(f"Webcam-Suche Fehler: {e}")
 
         if not cameras:
-            cameras = ["[0] Standard-Kamera"]
+            if camera_type == "nikon":
+                cameras = ["[0] Nikon via digiCamControl"]
+            else:
+                cameras = ["[0] Standard-Kamera"]
 
         return cameras
     
@@ -3542,8 +3564,13 @@ class AdminDialog(ctk.CTkToplevel):
         
         # Kamera - nur wenn Tab erstellt wurde
         if hasattr(self, 'camera_type_dropdown'):
-            self.config_data["camera_type"] = self.camera_type_dropdown.get()
-            
+            selected_camera_type = self.camera_type_dropdown.get()
+            self.config_data["camera_type"] = selected_camera_type
+            # DSLR-Auswahl merken, damit ein Booking-/Event-Reload sie respektiert
+            # (sonst springt apply_settings_to_config wieder hart auf Canon).
+            if selected_camera_type in ("canon", "nikon"):
+                self.config_data["dslr_camera_type"] = selected_camera_type
+
             # Kamera-Index
             cam_selection = self.camera_dropdown.get()
             # Extrahiere Index aus "[0] Kamera..." oder "[0] 📷 Canon..."
