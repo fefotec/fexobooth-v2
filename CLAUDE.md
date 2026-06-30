@@ -72,6 +72,14 @@ fexobooth-v2/
 
 ---
 
+## Mehrsprachigkeit – Geräte-Touchscreen (Pflegepflicht)
+
+Die Touchscreen-Texte des Geräts laufen über `src/i18n.py`. Das `locale`-Feld kommt vom Dashboard via `settings.json` (`NxSettingsJsonService::localeForCountry` in `adminFexobox`) – **beide Seiten** müssen für ein neues Land/eine neue Sprache gepflegt werden. Aktiv: **DE, FR**.
+
+**Bei jedem neuen sichtbaren Gerät-String automatisch (ohne Aufforderung):**
+1. In `src/i18n.py` für **alle** Sprachen ergänzen.
+2. Im **repo-übergreifenden** Übersetzungs-Inventar vermerken: [`../fexobox-next/docs/MULTILINGUAL-UEBERSETZUNGS-PROMPT.md`](../fexobox-next/docs/MULTILINGUAL-UEBERSETZUNGS-PROMPT.md) → **Abschnitt 0.000** (Fläche „Gerät/Touchscreen") + Detail-Mechanik in **Abschnitt 3.4 L**. So vergisst ein „Übersetze alles auf {Sprache}"-Run das Gerät nicht.
+
 ## Verwandte Dokumentation
 
 - [README.md](README.md) - Projekt-Übersicht und Architektur
