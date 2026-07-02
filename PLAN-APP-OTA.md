@@ -83,7 +83,7 @@ Handy hochgeladenen** ZIP statt einem GitHub-Download.
   - Nur anwenden, wenn Box **idle** (Startbildschirm), sonst ablehnen/markieren.
 - [ ] **updater.py prüfen:** `apply_update_and_restart(zip_path)` nimmt schon einen
   lokalen ZIP-Pfad? (download_update ist getrennt von apply → vermutlich direkt nutzbar).
-- [ ] **Versionsanzeige auf den Start-Screen** (dezent, Ecke) — deckt auch HANDOFF-P5 ab.
+- [x] **Versionsanzeige auf den Start-Screen** (dezent, Ecke) — erledigt in v2.4.8.
 
 ### Dashboard (adminFexobox) — additiv, live
 - [ ] Speicher für aktuelle Box-Software: Version, ZIP (Storage/FTP), SHA256, Größe, Changelog.

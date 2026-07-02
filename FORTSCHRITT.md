@@ -4,6 +4,275 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-07-02
+
+### 🎉 Nikon D3300 HARDWARE-VALIDIERT + Performance-Analyse ausgewertet → 4 Fixes (Build 2.4.12)
+
+**Meilenstein:** Testlog `fexobooth_20260702_114253.log` (Fotobox, Build 2.4.11): Die Nikon D3300
+läuft über die FexoNikonBridge — Warmup „bereit" in ~1,4 s, LiveView 640×424, **4 Captures in
+voller 6000×4000-Auflösung**, kein sichtbares Fremdfenster. Variante 3 funktioniert.
+
+**Performance-Analyse (die neue LIVEVIEW-PERF/UI-HITCH-Messung hat alle Bremsen exakt beziffert):**
+
+| Befund | Messwert | Ursache |
+|---|---|---|
+| LiveView bricht mit jedem Foto ein | 7,7 → 3,5 → 2,4 → 1,8 fps (Aufbereitung 64→551 ms/Frame) | `_apply_template_overlay` skalierte die bereits aufgenommenen 6000×4000-Fotos **bei jedem Frame** neu (+~160 ms pro Foto pro Frame) |
+| Dauer-UI-Blockade während Fotoanzeige | ~380 ms pro 100-ms-Tick, UI-HITCH ~280–450 ms im Halbsekundentakt über die ganze 60-s-Anzeige | Statisches 24-MP-Foto wurde 10×/s neu auf Bildschirmgröße skaliert |
+| Filter-Klick „gefühlt ewig" | (nicht instrumentiert, jetzt mit Timing-Log) | Filter lief auf allen **Originalen** (4 × 24 MP = 96 MP pro Klick), erst danach Verkleinerung |
+| Screenwechsel zu „final" friert ein | UI-HITCH **3347 ms** | Finales Rendern + Speichern liefen synchron im UI-Thread |
+| Nikon-Capture | konstant ~4,1 s sichtbar | Kamera-seitig (AF + 24-MP-Transfer) — akzeptabel, Feintuning später (JPEG-Größe M / NoAf) |
+
+**Fixes (alle in `2.4.12`):**
+- **[session.py](src/ui/screens/session.py):** (F1) Fotoanzeige gecacht — statisches Foto wird pro
+  Foto nur noch EINMAL skaliert (`_display_photo_cached`, Invalidierung bei neuem Capture).
+  (F2) Overlay-**Basis-Canvas** gecacht — Fotos werden nur noch beim Foto-Wechsel in ihre Boxen
+  skaliert, pro Frame bleiben Kopie + LiveView-Paste + Composite.
+- **[filter.py](src/ui/screens/filter.py):** (F3) Alle Vorschauen rechnen auf ~1000-px-**Arbeitskopien**
+  (einmal erstellt) statt auf den Originalen; zusätzlich werden **alle Filter sequentiell
+  vorgerendert** (Precache im Hintergrund) → Antippen wechselt sofort. Timing-Logs neu
+  (`Filter-Vorschau 'x' gerendert: …ms`). Druckbild rendert weiter aus den Originalen.
+- **[final.py](src/ui/screens/final.py):** (F4) Rendern + Speichern im **Worker-Thread**; Screen
+  erscheint sofort mit „Dein Bild wird erstellt..." (neuer i18n-Key `final.rendering`, alle
+  7 Sprachen; Platzhalter entfernt auch das Bild der Vorsession), Druck-Button bis
+  Fertigstellung gesperrt. Timing-Log `Final-Rendern (Hintergrund): …ms`.
+- **[src/i18n.py](src/i18n.py):** `final.rendering` in DE/EN/FR/NL/IT/ES/PL; Übersetzungs-Inventar
+  in `../fexobox-next/docs/MULTILINGUAL-UEBERSETZUNGS-PROMPT.md` (0.000 + 3.4 L) gepflegt.
+
+**Erwartung für den Nachtest:** LiveView konstant ~7–8 fps über alle 4 Fotos (statt Einbruch auf
+1,8), keine UI-HITCH-Serien während der Fotoanzeige, Filterwechsel < 1 s (nach Precache sofort),
+Final-Screen ohne Einfrieren. **Verifiziert:** `py_compile` OK, Nikon-Smoke-Test 86/86 OK.
+
+---
+
+### Dev-Mode-Performance-Messung für den Miix-Analyse-Lauf eingebaut
+
+**Ziel:** Vor dem 2.4.11-Release soll ein Dev-Log vom Lenovo-Tablet zeigen, wo die Zeit wirklich
+hingeht (Webcam-Foto dauert zu lang; Gesamteindruck soll flüssiger werden).
+
+**Bestandsaufnahme:** Die Webcam-Capture-Strecke ist bereits voll instrumentiert
+(`High-Res Capture Timing: set/verify/grab/read/restore`, `Capture-Worker Timing`,
+`Sichtbare Capture-Wartezeit`, `Preview-Restore Timing` — inkl. `fourcc`-Ausgabe).
+Was fehlte: Messung der LiveView-Schleife und der UI-Thread-Hänger.
+
+**Änderung (beides NUR im Developer Mode aktiv, Live-Betrieb 0 Overhead):**
+- **[src/ui/screens/session.py](src/ui/screens/session.py):** `LIVEVIEW-PERF`-Summenzeile alle ~5 s
+  (effektive fps vs. Ziel, avg/max ms pro Frame, getrennt Kamera-Read vs. Aufbereitung+Anzeige,
+  übersprungene Frames) + Messung der Fotoanzeige-Refreshes (statisches Foto wird derzeit alle
+  100 ms neu skaliert — Verdachtskandidat).
+- **[src/app.py](src/app.py):** `UI-HITCH`-Monitor: after(200ms)-Herzschlag loggt, wenn der
+  Tk-Hauptthread >200 ms blockiert war — die Zeitmarke zeigt, welche Aktion davor lief
+  (Sekunden-Polls Drucker/USB/Kamera, Screen-Wechsel, synchrone Arbeit).
+
+**Verdachtskandidaten aus dem Code (mit dem Log zu bestätigen):** Webcam-`fourcc` (YUY2 statt MJPG
+macht 1080p-Umschaltung+Read langsam), Auflösungs-Umschaltung hinter Countdown/Blitz vorziehen,
+Fotoanzeige-Refresh cachen, Countdown-Ziffern vorrendern (Font+8 Schatten pro Frame),
+Sekunden-Polls auf dem UI-Thread.
+
+---
+
+### Nikon-Neustart: digiCamControl verworfen, eigene unsichtbare FexoNikonBridge (Build 2.4.11)
+
+**Auslöser:** Testlog `D:\fexobooth_20260702_090008.log` (Build 2.4.10): Der automatisch gestartete
+`CameraControl.exe` öffnet ein **sichtbares digiCamControl-Fenster** vor FexoBooth (Kiosk-No-Go,
+verlangsamt den Start) und der Webserver `127.0.0.1:5513` antwortet **trotzdem nicht** — die
+Webserver-Aktivierung ist eine persistente DCC-Einstellung, die die Standardinstallation nie setzt.
+Der digiCamControl-App-Ansatz (Variante 2) ist damit **verworfen**.
+
+**Recherche (Multi-Agent, 7 Themen, jede Kernaussage adversarial verifiziert, 2026-07-02):**
+- Offizielles Nikon-SDK: **kein Modul für die gesamte D3xxx-Serie** → MAID/NikonCSWrapper unmöglich.
+- Nikon Webcam Utility: D3300 gar nicht unterstützt (und nur 1024×768-Webcam, kein Capture).
+- Camera Control Pro 2 / NX Tether: D3xxx nie unterstützt; CCP2 eingestellt, nur GUI.
+- libgphoto2 auf Windows: Zadig/WinUSB-Treibertausch nötig (killt MTP, kein Hotplug) → nicht kiosk-tauglich.
+- **dslrBooth unterstützt die D3300 inkl. LiveView** per direktem USB-PTP → eigener PTP-Stack ist der Weg.
+- **CameraControl.Devices** (Kern von digiCamControl, **MIT-Lizenz**): D3300 explizit im Code gemappt
+  (`"D3300"` → `NikonD600Base`), rohes PTP über die Windows-WPD-API, headless ohne GUI nutzbar.
+
+**Änderung (Variante 3, Build-Kandidat `2.4.11`):**
+- **NEU [bridge/FexoNikonBridge/](bridge/README.md):** eigener unsichtbarer C#-Hintergrundprozess
+  (.NET Framework 4.8 = auf Win10/11 vorinstalliert, `CREATE_NO_WINDOW`), Motor `CameraControl.Devices`.
+  Protokoll: JSON über stdin/stdout + längenpräfixierte JPEG-Binärdaten (keine Ports, keine
+  Firewall-Dialoge). Kommandos: `ping/list/init/lv_start/frame/capture/lv_stop/release/quit`.
+- **[src/camera/nikon.py](src/camera/nikon.py):** komplett neu als Bridge-Client (gleiches
+  Drop-in-Interface wie Canon; `ensure_bridge_running()` für den Warmup; Developer-Diagnose
+  loggt Bridge-Status + alle geprüften EXE-Pfade; kein `tasklist`, kein HTTP mehr).
+- **[src/app.py](src/app.py):** Warmup startet jetzt die unsichtbare Bridge statt DCC;
+  Top-Bar-Status `BRIDGE FEHLT!` (i18n-Key `topbar.camera_bridge_missing`, alle 8 Sprachen).
+- **[src/config/defaults.py](src/config/defaults.py):** `nikon_digicamcontrol` → `nikon_bridge`
+  (exe_path + Timeouts).
+- **Rückbau:** digiCamControl-Download/-Einbettung aus [build_installer.bat](build_installer.bat),
+  [installer.iss](installer.iss) und [.github/workflows/build-release.yml](.github/workflows/build-release.yml)
+  entfernt. CI baut stattdessen die Bridge (`dotnet build`, `continue-on-error`) und legt sie unter
+  `{app}\bridge\` bei; lokale Builds ohne .NET-SDK bauen weiter, nur ohne Nikon-Support.
+- **[support/HOTLINE_PROMPT_FELIX.md](support/HOTLINE_PROMPT_FELIX.md):** `DCC FEHLT!` → `BRIDGE FEHLT!`.
+- **[tools/nikon_smoke_test.py](tools/nikon_smoke_test.py):** komplett auf den Bridge-Vertrag umgestellt,
+  prüft zusätzlich, dass der DCC-Ansatz restlos entfernt ist.
+
+**Verifiziert (KEIN echtes Nikon-Gerät am Entwicklungsrechner):**
+- Smoke-Test: 82/82 Checks OK; `py_compile` aller geänderten Dateien OK.
+- End-to-End-Protokolltest gegen eine protokollgetreue Fake-Bridge: 11/11 OK
+  (Spawn → ping → list → init → LiveView-Frame 640×424 → Vollbild-Capture 6000×4000 →
+  release → Prozess-Stop).
+- Ohne Bridge-EXE: sauberes `is_available()=False` / `list_cameras()=[]` / `initialize()=False`.
+
+**Multi-Agent-Review (3 Linsen: Python-Client, C#-API-Abgleich gegen echte digiCamControl-Quellen,
+Integration; jedes Finding adversarial verifiziert) — 15 bestätigte Findings, alle gefixt:**
+- **(critical) Eingefrorener Cache-Frame als „Foto":** Stirbt Bridge/Kamera mitten in der Session, lieferte
+  `get_frame` unbegrenzt den letzten Frame; der Capture-Fallback hätte ein Minuten altes Standbild gedruckt.
+  → Stale-Grenze 1,5 s (`_recent_cached_frame`), danach `None`.
+- **(critical) Kein Recovery nach Bridge-Tod:** `_is_initialized` blieb True, Bridge wurde nie neu gestartet,
+  Status-Check schwieg. → `_handle_bridge_error()` in allen Request-Fehlerpfaden: setzt Status zurück,
+  nächste Session re-initialisiert (startet die Bridge neu). Per Test verifiziert (Kill + Recovery).
+- **(critical) x64/x86:** Die DLLs des 2018er-NuGet-Pakets sind 32-bit → `PlatformTarget` auf **x86**
+  (sonst BadImageFormatException bei jedem Kamera-Aufruf).
+- **(critical) OTA lieferte `bridge/` nie aus:** In-App-OTA (`src/updater.py`-BAT) und
+  `update_from_github.bat` kopieren jetzt `bridge/` mit (inkl. `taskkill` gegen gelockte EXE).
+  Achtung Selbst-Updater-Bootstrap: Das ERSTE Update auf 2.4.11 läuft noch mit dem alten BAT →
+  für die Nikon-Testbox den **Installer** nutzen, nicht OTA.
+- **(major)** UI-Hänger: `request()`-Timeout deckt jetzt auch das Lock-Warten ab; Warmup verbindet die
+  Kamera zusätzlich vor (`init` im Hintergrund), damit die erste Session keinen Kamera-Connect auf dem
+  UI-Thread abwartet. **(major)** Tablet-Webcam konnte als „Nikon" gebunden werden → `DetectWebcams=false`
+  + gezielte Geräteauswahl. **(major)** `[STAThread]` + blockierendes ReadLine hätte WPD-COM-Events
+  verhungern lassen → MTA. **(major)** Hot-Plug: `list` scannt jetzt gedrosselt (3 s) neu.
+- **(minor)** AF-Fehlschlag im Dunkeln → `CapturePhotoNoAf`-Fallback; Reader-Queue fest an ihren
+  Bridge-Prozess gebunden (kein EOF-Poisoning nach Neustart); CI-Gate: Run scheitert, wenn die Bridge
+  fehlt (außer Input `allow_no_bridge=true`); Smoke-Test prüft jetzt auch beide OTA-Pfade.
+- Widerlegt (kein Fix nötig): angebliches stdout-Fehlerbanner der Library.
+
+**Verifiziert nach den Fixes:** Smoke-Test 86/86 OK; Fake-Bridge-E2E 19/19 OK (inkl. neuem
+Crash-Szenario: Bridge-Kill → LiveView liefert `None` statt Standbild → `initialize()` startet
+Bridge neu → LiveView+Capture wieder da); `py_compile` OK.
+
+**Nachtrag (gleicher Tag): Bridge lokal gebaut + gegen echte EXE getestet.**
+- .NET-SDK 8 auf dem Work-PC installiert; csproj um `Microsoft.NETFramework.ReferenceAssemblies`
+  ergänzt → `dotnet build` funktioniert ohne Visual Studio. **Build: 0 Fehler.**
+- Realtest deckte auf: Die Library schreibt Banner (`**CRITICAL ERROR** ... EDSDK.dll is missing`,
+  Canon-Teil, für Nikon irrelevant) **auf stdout in den Protokollstrom** — das im Review widerlegte
+  Finding war also doch real. Fix: `Console.SetOut(TextWriter.Null)` vor Library-Nutzung; unser
+  Protokoll schreibt über den vorher gesicherten Raw-Handle. Ausgabe danach sauber.
+- Echte-Bridge-Test 8/8 OK: EXE-Suchpfad, unsichtbarer Spawn, ping, `list` = `[]` ohne Kamera,
+  `init` scheitert ohne Kamera sauber nach 15 s („Keine Nikon-Kamera gefunden"), sauberer Stop.
+
+**Offen (Blocker):** Nur noch der Hardware-Test mit echter D3300 auf der Fotobox
+(Installer `2.4.11` lokal bauen → USB → offline installieren; Checkliste in TODO.md).
+Der CI-Build-Schritt ist damit optional (lokaler Build bewiesen), sollte beim nächsten Push
+aber einmal mitlaufen.
+
+---
+
+### Nikon-Testlog 2.4.9 ausgewertet: DCC fehlt auf dem Tablet, Installer legt DCC jetzt bei (VERALTET — Ansatz verworfen, siehe oben)
+
+**Log:** `D:\fexobooth_20260702_083043.log` vom Test-Tablet.
+
+**Befund:** Der Diagnosebuild läuft korrekt und die App ist auf `camera_type=nikon` gestellt. Der Fehler
+liegt weiterhin vor dem eigentlichen Nikon-/LiveView-/Capture-Zugriff:
+- `/session.json` auf `http://127.0.0.1:5513` antwortet nicht.
+- Alle geprüften `CameraControl.exe`-Pfade sind `FEHLT` (`Program Files`, `Program Files (x86)`,
+  `%LOCALAPPDATA%`, `%APPDATA%`, `%ProgramData%`).
+- Deshalb ist `DCC FEHLT!` in der oberen Leiste korrekt: digiCamControl ist auf dem Tablet nicht installiert
+  bzw. nicht auffindbar.
+
+**Zusatzbefund:** Das neue Diagnose-Logging selbst erzeugte bei `tasklist` auf dem deutschen Windows eine
+`UnicodeDecodeError`-Thread-Exception. Das war Log-Rauschen, nicht die Nikon-Ursache.
+
+**Änderung:**
+- **[src/camera/nikon.py](src/camera/nikon.py):** `tasklist` wird nicht mehr mit `text=True` gelesen, sondern
+  als Bytes und robust mit `errors="replace"` decodiert.
+- **[src/__init__.py](src/__init__.py):** Testbuild auf `2.4.10` angehoben.
+- **[build_installer.bat](build_installer.bat) + [installer.iss](installer.iss):** Lokale Builds laden den
+  offiziellen stabilen digiCamControl-Installer `2.1.7.0`, prüfen SHA256 und betten ihn in die FexoBooth-Setup.exe
+  ein. Beim Installieren wird DCC nur gestartet, wenn `CameraControl.exe` fehlt.
+- **[tools/nikon_smoke_test.py](tools/nikon_smoke_test.py):** Smoke-Test prüft den robusten `tasklist`-Pfad
+  und die DCC-Installer-Beilage.
+
+**Nächster Test:** `FexoBooth_Setup_2.4.10.exe` auf dem Tablet installieren. Danach muss im Log nicht mehr
+`CameraControl.exe` überall `FEHLT` stehen. Falls DCC installiert ist, aber `/session.json` weiterhin nicht
+antwortet, ist der nächste Block die einmalige Webserver-Aktivierung/Autokonfiguration in digiCamControl.
+
+---
+
+## 2026-07-01
+
+### Nikon-Diagnosebuild 2.4.9: Developer-Logging für DCC FEHLT ausgebaut
+
+**Ziel:** Christian kann auf dem Tablet keine PowerShell-/Suchbefehle ausführen. Der nächste Installer
+muss deshalb selbst genug Diagnose loggen, wenn oben `DCC FEHLT!` steht.
+
+**Änderung:**
+- **[src/__init__.py](src/__init__.py):** Build-Kandidat auf `2.4.9` angehoben, damit das nächste Log
+  eindeutig dem Diagnosebuild zugeordnet werden kann.
+- **[src/camera/nikon.py](src/camera/nikon.py):** Im Developer Mode schreibt der Nikon-Adapter jetzt
+  `NIKON-DIAGNOSE`-Blöcke mit effektiver Config (`host`, `port`, `app_path`, Timeouts), HTTP-Probe auf
+  `/session.json`, relevanten Windows-Umgebungsvariablen, allen geprüften `CameraControl.exe`-Kandidaten
+  inklusive `OK/FEHLT/ORDNER`, sowie `tasklist`-Snapshot für `CameraControl.exe`/`digiCamControl.exe`.
+- Die automatische Suche prüft zusätzlich typische Per-User-Pfade unter `%LOCALAPPDATA%`, `%APPDATA%`
+  und `%ProgramData%`.
+- **[.github/workflows/build-release.yml](.github/workflows/build-release.yml):** Testbuild-Default auf
+  `2.4.9` gesetzt und Installer-Dateiname auf die vollständige Patch-Version korrigiert.
+
+**Erwartung beim nächsten Test:** Wenn `DCC FEHLT!` wieder erscheint, stehen im Log direkt die konkreten
+Pfade und Prozess-/Webserver-Ergebnisse. Damit muss auf dem Tablet nichts manuell ausgeführt werden.
+
+---
+
+### Startscreen-Version sichtbar + lokaler Build-Bump auf 2.4.8
+
+**Ziel:** Vor dem EXE-Build muss die Box bereits eine neue Versionsnummer anzeigen, auch wenn es
+noch keinen GitHub-Release gibt.
+
+**Änderung:**
+- **[src/__init__.py](src/__init__.py):** lokale Software-Version von `2.4.7` auf `2.4.8` angehoben.
+- **[src/app.py](src/app.py):** Top-Bar links zeigt neben Logo/`FEXOBOOTH` jetzt `v2.4.8` aus derselben
+  Versionsquelle. Dadurch passt Startscreen-Anzeige, `/api/v1/status` und Installer-Build-Quelle zusammen.
+- **[PLAN-APP-OTA.md](PLAN-APP-OTA.md):** erledigten Punkt „Versionsanzeige auf den Start-Screen" abgehakt.
+
+**Wichtig:** Die Anzeige hängt nicht an einem GitHub-Release-Tag. Wer lokal die EXE/Setup baut,
+bekommt die Version aus `src/__init__.py`.
+
+---
+
+### Nikon-Hardware-Test ausgewertet: digiCamControl nicht erreichbar/gefunden
+
+**Log:** `D:\fexobooth_20260701_131311.log` vom Windows-Testgerät.
+
+**Befund:** Die App kommt noch nicht bis zum Nikon-/LiveView-/Capture-Vertrag. Sie scheitert vorher,
+weil digiCamControl weder als laufender Webserver auf `127.0.0.1:5513` antwortet noch `CameraControl.exe`
+in den bekannten Standardpfaden gefunden wird. Relevante Logstellen:
+`digiCamControl-Warmup: nicht erreichbar`, `digiCamControl nicht gefunden`,
+`Kamera konnte nicht initialisiert werden`.
+
+**Änderung:** [src/camera/nikon.py](src/camera/nikon.py) loggt beim nächsten Fehlschlag zusätzlich
+die geprüften `CameraControl.exe`-Pfade. Damit ist sofort sichtbar, ob digiCamControl fehlt oder nur
+anders installiert wurde.
+
+**Nächster Test:** digiCamControl installieren, Webserver in digiCamControl einmalig aktivieren
+(Port `5513`) oder `nikon_digicamcontrol.app_path` auf den echten `CameraControl.exe`-Pfad setzen.
+Danach muss im Log `digiCamControl-Warmup: bereit` erscheinen, bevor LiveView/Capture sinnvoll
+bewertet werden können.
+
+---
+
+### Bugfix: Top-Bar-Alarmmeldungen sind jetzt mehrsprachig
+
+**Problem:** Die sichtbaren Alarmtexte oben in der Status-Leiste blieben unabhängig von `locale`
+deutsch (`KEIN USB!`, `USB FEHLT!`, Kamera- und Druckerwarnungen).
+
+**Fix:**
+- **[src/i18n.py](src/i18n.py):** eigener `TOPBAR_TRANSLATIONS`-Block für alle unterstützten Locales
+  (`de-DE`, `de-AT`, `en-GB`, `fr-FR`, `nl-NL`, `it-IT`, `es-ES`, `pl-PL`) ergänzt.
+- **[src/app.py](src/app.py):** USB- und Kamera-Badges nutzen jetzt `t(self.config, ...)`.
+  Druckerwarnungen werden nur für die Anzeige über `_translate_topbar_printer_problem()` übersetzt;
+  die internen deutschen Fehlercodes aus `PrinterController.get_error()` bleiben unverändert für
+  Overlay-Klassifizierung, Logging und Support-Kompatibilität.
+- **[support/HOTLINE_PROMPT_FELIX.md](support/HOTLINE_PROMPT_FELIX.md):** Felix-Hinweis ergänzt:
+  Status-Leisten-Warnungen können jetzt übersetzt sein; Support soll nach Symbol/Bedeutung fragen,
+  nicht nur nach exakt deutschem Wortlaut.
+
+**Verifiziert:**
+- `python3 -m py_compile src/i18n.py src/app.py`
+- Übersetzungsabdeckungs-Check für alle neuen `topbar.*`-Keys über alle `SUPPORTED_LOCALES`.
+
+---
+
 ## 2026-06-22
 
 ### Feature: Nikon D3300 als DSLR über digiCamControl (Variante 2, wie dslrBooth)

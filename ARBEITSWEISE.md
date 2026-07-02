@@ -4,6 +4,20 @@ Diese Regeln gelten für die Zusammenarbeit zwischen Mensch und KI in diesem Pro
 
 ---
 
+## Projektabgrenzung
+
+`fexobooth-v2` ist die interne Live-Flotten-Software. Sie darf nicht mit
+`fexobooth-consumer`, Backend, Web, Portal, Checkout oder Lizenzierung vermischt werden,
+wenn Christian ausdrücklich an der internen V2 arbeitet.
+
+Für V2-Aufgaben:
+- nur `fexobooth-v2` als Zielrepo behandeln, außer Christian nennt ein weiteres Repo,
+- keine Consumer-/Backend-/Web-Pflichtprüfungen erzwingen,
+- keine Folgeprompts für das Consumer-Projekt anhängen,
+- Abschluss kurz und praktisch halten: V2-Dateien, Checks, Hardware-/Tablet-Blocker.
+
+---
+
 ## Kernprinzipien
 
 ### 1. Niemals mutmaßen - immer nachfragen

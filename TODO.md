@@ -4,6 +4,27 @@ Aufgabenliste mit Prioritäten.
 
 ---
 
+## Performance vor Release 🏎️ (Analyse-Lauf 2026-07-02 ausgewertet, Fixes in 2.4.12)
+
+> Log `fexobooth_20260702_114253.log` (Nikon-Session): 4 Bremsen identifiziert und gefixt —
+> Overlay-Foto-Skalierung pro Frame, Fotoanzeige-Refresh (380 ms/Tick), Filter auf 24-MP-Originalen,
+> Final-Rendern im UI-Thread. Details in FORTSCHRITT.md.
+
+- [ ] **Nachtest 2.4.12 auf der Fotobox** (Dev-Mode, Nikon): komplette Collage-Session + Filter
+  antippen + Druck. Erwartung: LiveView konstant ~7–8 fps über alle 4 Fotos, keine
+  `UI-HITCH`-Serien während der Fotoanzeige, Filterwechsel sofort (nach Precache),
+  `Final-Rendern (Hintergrund)` im Log statt Einfrieren. Log wieder an Claude geben.
+- [ ] **Webcam-Lauf gesondert messen** (der 2026-07-02-Lauf war Nikon): `High-Res Capture Timing`
+  inkl. `fourcc` prüfen. Falls YUY2 aktiv → MJPG erzwingen; ggf. Auflösungs-Umschaltung hinter
+  Countdown „1"/Blitz vorziehen (Umschaltung bleibt erhalten, wird nur versteckt).
+- [ ] Optional (nach Nachtest, falls Grund-fps zu niedrig): Countdown-Ziffern vorrendern
+  (Font + 8 Schatten laufen pro Frame); Basis-Anzeigepfad (CTkImage pro Frame) prüfen.
+- [ ] Nikon-Capture-Feintuning (aktuell ~4,1 s sichtbar, kameraseitig): JPEG-Größe M an der
+  D3300 testen (bleibt DSLR-Qualität, halbiert Transfer) und/oder `noaf`-Capture für
+  vorfokussierte Box-Distanz.
+
+---
+
 ## Bugs 🐞 (beim nächsten Software-Update nebenbei mitfixen)
 
 - [ ] **Filter-Screen läuft nicht automatisch ab.** Der Filter-Screen soll automatisch weiterlaufen/ablaufen, tut das aber erst, nachdem man **einmal den Filter gewechselt** hat. (Wahrscheinlich startet der Auto-Ablauf-Timer erst beim ersten Filter-Wechsel statt direkt beim Anzeigen des Screens.)
@@ -12,35 +33,45 @@ Aufgabenliste mit Prioritäten.
 
 ---
 
-## Nikon D3300 DSLR (digiCamControl) — Hardware-Test offen 📷
+## Nikon D3300 DSLR (FexoNikonBridge, Variante 3) 📷
 
-> Code-Port ist fertig + statisch/Unit-verifiziert (kein echtes Nikon-Gerät am Testrechner).
-> Vertrag/Details: [ROADMAP.md](ROADMAP.md) → „Nikon D3300 … (Variante 2)".
+> digiCamControl-App-Ansatz (Variante 2) am 2026-07-02 **verworfen** (sichtbares Fenster +
+> Webserver antwortet nie). Neu: eigene unsichtbare `FexoNikonBridge.exe` (C#/.NET 4.8,
+> Motor: MIT-Bibliothek `CameraControl.Devices`, rohes PTP über Windows-WPD — wie dslrBooth).
+> Python-Seite fertig + gegen Fake-Bridge End-to-End verifiziert.
+> Vertrag/Details: [bridge/README.md](bridge/README.md) + [ROADMAP.md](ROADMAP.md).
 
-- [ ] **Windows-Testgerät mit Nikon D3300 vorbereiten:** digiCamControl installieren, Kamera per USB
-  verbinden, in digiCamControl unter *Settings → Webserver* den Webserver aktivieren (Port `5513`).
-  **Webserver-Aktivierung ist ein einmaliger Schritt** (persistente digiCamControl-Einstellung);
-  das **Starten** von digiCamControl übernimmt die App ab jetzt automatisch (kein manuelles Vorstarten).
-- [ ] **In fexobooth-v2 `camera_type = nikon` setzen** (Admin-Menü → Kamera-Typ „nikon") und
-  Box im Dev-Mode starten (`python src/main.py --dev`). Prüfen: Log „digiCamControl-Warmup: bereit"
-  erscheint kurz nach dem Start (= Auto-Start funktioniert), digiCamControl-Fenster kommt hoch.
-- [ ] **LiveView prüfen:** kommt ein Bild im Session-Screen? (Log: „Nikon/digiCamControl bereit: …")
-- [ ] **Capture prüfen:** löst die Kamera aus, kommt das Vollbild zurück? (Single-Command `capture`,
-  Fallback `LiveView_Capture`, dann `lastcaptured`/`/image/`/`/preview.jpg`).
+- [x] **Bridge lokal gebaut + ohne Kamera getestet (2026-07-02):** .NET-SDK 8 auf dem Work-PC
+  installiert, `dotnet build` → 0 Fehler; ping/list/init/quit gegen die echte EXE sauber
+  (Library-stdout-Banner entdeckt + stummgeschaltet). Python-Client gegen echte Bridge 8/8 OK.
+- [ ] **Bridge solo mit angesteckter D3300 prüfen** (am Work-PC möglich, vor dem Fotobox-Test):
+  PowerShell: `'{"id":1,"cmd":"init"}' | bridge\FexoNikonBridge\bin\Release\net48\FexoNikonBridge.exe`
+  → muss `"ok":true,"camera":"..."` liefern; danach `frame`/`capture` durchspielen
+  (oder direkt den kompletten Booth-Flow im Dev-Mode: `python src\main.py --dev`).
+- [ ] **CI-Build einmal mitlaufen lassen** (beim nächsten Push; GitHub → Actions → Version `2.4.11`):
+  bestätigt, dass auch der Cloud-Build die Bridge baut (Gate schlägt sonst an).
+- [ ] **Setup 2.4.11 auf der Fotobox installieren**, `camera_type = nikon` (Admin-Menü),
+  Dev-Mode starten. Prüfen: Log „Nikon-Bridge-Warmup: bereit" kurz nach dem Start,
+  **kein sichtbares Fremdfenster**, Startscreen bleibt vorn.
+- [ ] **LiveView prüfen:** Bild im Session-Screen? (Log: „Nikon/FexoNikonBridge bereit: …")
+- [ ] **Capture prüfen:** Vollauflösungs-Foto (≈6000×4000) kommt zurück, kein LiveView-Fallback-Log.
+- [ ] **Robustheit:** USB ab-/anstecken während Idle → Status-Warnung erscheint/verschwindet;
+  Bridge-Prozess stirbt (Taskmanager) → nächste Session startet ihn neu (initialize-Pfad).
 - [ ] **Erst nach erfolgreichem Hardware-Test** als „hardware-validiert" in ROADMAP/FORTSCHRITT markieren.
 
-**Beim Hardware-Test mit-härten (aus Multi-Agent-Review, alle Nikon-only, 0 Live-Flotten-Impact):**
-- [x] **(major) UI-Freeze in `initialize()`** bis ~24 s beim digiCamControl-Kaltstart — **entschärft per
-  Auto-Start-Warmup** (`_warmup_nikon_async` startet DCC beim App-Start off-thread vor). Auf dem Miix
-  noch **verifizieren** und den Restfall „DCC stirbt zur Laufzeit" prüfen (dann läuft wieder der
-  Auto-Launch in `initialize()` auf dem UI-Thread). Bei Bedarf dort zusätzlich fail-fast/off-thread.
-- [ ] **(minor) Status-Check-Hitch** ~1.5 s: `_check_camera_status`-Nikon-Zweig ruft `list_cameras()` (urlopen)
-  auf dem UI-Thread, wenn DCC-Exe da ist aber Server nicht antwortet. Ggf. kürzeres Timeout/Server-Vorabprobe.
+**Bekannte offene Punkte (Nikon-only, 0 Live-Flotten-Impact):**
+- [ ] **(major, entschärft) Erste Session initialisiert auf dem UI-Thread.** Durch den Warmup
+  (Bridge-Start + Kamera-Vorverbindung im Hintergrund) bleiben normal nur `lv_start` + erster
+  Frame (~1–3 s). Sauberer Fix wäre `initialize()` in einen Worker-Thread in `session.py`
+  (Muster `_capture_photo_worker`) — erst nach dem Hardware-Test angehen, betrifft auch Canon-Flow.
 - [ ] **(minor) Doppel-Capture** im Fehlerfall: schlägt `capture_photo()` mit `None` fehl, ruft der
-  Webcam-Fallthrough in `session.py` `get_high_res_frame()` → erneut `capture_photo()` (bis ~2×10 s).
+  Webcam-Fallthrough in `session.py` `get_high_res_frame()` → erneut `capture_photo()`.
   Spiegelt Canon-Verhalten; ggf. DSLR-Pfad autoritativ machen + Log-Zeile.
-- [ ] **(minor) Capture-Erfolg per Antworttext** (`"error" not in response`): leere/OK-Antwort gilt fälschlich
-  als Erfolg → bis Timeout warten vor Fallback. Optional: leere Antwort als Fehler werten.
+- [ ] **(minor) Capture blockiert Frames:** während `capture` läuft, wartet `get_frame()` am
+  Bridge-Lock (eine Anfrage gleichzeitig; Timeout deckt das Lock-Warten jetzt ab). Für den
+  Booth-Flow okay (LiveView pausiert beim Auslösen sowieso).
+- [ ] **OTA-Bootstrap beachten:** Das ERSTE Update auf 2.4.11 läuft noch mit dem alten
+  Update-BAT (kopiert `bridge/` nicht) → Nikon-Testbox per **Installer** aktualisieren, nicht OTA.
 
 ---
 
@@ -168,6 +199,21 @@ Details siehe ROADMAP.md. Datenschutz vorab klären, dann erst angehen.
 ---
 
 ## Erledigt ✅
+
+### 2026-07-02
+- [x] **🎉 Nikon D3300 hardware-validiert:** FexoNikonBridge auf der Fotobox erfolgreich —
+  unsichtbarer Warmup, LiveView, 4× Capture in 6000×4000. (Log `fexobooth_20260702_114253.log`)
+- [x] Performance-Analyse-Lauf ausgewertet + 4 Fixes umgesetzt (Overlay-Basis-Cache,
+  Fotoanzeige-Cache, Filter-Arbeitskopien + Precache, Final-Rendern im Worker) → Build `2.4.12`.
+- [x] digiCamControl-Ansatz verworfen und restlos zurückgebaut (Autostart, Installer-Einbettung,
+  CI-Download, i18n `DCC FEHLT!`, Felix-Runbook). Neue Architektur FexoNikonBridge (Variante 3)
+  vorbereitet: C#-Bridge-Gerüst + Python-Client + CI-Build-Schritt; Build-Kandidat `2.4.11`.
+  Verifiziert: Smoke-Test 82/82, Fake-Bridge-E2E 11/11.
+
+### 2026-07-01
+- [x] Nikon-DCC-Logging im Developer Mode erweitert und Build-Kandidat auf `2.4.9` gesetzt.
+- [x] Startscreen-Version umgesetzt: Top-Bar zeigt links neben `FEXOBOOTH` die lokale Version aus
+  `src/__init__.py`; Build-Kandidat auf `2.4.8` gesetzt.
 
 ### 2026-06-19
 - [x] **Druck-Korrektur (2015er-Menü) wird beim Neustart nicht mehr zurückgesetzt.** `print_adjustment` stand fälschlich in den bei jedem Start erzwungenen Produktions-Overrides (`_PRODUCTION_DEFAULT_OVERRIDES` in `src/config/config.py`) → Override gewann gegen die gespeicherten Werte. Entfernt; Start-Default kommt aus `defaults.py`, Eventwechsel-Reset bleibt über `reset_event_defaults()`. Mit simuliertem Neustart verifiziert.

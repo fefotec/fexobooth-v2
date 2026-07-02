@@ -6,14 +6,42 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
-### Nikon-DSLR-Support: digiCamControl als externe Steuerungsschicht (Variante 2), NICHT Nikon Webcam Utility
+### Build-Version: Lokale Quelle ist `src/__init__.py`, GitHub-Release ist nur Veröffentlichung
+
+| | |
+|---|---|
+| **Kontext** | Vor einem EXE-/Installer-Build braucht die Box bereits eine neue sichtbare Version, auch wenn noch kein GitHub-Release existiert. |
+| **Entscheidung** | Die sichtbare Startscreen-Version und die API-Version kommen aus `src/__init__.py`. Der Installer liest dieselbe Quelle über `build_installer.bat` bzw. Workflow-Input. GitHub-Releases veröffentlichen später nur den bereits nummerierten Build. |
+| **Merke** | Version zuerst lokal bumpen, dann EXE/Setup bauen, erst danach optional als GitHub-Release veröffentlichen. Sonst zeigt ein manuell gebauter Kandidat weiter die alte Flottenversion. |
+
+### Top-Bar-Alarmtexte: Interne Fehlercodes bleiben stabil, Anzeige wird übersetzt
+
+| | |
+|---|---|
+| **Kontext** | USB-, Kamera- und Druckerwarnungen in der oberen Status-Leiste sind kunden-/gastseitig sichtbar und müssen daher der `locale` folgen. Gleichzeitig hängen Drucker-Overlay, Klassifizierung, Logging und Support-Doku an den etablierten deutschen Fehlercodes aus `PrinterController.get_error()`. |
+| **Entscheidung** | Die Fehlerquellen bleiben intern unverändert deutsch. Nur die Top-Bar-Anzeige übersetzt bekannte Codes über `TOPBAR_TRANSLATIONS`/`_translate_topbar_printer_problem()`. USB- und Kamera-Texte gehen direkt über `t(self.config, "topbar.*")`; Druckertexte werden erst unmittelbar vor `CTkLabel.configure()` in Anzeigetext umgewandelt. |
+| **Merke** | Bei sicherheits-/supportrelevanten Fehlerzuständen nicht den internen Vertrag übersetzen, wenn andere Logik per String klassifiziert. Übersetzung an der UI-Kante hält Klassifizierung stabil und verhindert, dass neue Locales Drucker-Overlay oder Runbooks brechen. |
+
+### Nikon-DSLR-Support Variante 3: eigene unsichtbare FexoNikonBridge (WPD-PTP), digiCamControl-App VERWORFEN
+
+| | |
+|---|---|
+| **Kontext** | Variante 2 (digiCamControl-App, siehe verworfenen Eintrag unten) scheiterte im Realtest 2.4.10 doppelt: `CameraControl.exe` öffnet beim Autostart ein **sichtbares Fenster** vor FexoBooth (Kiosk-No-Go) und der lokale Webserver `127.0.0.1:5513` antwortet nie, weil die Webserver-Aktivierung eine persistente DCC-Einstellung ist, die die Standardinstallation nicht setzt. Multi-Agent-Webrecherche (2026-07-02, alle Kernaussagen adversarial verifiziert): Das **offizielle Nikon-SDK bietet für die gesamte D3xxx-Serie kein MD3-Modul** („SDKs not listed cannot be downloaded") → MAID/NikonCSWrapper/MekNikon sind Sackgassen; Nikon Webcam Utility unterstützt die D3300 gar nicht; Camera Control Pro 2 hat die D3xxx nie unterstützt (und ist eingestellt); libgphoto2 braucht unter Windows einen Zadig/WinUSB-Treibertausch (killt MTP, kein Hotplug) → nicht kiosk-tauglich. **dslrBooth unterstützt die D3300 inkl. LiveView** über direktes USB-PTP — muss also (mangels SDK) einen eigenen PTP-Stack nutzen. |
+| **Entscheidung** | **Eigene `FexoNikonBridge.exe`** (C#, .NET Framework 4.8 = auf Win10/11 vorinstalliert): unsichtbarer Hintergrundprozess (CREATE_NO_WINDOW), Motor ist die **MIT-lizenzierte** Bibliothek `CameraControl.Devices` (Kern von digiCamControl, D3300 im Code explizit gemappt: `"D3300"` → `NikonD600Base`, LiveView `0x9201/0x9203` + Capture `0x90C0` als rohe PTP-Opcodes über die Windows-WPD-API, kein Treibertausch). Kommunikation FexoBooth↔Bridge über **stdin/stdout** (JSON-Zeilen + längenpräfixierte JPEG-Binärdaten): keine Ports, keine Firewall-Dialoge, kein Webserver-Aktivierungsschritt. `src/camera/nikon.py` ist der Bridge-Client (Drop-in-Interface wie Canon). CI (GitHub Actions) baut die Bridge, weil lokal kein .NET-SDK installiert ist. |
+| **Alternativen** | (a) Offizielles Nikon-SDK/MAID: kein D3300-Modul → unmöglich. (b) digiCamControl-App + Webserver: sichtbar + unzuverlässig → verworfen. (c) pythonnet (Library im Python-Prozess): keine Crash-Isolation, .NET-Framework/PyInstaller-Kopplung → separater Prozess ist robuster. (d) libgphoto2/Windows: Treibertausch → raus. (e) Eigener PTP-Stack in Python über WPD-COM: technisch möglich, aber Neuland ohne erprobte Vorlage → unnötiges Risiko. |
+| **Merke** | Wenn ein Hersteller-SDK ein Gerät nicht abdeckt, ist **rohes PTP/MTP über die Windows-WPD-API** der bewährte, unsichtbare Weg (offiziell von Microsoft dokumentierte MTP-Extensions, Standard-Treiber bleibt). Fremde Steuer-**Apps** einzubinden scheitert im Kiosk an Sichtbarkeit und Persistenz-Konfiguration — die zugrunde liegende **Bibliothek** im eigenen versteckten Prozess ist die richtige Altitude. |
+
+### VERWORFEN (2026-07-02): Nikon-DSLR-Support über digiCamControl-App (Variante 2)
+
+> Ersetzt durch Variante 3 (siehe oben). Grund: sichtbares DCC-Fenster beim Autostart + Webserver
+> antwortet ohne manuelle Einmal-Aktivierung nie (Testlogs `D:\fexobooth_20260702_090008.log` u.a.).
 
 | | |
 |---|---|
 | **Kontext** | Nikon D3300 soll als DSLR funktionieren wie bei dslrBooth. Zwei Wege: (1) Nikon Webcam Utility (Kamera erscheint als Webcam — aber nur LiveView-Auflösung, kein echtes Vollbild-Capture, kein Tethering-Steuerung), (2) digiCamControl als lokale Windows-Steuerungsschicht mit eigenem Webserver (`127.0.0.1:5513`). |
 | **Entscheidung** | **Variante 2 (digiCamControl).** fexobooth bleibt ein **dünner HTTP-Adapter** (`NikonCameraManager`): LiveView über `/liveview.jpg`, Capture über Single-Command `capture` (Fallback `LiveView_Capture`), Bildübergabe über `session.folder`/`session.filenametemplate`/`lastcaptured` → lokale Datei, sonst `/image/<name>`, zuletzt `/preview.jpg`. digiCamControl darf extern installiert sein; sonst Auto-Start von `CameraControl.exe`. |
 | **Begründung** | Vollbild-Capture in DSLR-Qualität + echtes Tethering ohne nativen Nikon-SDK-Aufwand. Der Adapter ist interface-kompatibel zu `CanonCameraManager` → **Drop-in** für den bestehenden Session-/App-Flow (`capture_photo`, `get_high_res_frame`, `get_frame`, `start/stop_live_view`, `release`, `is_initialized`). Keine native DLL → der Manager ist immer konstruierbar; „verfügbar" heißt nur „digiCamControl-Exe vorhanden ODER Webserver antwortet". |
-| **Merke** | Externe Steuerungs-Tools mit lokalem HTTP-Vertrag (digiCamControl, dslrBooth-Pattern) sind ein sauberer Weg, fremde Hardware anzubinden, ohne den App-Kern aufzublähen. **Aber:** HTTP heißt **blockierende urlopen-Timeouts** — solche Calls niemals naiv auf den Tk-UI-Thread legen (siehe Lessons Learned: Init-Freeze). |
+| **Merke** | Externe Steuerungs-Tools mit lokalem HTTP-Vertrag (digiCamControl, dslrBooth-Pattern) sind ein sauberer Weg, fremde Hardware anzubinden, ohne den App-Kern aufzublähen. **Aber:** HTTP heißt **blockierende urlopen-Timeouts** — solche Calls niemals naiv auf den Tk-UI-Thread legen (siehe Lessons Learned: Init-Freeze). Seit dem 2026-07-02-Test gilt zusätzlich: Hardware-Runtime-Abhängigkeiten müssen im Setup mitgeliefert oder im Log eindeutig als fehlend ausgewiesen werden; sonst bleibt ein „DCC FEHLT" auf dem Tablet für den Betreiber nicht lösbar. |
 
 ### App-Plattform-Fundament: „Infrastruktur immer an" vs „Feature verkauft" sauber trennen
 

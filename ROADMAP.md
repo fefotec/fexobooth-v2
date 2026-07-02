@@ -7,7 +7,8 @@ Diese Datei enthält die Anforderungen und geplanten Features.
 ## Aktuelle Version
 
 **Status:** Produktiv im Einsatz
-**Letzte Änderung:** 2026-02-04
+**Version:** 2.4.9 Build-Kandidat (lokal gesetzt, noch kein GitHub-Release)
+**Letzte Änderung:** 2026-07-01
 
 ---
 
@@ -15,7 +16,7 @@ Diese Datei enthält die Anforderungen und geplanten Features.
 
 - [x] Photobooth-Workflow (Start → Capture → Preview → Final)
 - [x] Webcam + Canon DSLR Support
-- [~] Nikon DSLR Support (D3300) über digiCamControl — Code fertig, **Hardware-Test offen** (siehe unten)
+- [x] Nikon DSLR Support (D3300) über eigene FexoNikonBridge — **hardware-validiert 2026-07-02** (LiveView + 6000×4000-Capture auf der Fotobox, unsichtbar)
 - [x] USB-Template laden (ZIP vom Stick)
 - [x] Buchungsnummer aus settings.json
 - [x] Lokale Galerie (Flask + QR-Code)
@@ -28,26 +29,34 @@ Diese Datei enthält die Anforderungen und geplanten Features.
 
 ---
 
-## Nikon D3300 DSLR über digiCamControl (Variante 2) 📷
+## Nikon D3300 DSLR über eigene FexoNikonBridge (Variante 3) 📷
 
-> Ziel: Nikon-D3300 als DSLR betreiben — wie dslrBooth — **ohne** Nikon Webcam Utility.
-> digiCamControl übernimmt das Tethering als externe Windows-Steuerungsschicht und stellt
-> einen lokalen Webserver bereit (`127.0.0.1:5513`). fexobooth-v2 spricht nur HTTP/Single-Command.
+> Ziel: Nikon-D3300 als DSLR betreiben — **unsichtbar integriert wie bei dslrBooth**: kein fremdes
+> Fenster, kein verdeckter Startscreen, LiveView im Session-Screen, Capture in DSLR-Qualität.
+>
+> **Variante 2 (digiCamControl-App) wurde am 2026-07-02 verworfen:** sichtbares DCC-Fenster beim
+> Autostart + Webserver `127.0.0.1:5513` antwortet ohne manuelle Einmal-Aktivierung nie.
+> Das offizielle Nikon-SDK ist keine Option (kein Modul für die gesamte D3xxx-Serie).
 
-**Technischer Vertrag (implementiert):**
+**Technischer Vertrag (implementiert, Bridge-Build offen):**
 - `camera_type = "nikon"`, optional `dslr_camera_type = "nikon"` (überlebt Booking-/Event-Reload)
-- LiveView über `/liveview.jpg`, Capture über Single-Command `capture` (Fallback `LiveView_Capture`)
-- Bildübergabe über `session.folder` + `session.filenametemplate` + `lastcaptured` → lokale Datei,
-  sonst `/image/<name>`, zuletzt `/preview.jpg`
-- digiCamControl darf extern installiert sein; **die App startet `CameraControl.exe` beim Programmstart
-  automatisch im Hintergrund** (kein manuelles Vorstarten nötig). Auto-Start aus Standardpfaden.
-- Konfiguration unter `nikon_digicamcontrol` in der Config (Host/Port/app_path/capture_folder/Timeouts)
-- **Einmaliger Installations-Schritt:** in digiCamControl den Webserver aktivieren (Port 5513). Das ist
-  eine persistente digiCamControl-Einstellung; die App startet das Programm, schaltet diese Einstellung
-  aber bewusst nicht bei jedem Start um (würde fremde Tool-Config manipulieren).
+- Eigener unsichtbarer Hintergrundprozess `bridge\FexoNikonBridge.exe` (C#/.NET Framework 4.8,
+  auf Win10/11 vorinstalliert; gestartet mit `CREATE_NO_WINDOW`). Motor: MIT-Bibliothek
+  `CameraControl.Devices` (digiCamControl-Kern) — rohes PTP/MTP über die Windows-WPD-API,
+  D3300 dort explizit unterstützt (LiveView + Vollauflösungs-Capture in den RAM).
+- Kommunikation über stdin/stdout: JSON-Zeilen + längenpräfixierte JPEG-Binärdaten
+  (`ping/list/init/lv_start/frame/capture/lv_stop/release/quit`) — keine Ports, keine
+  Firewall-Dialoge, kein Konfigurationsschritt in Fremdsoftware.
+- Die App startet die Bridge beim Programmstart automatisch unsichtbar vor (Warmup) und
+  bei Bedarf in `initialize()` neu. Konfiguration unter `nikon_bridge` (exe_path + Timeouts).
+- Installer/CI: GitHub-Actions baut die Bridge (`dotnet build`) und legt sie unter `{app}\bridge\`
+  bei; es wird keine Fremdsoftware mehr installiert.
 
-**Status:** Code-vollständig + statisch/Unit-verifiziert (kein echtes Nikon-Gerät am Testrechner).
-**Offen:** Hardware-Test mit echter D3300 (LiveView + Capture End-to-End). Siehe [TODO.md](TODO.md).
+**Status: ✅ HARDWARE-VALIDIERT (2026-07-02, Build 2.4.11 auf der Fotobox):** unsichtbarer
+Bridge-Warmup in ~1,4 s, LiveView 640×424 im Session-Screen, 4 Captures in voller
+6000×4000-Auflösung, kein Fremdfenster. Performance-Fixes danach in 2.4.12
+(Overlay-/Fotoanzeige-Cache, Filter-Arbeitskopien, Final-Rendern im Hintergrund).
+**Offen:** Nachtest 2.4.12 + Capture-Feintuning (~4,1 s, kameraseitig). Siehe [TODO.md](TODO.md).
 
 ---
 

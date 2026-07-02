@@ -12,6 +12,21 @@
 
 ---
 
+## Projektabgrenzung
+
+Dieses Repo ist die **interne FexoBooth V2 / Live-Flotten-Software**. Es ist nicht der
+Consumer-Fork und gehört bei normalen V2-Aufgaben nicht zu Backend-, Web-, Portal-,
+Checkout- oder Lizenzierungsarbeiten.
+
+Wenn Christian von `fexobooth-v2`, interner V2, Tablet-Logs, Nikon, Canon, Drucker,
+Hotspot, Kundenmenü oder Live-Flotte spricht:
+- nur dieses Repo bearbeiten, außer ein anderes Repo wird ausdrücklich genannt,
+- keine Consumer-/Backend-/Web-Repos als Pflichtkontext einbeziehen,
+- keinen Consumer-Folgeprompt ausgeben,
+- am Ende nur kurz V2-Dateien, Checks und echte Hardware-/Tablet-Blocker nennen.
+
+---
+
 ## Pflichtanweisungen
 
 ### Bei jedem relevanten Prompt:

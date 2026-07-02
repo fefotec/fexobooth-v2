@@ -13,6 +13,40 @@ Alles additiv und performance-neutral; die gebuchte Galerie verhält sich unver�
 
 ### Neu
 
+- **Startscreen zeigt die lokale Software-Version.** Oben links neben `FEXOBOOTH` steht jetzt die
+  Build-Version aus `src/__init__.py`; die lokale Build-Quelle ist auf `2.4.12` angehoben, auch ohne
+  bereits veröffentlichten GitHub-Release.
+- **Deutlich flüssiger auf dem Miix 310 (Messung per Dev-Log, Build 2.4.11 mit Nikon D3300):**
+  - LiveView bricht nicht mehr mit jedem aufgenommenen Foto ein (vorher 7,7 → 1,8 fps): die
+    bereits aufgenommenen Fotos werden im Template-Overlay nur noch beim Foto-Wechsel skaliert,
+    nicht mehr bei jedem Frame.
+  - Während der Fotoanzeige blockiert die Bedienung nicht mehr (vorher wurde das 24-MP-Foto
+    10×/Sekunde neu skaliert → Dauer-Hänger ~300 ms; jetzt einmalig gecacht).
+  - **Filter-Screen reagiert sofort:** Vorschauen rechnen auf verkleinerten Arbeitskopien statt
+    auf den 24-MP-Originalen (vorher 96 MP pro Klick), und alle Filter werden im Hintergrund
+    vorgerendert. Das gedruckte Bild rendert unverändert aus den Originalen.
+  - **Final-Screen friert nicht mehr ein** (vorher 3,3 s UI-Blockade): Rendern + Speichern laufen
+    im Hintergrund, der Gast sieht sofort „Dein Bild wird erstellt..." (neuer i18n-Text
+    `final.rendering` in allen 7 Sprachen), der Druck-Button ist bis zur Fertigstellung gesperrt.
+- **Nikon-Anbindung komplett neu: unsichtbare FexoNikonBridge statt digiCamControl.** Die D3300 wird
+  vom offiziellen Nikon-SDK nicht unterstützt (kein Modul für die gesamte D3xxx-Serie); der bisherige
+  digiCamControl-Ansatz scheiterte im Realtest (sichtbares Fremdfenster vor FexoBooth + Webserver auf
+  `127.0.0.1:5513` antwortet ohne manuelle Einmal-Aktivierung nie). Neu: eigener versteckter
+  Hintergrundprozess `bridge\FexoNikonBridge.exe` (C#/.NET 4.8, kein Fenster), Motor ist die
+  MIT-lizenzierte digiCamControl-Kernbibliothek `CameraControl.Devices` (rohes PTP/MTP über die
+  Windows-WPD-API — derselbe Weg wie dslrBooth). FexoBooth spricht die Bridge über stdin/stdout an
+  (keine Ports, keine Firewall-Dialoge). `src/camera/nikon.py` ist jetzt der Bridge-Client;
+  Config-Block `nikon_digicamcontrol` wurde durch `nikon_bridge` ersetzt.
+- **Nikon-Developer-Diagnose** loggt im Developer Mode die effektive Nikon-Konfiguration, den
+  Bridge-Status und alle geprüften `FexoNikonBridge.exe`-Pfade mit Trefferstatus.
+- **Dev-Mode misst jetzt Performance:** `LIVEVIEW-PERF`-Summenzeile (~alle 5 s: effektive fps,
+  ms pro Frame getrennt nach Kamera/Anzeige) und `UI-HITCH`-Monitor (loggt blockierte
+  Tk-Hauptschleife >200 ms). Nur im Developer Mode aktiv, Live-Betrieb unverändert.
+- **OTA-Updates liefern `bridge/` mit aus.** Sowohl das In-App-Update als auch
+  `update_from_github.bat` kopieren den neuen `bridge\`-Ordner (FexoNikonBridge) mit und beenden
+  eine ggf. noch laufende Bridge vor dem Kopieren. (Bootstrap-Hinweis: Das jeweils ERSTE Update
+  auf diese Version läuft noch mit dem alten Update-Script — Nikon-Boxen einmalig per Installer
+  aktualisieren.)
 - **Lokaler Service-Kanal läuft dauerhaft.** Hotspot und lokale API laufen jetzt immer (4 s verzögert),
   entkoppelt von der gebuchten Galerie. Dadurch sind Template-/Settings-Korrektur und Software-Update
   per App auch ohne gebuchte Online-Galerie möglich.
@@ -35,12 +69,19 @@ Alles additiv und performance-neutral; die gebuchte Galerie verhält sich unver�
 
 ### Behoben
 
+- **Top-Bar-Alarmmeldungen folgen jetzt der eingestellten Sprache.** USB-, Kamera- und Druckerwarnungen
+  in der oberen Status-Leiste bleiben nicht mehr deutsch, wenn `locale` auf Englisch, Französisch,
+  Niederländisch, Italienisch, Spanisch oder Polnisch steht. Interne Drucker-Fehlercodes bleiben deutsch,
+  damit Overlay-Klassifizierung und Support-Runbooks stabil bleiben.
 - **Druck-Korrektur aus dem 2015er-Menü bleibt jetzt dauerhaft erhalten.** Bisher wurden im
   Service-Menü angepasste Druckwerte (Offset X/Y, Zoom) bei jedem Neustart auf die Produktionswerte
   (40/30/103) zurückgesetzt, weil `print_adjustment` fälschlich in den bei jedem Start erzwungenen
   Produktions-Overrides stand. Ursache entfernt; der Start-Default kommt weiterhin aus `defaults.py`
   (identische Werte), der gewollte Reset pro Eventwechsel bleibt über `reset_event_defaults()` aktiv.
   Wichtig für den Einrichtungsflow (Box testen → herunterfahren → Kunde startet neu).
+- **Nikon-Diagnoselogger crasht nicht mehr bei Windows-Encoding.** Der frühere `tasklist`-Prozess-Snapshot
+  erzeugte auf deutschem Windows `UnicodeDecodeError`-Thread-Exceptions; mit der neuen Bridge-Architektur
+  ist der `tasklist`-Aufruf komplett entfallen (die App kennt ihren eigenen Bridge-Prozess direkt).
 
 ## [2.4.7] - 2026-06-12 - Produktions-Defaults und persistente Box-Daten
 
