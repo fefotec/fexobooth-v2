@@ -157,6 +157,15 @@ if exist "%SOURCE_DIR%\setup" (
     xcopy "%SOURCE_DIR%\setup" "%SCRIPT_DIR%setup" /E /I /Y >nul 2>&1
 )
 
+:: Nikon-Bridge komplett ersetzen (unsichtbarer Hintergrundprozess).
+:: taskkill vorab: eine noch laufende Bridge wuerde die EXE locken.
+if exist "%SOURCE_DIR%\bridge" (
+    echo - bridge/ ^(FexoNikonBridge^)
+    taskkill /F /IM "FexoNikonBridge.exe" >nul 2>&1
+    if exist "%SCRIPT_DIR%bridge" rmdir /s /q "%SCRIPT_DIR%bridge"
+    xcopy "%SOURCE_DIR%\bridge" "%SCRIPT_DIR%bridge" /E /I /Y >nul 2>&1
+)
+
 :: BAT-Dateien
 for %%F in (START.bat start_fexobooth.bat start_dev.bat) do (
     if exist "%SOURCE_DIR%\%%F" (

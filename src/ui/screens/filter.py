@@ -191,6 +191,13 @@ class FilterScreen(ctk.CTkFrame):
         self.selected_filter = "none"
         self.filter_buttons: Dict[str, FilterCard] = {}
         self.preview_cache: Dict[str, Image.Image] = {}
+        # Verkleinerte Arbeitskopien der Fotos für ALLE Vorschauen: Filter auf
+        # den 6000x4000-Nikon-Originalen dauerten pro Klick viele Sekunden
+        # (4x 24 MP); für die Vorschau reicht ~1000px. Das finale Druckbild
+        # rendert weiterhin aus den Originalen (final.py).
+        self._preview_photos = None
+        self._preview_photos_lock = threading.Lock()
+        self._precache_active = False
         self._auto_continue_job = None
         self._auto_continue_until = 0.0
         self._auto_continue_seconds = 0.0
@@ -416,6 +423,53 @@ class FilterScreen(ctk.CTkFrame):
 
         logger.debug(f"Filter ausgewählt: {self.selected_filter}")
 
+    def _get_preview_photos(self):
+        """Liefert die verkleinerten Arbeitskopien der Fotos (einmal erstellt).
+
+        Läuft in Worker-Threads; der Lock verhindert doppelten Aufbau, wenn
+        Klick-Render und Precache gleichzeitig starten.
+        """
+        with self._preview_photos_lock:
+            if self._preview_photos is None:
+                t0 = time.perf_counter()
+                small = []
+                for photo in self.app.photos_taken:
+                    scale = min(1.0, 1000 / max(photo.width, photo.height))
+                    if scale < 1.0:
+                        small.append(photo.resize(
+                            (max(1, int(photo.width * scale)), max(1, int(photo.height * scale))),
+                            Image.Resampling.BILINEAR
+                        ))
+                    else:
+                        small.append(photo)
+                self._preview_photos = small
+                logger.info(
+                    f"Filter-Vorschau: {len(small)} Arbeitskopien erstellt "
+                    f"({(time.perf_counter() - t0) * 1000:.0f}ms)"
+                )
+            return self._preview_photos
+
+    def _render_filter_preview(self, filter_key: str):
+        """Rendert die große Vorschau für einen Filter (auf Arbeitskopien)."""
+        t0 = time.perf_counter()
+        photos = self._get_preview_photos()
+        filtered_photos = [
+            self.app.filter_manager.apply(photo, filter_key)
+            for photo in photos
+        ]
+        max_preview_size = 900 if self._is_compact else 800
+        preview = self.app.renderer.render_preview(
+            filtered_photos,
+            self.app.template_boxes,
+            self.app.overlay_image,
+            max_size=max_preview_size
+        )
+        logger.info(
+            f"Filter-Vorschau '{filter_key}' gerendert: "
+            f"{(time.perf_counter() - t0) * 1000:.0f}ms"
+        )
+        return preview
+
     def _update_main_preview(self):
         """Aktualisiert die große Vorschau (gecached oder im Hintergrund gerendert)"""
         if not self.app.photos_taken:
@@ -431,17 +485,7 @@ class FilterScreen(ctk.CTkFrame):
             filter_key = self.selected_filter
             def _render():
                 try:
-                    filtered_photos = [
-                        self.app.filter_manager.apply(photo, filter_key)
-                        for photo in self.app.photos_taken
-                    ]
-                    max_preview_size = 900 if self._is_compact else 800
-                    preview = self.app.renderer.render_preview(
-                        filtered_photos,
-                        self.app.template_boxes,
-                        self.app.overlay_image,
-                        max_size=max_preview_size
-                    )
+                    preview = self._render_filter_preview(filter_key)
                     self.preview_cache[filter_key] = preview
                     # UI-Update im Hauptthread (nur wenn Filter noch aktiv)
                     if self.selected_filter == filter_key:
@@ -449,6 +493,30 @@ class FilterScreen(ctk.CTkFrame):
                 except Exception as e:
                     logger.warning(f"Preview-Rendering fehlgeschlagen: {e}")
             threading.Thread(target=_render, daemon=True).start()
+
+    def _precache_all_filters(self):
+        """Rendert alle Filter-Vorschauen nacheinander vor (Hintergrund).
+
+        Damit ist der Wechsel beim Antippen sofort da, statt dass der Gast auf
+        das Rendern wartet. Sequentiell — parallele Render-Threads würden den
+        schwachen Prozessor gegenseitig ausbremsen.
+        """
+        for key in AVAILABLE_FILTERS.keys():
+            if not self._precache_active:
+                return
+            if key in self.preview_cache:
+                continue
+            try:
+                preview = self._render_filter_preview(key)
+                if not self._precache_active:
+                    return
+                self.preview_cache[key] = preview
+                # Falls der Gast genau diesen Filter gerade gewählt hat: anzeigen
+                if self.selected_filter == key:
+                    self.after(0, lambda p=preview: self._show_main_preview(p))
+            except Exception as e:
+                logger.debug(f"Filter-Precache '{key}' fehlgeschlagen: {e}")
+        logger.info("Filter-Vorschauen komplett vorgerendert")
 
     def _show_main_preview(self, preview: Image.Image):
         """Zeigt die Main-Preview an"""
@@ -480,9 +548,10 @@ class FilterScreen(ctk.CTkFrame):
         if not self.app.photos_taken:
             return
 
-        # Kleines Sample-Bild für schnelle Filter-Previews
+        # Kleines Sample-Bild für schnelle Filter-Previews — aus der bereits
+        # verkleinerten Arbeitskopie (KEIN copy() des 24-MP-Originals mehr)
         # Thumbnail-Größe von erster Karte ableiten (dynamisch berechnet)
-        sample = self.app.photos_taken[0].copy()
+        sample = self._get_preview_photos()[0].copy()
         first_card = next(iter(self.filter_buttons.values()), None)
         if first_card:
             thumb_size = (first_card._thumb_width, first_card._thumb_height)
@@ -587,8 +656,10 @@ class FilterScreen(ctk.CTkFrame):
         """Screen wird angezeigt"""
         self.config = self.app.config
 
-        # Cache leeren
+        # Caches leeren (neue Fotos → neue Arbeitskopien)
         self.preview_cache = {}
+        with self._preview_photos_lock:
+            self._preview_photos = None
 
         # Standard-Filter auswählen
         self.selected_filter = "none"
@@ -610,12 +681,20 @@ class FilterScreen(ctk.CTkFrame):
         # Filter-Previews im Hintergrund generieren
         threading.Thread(target=self._generate_filter_previews, daemon=True).start()
 
+        # Alle großen Filter-Vorschauen vorab rendern (sequentiell im
+        # Hintergrund) — Antippen fühlt sich dann sofort an.
+        self._precache_active = True
+        threading.Thread(target=self._precache_all_filters, daemon=True).start()
+
         # Ohne Eingabe automatisch nach fester Inaktivitätsdauer weiter.
         self._bind_activity_events()
         self._reset_auto_continue_timer()
 
     def on_hide(self):
         """Screen wird verlassen"""
+        self._precache_active = False
         self._unbind_activity_events()
         self._cancel_auto_continue_timer()
         self.preview_cache = {}
+        with self._preview_photos_lock:
+            self._preview_photos = None

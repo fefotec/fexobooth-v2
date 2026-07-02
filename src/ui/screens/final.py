@@ -7,6 +7,7 @@ import customtkinter as ctk
 from PIL import Image
 from typing import TYPE_CHECKING, Optional
 from pathlib import Path
+import threading
 import time
 
 from src.ui.theme import COLORS, FONTS, SIZES
@@ -757,46 +758,107 @@ class FinalScreen(ctk.CTkFrame):
         if hasattr(self, "finish_btn"):
             self.finish_btn.configure(text=t(self.config, "common.finish"))
 
-        # Finales Bild rendern
-        self.final_image = self._render_final_image()
+        # Rendern + Speichern laufen im Worker-Thread: der Screen erscheint
+        # SOFORT mit Hinweis, statt den UI-Thread ~3s zu blockieren
+        # (Messung Miix 310: 3.3s UI-HITCH beim Screenwechsel zu final).
+        self.final_image = None
+        self._show_rendering_placeholder()
+        if self.print_btn:
+            self.print_btn.configure(state="disabled")
 
-        # IMMER speichern
-        self._save_final_image()
-
-        # Vorschau anzeigen - Image-Frame Größe ermitteln
+        # Container-Größe VOR dem Thread ermitteln (Tk nur im UI-Thread nutzen)
         self.update_idletasks()
         container_w = self.image_frame.winfo_width()
         container_h = self.image_frame.winfo_height()
-
         if container_w < 100:
             container_w = 1000
         if container_h < 100:
             container_h = 500
 
-        # Bild auf Container-Größe skalieren (Seitenverhältnis beibehalten)
-        preview = self.final_image.copy()
-        preview.thumbnail((container_w, container_h), Image.Resampling.LANCZOS)
+        threading.Thread(
+            target=self._render_final_worker,
+            args=(container_w, container_h),
+            daemon=True,
+        ).start()
+
+        # Auto-Return Timer starten
+        self.auto_return_time = time.time() + self.config.get("final_time", 30)
+        self.progress_bar.set(1.0)
+        self._update_countdown()
+
+    def _show_rendering_placeholder(self):
+        """Zeigt 'Dein Bild wird erstellt…' und entfernt das Bild der Vorsession.
+
+        Wichtig: Ohne das Leeren wäre bis zum Render-Ende noch das fertige Bild
+        der VORHERIGEN Gäste sichtbar. CTkLabel löscht ein Bild nicht über
+        image=None, daher ein 1x1-transparentes Platzhalterbild.
+        """
+        if not hasattr(self, "_blank_ctk"):
+            blank = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+            self._blank_ctk = ctk.CTkImage(light_image=blank, dark_image=blank, size=(1, 1))
+        self.preview_label.configure(
+            image=self._blank_ctk,
+            text=t(self.config, "final.rendering"),
+            font=("Segoe UI", 26, "bold"),
+            text_color=COLORS["text_primary"],
+        )
+        self.preview_label.image = self._blank_ctk
+
+    def _render_final_worker(self, container_w: int, container_h: int):
+        """Worker-Thread: finales Bild rendern, speichern, Vorschau vorbereiten."""
+        started = time.perf_counter()
+        final_image = None
+        preview = None
+        try:
+            final_image = self._render_final_image()
+        except Exception as e:
+            logger.error(f"Final-Rendern fehlgeschlagen: {e}")
+
+        if final_image is not None:
+            self.final_image = final_image
+            try:
+                # IMMER speichern (reine PIL-/Datei-Arbeit — threadsicher,
+                # gleiches Muster wie _save_photo_async in der Session)
+                self._save_final_image()
+            except Exception as e:
+                logger.error(f"Final-Speichern fehlgeschlagen: {e}")
+
+            preview = final_image.copy()
+            preview.thumbnail((container_w, container_h), Image.Resampling.LANCZOS)
+
+        logger.info(
+            f"Final-Rendern (Hintergrund): {(time.perf_counter() - started) * 1000:.0f}ms, "
+            f"{'ok' if final_image is not None else 'FEHLER'}"
+        )
+        self.after(0, lambda: self._on_final_ready(preview))
+
+    def _on_final_ready(self, preview: Optional[Image.Image]):
+        """UI-Thread: fertiges Bild anzeigen und Druck-Button freigeben."""
+        if not self.is_active:
+            return
+
+        if preview is None or self.final_image is None:
+            self.preview_label.configure(text=t(self.config, "final.no_image"))
+            if self.print_btn:
+                self.print_btn.configure(state="disabled")
+            return
 
         # CTkImage size in logischen Pixeln (DPI-korrigiert)
         scaling = self._get_widget_scaling()
         logical_size = (int(preview.size[0] / scaling), int(preview.size[1] / scaling))
         ctk_img = ctk.CTkImage(light_image=preview, dark_image=preview, size=logical_size)
-        self.preview_label.configure(image=ctk_img)
+        self.preview_label.configure(image=ctk_img, text="")
         self.preview_label.image = ctk_img
 
-        # Druck-Button zurücksetzen
+        # Druck-Button freigeben
         if self.print_btn:
+            self.print_btn.configure(state="normal")
             self._update_print_button_state()
         else:
             self.print_info.configure(
                 text=t(self.config, "final.print_disabled"),
                 text_color=COLORS["text_muted"]
             )
-
-        # Auto-Return Timer starten
-        self.auto_return_time = time.time() + self.config.get("final_time", 30)
-        self.progress_bar.set(1.0)
-        self._update_countdown()
 
     def on_hide(self):
         """Screen wird verlassen"""

@@ -10,7 +10,7 @@ except ImportError:
     CanonCameraManager = None
     CANON_AVAILABLE = False
 
-# Nikon läuft über digiCamControl (HTTP), keine native DLL nötig.
+# Nikon läuft über die FexoNikonBridge (stdio-Subprozess), keine native DLL nötig.
 # Defensiv importieren (wie Canon): ein künftiger Import-Fehler in nikon.py darf
 # NICHT die ganze App (auch Webcam-/Canon-Flotte!) am Start hindern.
 try:
@@ -26,7 +26,7 @@ def get_camera_manager(camera_type: str = "webcam", config=None):
 
     Args:
         camera_type: "webcam", "canon" oder "nikon"
-        config: App-Config (für Nikon/digiCamControl-Einstellungen)
+        config: App-Config (für Nikon-Bridge-Einstellungen)
 
     Returns:
         CameraManager Instanz

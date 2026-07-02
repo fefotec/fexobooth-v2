@@ -174,14 +174,45 @@ echo start "" fexobooth.exe
 echo [OK] START.bat erstellt
 
 REM ─────────────────────────────────────────────
-REM Schritt 8: Windows-Installer erstellen
+REM Schritt 8: FexoNikonBridge fuer Nikon beilegen (falls gebaut)
+REM ─────────────────────────────────────────────
+
+echo.
+echo Pruefe FexoNikonBridge fuer Nikon...
+
+set "BRIDGE_BIN=bridge\FexoNikonBridge\bin\Release\net48"
+if exist "%BRIDGE_BIN%\FexoNikonBridge.exe" (
+    xcopy /E /I /Y "%BRIDGE_BIN%" "installer_output\fexobooth\bridge\" >nul
+    echo [OK] FexoNikonBridge wird mitinstalliert ^(unsichtbarer Nikon-Prozess^)
+) else (
+    echo HINWEIS: FexoNikonBridge nicht gebaut ^(%BRIDGE_BIN%\FexoNikonBridge.exe fehlt^).
+    echo Nikon-Support fehlt in diesem lokalen Build. Bauen mit .NET SDK:
+    echo   dotnet build bridge\FexoNikonBridge\FexoNikonBridge.csproj -c Release
+    echo Der GitHub-Actions-Build baut die Bridge automatisch mit.
+)
+
+REM ─────────────────────────────────────────────
+REM Schritt 9: Windows-Installer erstellen
 REM ─────────────────────────────────────────────
 
 echo.
 
-set ISCC_PATH=C:\Program Files (x86)\Inno Setup 6\ISCC.exe
+set "ISCC_PATH="
+if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" (
+    set "ISCC_PATH=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+)
+if not defined ISCC_PATH (
+    if exist "C:\Program Files\Inno Setup 6\ISCC.exe" (
+        set "ISCC_PATH=C:\Program Files\Inno Setup 6\ISCC.exe"
+    )
+)
+if not defined ISCC_PATH (
+    if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" (
+        set "ISCC_PATH=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
+    )
+)
 
-if not exist "%ISCC_PATH%" (
+if not defined ISCC_PATH (
     echo WARNUNG: Inno Setup nicht gefunden!
     echo Nur ZIP wird erstellt, kein Installer.
     echo Installiere Inno Setup 6 fuer einen richtigen Windows-Installer.
@@ -218,7 +249,7 @@ if %errorlevel% neq 0 (
 :skip_installer
 
 REM ─────────────────────────────────────────────
-REM Schritt 9: ZIP erstellen (fuer OTA-Updates via GitHub Releases)
+REM Schritt 10: ZIP erstellen (fuer OTA-Updates via GitHub Releases)
 REM ─────────────────────────────────────────────
 
 echo.
@@ -232,7 +263,7 @@ if %errorlevel% neq 0 (
 )
 
 REM ─────────────────────────────────────────────
-REM Schritt 10: Build-Ordner aufraeumen
+REM Schritt 11: Build-Ordner aufraeumen
 REM ─────────────────────────────────────────────
 
 echo.

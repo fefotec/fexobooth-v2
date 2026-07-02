@@ -60,9 +60,27 @@ class SessionScreen(ctk.CTkFrame):
         self._target_fps = cam_settings.get("live_view_fps", 20)
         self._frame_delay_ms = max(33, int(1000 / self._target_fps))
 
+        # Dev-Mode: LiveView-Performance messen (alle ~5s EINE Summenzeile,
+        # kein Log pro Frame). Im Live-Betrieb komplett aus (0 Overhead).
+        self._perf_enabled = bool(self.config.get("developer_mode"))
+        self._perf_window_start = 0.0
+        self._perf_live_frames = 0
+        self._perf_live_cam_ms = 0.0
+        self._perf_live_ui_ms = 0.0
+        self._perf_live_max_ms = 0.0
+        self._perf_photo_refreshes = 0
+        self._perf_photo_ms = 0.0
+        self._perf_skipped = 0
+
         # Gecachtes Flash-Bild (wird in on_show erstellt, nicht bei jedem Foto neu)
         self._cached_flash_ctk = None
         self._cached_flash_size = (0, 0)
+
+        # Fotoanzeige-Cache: das statische "gerade aufgenommen"-Foto wird pro
+        # Foto nur EINMAL auf Bildschirmgröße skaliert (Messung Miix 310:
+        # vorher ~380ms pro 100ms-Tick = Dauer-UI-Blockade während der Anzeige).
+        self._photo_display_key = None
+        self._photo_display_ctk = None
 
         # Template-Overlay im LiveView (optional, konfigurierbar)
         self._template_overlay_enabled = self.config.get("liveview_template_overlay", False)
@@ -71,6 +89,13 @@ class SessionScreen(ctk.CTkFrame):
         self._cached_template_scale = 1.0
         self._cached_template_display_size = (0, 0)
         self._cached_template_container_size = (0, 0)  # Container-Größe bei Cache-Erstellung
+
+        # Basis-Canvas-Cache fürs Overlay: die bereits aufgenommenen Fotos
+        # (6000x4000!) werden nur beim Foto-Wechsel in ihre Boxen skaliert,
+        # NICHT bei jedem LiveView-Frame (Messung Miix 310: vorher +~160ms
+        # pro Foto pro Frame → LiveView brach von 7.7 auf 1.8 fps ein).
+        self._overlay_base_canvas = None
+        self._overlay_base_photo_count = -1
 
         logger.info(f"Session: FPS={self._target_fps}, delay={self._frame_delay_ms}ms, skip={self._skip_frames}")
 
@@ -259,9 +284,17 @@ class SessionScreen(ctk.CTkFrame):
 
         if self.photo_display_until > 0:
             if time.time() < self.photo_display_until:
-                # Zuletzt aufgenommenes Foto anzeigen
+                # Zuletzt aufgenommenes Foto anzeigen (gecacht — das Bild ist
+                # statisch, es wird nur beim ersten Tick wirklich skaliert)
                 if self.app.photos_taken:
-                    self._display_preview(self.app.photos_taken[-1])
+                    if self._perf_enabled:
+                        t0 = time.perf_counter()
+                        self._display_photo_cached(self.app.photos_taken[-1])
+                        self._perf_photo_refreshes += 1
+                        self._perf_photo_ms += (time.perf_counter() - t0) * 1000
+                        self._maybe_log_liveview_perf()
+                    else:
+                        self._display_photo_cached(self.app.photos_taken[-1])
                 self.after(100, self._update_live_view)
                 return
             else:
@@ -274,13 +307,17 @@ class SessionScreen(ctk.CTkFrame):
         # Frame-Skipping für schwache Hardware
         self._frame_counter += 1
         if self._skip_frames > 0 and (self._frame_counter % (self._skip_frames + 1)) != 0:
+            if self._perf_enabled:
+                self._perf_skipped += 1
             if self.is_live:
                 self.after(self._frame_delay_ms, self._update_live_view)
             return
 
         # Kein Kamera-Zugriff während Capture/Restore im Hintergrund (Race Condition vermeiden)
         if not self._capture_in_progress and not self._camera_restore_in_progress:
+            perf_start = time.perf_counter() if self._perf_enabled else 0.0
             frame = self.app.camera_manager.get_frame()
+            perf_after_cam = time.perf_counter() if self._perf_enabled else 0.0
             if frame is not None:
                 # Kamera-Frame aufbereiten (spiegeln, rotieren)
                 # WICHTIG: Spiegelung NUR für LiveView (intuitiver Spiegel-Effekt für User).
@@ -314,8 +351,61 @@ class SessionScreen(ctk.CTkFrame):
 
                 self._display_preview(live_img)
 
+            if self._perf_enabled:
+                perf_end = time.perf_counter()
+                self._perf_live_frames += 1
+                self._perf_live_cam_ms += (perf_after_cam - perf_start) * 1000
+                self._perf_live_ui_ms += (perf_end - perf_after_cam) * 1000
+                frame_ms = (perf_end - perf_start) * 1000
+                if frame_ms > self._perf_live_max_ms:
+                    self._perf_live_max_ms = frame_ms
+                self._maybe_log_liveview_perf()
+
         if self.is_live:
             self.after(self._frame_delay_ms, self._update_live_view)
+
+    def _maybe_log_liveview_perf(self):
+        """Dev-Mode: alle ~5s EINE LiveView-Performance-Summenzeile loggen.
+
+        Zeigt, wo die Zeit pro Frame wirklich hingeht (Kamera-Read vs.
+        Aufbereitung/Anzeige) und wie viele fps effektiv ankommen — die
+        Grundlage für gezielte Optimierung auf dem Miix 310.
+        """
+        now = time.perf_counter()
+        if self._perf_window_start <= 0:
+            self._perf_window_start = now
+            return
+        elapsed = now - self._perf_window_start
+        if elapsed < 5.0:
+            return
+
+        if self._perf_live_frames > 0:
+            avg_cam = self._perf_live_cam_ms / self._perf_live_frames
+            avg_ui = self._perf_live_ui_ms / self._perf_live_frames
+            fps = self._perf_live_frames / elapsed
+            logger.info(
+                "LIVEVIEW-PERF: "
+                f"{self._perf_live_frames} Frames in {elapsed:.1f}s "
+                f"(~{fps:.1f} fps, Ziel {self._target_fps}), "
+                f"avg={avg_cam + avg_ui:.0f}ms/Frame "
+                f"(Kamera={avg_cam:.0f}ms, Aufbereitung+Anzeige={avg_ui:.0f}ms), "
+                f"max={self._perf_live_max_ms:.0f}ms, übersprungen={self._perf_skipped}"
+            )
+        if self._perf_photo_refreshes > 0:
+            logger.info(
+                "LIVEVIEW-PERF: Fotoanzeige-Refresh: "
+                f"{self._perf_photo_refreshes}x in {elapsed:.1f}s, "
+                f"avg={self._perf_photo_ms / self._perf_photo_refreshes:.0f}ms pro Refresh"
+            )
+
+        self._perf_window_start = now
+        self._perf_live_frames = 0
+        self._perf_live_cam_ms = 0.0
+        self._perf_live_ui_ms = 0.0
+        self._perf_live_max_ms = 0.0
+        self._perf_photo_refreshes = 0
+        self._perf_photo_ms = 0.0
+        self._perf_skipped = 0
 
     def _add_countdown_overlay(self, img: Image.Image) -> Image.Image:
         """Fügt ZENTRIERTEN Countdown zum Bild hinzu"""
@@ -347,6 +437,48 @@ class SessionScreen(ctk.CTkFrame):
         draw.text((x, y), text, fill=(224, 6, 117, 255), font=font)
 
         return img
+
+    def _display_photo_cached(self, photo: Image.Image):
+        """Zeigt ein STATISCHES Foto an — Skalierung + CTkImage nur einmal pro Foto.
+
+        Das aufgenommene Nikon-Foto ist 6000x4000; es bei jedem 100ms-Tick neu
+        auf Bildschirmgröße zu skalieren blockierte den UI-Thread dauerhaft
+        (~380ms pro Tick auf dem Miix 310). Cache-Key = Foto-Objekt + Containergröße.
+        """
+        container_w = self.preview_container.winfo_width()
+        container_h = self.preview_container.winfo_height()
+        key = (id(photo), container_w, container_h)
+        if key == self._photo_display_key and self._photo_display_ctk is not None:
+            return  # Bild steht schon unverändert auf dem Label — nichts zu tun
+
+        if container_w < 100 or container_h < 100:
+            container_w = self.winfo_screenwidth()
+            container_h = self.winfo_screenheight()
+
+        scaling = self._get_widget_scaling()
+        logical_w = container_w / scaling
+        logical_h = container_h / scaling
+
+        img_ratio = photo.width / photo.height
+        container_ratio = logical_w / logical_h
+        if img_ratio > container_ratio:
+            display_w = int(logical_w)
+            display_h = int(logical_w / img_ratio)
+        else:
+            display_h = int(logical_h)
+            display_w = int(logical_h * img_ratio)
+
+        # Einmalig auf Anzeigegröße (physische Pixel) verkleinern — danach hat
+        # CTkImage intern nichts Großes mehr zu skalieren.
+        phys_w = max(1, int(display_w * scaling))
+        phys_h = max(1, int(display_h * scaling))
+        small = photo.resize((phys_w, phys_h), Image.Resampling.BILINEAR)
+
+        ctk_img = ctk.CTkImage(light_image=small, dark_image=small, size=(display_w, display_h))
+        self.preview_label.configure(image=ctk_img)
+        self.preview_label.image = ctk_img
+        self._photo_display_key = key
+        self._photo_display_ctk = ctk_img
 
     def _display_preview(self, img: Image.Image):
         """Zeigt das Vorschau-Bild bildschirmfüllend an.
@@ -505,11 +637,45 @@ class SessionScreen(ctk.CTkFrame):
             self._cached_template_scale = scale
             self._cached_template_display_size = (display_w, display_h)
             self._cached_template_container_size = (container_w, container_h)
+            # Basis-Canvas muss zur neuen Skalierung neu aufgebaut werden
+            self._overlay_base_canvas = None
+            self._overlay_base_photo_count = -1
             logger.info(f"Template-Overlay Cache: {overlay_w}x{overlay_h} -> {display_w}x{display_h} (Container: {container_w}x{container_h}, scale={scale:.3f})")
 
         except Exception as e:
             logger.error(f"Template-Overlay Cache fehlgeschlagen: {e}")
             self._cached_template_composite = None
+            self._overlay_base_canvas = None
+            self._overlay_base_photo_count = -1
+
+    def _get_overlay_base_canvas(self) -> Image.Image:
+        """Basis-Canvas (schwarz + bereits aufgenommene Fotos) — gecacht.
+
+        Wird nur neu gebaut, wenn sich die Anzahl der Fotos ändert (Aufnahme/
+        Redo) oder der Template-Cache neu skaliert wurde. Die teure Skalierung
+        der 6000x4000-Fotos passiert damit einmal pro Foto statt pro Frame.
+        """
+        photo_count = len(self.app.photos_taken)
+        if (self._overlay_base_canvas is not None
+                and self._overlay_base_photo_count == photo_count):
+            return self._overlay_base_canvas
+
+        display_w, display_h = self._cached_template_display_size
+        base = Image.new("RGBA", (display_w, display_h), (0, 0, 0, 255))
+
+        for i, photo in enumerate(self.app.photos_taken):
+            if i >= len(self._cached_template_boxes_scaled):
+                break
+            box_info = self._cached_template_boxes_scaled[i]
+            x1, y1, x2, y2 = box_info["box"]
+            bw, bh = x2 - x1 + 1, y2 - y1 + 1
+            if bw > 0 and bh > 0:
+                fitted = self._fit_to_box(photo, bw, bh)
+                base.paste(fitted, (x1, y1))
+
+        self._overlay_base_canvas = base
+        self._overlay_base_photo_count = photo_count
+        return base
 
     def _apply_template_overlay(self, live_img: Image.Image) -> Image.Image:
         """Setzt den Kamera-Frame in die aktuelle Template-Box ein und legt das Overlay darüber"""
@@ -520,21 +686,9 @@ class SessionScreen(ctk.CTkFrame):
         if idx >= len(self._cached_template_boxes_scaled):
             return live_img
 
-        display_w, display_h = self._cached_template_display_size
-
-        # Canvas mit schwarzem Hintergrund erstellen
-        canvas = Image.new("RGBA", (display_w, display_h), (0, 0, 0, 255))
-
-        # Bereits aufgenommene Fotos in ihre Boxen einfügen (verkleinert)
-        for i, photo in enumerate(self.app.photos_taken):
-            if i >= len(self._cached_template_boxes_scaled):
-                break
-            box_info = self._cached_template_boxes_scaled[i]
-            x1, y1, x2, y2 = box_info["box"]
-            bw, bh = x2 - x1 + 1, y2 - y1 + 1
-            if bw > 0 and bh > 0:
-                fitted = self._fit_to_box(photo, bw, bh)
-                canvas.paste(fitted, (x1, y1))
+        # Gecachte Basis (Fotos schon eingesetzt) kopieren — pro Frame bleiben
+        # nur noch: LiveView-Box einsetzen + Overlay drüberlegen.
+        canvas = self._get_overlay_base_canvas().copy()
 
         # LiveView in aktuelle Box einsetzen
         current_box = self._cached_template_boxes_scaled[idx]
@@ -759,6 +913,9 @@ class SessionScreen(ctk.CTkFrame):
     def _on_capture_complete(self, photo: Optional[Image.Image]):
         """Callback auf UI-Thread nach abgeschlossenem Capture"""
         self._capture_in_progress = False
+        # Fotoanzeige-Cache invalidieren: gleich wird ein NEUES Foto angezeigt
+        # (id()-Kollisionen über Sessions hinweg ausschließen)
+        self._photo_display_key = None
         if self._capture_visible_started_at > 0:
             visible_ms = (time.perf_counter() - self._capture_visible_started_at) * 1000
             logger.info(f"Sichtbare Capture-Wartezeit bis Fotoanzeige: {visible_ms:.0f}ms")

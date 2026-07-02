@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    FexoNikonBridge: unsichtbarer Hintergrundprozess für Nikon-DSLR-Steuerung
+    (D3300 u.a.) über rohes PTP/MTP via Windows-WPD-API.
+
+    Motor: CameraControl.Devices (Kern von digiCamControl, MIT-Lizenz) —
+    KEIN Nikon-SDK nötig (für die D3xxx-Serie existiert ohnehin keines).
+
+    Ziel-Framework net48: auf Windows 10/11 vorinstalliert, d.h. auf den
+    Foto-Box-Tablets ist keine zusätzliche Runtime nötig.
+
+    Bauen (braucht .NET SDK oder Visual Studio Build Tools, Windows):
+        dotnet build bridge/FexoNikonBridge/FexoNikonBridge.csproj -c Release
+    Output: bridge/FexoNikonBridge/bin/Release/net48/FexoNikonBridge.exe (+DLLs)
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <!-- x86 ist PFLICHT: die DLLs des NuGet-Pakets (PortableDeviceLib u.a.) sind
+         32BITREQUIRED — eine x64-Exe stirbt beim Laden mit BadImageFormatException.
+         digiCamControl selbst wird seit Jahren als x86 ausgeliefert; x86 läuft auf
+         allen Ziel-Tablets (Win10/11 x64 via WOW64). -->
+    <PlatformTarget>x86</PlatformTarget>
+    <LangVersion>8.0</LangVersion>
+    <AssemblyName>FexoNikonBridge</AssemblyName>
+    <RootNamespace>FexoNikonBridge</RootNamespace>
+    <Version>0.1.0</Version>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Kern von digiCamControl als Standalone-Library (MIT).
+         Falls das 2018er-NuGet-Paket im Hardware-Test Probleme macht:
+         auf Source-Build aus github.com/dukus/digiCamControl umstellen
+         (Solution CameraControlDevices.sln) und Projektreferenz nutzen. -->
+    <PackageReference Include="CameraControl.Devices" Version="2.1.0-beta" />
+    <!-- Macht net48 mit dem reinen .NET-SDK baubar (dotnet build), ohne
+         Visual Studio / Targeting Packs auf dem Build-Rechner. -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="All" />
+  </ItemGroup>
+
+</Project>

@@ -59,6 +59,10 @@ dist/
 installer_files/
 installer_output/
 
+# FexoNikonBridge (.NET-Build-Output)
+bridge/**/bin/
+bridge/**/obj/
+
 # OS
 .DS_Store
 Thumbs.db

@@ -8,7 +8,7 @@ name: Build Windows .exe (Test, kein Release)
 # Actions-Run-Seite herunter und spielst sie selbst auf die Box.
 #
 # Nutzung: GitHub → Tab "Actions" → "Build Windows .exe (Test, kein Release)"
-#          → "Run workflow" → Version eingeben (z.B. 2.4.8) → Run.
+#          → "Run workflow" → Version eingeben (z.B. 2.4.10) → Run.
 #          Nach ein paar Minuten unten auf der Run-Seite unter "Artifacts" laden.
 
 on:
@@ -17,8 +17,13 @@ on:
       version:
         description: 'Version X.Y.Z (nur für Dateiname/Anzeige; kein Release)'
         required: true
-        default: '2.4.8'
+        default: '2.4.11'
         type: string
+      allow_no_bridge:
+        description: 'Build auch OHNE FexoNikonBridge zulassen (Nikon-Support fehlt dann)'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -35,7 +40,7 @@ jobs:
         shell: pwsh
         run: |
           if ('${{ inputs.version }}' -notmatch '^\d+\.\d+\.\d+$') {
-            Write-Error 'Version muss das Format X.Y.Z haben, z.B. 2.4.8'
+            Write-Error 'Version muss das Format X.Y.Z haben, z.B. 2.4.10'
             exit 1
           }
 
@@ -56,8 +61,6 @@ jobs:
         run: |
           $v = '${{ inputs.version }}'
           (Get-Content 'src/__init__.py') -replace '__version__ = ".*"', "__version__ = ""$v""" | Set-Content 'src/__init__.py' -Encoding utf8
-          $iss = ($v -split '\.')[0..1] -join '.'
-          (Get-Content 'installer.iss') -replace '#define MyAppVersion ".*"', "#define MyAppVersion ""$iss""" | Set-Content 'installer.iss' -Encoding utf8
           Write-Host "Version gesetzt: $v"
 
       - name: PyInstaller-Build
@@ -85,16 +88,41 @@ jobs:
           $dev = "@echo off`r`ncd /d `"%~dp0`"`r`nstart `"`" fexobooth.exe --dev`r`n"
           Set-Content -Path 'installer_files/start_dev.bat' -Value $dev -Encoding ascii -NoNewline
 
+      - name: FexoNikonBridge bauen (Nikon, unsichtbarer Hintergrundprozess)
+        id: bridge
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          # Kleiner .NET-Framework-4.8-Prozess (kein Fenster), Motor: CameraControl.Devices
+          # (MIT). Ersetzt den frueheren sichtbaren digiCamControl-Ansatz komplett.
+          dotnet build bridge/FexoNikonBridge/FexoNikonBridge.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw 'FexoNikonBridge-Build fehlgeschlagen' }
+          New-Item -ItemType Directory -Force -Path 'installer_output/fexobooth/bridge' | Out-Null
+          Copy-Item 'bridge/FexoNikonBridge/bin/Release/net48/*' 'installer_output/fexobooth/bridge/' -Recurse -Force
+          Write-Host 'FexoNikonBridge gebaut und nach installer_output/fexobooth/bridge/ kopiert.'
+
+      - name: Bridge-Gate (Run scheitert, wenn Bridge fehlt und nicht explizit erlaubt)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'installer_output/fexobooth/bridge/FexoNikonBridge.exe')) {
+            if ('${{ inputs.allow_no_bridge }}' -eq 'true') {
+              Write-Warning 'FexoNikonBridge fehlt - Build laeuft auf ausdruecklichen Wunsch OHNE Nikon-Support weiter.'
+            } else {
+              Write-Error 'FexoNikonBridge.exe fehlt - Abbruch, Installer wuerde ohne Nikon-Support gebaut. (Input allow_no_bridge=true setzen, um bewusst ohne zu bauen.)'
+              exit 1
+            }
+          }
+
       - name: Windows-Installer bauen (Inno Setup)
         id: installer
         continue-on-error: true
         shell: pwsh
         run: |
           choco install innosetup --no-progress -y
-          $iss = ('${{ inputs.version }}' -split '\.')[0..1] -join '.'
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=$iss installer.iss
-          if (Test-Path "installer_output/FexoBooth_Setup_$iss.exe") {
-            Write-Host "Installer gebaut: FexoBooth_Setup_$iss.exe"
+          $v = '${{ inputs.version }}'
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DMyAppVersion=$v installer.iss
+          if (Test-Path "installer_output/FexoBooth_Setup_$v.exe") {
+            Write-Host "Installer gebaut: FexoBooth_Setup_$v.exe"
           } else {
             Write-Warning 'Installer-.exe wurde nicht gefunden – ZIP-Fallback im Artefakt nutzen.'
           }
@@ -113,7 +141,7 @@ jobs:
           path: |
             installer_output/FexoBooth_Setup_*.exe
             installer_output/fexobooth.zip
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Hinweis
         shell: pwsh

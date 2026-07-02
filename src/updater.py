@@ -471,6 +471,9 @@ timeout /t 2 /nobreak >nul
 
 :do_update
 echo App beendet. Starte Update...
+:: Nikon-Bridge (Kindprozess) beendet sich normalerweise selbst per stdin-EOF,
+:: haengt sie doch noch, wuerde sie bridge\\FexoNikonBridge.exe locken.
+taskkill /F /IM "FexoNikonBridge.exe" >nul 2>&1
 echo.
 
 :: ============================================
@@ -655,6 +658,17 @@ if exist "%SOURCE_DIR%\\assets" (
 if exist "%SOURCE_DIR%\\setup" (
     echo - setup/
     xcopy "%SOURCE_DIR%\\setup" "%INSTALL_DIR%\\setup" /E /I /Y >nul 2>&1
+)
+
+:: Nikon-Bridge aktualisieren (unsichtbarer Hintergrundprozess fuer Nikon-DSLRs).
+:: Komplett ersetzen, damit keine veralteten CameraControl-DLLs liegen bleiben.
+if exist "%SOURCE_DIR%\\bridge" (
+    echo - bridge/ ^(FexoNikonBridge^)
+    if exist "%INSTALL_DIR%\\bridge" rmdir /s /q "%INSTALL_DIR%\\bridge" 2>nul
+    xcopy "%SOURCE_DIR%\\bridge" "%INSTALL_DIR%\\bridge" /E /I /Y >nul 2>&1
+    if not exist "%INSTALL_DIR%\\bridge\\FexoNikonBridge.exe" (
+        echo   WARNUNG: bridge\\FexoNikonBridge.exe fehlt nach dem Kopieren
+    )
 )
 
 :: BAT-Dateien aktualisieren

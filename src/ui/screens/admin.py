@@ -2516,7 +2516,7 @@ class AdminDialog(ctk.CTkToplevel):
             text_color=COLORS["text_secondary"]
         ).pack(anchor="w", pady=(5, 5))
         
-        # Prüfen ob Canon EDSDK verfügbar ist (Nikon läuft über digiCamControl/HTTP)
+        # Prüfen ob Canon EDSDK verfügbar ist (Nikon läuft über die FexoNikonBridge)
         try:
             from src.camera import CANON_AVAILABLE, NIKON_AVAILABLE
         except:
@@ -2665,12 +2665,12 @@ class AdminDialog(ctk.CTkToplevel):
             except Exception as e:
                 logger.warning(f"Canon Kamera-Suche Fehler: {e}")
         elif camera_type == "nikon":
-            # Nikon Kameras via digiCamControl
+            # Nikon Kameras via FexoNikonBridge (fragt nur eine laufende Bridge)
             try:
                 from src.camera.nikon import NikonCameraManager
                 nikon_cams = NikonCameraManager.list_cameras(self.config_data)
                 for cam in nikon_cams:
-                    cameras.append(f"[{cam['index']}] 📷 Nikon/digiCamControl {cam['name']}")
+                    cameras.append(f"[{cam['index']}] 📷 Nikon {cam['name']}")
                 logger.info(f"Nikon Kameras gefunden: {len(nikon_cams)}")
             except Exception as e:
                 logger.warning(f"Nikon Kamera-Suche Fehler: {e}")
@@ -2702,7 +2702,7 @@ class AdminDialog(ctk.CTkToplevel):
 
         if not cameras:
             if camera_type == "nikon":
-                cameras = ["[0] Nikon via digiCamControl"]
+                cameras = ["[0] Nikon via FexoNikonBridge"]
             else:
                 cameras = ["[0] Standard-Kamera"]
 

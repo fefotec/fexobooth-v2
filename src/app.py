@@ -14,6 +14,7 @@ import threading
 import random
 import atexit
 
+from src import __version__
 from src.config.config import load_config, reset_event_defaults, save_config
 from src.camera import get_camera_manager, CANON_AVAILABLE, NIKON_AVAILABLE
 from src.storage.local import get_shared_usb_manager
@@ -28,6 +29,27 @@ from src.utils.logging import get_logger
 from src.i18n import apply_locale_to_config, t
 
 logger = get_logger(__name__)
+
+TOPBAR_PRINTER_ERROR_KEYS = {
+    "KEIN DRUCKER!": "topbar.printer_no_printer",
+    "DRUCKER AUS!": "topbar.printer_off",
+    "PAPIER LEER!": "topbar.printer_no_paper",
+    "KASSETTE LEER!": "topbar.printer_cassette_empty",
+    "PAPIERSTAU!": "topbar.printer_paper_jam",
+    "KLAPPE OFFEN!": "topbar.printer_cover_open",
+    "DRUCKER PRÜFEN!": "topbar.printer_check",
+    "DRUCKER FEHLER!": "topbar.printer_error",
+    "DRUCKER FEHLT!": "topbar.printer_missing",
+    "KASSETTE FALSCH!": "topbar.printer_cassette_wrong",
+    "PAPIER/KASSETTE LEER!": "topbar.printer_paper_cassette_empty",
+    "DRUCK BLOCKIERT!": "topbar.print_blocked",
+    "DRUCKER OFFLINE!": "topbar.printer_offline",
+    "DRUCK-FEHLER!": "topbar.print_error",
+    "KEIN PAPIER / KASSETTE!": "topbar.printer_no_paper_cassette",
+    "KEINE TINTENKASSETTE!": "topbar.printer_no_ink_cassette",
+    "TINTE LEER!": "topbar.printer_ink_empty",
+    "KASSETTE PRÜFEN!": "topbar.printer_check_cassette",
+}
 
 
 class PhotoboothApp:
@@ -295,32 +317,61 @@ class PhotoboothApp:
 
         logger.info("PhotoboothApp initialisiert")
 
-        # digiCamControl automatisch vorstarten (nur Nikon) – der Betreiber muss es
-        # NICHT mehr manuell vor der App starten. Läuft im Hintergrund, blockiert
-        # den Startup nicht und entschärft den Kaltstart-Freeze beim ersten Capture.
+        # Dev-Mode: UI-Hänger-Monitor (loggt, wenn der Tk-Hauptthread blockiert war)
+        self._start_ui_hitch_monitor()
+
+        # FexoNikonBridge automatisch vorstarten (nur Nikon) – unsichtbarer
+        # Hintergrundprozess ohne Fenster. Blockiert den Startup nicht und
+        # entschärft den Kaltstart beim ersten Capture.
         self._warmup_nikon_async()
 
-    def _warmup_nikon_async(self):
-        """Startet digiCamControl im Hintergrund vor (nur wenn camera_type == 'nikon').
+    def _start_ui_hitch_monitor(self):
+        """Dev-Mode: loggt, wenn der Tk-UI-Thread spürbar blockiert war.
 
-        Erspart das manuelle Vorstarten von digiCamControl und verhindert, dass
-        initialize() beim ersten Session-Start den Kaltstart-Poll (bis
-        startup_timeout_seconds) auf dem UI-Thread durchläuft. Komplett im
-        Daemon-Thread – kein Block des UI-/Startup-Threads. Idempotent (no-op,
-        wenn der Webserver schon antwortet oder kein Nikon-Manager aktiv ist).
+        Ein after(200ms)-Herzschlag misst seine eigene Verspätung. Kommt er
+        deutlich zu spät, hat IRGENDWAS den UI-Thread so lange blockiert
+        (Sekunden-Polls, Screen-Wechsel, versehentlich synchrone Arbeit) —
+        die Log-Zeitmarke zeigt dann, welche Aktion unmittelbar davor lief.
+        Im Live-Betrieb komplett deaktiviert (0 Overhead).
+        """
+        if not self.config.get("developer_mode"):
+            return
+
+        interval_seconds = 0.2
+
+        def _tick():
+            now = time.perf_counter()
+            late_ms = (now - self._ui_hitch_expected_at) * 1000
+            if late_ms > 200:
+                logger.info(f"UI-HITCH: Tk-Hauptschleife war ~{late_ms:.0f}ms blockiert")
+            self._ui_hitch_expected_at = time.perf_counter() + interval_seconds
+            self.root.after(int(interval_seconds * 1000), _tick)
+
+        self._ui_hitch_expected_at = time.perf_counter() + interval_seconds
+        self.root.after(int(interval_seconds * 1000), _tick)
+
+    def _warmup_nikon_async(self):
+        """Startet die FexoNikonBridge im Hintergrund vor (nur wenn camera_type == 'nikon').
+
+        Die Bridge ist ein unsichtbarer Hintergrundprozess (kein Fenster, kein
+        Webserver). Der Warmup verhindert, dass initialize() beim ersten
+        Session-Start den Bridge-Kaltstart auf dem UI-Thread durchläuft.
+        Komplett im Daemon-Thread – kein Block des UI-/Startup-Threads.
+        Idempotent (no-op, wenn die Bridge schon läuft oder kein Nikon-Manager
+        aktiv ist).
         """
         if self.config.get("camera_type") != "nikon":
             return
         manager = self.camera_manager
-        if not hasattr(manager, "ensure_server_running"):
+        if not hasattr(manager, "ensure_bridge_running"):
             return
 
         def _warmup():
             try:
-                ok = manager.ensure_server_running()
-                logger.info(f"digiCamControl-Warmup: {'bereit' if ok else 'nicht erreichbar'}")
+                ok = manager.ensure_bridge_running()
+                logger.info(f"Nikon-Bridge-Warmup: {'bereit' if ok else 'nicht verfügbar'}")
             except Exception as e:
-                logger.warning(f"digiCamControl-Warmup fehlgeschlagen: {e}")
+                logger.warning(f"Nikon-Bridge-Warmup fehlgeschlagen: {e}")
 
         threading.Thread(target=_warmup, daemon=True, name="nikon-warmup").start()
 
@@ -330,7 +381,7 @@ class PhotoboothApp:
         Nötig, weil Buchungs-/Event-Reloads und das Admin-Speichern den
         camera_type ändern können (z.B. webcam→nikon). Bleibt der Typ gleich,
         wird nur die Config in den Manager durchgereicht (Nikon braucht sie für
-        die digiCamControl-Pfade) – kein teurer Re-Init.
+        die Bridge-Pfade) – kein teurer Re-Init.
         """
         camera_type = self.config.get("camera_type", "webcam")
 
@@ -349,7 +400,7 @@ class PhotoboothApp:
         self._camera_type = camera_type
         self.camera_manager = get_camera_manager(camera_type, config=self.config)
 
-        # Bei Wechsel auf Nikon digiCamControl im Hintergrund vorstarten.
+        # Bei Wechsel auf Nikon die FexoNikonBridge im Hintergrund vorstarten.
         if camera_type == "nikon":
             self._warmup_nikon_async()
 
@@ -1159,7 +1210,7 @@ class PhotoboothApp:
                     size=(new_width, new_height)
                 )
                 logo_label = ctk.CTkLabel(logo_frame, image=self.logo_ctk, text="")
-                logo_label.pack()
+                logo_label.pack(side="left")
             except Exception as e:
                 logger.warning(f"Logo konnte nicht geladen werden: {e}")
                 ctk.CTkLabel(
@@ -1167,14 +1218,21 @@ class PhotoboothApp:
                     text="FEXOBOOTH",
                     font=FONTS["heading"],
                     text_color=COLORS["primary"]
-                ).pack()
+                ).pack(side="left")
         else:
             ctk.CTkLabel(
                 logo_frame,
                 text="FEXOBOOTH",
                 font=FONTS["heading"],
                 text_color=COLORS["primary"]
-            ).pack()
+            ).pack(side="left")
+
+        ctk.CTkLabel(
+            logo_frame,
+            text=f"v{__version__}",
+            font=FONTS["tiny"],
+            text_color=COLORS["text_secondary"]
+        ).pack(side="left", padx=(8, 0), pady=(8, 0))
 
         # Dev-Mode Buttons (nur im Developer Mode)
         if self.config.get("developer_mode", False):
@@ -1247,7 +1305,7 @@ class PhotoboothApp:
 
         self.usb_status = ctk.CTkLabel(
             usb_container,
-            text="⚠️ USB",
+            text=f"⚠️ {t(self.config, 'topbar.usb_label')}",
             font=FONTS["small"],
             text_color=COLORS["warning"],
             fg_color=COLORS["bg_light"],
@@ -1431,13 +1489,13 @@ class PhotoboothApp:
 
             if self._usb_blink_state:
                 self.usb_status.configure(
-                    text=f"⚠️ KEIN USB!{pending_text}",
+                    text=f"⚠️ {t(self.config, 'topbar.usb_none')}{pending_text}",
                     text_color="#ffffff",
                     fg_color="#ff0000"  # Knallrot
                 )
             else:
                 self.usb_status.configure(
-                    text=f"⚠️ USB FEHLT!{pending_text}",
+                    text=f"⚠️ {t(self.config, 'topbar.usb_missing')}{pending_text}",
                     text_color="#000000",
                     fg_color="#ffcc00"  # Gelb
                 )
@@ -2098,6 +2156,44 @@ class PhotoboothApp:
 
         dialog.protocol("WM_DELETE_WINDOW", close_dialog)
 
+    def _translate_topbar_printer_problem(self, problem_text: str) -> str:
+        """Übersetzt bekannte Drucker-Fehler nur für die Top-Bar-Anzeige."""
+        raw_text = str(problem_text or "").strip()
+        normalized = raw_text.upper()
+
+        key = TOPBAR_PRINTER_ERROR_KEYS.get(normalized)
+        if key:
+            return t(self.config, key)
+
+        if normalized.startswith("FEHLER:"):
+            details = raw_text.split(":", 1)[1].strip()
+            return t(self.config, "topbar.printer_error_detail", details=details)
+
+        if "STAU" in normalized:
+            return t(self.config, "topbar.printer_paper_jam")
+        if "PAPIER" in normalized and "KASSETTE" in normalized:
+            return t(self.config, "topbar.printer_no_paper_cassette")
+        if "PAPIER" in normalized:
+            return t(self.config, "topbar.printer_no_paper")
+        if "TINTENKASSETTE" in normalized:
+            return t(self.config, "topbar.printer_no_ink_cassette")
+        if "TINTE" in normalized:
+            return t(self.config, "topbar.printer_ink_empty")
+        if "KASSETTE" in normalized:
+            return t(self.config, "topbar.printer_check_cassette")
+        if "KLAPPE" in normalized:
+            return t(self.config, "topbar.printer_cover_open")
+        if "OFFLINE" in normalized:
+            return t(self.config, "topbar.printer_offline")
+        if "FEHLT" in normalized or "KEIN DRUCKER" in normalized:
+            return t(self.config, "topbar.printer_missing")
+        if "BLOCKIERT" in normalized:
+            return t(self.config, "topbar.print_blocked")
+        if "FEHLER" in normalized or "DRUCK" in normalized:
+            return t(self.config, "topbar.printer_error")
+
+        return raw_text
+
     def _check_printer_status(self):
         """Prüft Drucker-Status via PrinterController
 
@@ -2137,16 +2233,17 @@ class PhotoboothApp:
 
             # Blinkend in Top-Bar anzeigen
             self._printer_blink_state = not self._printer_blink_state
+            display_text = self._translate_topbar_printer_problem(problem_text)
 
             if self._printer_blink_state:
                 self.printer_status.configure(
-                    text=f"⚠️ {problem_text}",
+                    text=f"⚠️ {display_text}",
                     text_color="#ffffff",
                     fg_color="#ff0000"
                 )
             else:
                 self.printer_status.configure(
-                    text=f"⚠️ {problem_text}",
+                    text=f"⚠️ {display_text}",
                     text_color="#000000",
                     fg_color="#ffcc00"
                 )
@@ -2225,14 +2322,14 @@ class PhotoboothApp:
                     # Sonst DEADLOCK: UI-Thread + Session-Thread rufen gleichzeitig EDSDK auf
                     pass
                 elif not CANON_AVAILABLE:
-                    problem_text = "EDSDK FEHLT!"
+                    problem_text = t(self.config, "topbar.camera_edsdk_missing")
                 else:
                     # Kamera nicht aktiv → sicher EDSDK aufzurufen
                     from src.camera.canon import CanonCameraManager
                     from src.camera import edsdk as _edsdk
                     cameras = CanonCameraManager.list_cameras()
                     if not cameras:
-                        problem_text = "KEINE KAMERA!"
+                        problem_text = t(self.config, "topbar.camera_missing")
                     # Kamera-Handles freigeben (sonst EDSDK Handle-Leak bei jedem Check!)
                     for cam in cameras:
                         ref = cam.get("ref")
@@ -2242,16 +2339,18 @@ class PhotoboothApp:
                             except Exception:
                                 pass
             elif camera_type == "nikon":
-                # Nikon läuft über digiCamControl (HTTP). Wenn die Kamera bereits
-                # aktiv ist, KEINE weiteren Anfragen (kein Eingriff in Session).
+                # Nikon läuft über die FexoNikonBridge (stdio, unsichtbar).
+                # Wenn die Kamera bereits aktiv ist, KEINE weiteren Anfragen
+                # (kein Eingriff in Session). list_cameras() fragt nur eine
+                # BEREITS laufende Bridge (startet nichts auf dem UI-Thread).
                 if self.camera_manager.is_initialized:
                     pass
                 else:
                     from src.camera.nikon import NikonCameraManager
                     if not NikonCameraManager.is_available(self.config):
-                        problem_text = "DCC FEHLT!"
+                        problem_text = t(self.config, "topbar.camera_bridge_missing")
                     elif not NikonCameraManager.list_cameras(self.config):
-                        problem_text = "KEINE NIKON!"
+                        problem_text = t(self.config, "topbar.camera_nikon_missing")
             else:
                 # Webcam: Prüfen ob Kamera erreichbar ist
                 cam_idx = self.config.get("camera_index", 0)
@@ -2268,9 +2367,9 @@ class PhotoboothApp:
                             self.config["camera_index"] = best_idx
                             # Kein problem_text → Warnung verschwindet
                         else:
-                            problem_text = "KEINE KAMERA!"
+                            problem_text = t(self.config, "topbar.camera_missing")
                     else:
-                        problem_text = "KEINE KAMERA!"
+                        problem_text = t(self.config, "topbar.camera_missing")
                 elif self.camera_manager.is_initialized:
                     pass  # Kamera aktiv → OK
                 else:
@@ -2279,9 +2378,9 @@ class PhotoboothApp:
                     if cap.isOpened():
                         cap.release()
                     else:
-                        problem_text = "KEINE KAMERA!"
+                        problem_text = t(self.config, "topbar.camera_missing")
         except Exception:
-            problem_text = "KAMERA FEHLER!"
+            problem_text = t(self.config, "topbar.camera_error")
 
         if problem_text:
             # Blinkend anzeigen (wie USB/Drucker-Warnung)

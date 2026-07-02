@@ -48,15 +48,15 @@ DEFAULT_CONFIG = {
         "single_photo_height": 1080,
         "live_view_resolution": 640
     },
-    # Nikon DSLR über digiCamControl (lokaler Webserver, Variante 2 wie dslrBooth).
-    # Leere app_path/capture_folder = Standardpfade verwenden.
-    "nikon_digicamcontrol": {
-        "host": "127.0.0.1",
-        "port": 5513,
-        "app_path": "",
-        "capture_folder": "",
-        "startup_timeout_seconds": 15,
-        "http_timeout_seconds": 3
+    # Nikon DSLR über die eigene unsichtbare FexoNikonBridge (Variante 3, wie dslrBooth):
+    # kleiner versteckter Hintergrundprozess (kein Fenster), spricht rohes PTP/MTP über
+    # die Windows-WPD-API mit der Kamera. Kommunikation über stdin/stdout (keine Ports).
+    # Leerer exe_path = Standardpfade verwenden ({app}\bridge\FexoNikonBridge.exe).
+    "nikon_bridge": {
+        "exe_path": "",
+        "init_timeout_seconds": 20,
+        "command_timeout_seconds": 4,
+        "capture_timeout_seconds": 12
     },
 
     # Druck

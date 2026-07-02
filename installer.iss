@@ -82,6 +82,11 @@ Source: "deployment\01_referenz-tablet\post_install_check.bat"; DestDir: "{app}\
 ; Beispiel-Konfiguration
 Source: "config.example.json"; DestDir: "{app}"; Flags: ignoreversion
 
+; Nikon: Die unsichtbare FexoNikonBridge liegt (falls gebaut) bereits unter
+; installer_output\fexobooth\bridge\ und wird über den rekursiven
+; Hauptanwendungs-Eintrag oben nach {app}\bridge\ mitinstalliert.
+; Es wird KEINE Fremdsoftware (digiCamControl) mehr installiert.
+
 [Dirs]
 ; Erstelle wichtige Verzeichnisse
 Name: "{app}\BILDER"
