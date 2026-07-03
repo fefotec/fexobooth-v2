@@ -631,6 +631,70 @@ def _create_flask_app(locale: str = "de-DE"):
             return None
         return img_path
 
+    # ---------- Thumbnail-Cache (BILDER/.thumbs) ----------------------------
+    # Plan "Offline-Galerie + Cloud-Relay" Etappe 2 (fexobox-app/docs/
+    # PLAN-OFFLINE-GALERIE-CLOUD-RELAY.md §5): Jedes Thumbnail wird genau
+    # EINMAL gerechnet (Pillow) und als JPEG unter BILDER/.thumbs/{Folder}/
+    # {filename} abgelegt. Ab dann liefert send_file die Datei direkt aus -
+    # keine Pillow-Arbeit mehr pro Abruf (5 scrollende Gaeste = 5x dieselbe
+    # Rechenlast auf dem Miix 310). Web-Galerie und App-API nutzen DENSELBEN
+    # Cache. Lebenszyklus: delete_all_images() (Event-Wechsel) raeumt .thumbs
+    # mit; _collect_photos listet nur Prints/Single, sieht .thumbs also nie.
+
+    def _thumb_cache_path(img_path: Path) -> Optional[Path]:
+        """Cache-Datei fuer ein Galerie-Bild (None = kein Cache moeglich)."""
+        if not _gallery_path:
+            return None
+        try:
+            rel = img_path.resolve().relative_to(_gallery_path.resolve())
+        except Exception:
+            return None
+        return _gallery_path / ".thumbs" / rel
+
+    def _serve_thumbnail(filename: str):
+        """Gemeinsamer Kern fuer /thumb/... und /api/v1/thumb/... (EIN Cache)."""
+        img_path = _resolve_gallery_file(filename)
+        if not img_path:
+            abort(404)
+
+        cache_path = _thumb_cache_path(img_path)
+
+        # 1) Cache-Treffer: Datei direkt ausliefern, keine Pillow-Arbeit.
+        if cache_path is not None and cache_path.exists():
+            try:
+                if cache_path.stat().st_mtime >= img_path.stat().st_mtime:
+                    logger.debug(f"🖼️ Thumb-Cache HIT: {filename}")
+                    return send_file(cache_path, mimetype='image/jpeg')
+                logger.debug(f"🖼️ Thumb-Cache veraltet (Quelle neuer): {filename}")
+            except OSError:
+                logger.debug(f"🖼️ Thumb-Cache unlesbar -> neu rechnen: {filename}")
+
+        # 2) Cache-Miss: einmal rechnen (wie bisher).
+        try:
+            img = Image.open(img_path)
+            img.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
+            buffer = io.BytesIO()
+            img.save(buffer, format='JPEG', quality=80)
+            data = buffer.getvalue()
+        except Exception as e:
+            logger.error(f"Thumbnail-Fehler: {e}")
+            abort(500)
+
+        # 3) Best-effort in den Cache schreiben. Atomar via tmp+os.replace mit
+        #    zufaelligem tmp-Namen: parallele Anfragen desselben Thumbs
+        #    ueberschreiben sich nicht und es liegt nie eine halbe Datei da.
+        if cache_path is not None:
+            try:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                tmp_path = cache_path.with_name(f"{cache_path.name}.{secrets.token_hex(4)}.tmp")
+                tmp_path.write_bytes(data)
+                os.replace(tmp_path, cache_path)
+                logger.debug(f"🖼️ Thumb-Cache MISS -> gespeichert: {filename} ({len(data)} Bytes)")
+            except OSError as e:
+                logger.debug(f"🖼️ Thumb-Cache schreiben fehlgeschlagen ({filename}): {e}")
+
+        return send_file(io.BytesIO(data), mimetype='image/jpeg')
+
     def _request_token() -> str:
         auth_header = request.headers.get("Authorization", "")
         if auth_header.lower().startswith("bearer "):
@@ -829,27 +893,11 @@ def _create_flask_app(locale: str = "de-DE"):
 
     @app.route('/thumb/<path:filename>')
     def thumbnail(filename):
-        """Generiert und liefert Thumbnail"""
+        """Liefert Thumbnail (einmal rechnen, dann aus BILDER/.thumbs)"""
         gate = _require_gallery_feature()
         if gate:
             return gate
-        img_path = _resolve_gallery_file(filename)
-        if not img_path:
-            abort(404)
-        
-        try:
-            img = Image.open(img_path)
-            img.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
-            
-            # In Memory speichern
-            buffer = io.BytesIO()
-            img.save(buffer, format='JPEG', quality=80)
-            buffer.seek(0)
-            
-            return send_file(buffer, mimetype='image/jpeg')
-        except Exception as e:
-            logger.error(f"Thumbnail-Fehler: {e}")
-            abort(500)
+        return _serve_thumbnail(filename)
     
     @app.route('/image/<path:filename>')
     def full_image(filename):
@@ -996,21 +1044,8 @@ def _create_flask_app(locale: str = "de-DE"):
         gate = _require_gallery_feature()
         if gate:
             return gate
-
-        img_path = _resolve_gallery_file(filename)
-        if not img_path:
-            abort(404)
-
-        try:
-            img = Image.open(img_path)
-            img.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
-            buffer = io.BytesIO()
-            img.save(buffer, format='JPEG', quality=80)
-            buffer.seek(0)
-            return send_file(buffer, mimetype='image/jpeg')
-        except Exception as e:
-            logger.error(f"API Thumbnail-Fehler: {e}")
-            abort(500)
+        # Gleicher Cache wie die Web-Galerie (/thumb/...).
+        return _serve_thumbnail(filename)
 
     @app.route('/api/v1/image/<path:filename>')
     def api_v1_full_image(filename):

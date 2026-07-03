@@ -1,6 +1,7 @@
 """Lokale Speicherung mit automatischer USB-Kopie"""
 
 import os
+import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -122,7 +123,7 @@ class LocalStorage:
     def delete_all_images() -> int:
         """Löscht alle Bilder (mit Vorsicht verwenden!)"""
         count = 0
-        
+
         for folder in [SINGLES_PATH, PRINTS_PATH]:
             if folder.exists():
                 for file in folder.glob("*.jpg"):
@@ -131,6 +132,17 @@ class LocalStorage:
                         count += 1
                     except Exception as e:
                         logger.warning(f"Konnte {file} nicht löschen: {e}")
-        
+
+        # Thumbnail-Cache der Galerie folgt dem Lebenszyklus der Bilder
+        # (Plan Offline-Galerie Etappe 2): Event-Wechsel räumt ihn mit,
+        # sonst lägen dort verwaiste Thumbs des alten Events.
+        thumbs_cache = IMAGES_PATH / ".thumbs"
+        if thumbs_cache.exists():
+            try:
+                shutil.rmtree(thumbs_cache)
+                logger.info("Thumbnail-Cache (.thumbs) gelöscht")
+            except Exception as e:
+                logger.warning(f"Konnte Thumbnail-Cache nicht löschen: {e}")
+
         logger.info(f"{count} Bilder gelöscht")
         return count
