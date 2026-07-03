@@ -209,7 +209,7 @@ Frage: „Reagiert der Touch oben rechts auf der Status-Leiste, also auf das Bli
 
 **Akkusymbol auf Display:** Box 30 Min laden (Strom muss fließen – Blitz oben grün!), dann erneut versuchen. Vorher Wartehinweis aus den Gesprächsregeln sagen, dann still bleiben.
 
-Kein Erfolg → zuerst **Service-Menü** (Windows Neustart), sonst Callback.
+Kein Erfolg → zuerst **Service-Menü** („Neustart / Ausschalten" → Neustart), sonst Callback.
 
 ---
 
@@ -265,7 +265,7 @@ Verfügbare Optionen im Service-Menü:
 - **„Template wählen"** – Kunde kann ein vorhandenes Template auswählen
 - **„Template neu einlesen"** – Template/Settings erneut laden, wenn die Box die vorhandenen Daten nicht neu übernommen hat
 - **„Druckstau beheben"** – setzt den Drucker softwareseitig zurück
-- **„Windows Neustart"** – kompletter Box-Neustart (~2 Min)
+- **„Neustart / Ausschalten"** – nach dem Antippen erscheint eine Rückfrage mit **„Neustart"** (kompletter Box-Neustart, ~2 Min) oder **„Ausschalten"** (Box sauber herunterfahren, z. B. am Event-Ende)
 - **„Live-View Overlay EIN/AUS"** – Wunsch des Kunden nach Vollbild-Kamerabild ohne Template-Vorschau
 
 Nicht nennen/anbieten: „Druck-Korrektur" ist noch nicht ausgerollt. „LANG / Sprache" ist nicht Teil der Hotline-Anleitung.
@@ -277,7 +277,8 @@ Nicht nennen/anbieten: „Druck-Korrektur" ist noch nicht ausgerollt. „LANG / 
 | Default-Template/4 Bilder sichtbar, Kunde möchte vorhandenes Template auswählen | „Template wählen" |
 | Template wurde geändert, aber die Box hat es offenbar nicht neu übernommen | „Template neu einlesen" |
 | Drucker hängt nach Folien-/Papier-Wechsel | „Druckstau beheben" |
-| Tablet hängt, Hard-Reset über Power-Knopf nicht möglich oder ohne Erfolg | „Windows Neustart" |
+| Tablet hängt, Hard-Reset über Power-Knopf nicht möglich oder ohne Erfolg | „Neustart / Ausschalten" → **Neustart** wählen |
+| Kunde will die Box am Event-Ende sauber ausschalten | „Neustart / Ausschalten" → **Ausschalten** wählen |
 | Kunde sagt „Ich will das Kamerabild groß sehen / ohne Vorschau-Rahmen" | „Live-View Overlay" auf AUS schalten |
 | Kunde sagt „Wunsch-Template fehlt" oder „gebuchtes Template fehlt" | Kein Service-Menü-Versuch, sondern **Callback** |
 
@@ -286,8 +287,8 @@ Nicht nennen/anbieten: „Druck-Korrektur" ist noch nicht ausgerollt. „LANG / 
 1. „Bitte gehen Sie zurück auf den Hauptbildschirm der Box, sodass Sie oben rechts die Buchungsnummer und das Blitz-Symbol sehen."
 2. „Tippen Sie jetzt ganz oben rechts in die ÄUSSERSTE Ecke des Bildschirms – rechts neben der Buchungsnummer. Dort ist eine unsichtbare Schaltfläche."
 3. „Es öffnet sich ein PIN-Feld. Bitte tippen Sie genau diese vier Ziffern ein: zwei – null – eins – fünf."
-4. „Es erscheint ein Service-Menü. Tippen Sie auf [JE NACH SITUATION: 'Template wählen' / 'Template neu einlesen' / 'Druckstau beheben' / 'Windows Neustart' / 'Live-View Overlay']."
-5. Bei Windows Neustart: Wartezeit ~2 Minuten. Vorher Wartehinweis aus den Gesprächsregeln sagen, dann still bleiben, bis der Kunde meldet, dass der Startbildschirm wieder da ist.
+4. „Es erscheint ein Service-Menü. Tippen Sie auf [JE NACH SITUATION: 'Template wählen' / 'Template neu einlesen' / 'Druckstau beheben' / 'Neustart / Ausschalten' / 'Live-View Overlay']."
+5. Bei „Neustart / Ausschalten": „Es kommt eine Rückfrage. Tippen Sie auf **'Neustart'** [bzw. **'Ausschalten'**, wenn der Kunde die Box abbauen will]." Beim Neustart: Wartezeit ~2 Minuten. Vorher Wartehinweis aus den Gesprächsregeln sagen, dann still bleiben, bis der Kunde meldet, dass der Startbildschirm wieder da ist.
 
 Wenn auch das Service-Menü nicht hilft → **Callback**.
 

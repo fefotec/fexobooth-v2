@@ -13,9 +13,28 @@ Alles additiv und performance-neutral; die gebuchte Galerie verhält sich unver�
 
 ### Neu
 
+- **Thumbnail-Cache `BILDER/.thumbs/`** (Plan „Offline-Galerie" Etappe 2, 2026-07-03): Jedes
+  Galerie-Thumbnail wird nur noch EINMAL gerechnet (Pillow) und danach als Datei direkt
+  ausgeliefert (`send_file`) — vorher rechnete die Box dasselbe Thumbnail bei JEDEM Abruf neu
+  (5 scrollende Gäste = 5× dieselbe Last auf dem Miix 310). Web-Galerie (`/thumb/...`) und
+  App-API (`/api/v1/thumb/...`) teilen sich denselben Cache; wird ein Foto ersetzt (Quelle
+  neuer als Cache), rechnet die Box automatisch neu. Der Event-Wechsel
+  (`delete_all_images()`) räumt `.thumbs` mit ab. Cache-Schreiben ist best-effort und atomar
+  (tmp + `os.replace`), Fehler stören die Auslieferung nie.
+
 - **Startscreen zeigt die lokale Software-Version.** Oben links neben `FEXOBOOTH` steht jetzt die
-  Build-Version aus `src/__init__.py`; die lokale Build-Quelle ist auf `2.4.12` angehoben, auch ohne
+  Build-Version aus `src/__init__.py`; die lokale Build-Quelle ist auf `2.4.14` angehoben, auch ohne
   bereits veröffentlichten GitHub-Release.
+- **Webcam-Foto: MJPG-Codec statt unkomprimiertem YUY2.** Die Auflösungs-Umschaltung auf 1080p
+  bleibt erhalten, kostete aber bisher ~1,3 s + ~0,7 s Auslesen pro Foto (Messung Miix 310).
+  Der Codec wird jetzt NACH der Auflösung gesetzt und das Ergebnis verifiziert (der erste
+  Versuch in 2.4.13 wurde von DirectShow zurückverhandelt und kostete sogar Zeit); lehnt die
+  Kamera MJPG ab, merkt sich die Software das und verschwendet keine Zeit mehr pro Foto.
+- **Final-Screen ruckelt nicht mehr beim Erzeugen:** Das Druckbild wird aus vorab verkleinerten
+  Fotos gerechnet (2000 px, weiterhin >2× über dem 1800×1200-Druckbedarf — Qualität identisch).
+  Vorher sättigten die 24/13,5-MP-Originale beide Prozessorkerne und die Bedienung stand ~3 s.
+- **Filter-Screen:** Doppeltes Vorschau-Rechnen beim Betreten behoben; die Hintergrund-Vorschau
+  macht kurze Pausen, damit Touch/LiveView flüssig bleiben.
 - **Deutlich flüssiger auf dem Miix 310 (Messung per Dev-Log, Build 2.4.11 mit Nikon D3300):**
   - LiveView bricht nicht mehr mit jedem aufgenommenen Foto ein (vorher 7,7 → 1,8 fps): die
     bereits aufgenommenen Fotos werden im Template-Overlay nur noch beim Foto-Wechsel skaliert,
@@ -26,8 +45,15 @@ Alles additiv und performance-neutral; die gebuchte Galerie verhält sich unver�
     auf den 24-MP-Originalen (vorher 96 MP pro Klick), und alle Filter werden im Hintergrund
     vorgerendert. Das gedruckte Bild rendert unverändert aus den Originalen.
   - **Final-Screen friert nicht mehr ein** (vorher 3,3 s UI-Blockade): Rendern + Speichern laufen
-    im Hintergrund, der Gast sieht sofort „Dein Bild wird erstellt..." (neuer i18n-Text
+    im Hintergrund, der Gast sieht sofort „Druckdatei wird erzeugt..." (neuer i18n-Text
     `final.rendering` in allen 7 Sprachen), der Druck-Button ist bis zur Fertigstellung gesperrt.
+    **Der Auto-Zurück-Countdown startet erst, wenn das Bild sichtbar ist und gedruckt werden
+    kann** — die Wartezeit während des Erzeugens geht nicht mehr von der Gast-Zeit ab.
+- **Nikon fotografiert in Größe „M" statt 24 MP** (neu: `nikon_bridge.image_size`, Standard `"M"`):
+  Die Bridge stellt die JPEG-Größe der Kamera beim Verbinden automatisch um (D3300: 4496×3000
+  statt 6000×4000). Für den 1800×1200-Druck mehr als ausreichend, und der USB-Transfer pro Foto
+  wird deutlich kürzer (weniger sichtbare Wartezeit nach dem Auslösen). `"L"` = volle Auflösung,
+  `""` = Kamera-Einstellung unangetastet lassen.
 - **Nikon-Anbindung komplett neu: unsichtbare FexoNikonBridge statt digiCamControl.** Die D3300 wird
   vom offiziellen Nikon-SDK nicht unterstützt (kein Modul für die gesamte D3xxx-Serie); der bisherige
   digiCamControl-Ansatz scheiterte im Realtest (sichtbares Fremdfenster vor FexoBooth + Webserver auf
@@ -61,6 +87,10 @@ Alles additiv und performance-neutral; die gebuchte Galerie verhält sich unver�
 
 ### Geändert
 
+- **Kunden-Menü (PIN 2015): „Windows Neustart" → „Neustart / Ausschalten".** Der bestehende Button
+  öffnet jetzt eine Rückfrage mit **Neustart**, **Ausschalten** und **Abbrechen** — so kann die Box
+  am Event-Ende auch sauber heruntergefahren werden (nicht nur neu gestartet). Kein zusätzlicher
+  Button; Texte in allen 7 Sprachen, Felix-Hotline-Prompt entsprechend angepasst.
 - **Foto-Galerie bleibt zahlendes Feature.** Obwohl der Server immer läuft, liefern alle Foto-/Galerie-Routes
   ohne gebuchte Galerie weiterhin nur eine Sperrseite bzw. 403. Am Box-Bildschirm ändert sich für
   Nicht-Galerie-Kunden nichts (kein QR, kein Banner).

@@ -4,6 +4,118 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-07-03
+
+### Kunden-Menü PIN 2015: „Neustart / Ausschalten" mit Rückfrage (Kundenwunsch Christian)
+
+**Wunsch:** Bisher konnte man im 2015er-Menü nur Windows neu starten. Der Kunde soll die Box am
+Event-Ende auch **sauber herunterfahren** können — über **denselben** Button (kein zusätzlicher).
+
+**Umsetzung:**
+- **[src/ui/screens/admin.py](src/ui/screens/admin.py):** Button „Windows Neustart" → „Neustart /
+  Ausschalten"; `_customer_restart` → `_customer_power_options`. Der Bestätigungsdialog zeigt jetzt
+  **drei** Buttons: Neustart (`shutdown /r`), Ausschalten (`shutdown /s`, rot), Abbrechen. Gemeinsame
+  `do_power(action)`-Funktion mit passendem Wartehinweis je Aktion.
+- **[src/i18n.py](src/i18n.py):** `service.restart_windows/_title/_hint` → `service.power_options/
+  _title/_hint`; neu `service.shutdown_confirm` + `service.shutdown_running`; `restart_confirm/
+  _running` + `abort` bleiben. Alle **7 Sprachen** gepflegt (de-AT erbt de-DE per Fallback — mit
+  `t()` verifiziert). Übersetzungs-Inventar (`../fexobox-next/docs/MULTILINGUAL-...md`) aktualisiert.
+- **[support/HOTLINE_PROMPT_FELIX.md](support/HOTLINE_PROMPT_FELIX.md):** Alle „Windows Neustart"-
+  Stellen auf „Neustart / Ausschalten" + Rückfrage-Hinweis umgestellt (Pflicht bei 2015er-Änderung).
+
+**Checks:** `py_compile` OK; i18n-Key-Parität + `t()`-Fallback für alle 7 Sprachen geprüft; keine
+verwaisten Alt-Keys mehr im Code. Geht in denselben Build-Kandidaten (2.4.14) wie Thumbnail-Cache
++ MJPG-Fix.
+
+### Thumbnail-Cache `BILDER/.thumbs/` gebaut (Etappe 2 App-Plan „Offline-Galerie + Cloud-Relay")
+
+> Detailplan: [../fexobox-app/docs/PLAN-OFFLINE-GALERIE-CLOUD-RELAY.md](../fexobox-app/docs/PLAN-OFFLINE-GALERIE-CLOUD-RELAY.md) §5.
+> Commit betrifft NUR `src/gallery/server.py` + `src/storage/local.py` (bewusst getrennt von der
+> parallel laufenden 2.4.14-Performance-Arbeit).
+
+- **Gemeinsamer Kern `_serve_thumbnail()`** in `server.py`: Erster Abruf rechnet das Thumbnail wie
+  bisher (Pillow LANCZOS, JPEG q80) und legt es unter `BILDER/.thumbs/{Folder}/{filename}` ab;
+  jeder weitere Abruf liefert die Datei direkt per `send_file` — **keine Pillow-Arbeit mehr pro
+  Abruf**. Beide Routen (`/thumb/...` Web-Galerie und `/api/v1/thumb/...` App) nutzen DENSELBEN Cache.
+- **Invalidierung:** Ist die Quelle neuer als die Cache-Datei (Foto ersetzt), wird neu gerechnet.
+- **Robustheit:** Cache-Schreiben ist best-effort und atomar (zufälliger tmp-Name + `os.replace`) —
+  parallele Anfragen kollidieren nicht, eine halbe Datei wird nie ausgeliefert, Schreibfehler
+  (z. B. Handle-Lock unter Windows) stören die Antwort nicht (Dev-Log `Thumb-Cache HIT/MISS/…`).
+- **Lebenszyklus:** `delete_all_images()` (Event-Wechsel, [local.py](src/storage/local.py)) löscht
+  `.thumbs` mit. `_collect_photos` listet nur `Prints`/`Single` → der Cache taucht nie in der
+  Galerie/App-Liste auf.
+- **Verifiziert (automatisierter Test, Flask-Testclient):** ① Erst-Abruf 200 + Cache-Datei angelegt,
+  ② API-Route liefert aus demselben Cache, ③ Quelle ersetzt → neu gerechnet + Cache erneuert,
+  ④ Feature-Gate 403 unverändert, ⑤ Event-Reset löscht Bilder UND `.thumbs`. Zusätzlich
+  `py_compile` beider Dateien sauber.
+- **Test-Checkliste für den nächsten Build-Kandidaten** (sobald die parallele 2.4.14-Arbeit
+  committet ist): siehe TODO.md-Abschnitt bzw. Übergabe an Christian.
+
+### 2.4.13-Webcam-Log ausgewertet: 3 von 4 Fixes greifen, MJPG-Fix korrigiert → Build 2.4.14
+
+**Log `fexobooth_20260703_085633.log` (Webcam-Box, 5 Sessions, 18 Captures, 0 Fehler):**
+- ✅ **Final-Screen-Hänger weg:** `Final-Rendern (Hintergrund)` 1,0–2,7 s, KEIN ~3,3-s-UI-HITCH
+  mehr am Final (größte Hänger jetzt: Startscreen-Template-Rebuild ~2,9 s zwischen Sessions
+  und Kamera-Vorinit während des Videos — beide ohne Gast-Kontakt, bekannt).
+- ✅ **Fotoanzeige-Cache perfekt:** Refreshes `avg=0ms` (49×/5 s aus dem Cache).
+- ✅ **Kein Doppel-Rendern mehr:** jeder Filter exakt 1× pro Screen; Arbeitskopien 220–295 ms;
+  alle Vorschauen in ~9 s vorgerendert („Filter-Vorschauen komplett vorgerendert").
+- ✅ **Overlay-Frage beantwortet:** Overlay nur ~40–55 ms von ~160 ms Aufbereitung → das
+  Box-Region-Composite lohnt kaum; der Rest ist der Tk-Anzeigepfad (~110 ms/Frame) — bewusst
+  nicht angefasst (riskant, LiveView mit ~4,7 fps akzeptabel).
+- ❌ **MJPG griff NICHT** (`fourcc=YUY2` überall) und machte die Umschaltung sogar langsamer
+  (set 600 → ~1300 ms): Der Codec wurde VOR der Auflösung gesetzt, DirectShow verhandelte beim
+  Auflösungs-Setzen zurück auf YUY2 — der nutzlose Versuch kostete ~600 ms pro Foto extra.
+
+**Fix in 2.4.14 ([webcam.py](src/camera/webcam.py) `_apply_mjpg`):** Codec NACH der Auflösung
+setzen + Ergebnis VERIFIZIEREN (Log: „Webcam-Codec: MJPG aktiv"), Fallback Codec-zuerst-Variante,
+und bei endgültiger Ablehnung Latch `_mjpg_unsupported` → nie wieder Renegotiation-Kosten pro
+Foto (Latch wird bei Kamera-Neuinitialisierung zurückgesetzt). Kein lokaler Webcam-Test möglich
+(Work-PC ohne Kamera) → Verifikation über den nächsten Box-Log.
+
+**Checks:** `py_compile` OK, Smoke-Test grün.
+
+---
+
+### Dauerlauf-Logs ausgewertet: Fixes bestätigt + 4 neue Befunde → Build 2.4.13
+
+**Datenbasis:** Zwei Stresstests vom 2026-07-02 — `ready` (Nikon, 2¾ h, **647 Captures**,
+140+ Sessions) und `selphy` (Webcam + USB-Template + SELPHY, **über Nacht 17 h, 2.356 Sessions,
+0 Errors/Warnings in 212.000 Zeilen** — Stabilität exzellent, kein Leak, kein Crash).
+
+**Bestätigt (2.4.12-Fixes wirken):**
+- LiveView **konstant ~7,5 fps über 2¾ h** (vorher Einbruch 7,7→1,8) — Overlay-Basis-Cache ✓
+- Fotoanzeige-Refresh **1× pro Foto ~160 ms** (vorher 10×/s à 380 ms) ✓
+- **Bildgröße M aktiv**: alle 647 Captures 4496×3000; Capture-Worker 4,06 s → **3,65 s** ✓
+- Filter-Vorschauen 0,35–2,2 s statt vieler Sekunden; Final-Rendern läuft im Worker ✓
+
+**Neue Befunde → gefixt in 2.4.13:**
+1. **Webcam bestätigt auf YUY2** (`fourcc=YUY2`): 1080p-Umschaltung set≈600 ms + read≈550–690 ms
+   → [webcam.py](src/camera/webcam.py) fordert jetzt **MJPG** an (bei Init, High-Res-Wechsel,
+   Preview-Restore); Kameras ohne MJPG ignorieren es einfach.
+2. **UI stand ~3,3 s an JEDEM Final-Screen trotz Worker-Threads**: Filter+Rendern auf den
+   13,5-MP-Originalen sättigt die 2 Atom-Kerne (GIL/CPU) → [final.py](src/ui/screens/final.py)
+   verkleinert die Fotos vorm Filtern auf **2000 px lange Kante** (Template 1800×1200, Boxen
+   ~900×600 → weiterhin >2× überabgetastet, Druckqualität identisch).
+3. **Filter 'none' wurde pro Screen doppelt gerechnet** (Klick-Worker + Precache gleichzeitig,
+   4.697 statt ~2.356 Renders) → In-Flight-Merkliste in [filter.py](src/ui/screens/filter.py);
+   Precache macht zudem 150 ms Pause zwischen Filtern (2 Kerne atmen lassen).
+4. Kosmetik: Kamera-PTP-String enthielt `\x00` („4496x3000\x00") → Bridge trimmt die Antwort.
+
+**Zusätzliche Messung eingebaut:** `LIVEVIEW-PERF` weist jetzt den **Overlay-Anteil** separat aus
+(`davon Overlay=#ms`) — im Selphy-Lauf kostete die Aufbereitung mit USB-Template 173 ms/Frame
+(nur 4,5 fps) vs. 63 ms mit Default-Template; der nächste Log zeigt, ob das Alpha-Compositing
+der Treiber ist (dann lohnt ein Box-Region-Composite statt Vollflächen-Composite).
+
+**Bekannt, bewusst NICHT angefasst:** ~3 s Hänger beim tatsächlichen SELPHY-Druck (2× beobachtet,
+Druckpfad ist live-flotten-kritisch → nicht vor dem Release umbauen); vereinzelte ~1,2 s
+Bridge-Frame-Stalls alle ~60–75 s im Nikon-Lauf (selten, unkritisch); Startscreen-Neuaufbau
+mit USB-Template ~5 s zwischen den Sessions (kein Gast-Kontakt).
+
+**Checks:** `py_compile` OK, Bridge-Build 0 Fehler, Smoke-Test grün. → Build-Kandidat **2.4.13**.
+
+---
+
 ## 2026-07-02
 
 ### 🎉 Nikon D3300 HARDWARE-VALIDIERT + Performance-Analyse ausgewertet → 4 Fixes (Build 2.4.12)
@@ -41,6 +153,20 @@ voller 6000×4000-Auflösung**, kein sichtbares Fremdfenster. Variante 3 funktio
 **Erwartung für den Nachtest:** LiveView konstant ~7–8 fps über alle 4 Fotos (statt Einbruch auf
 1,8), keine UI-HITCH-Serien während der Fotoanzeige, Filterwechsel < 1 s (nach Precache sofort),
 Final-Screen ohne Einfrieren. **Verifiziert:** `py_compile` OK, Nikon-Smoke-Test 86/86 OK.
+
+**Nachtrag (gleicher Tag, Kundenwünsche Christian):**
+- Final-Screen-Text: „Dein Bild wird erstellt..." → **„Druckdatei wird erzeugt..."** (alle 7 Sprachen).
+- **Auto-Zurück-Countdown startet erst ab fertigem Bild** (sichtbar + Druck-Button aktiv) —
+  Start verlagert von `on_show` nach `_on_final_ready` (läuft auch im Fehlerfall an, damit die
+  Box nie hängen bleibt); während des Erzeugens: volle Leiste, kein Zähltext.
+- **Nikon-Bildgröße „M" statt 24 MP** (Christian: „M reicht auf jeden Fall"): neue Option
+  `nikon_bridge.image_size` (Default `"M"`), die Bridge setzt beim `init` die Kamera-Property
+  „Image Size" (PTP 0x5003, per `AdvancedProperties`/`SetValue` — API gegen die echten
+  digiCamControl-Quellen verifiziert). Auswahl-Heuristik: Werte nach Breite sortiert,
+  L=größte/M=zweitgrößte/S=kleinste → kameraunabhängig. D3300: 4496×3000 statt 6000×4000
+  (~44 % weniger Pixel → spürbar kürzerer Transfer nach dem Auslösen). Best-effort: fehlt die
+  Property, bleibt die Kamera unangetastet; das Log zeigt „Nikon Bildgröße gesetzt: …".
+- Bridge neu gebaut (0 Fehler), Protokolltest OK, `py_compile` OK, Smoke-Test grün.
 
 ---
 

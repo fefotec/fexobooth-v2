@@ -67,6 +67,7 @@ class SessionScreen(ctk.CTkFrame):
         self._perf_live_frames = 0
         self._perf_live_cam_ms = 0.0
         self._perf_live_ui_ms = 0.0
+        self._perf_live_overlay_ms = 0.0
         self._perf_live_max_ms = 0.0
         self._perf_photo_refreshes = 0
         self._perf_photo_ms = 0.0
@@ -330,6 +331,7 @@ class SessionScreen(ctk.CTkFrame):
                 live_img = Image.fromarray(rgb)
 
                 # Template-Overlay anwenden (wenn aktiviert)
+                perf_overlay_start = time.perf_counter() if self._perf_enabled else 0.0
                 if self._template_overlay_enabled and self._cached_template_composite is not None:
                     # Cache-Rebuild wenn Container-Größe sich deutlich geändert hat
                     try:
@@ -345,6 +347,9 @@ class SessionScreen(ctk.CTkFrame):
                     except Exception as e:
                         logger.warning(f"Template-Overlay Fehler im LiveView: {e}")
                         self._cached_template_composite = None
+
+                if self._perf_enabled:
+                    self._perf_live_overlay_ms += (time.perf_counter() - perf_overlay_start) * 1000
 
                 if self.is_countdown_active and self.countdown_value > 0:
                     live_img = self._add_countdown_overlay(live_img)
@@ -382,13 +387,15 @@ class SessionScreen(ctk.CTkFrame):
         if self._perf_live_frames > 0:
             avg_cam = self._perf_live_cam_ms / self._perf_live_frames
             avg_ui = self._perf_live_ui_ms / self._perf_live_frames
+            avg_overlay = self._perf_live_overlay_ms / self._perf_live_frames
             fps = self._perf_live_frames / elapsed
             logger.info(
                 "LIVEVIEW-PERF: "
                 f"{self._perf_live_frames} Frames in {elapsed:.1f}s "
                 f"(~{fps:.1f} fps, Ziel {self._target_fps}), "
                 f"avg={avg_cam + avg_ui:.0f}ms/Frame "
-                f"(Kamera={avg_cam:.0f}ms, Aufbereitung+Anzeige={avg_ui:.0f}ms), "
+                f"(Kamera={avg_cam:.0f}ms, Aufbereitung+Anzeige={avg_ui:.0f}ms, "
+                f"davon Overlay={avg_overlay:.0f}ms), "
                 f"max={self._perf_live_max_ms:.0f}ms, übersprungen={self._perf_skipped}"
             )
         if self._perf_photo_refreshes > 0:
@@ -402,6 +409,7 @@ class SessionScreen(ctk.CTkFrame):
         self._perf_live_frames = 0
         self._perf_live_cam_ms = 0.0
         self._perf_live_ui_ms = 0.0
+        self._perf_live_overlay_ms = 0.0
         self._perf_live_max_ms = 0.0
         self._perf_photo_refreshes = 0
         self._perf_photo_ms = 0.0

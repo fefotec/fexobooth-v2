@@ -386,6 +386,7 @@ class NikonCameraManager(CameraManager):
                     "init",
                     timeout=self._settings().get("init_timeout_seconds", 20),
                     index=self._camera_index,
+                    size=self._settings().get("image_size", "M"),
                 )
                 logger.info("Nikon-Bridge-Warmup: Kamera vorverbunden")
             except Exception as exc:
@@ -412,8 +413,15 @@ class NikonCameraManager(CameraManager):
                     "init",
                     timeout=self._settings().get("init_timeout_seconds", 20),
                     index=camera_index,
+                    size=self._settings().get("image_size", "M"),
                 )
                 self._camera_name = header.get("camera", self._camera_name)
+                image_size = (header.get("image_size") or "").strip("\x00 ").strip()
+                if image_size:
+                    logger.info(
+                        f"Nikon Bildgröße gesetzt: {image_size} "
+                        f"(nikon_bridge.image_size={self._settings().get('image_size', 'M')!r})"
+                    )
             except Exception as exc:
                 logger.error(f"Nikon init fehlgeschlagen: {exc}")
                 if self._dev_logging_enabled():

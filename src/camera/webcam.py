@@ -29,6 +29,7 @@ class WebcamManager(CameraManager):
         self._preview_height: int = 0
         self._active_width: int = 0
         self._active_height: int = 0
+        self._mjpg_unsupported: bool = False  # Latch: Kamera lehnt MJPG ab
         self._camera_lock = threading.RLock()
 
     def initialize(self, camera_index: int, width: int, height: int) -> bool:
@@ -41,6 +42,7 @@ class WebcamManager(CameraManager):
             # Alte Verbindung schließen
             self.release()
             self.camera_index = camera_index
+            self._mjpg_unsupported = False  # neue Kamera = neuer Versuch
 
             # Verschiedene Backends probieren
             backends = [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]
@@ -57,11 +59,14 @@ class WebcamManager(CameraManager):
                 logger.error(f"Konnte Kamera {camera_index} nicht öffnen")
                 return False
 
-            # Einstellungen setzen
+            # Einstellungen setzen — Codec NACH der Auflösung anfordern
+            # (Messung 2.4.13: andersherum verhandelt DirectShow beim
+            # Auflösungs-Setzen wieder auf YUY2 zurück)
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
             self.cap.set(cv2.CAP_PROP_FPS, 30)
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimiert Latenz
+            self._apply_mjpg()
 
             # Tatsächliche Auflösung loggen und als Preview-Auflösung merken
             actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -77,6 +82,52 @@ class WebcamManager(CameraManager):
 
             self._is_initialized = True
             return True
+
+    def _apply_mjpg(self) -> bool:
+        """Aktiviert den MJPG-Codec — mit VERIFIKATION und Merker bei Ablehnung.
+
+        Warum: YUY2 (unkomprimiert) macht 1080p-Umschaltung + Auslesen über
+        USB2 langsam (~1,3s + ~0,7s pro Foto, Messung Miix 310). Der erste
+        Fix (2.4.13) setzte den Codec VOR der Auflösung — DirectShow
+        verhandelte beim Auflösungs-Setzen zurück auf YUY2, und der nutzlose
+        Versuch kostete zusätzlich ~600ms pro Foto. Daher jetzt:
+        1) Codec NACH der Auflösung setzen und Ergebnis PRÜFEN,
+        2) Fallback: Codec-zuerst-Variante (manche Treiber wollen es so),
+        3) bei endgültiger Ablehnung dauerhaft merken → nie wieder Zeit
+           pro Foto verschwenden.
+        """
+        if self._mjpg_unsupported or not self.cap:
+            return False
+        try:
+            if self._get_current_fourcc() == "MJPG":
+                return True
+            mjpg = cv2.VideoWriter_fourcc(*"MJPG")
+
+            # Versuch 1: Codec nach bereits gesetzter Auflösung anfordern
+            self.cap.set(cv2.CAP_PROP_FOURCC, mjpg)
+            if self._get_current_fourcc() == "MJPG":
+                logger.info("Webcam-Codec: MJPG aktiv")
+                return True
+
+            # Versuch 2: Codec zuerst, dann dieselbe Auflösung erneut setzen
+            width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            self.cap.set(cv2.CAP_PROP_FOURCC, mjpg)
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            if self._get_current_fourcc() == "MJPG":
+                logger.info("Webcam-Codec: MJPG aktiv (Codec-zuerst-Variante)")
+                return True
+
+            self._mjpg_unsupported = True
+            logger.info(
+                f"Webcam-Codec: Kamera lehnt MJPG ab, bleibt bei "
+                f"{self._get_current_fourcc()} (keine weiteren Versuche)"
+            )
+        except Exception as e:
+            self._mjpg_unsupported = True
+            logger.debug(f"MJPG-Anforderung fehlgeschlagen: {e}")
+        return False
 
     def get_frame(self, use_cache: bool = True) -> Optional[np.ndarray]:
         """Holt ein Frame von der Kamera"""
@@ -157,6 +208,7 @@ class WebcamManager(CameraManager):
                     t0 = time.perf_counter()
                     ok_w = self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
                     ok_h = self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+                    self._apply_mjpg()
                     set_ms = (time.perf_counter() - t0) * 1000
 
                     t0 = time.perf_counter()
@@ -251,6 +303,7 @@ class WebcamManager(CameraManager):
             t0 = time.perf_counter()
             ok_w = self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, target_w)
             ok_h = self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, target_h)
+            self._apply_mjpg()
             set_ms = (time.perf_counter() - t0) * 1000
 
             t0 = time.perf_counter()

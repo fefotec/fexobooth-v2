@@ -4,24 +4,49 @@ Aufgabenliste mit Prioritäten.
 
 ---
 
+## Galerie-Server: Thumbnail-Cache 🟡 (Etappe 2 des App-Plans „Offline-Galerie + Cloud-Relay", 2026-07-03)
+
+> Detailplan: [../fexobox-app/docs/PLAN-OFFLINE-GALERIE-CLOUD-RELAY.md](../fexobox-app/docs/PLAN-OFFLINE-GALERIE-CLOUD-RELAY.md) §5.
+> Hintergrund: `server.py` rechnet jedes Thumbnail bei JEDEM Abruf neu (Pillow/LANCZOS, kein Cache) –
+> bei mehreren verbundenen Smartphones der größte Lastfaktor auf der schwachen Box-Hardware.
+
+- [x] Thumbnail-Cache `BILDER/.thumbs/{folder}/{filename}`: beim ersten Abruf einmal rechnen + speichern,
+  danach nur noch `send_file` (Routen `/thumb/...` UND `/api/v1/thumb/...` auf denselben Cache) —
+  *gebaut 2026-07-03, gemeinsamer Kern `_serve_thumbnail()` in `server.py`, atomares Schreiben,
+  Invalidierung wenn Quelle neuer; 5 automatisierte Tests bestanden (HIT/MISS/Invalidierung/403/Reset)*
+- [x] Aufräumen: `.thumbs` folgt dem BILDER-Lebenszyklus — *`delete_all_images()` (Event-Wechsel) löscht
+  `.thumbs` mit; `_collect_photos` listet nur Prints/Single und sieht den Cache nie*
+- [ ] Optional: Thumb direkt beim Foto-Speichern erzeugen (kein Gast zahlt die Erst-Wartezeit)
+- [ ] Eigener Build-Kandidat mit kurzer Test-Checkliste (Live-Flotte, getrennt von anderen Änderungen) —
+  ⚠️ Arbeitsbaum enthält parallel laufende 2.4.14-Arbeit (Nikon/Webcam) → Build-Kandidat erst
+  schnüren, wenn die parallele Session committet hat; Checkliste liegt bereit (FORTSCHRITT.md)
+
 ## Performance vor Release 🏎️ (Analyse-Lauf 2026-07-02 ausgewertet, Fixes in 2.4.12)
 
 > Log `fexobooth_20260702_114253.log` (Nikon-Session): 4 Bremsen identifiziert und gefixt —
 > Overlay-Foto-Skalierung pro Frame, Fotoanzeige-Refresh (380 ms/Tick), Filter auf 24-MP-Originalen,
 > Final-Rendern im UI-Thread. Details in FORTSCHRITT.md.
 
-- [ ] **Nachtest 2.4.12 auf der Fotobox** (Dev-Mode, Nikon): komplette Collage-Session + Filter
-  antippen + Druck. Erwartung: LiveView konstant ~7–8 fps über alle 4 Fotos, keine
-  `UI-HITCH`-Serien während der Fotoanzeige, Filterwechsel sofort (nach Precache),
-  `Final-Rendern (Hintergrund)` im Log statt Einfrieren. Log wieder an Claude geben.
-- [ ] **Webcam-Lauf gesondert messen** (der 2026-07-02-Lauf war Nikon): `High-Res Capture Timing`
-  inkl. `fourcc` prüfen. Falls YUY2 aktiv → MJPG erzwingen; ggf. Auflösungs-Umschaltung hinter
-  Countdown „1"/Blitz vorziehen (Umschaltung bleibt erhalten, wird nur versteckt).
-- [ ] Optional (nach Nachtest, falls Grund-fps zu niedrig): Countdown-Ziffern vorrendern
-  (Font + 8 Schatten laufen pro Frame); Basis-Anzeigepfad (CTkImage pro Frame) prüfen.
-- [ ] Nikon-Capture-Feintuning (aktuell ~4,1 s sichtbar, kameraseitig): JPEG-Größe M an der
-  D3300 testen (bleibt DSLR-Qualität, halbiert Transfer) und/oder `noaf`-Capture für
-  vorfokussierte Box-Distanz.
+- [x] **Nachtest 2.4.12 bestanden** (Dauerläufe 2026-07-02: Nikon 647 Captures + Webcam/SELPHY
+  17 h über Nacht, 0 Fehler): LiveView konstant ~7,5 fps, Fotoanzeige 1×/Foto, Bildgröße M aktiv
+  (Capture 3,65 s statt 4,06 s), Filter < 2,2 s, Final im Worker.
+- [x] **Nachtest 2.4.13 (Webcam-Box) ausgewertet:** Final-Hänger weg ✓, Fotoanzeige-Cache ✓,
+  kein Doppel-Rendern ✓, Overlay nur ~45 ms (Box-Region-Composite lohnt nicht) ✓ —
+  aber MJPG griff nicht (falsche Reihenfolge, DirectShow verhandelte zurück) → in 2.4.14 korrigiert.
+- [ ] **Nachtest 2.4.14 (Webcam-Box, kurz):** Eine Session reicht. Im Log muss stehen:
+  „Webcam-Codec: MJPG aktiv" und im `High-Res Capture Timing` `fourcc=MJPG` mit `set`+`read`
+  deutlich unter den bisherigen ~1300+700 ms. Falls stattdessen „Kamera lehnt MJPG ab" →
+  Kamera-Modell notieren; dann bleibt YUY2, aber ohne Zusatzkosten (Latch).
+- [ ] Optional/später: Tk-Anzeigepfad (~110 ms/Frame, größter LiveView-Posten laut Overlay-Split);
+  Countdown-Ziffern vorrendern (Font + 8 Schatten pro Frame).
+- [ ] Bekannt, nach dem Release angehen: ~3 s UI-Hänger beim tatsächlichen SELPHY-Druck
+  (Druckpfad ist live-flotten-kritisch — nicht vorher umbauen); Startscreen-Neuaufbau mit
+  USB-Template ~5 s (läuft zwischen Sessions, kein Gast-Kontakt).
+- [x] Nikon-Capture-Feintuning Teil 1: **JPEG-Größe „M" wird jetzt automatisch gesetzt**
+  (`nikon_bridge.image_size`, Bridge setzt „Image Size" beim Verbinden; D3300: 4496×3000).
+  Wirkung im Nachtest messen.
+- [ ] Nikon-Capture-Feintuning Teil 2 (optional, falls immer noch zu langsam): `noaf`-Capture
+  für vorfokussierte Box-Distanz (Bridge kann CapturePhotoNoAf bereits als AF-Fallback).
 
 ---
 
@@ -30,6 +55,7 @@ Aufgabenliste mit Prioritäten.
 - [ ] **Filter-Screen läuft nicht automatisch ab.** Der Filter-Screen soll automatisch weiterlaufen/ablaufen, tut das aber erst, nachdem man **einmal den Filter gewechselt** hat. (Wahrscheinlich startet der Auto-Ablauf-Timer erst beim ersten Filter-Wechsel statt direkt beim Anzeigen des Screens.)
 - [ ] **Box friert nach dem ersten Video ein.** Nach dem ersten Video hängt die Software; ein Tipp auf den Touchscreen löst sie wieder. Vermutlich UI-Thread / Video-Handling (evtl. Zusammenhang mit dem Galerie-Server prüfen). Muss stabilisiert werden.
 - [ ] **Drucker-Status-Log entspammen** (nur Loghygiene, kein Verhaltensfehler). Bei ausgeschaltetem Drucker loggt die Box `DRUCKER AUS!` + „Overlay wird gezeigt / kein Overlay" **jede Sekunde** (im Dev-Log aus 2026-06-14: tausende identische Zeilen über ~40 Min) und verdeckt echte Events. Fix: nur bei **Status-WECHSEL** loggen (in `src/app.py` Drucker-Status-Check + `src/printer/controller.py get_error`), Poll-/Klassifizierungs-/Overlay-Logik unverändert lassen. Die INFO-Zeile „Drucker-Fehler erkannt → Overlay wird gezeigt" ist zudem irreführend (danach folgt „kein Overlay (other)") → mitklären. **Erst im Dev-Mode testen** (Kernprinzip 8), nicht in einen Same-Day-Flotten-Build.
+- [ ] **Windows-Update-Lockdown härter machen** (nicht dringend, entschieden 2026-07-03: erstmal so lassen). `windows_update_lockdown.log` endet „mit Warnungen": `sc.exe konnte Starttyp nicht setzen: WaaSMedicSvc (Exit 5)` und `DoSvc (Exit 5)` — diese zwei besonders geschützten Dienste lassen sich per `sc.exe config` nicht deaktivieren (Exit 5 = Zugriff verweigert). Ausgerechnet **WaaSMedicSvc** (Update Medic) kann abgeschaltete Updates theoretisch reaktivieren. In der Praxis greift der Lockdown (seit 15.06. keine ungewollten Updates/Neustarts), aber nicht 100 % wasserdicht. **Fix-Idee:** in `setup/disable_windows_update.ps1` für diese zwei Dienste den `Start`-Wert direkt in der Registry (`HKLM\SYSTEM\CurrentControlSet\Services\WaaSMedicSvc` bzw. `DoSvc` → `Start=4`) setzen statt über `sc.exe`; ggf. Registry-Owner/ACL vorher übernehmen. **Live-Flotten-Boot-Script → separat + vorsichtig testen**, nicht in einen Same-Day-Build.
 
 ---
 

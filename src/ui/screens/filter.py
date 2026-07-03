@@ -198,6 +198,10 @@ class FilterScreen(ctk.CTkFrame):
         self._preview_photos = None
         self._preview_photos_lock = threading.Lock()
         self._precache_active = False
+        # In-Flight-Merkliste: verhindert, dass Klick-Render und Precache
+        # denselben Filter doppelt rechnen (Dauerlauf 2026-07-02: 'none'
+        # wurde pro Screen 2x gerendert = ~0,7s CPU umsonst).
+        self._rendering_filters = set()
         self._auto_continue_job = None
         self._auto_continue_until = 0.0
         self._auto_continue_seconds = 0.0
@@ -481,8 +485,15 @@ class FilterScreen(ctk.CTkFrame):
             # Sofort aus Cache anzeigen
             self._show_main_preview(self.preview_cache[cache_key])
         else:
-            # Im Hintergrund rendern für flüssigere UI
+            # Im Hintergrund rendern für flüssigere UI. Läuft derselbe Filter
+            # schon (Precache/früherer Klick), NICHT doppelt rechnen — das
+            # Ergebnis wird nach Fertigstellung ohnehin angezeigt.
             filter_key = self.selected_filter
+            with self._preview_photos_lock:
+                if filter_key in self._rendering_filters:
+                    return
+                self._rendering_filters.add(filter_key)
+
             def _render():
                 try:
                     preview = self._render_filter_preview(filter_key)
@@ -492,6 +503,9 @@ class FilterScreen(ctk.CTkFrame):
                         self.after(0, lambda: self._show_main_preview(preview))
                 except Exception as e:
                     logger.warning(f"Preview-Rendering fehlgeschlagen: {e}")
+                finally:
+                    with self._preview_photos_lock:
+                        self._rendering_filters.discard(filter_key)
             threading.Thread(target=_render, daemon=True).start()
 
     def _precache_all_filters(self):
@@ -506,6 +520,10 @@ class FilterScreen(ctk.CTkFrame):
                 return
             if key in self.preview_cache:
                 continue
+            with self._preview_photos_lock:
+                if key in self._rendering_filters:
+                    continue  # rechnet gerade der Klick-Worker
+                self._rendering_filters.add(key)
             try:
                 preview = self._render_filter_preview(key)
                 if not self._precache_active:
@@ -516,6 +534,12 @@ class FilterScreen(ctk.CTkFrame):
                     self.after(0, lambda p=preview: self._show_main_preview(p))
             except Exception as e:
                 logger.debug(f"Filter-Precache '{key}' fehlgeschlagen: {e}")
+            finally:
+                with self._preview_photos_lock:
+                    self._rendering_filters.discard(key)
+            # Kurz Luft lassen: 2 CPU-Kerne — Dauerrechnen im Hintergrund
+            # macht sonst Touch/LiveView spürbar zäh (UI-HITCH-Messung).
+            time.sleep(0.15)
         logger.info("Filter-Vorschauen komplett vorgerendert")
 
     def _show_main_preview(self, preview: Image.Image):
@@ -660,6 +684,7 @@ class FilterScreen(ctk.CTkFrame):
         self.preview_cache = {}
         with self._preview_photos_lock:
             self._preview_photos = None
+            self._rendering_filters = set()
 
         # Standard-Filter auswählen
         self.selected_filter = "none"

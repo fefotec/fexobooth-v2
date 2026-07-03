@@ -74,7 +74,7 @@ namespace FexoNikonBridge
                             HandleList(id);
                             break;
                         case "init":
-                            HandleInit(id);
+                            HandleInit(id, request);
                             break;
                         case "lv_start":
                             RequireCamera().StartLiveView();
@@ -192,7 +192,7 @@ namespace FexoNikonBridge
             Reply(id, new JObject { ["cameras"] = cameras });
         }
 
-        private static void HandleInit(long id)
+        private static void HandleInit(long id, JObject request)
         {
             EnsureDeviceManager();
 
@@ -217,7 +217,105 @@ namespace FexoNikonBridge
             _camera = camera;
             // Bild direkt in den RAM statt auf die SD-Karte übertragen.
             _camera.CaptureInSdRam = true;
-            Reply(id, new JObject { ["camera"] = _camera.DeviceName ?? "Nikon" });
+
+            // JPEG-Größe an der Kamera setzen (Standard "M": D3300 = 4496x3000
+            // statt 6000x4000) — reicht für den 1800x1200-Druck locker und
+            // verkürzt den USB-Transfer pro Foto deutlich.
+            var imageSize = TrySetImageSize(_camera, request.Value<string>("size"));
+
+            var reply = new JObject { ["camera"] = _camera.DeviceName ?? "Nikon" };
+            if (imageSize != null)
+            {
+                reply["image_size"] = imageSize;
+            }
+            Reply(id, reply);
+        }
+
+        private static string TrySetImageSize(ICameraDevice camera, string sizeWish)
+        {
+            // Best-effort: Die "Image Size"-Property (PTP 0x5003) liegt in den
+            // AdvancedProperties; fehlt sie oder passt etwas nicht, bleibt die
+            // Kamera-Einstellung unangetastet — init darf daran NIE scheitern.
+            try
+            {
+                if (string.IsNullOrEmpty(sizeWish))
+                {
+                    return null;
+                }
+                var wish = sizeWish.Trim().ToUpperInvariant();
+                if (wish != "L" && wish != "M" && wish != "S")
+                {
+                    return null;
+                }
+
+                foreach (var prop in camera.AdvancedProperties)
+                {
+                    if (prop == null || prop.Name == null ||
+                        !prop.Name.Equals("Image Size", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    // Kamera liefert Strings wie "6000x4000" — nach Breite
+                    // absteigend sortieren: L = größte, M = zweitgrößte, S = kleinste.
+                    var widths = new List<long>();
+                    var byWidth = new List<string>();
+                    foreach (var value in prop.Values)
+                    {
+                        if (string.IsNullOrEmpty(value))
+                        {
+                            continue;
+                        }
+                        int digitEnd = 0;
+                        while (digitEnd < value.Length && char.IsDigit(value[digitEnd]))
+                        {
+                            digitEnd++;
+                        }
+                        long width;
+                        if (digitEnd > 0 && long.TryParse(value.Substring(0, digitEnd), out width) && width > 0)
+                        {
+                            int pos = 0;
+                            while (pos < widths.Count && widths[pos] > width)
+                            {
+                                pos++;
+                            }
+                            widths.Insert(pos, width);
+                            byWidth.Insert(pos, value);
+                        }
+                    }
+                    if (byWidth.Count == 0)
+                    {
+                        return null;
+                    }
+
+                    string target;
+                    if (wish == "L")
+                    {
+                        target = byWidth[0];
+                    }
+                    else if (wish == "S")
+                    {
+                        target = byWidth[byWidth.Count - 1];
+                    }
+                    else
+                    {
+                        target = byWidth[Math.Min(1, byWidth.Count - 1)];
+                    }
+
+                    if (target != prop.Value)
+                    {
+                        prop.SetValue(target);
+                    }
+                    // PTP-Strings der Kamera enden teils mit \0 — fürs Log/JSON säubern
+                    // (SetValue oben braucht den ORIGINAL-String für den Werte-Abgleich).
+                    return target.Trim('\0', ' ');
+                }
+            }
+            catch
+            {
+                // Bildgröße ist Komfort, kein Muss.
+            }
+            return null;
         }
 
         private static void HandleFrame(long id)

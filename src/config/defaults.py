@@ -56,7 +56,11 @@ DEFAULT_CONFIG = {
         "exe_path": "",
         "init_timeout_seconds": 20,
         "command_timeout_seconds": 4,
-        "capture_timeout_seconds": 12
+        "capture_timeout_seconds": 12,
+        # JPEG-Größe an der Kamera: "M" (D3300: 4496x3000) reicht für den
+        # 1800x1200-Druck locker und halbiert fast den USB-Transfer pro Foto.
+        # "L" = volle Auflösung, "S" = klein, "" = Kamera-Einstellung nicht anfassen.
+        "image_size": "M"
     },
 
     # Druck

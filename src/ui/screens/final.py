@@ -131,9 +131,26 @@ class FinalScreen(ctk.CTkFrame):
         """Rendert das finale Bild"""
         logger.info(f"Rendere finales Bild: {len(self.app.photos_taken)} Fotos, "
                      f"Filter '{self.app.current_filter}'")
+
+        # Fotos vorab auf den Druckbedarf verkleinern: Das Template ist 1800x1200
+        # (Boxen ~900x600) — 2000px lange Kante bleibt >2x überabgetastet, also
+        # identische Druckqualität. Filter auf den 13,5/24-MP-Originalen dagegen
+        # sättigten die 2 Atom-Kerne so, dass trotz Worker-Thread die UI ~3s
+        # stand (Messung Dauerlauf 2026-07-02: UI-HITCH ~3,3s an jedem Final).
+        prepared = []
+        for photo in self.app.photos_taken:
+            scale = min(1.0, 2000 / max(photo.width, photo.height))
+            if scale < 1.0:
+                prepared.append(photo.resize(
+                    (max(1, int(photo.width * scale)), max(1, int(photo.height * scale))),
+                    Image.Resampling.LANCZOS
+                ))
+            else:
+                prepared.append(photo)
+
         filtered_photos = [
             self.app.filter_manager.apply(photo, self.app.current_filter)
-            for photo in self.app.photos_taken
+            for photo in prepared
         ]
 
         return self.app.renderer.render(
@@ -781,10 +798,12 @@ class FinalScreen(ctk.CTkFrame):
             daemon=True,
         ).start()
 
-        # Auto-Return Timer starten
-        self.auto_return_time = time.time() + self.config.get("final_time", 30)
+        # Auto-Return-Countdown startet BEWUSST NOCH NICHT: Der Gast bekommt
+        # die volle Zeit erst ab sichtbarem Bild + nutzbarem Druck-Button
+        # (Start in _on_final_ready). Bis dahin: volle Leiste, kein Zähltext.
+        self.auto_return_time = 0
         self.progress_bar.set(1.0)
-        self._update_countdown()
+        self.subtitle_label.configure(text="")
 
     def _show_rendering_placeholder(self):
         """Zeigt 'Dein Bild wird erstellt…' und entfernt das Bild der Vorsession.
@@ -836,6 +855,14 @@ class FinalScreen(ctk.CTkFrame):
         """UI-Thread: fertiges Bild anzeigen und Druck-Button freigeben."""
         if not self.is_active:
             return
+
+        # Auto-Return-Countdown startet erst JETZT — nicht schon während
+        # "Druckdatei wird erzeugt" (Kundenwunsch: volle Zeit mit sichtbarem
+        # Bild und aktiver Druckmöglichkeit). Läuft auch im Fehlerfall an,
+        # damit die Box nie auf diesem Screen hängen bleibt.
+        self.auto_return_time = time.time() + self.config.get("final_time", 30)
+        self.progress_bar.set(1.0)
+        self._update_countdown()
 
         if preview is None or self.final_image is None:
             self.preview_label.configure(text=t(self.config, "final.no_image"))

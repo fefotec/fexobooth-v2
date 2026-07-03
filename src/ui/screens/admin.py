@@ -417,14 +417,14 @@ class AdminDialog(ctk.CTkToplevel):
             **btn_style
         ).pack(pady=4)
 
-        # 7. Neustart
+        # 7. Neustart / Ausschalten
         ctk.CTkButton(
             btn_container,
-            text=f"  {self._tr('service.restart_windows')}",
+            text=f"  {self._tr('service.power_options')}",
             fg_color=COLORS["bg_light"],
             hover_color=COLORS["warning"],
             text_color=COLORS["text_primary"],
-            command=lambda: self._customer_restart(menu_frame),
+            command=lambda: self._customer_power_options(menu_frame),
             **btn_style
         ).pack(pady=4)
 
@@ -1165,8 +1165,8 @@ class AdminDialog(ctk.CTkToplevel):
             command=self.destroy
         ).pack(pady=(5, 15))
 
-    def _customer_restart(self, parent_frame):
-        """Windows Neustart mit Bestätigung und Wartehinweis"""
+    def _customer_power_options(self, parent_frame):
+        """Rückfrage: Neustart ODER Ausschalten (mit Wartehinweis)."""
         parent_frame.destroy()
 
         confirm_frame = ctk.CTkFrame(self, fg_color="#0a0a10", corner_radius=0)
@@ -1183,59 +1183,78 @@ class AdminDialog(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             card,
-            text=self._tr("service.restart_title"),
+            text=self._tr("service.power_title"),
             font=("Segoe UI", 20, "bold"),
             text_color=COLORS["warning"]
         ).pack(pady=(20, 10))
 
         self._restart_status = ctk.CTkLabel(
             card,
-            text=self._tr("service.restart_hint"),
+            text=self._tr("service.power_hint"),
             font=FONTS["body"],
             text_color=COLORS["text_primary"],
             justify="center",
-            wraplength=300
+            wraplength=340
         )
         self._restart_status.pack(pady=(0, 20), padx=25)
 
         btn_frame = ctk.CTkFrame(card, fg_color="transparent")
         btn_frame.pack(pady=(0, 15))
 
-        def do_restart():
+        def do_power(action):
             import subprocess
+            # action: "restart" (/r) oder "shutdown" (/s)
+            running_key = "service.restart_running" if action == "restart" else "service.shutdown_running"
+            flag = "/r" if action == "restart" else "/s"
+            comment = ("FexoBooth: Neustart über Kunden-Menü" if action == "restart"
+                       else "FexoBooth: Ausschalten über Kunden-Menü")
             self._restart_status.configure(
-                text=self._tr("service.restart_running"),
+                text=self._tr(running_key),
                 text_color=COLORS["warning"]
             )
             btn_frame.destroy()
-            logger.info("Kunden-Menü: Windows-Neustart ausgelöst")
+            logger.info(f"Kunden-Menü: Windows-{'Neustart' if action == 'restart' else 'Herunterfahren'} ausgelöst")
             subprocess.Popen(
-                ["shutdown", "/r", "/f", "/t", "5", "/c", "FexoBooth: Neustart über Kunden-Menü"],
+                ["shutdown", flag, "/f", "/t", "5", "/c", comment],
                 creationflags=0x08000000
             )
 
+        # Neustart
         ctk.CTkButton(
             btn_frame,
             text=self._tr("service.restart_confirm"),
             font=("Segoe UI", 16, "bold"),
-            width=130, height=45,
+            width=140, height=45,
             fg_color=COLORS["warning"],
             hover_color="#ff6600",
             corner_radius=12,
-            command=do_restart
-        ).pack(side="left", padx=8)
+            command=lambda: do_power("restart")
+        ).pack(side="left", padx=6)
 
+        # Ausschalten
+        ctk.CTkButton(
+            btn_frame,
+            text=self._tr("service.shutdown_confirm"),
+            font=("Segoe UI", 16, "bold"),
+            width=140, height=45,
+            fg_color=COLORS["error"],
+            hover_color="#c0392b",
+            corner_radius=12,
+            command=lambda: do_power("shutdown")
+        ).pack(side="left", padx=6)
+
+        # Abbrechen
         ctk.CTkButton(
             btn_frame,
             text=self._tr("service.abort"),
             font=("Segoe UI", 16, "bold"),
-            width=130, height=45,
+            width=140, height=45,
             fg_color=COLORS["bg_light"],
             hover_color=COLORS["bg_card"],
             text_color=COLORS["text_primary"],
             corner_radius=12,
             command=self.destroy
-        ).pack(side="left", padx=8)
+        ).pack(side="left", padx=6)
 
     def _customer_back_to_menu(self, current_frame):
         """Zurück zum Kunden-Hauptmenü"""

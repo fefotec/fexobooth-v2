@@ -44,7 +44,13 @@ Hotspot, Kundenmenü oder Live-Flotte spricht:
    - `CHANGELOG.md` - Für Release-relevante Änderungen
    - `support/HOTLINE_PROMPT_FELIX.md` - Steuert die Telefon-KI „Felix". **Muss bei jeder Änderung an Status-Anzeigen (`src/app.py` Top-Bar), Drucker-Fehlertexten (`src/ui/dialogs/printer_error.py`) oder am Kunden-Menü PIN 2015 (`src/ui/screens/admin.py`) geprüft und angepasst werden.** Sonst gibt Felix dem Kunden falsche Anweisungen.
 
-3. **Dev-Mode-Logging IMMER mitziehen** - Bei **jeder** Code-Änderung sofort das
+3. **Nach jedem neuen Build-Kandidaten: kurze Prüfanweisung ausgeben.** Sobald eine neue
+   Versionsnummer gebaut werden kann, bekommt Christian eine **kurze, anfängerfreundliche
+   Test-Checkliste** (max. ~6 Punkte): Was auf der Box tun, was dabei rauskommen soll
+   (sichtbares Verhalten, kein Log-Jargon), und als letzter Punkt „Dev-Mode-Log an Claude".
+   Nur die Punkte aufnehmen, die sich in DIESER Version geändert haben.
+
+4. **Dev-Mode-Logging IMMER mitziehen** - Bei **jeder** Code-Änderung sofort das
    Dev-Mode-Logging erweitern (nicht erst, wenn etwas hakt) und neue Funktionen
    **zuerst im Dev-Mode** (`python src/main.py --dev`) testen.
    - Logger: `from src.utils.logging import get_logger` → `logger = get_logger(__name__)`
