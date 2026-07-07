@@ -69,3 +69,6 @@ Thumbs.db
 desktop.ini
 .claude/settings.local.json
 nul
+
+# Graphify (generierter Wissensgraph, abgeleitete Daten)
+graphify-out/
