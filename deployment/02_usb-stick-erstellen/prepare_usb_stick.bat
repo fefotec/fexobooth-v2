@@ -400,7 +400,7 @@ if not exist "%BOOT_DRIVE%:\live\custom-ocs" mkdir "%BOOT_DRIVE%:\live\custom-oc
 :: WICHTIG: goto statt if/else, weil inline-PowerShell Klammern enthaelt
 :: die den Batch-Parser in if/else-Bloecken zum Absturz bringen
 if exist "%SCRIPT_DIR%custom-ocs\custom-ocs-capture" goto :capture_from_file
-goto :capture_inline
+goto :capture_missing
 
 :capture_from_file
 copy /Y "%SCRIPT_DIR%custom-ocs\custom-ocs-capture" "%BOOT_DRIVE%:\live\custom-ocs\" >nul
@@ -409,16 +409,19 @@ powershell -Command "$f='%BOOT_DRIVE%:\live\custom-ocs\custom-ocs-capture'; [Sys
 echo [OK] custom-ocs-capture kopiert (LF)
 goto :capture_done
 
-:capture_inline
-powershell -ExecutionPolicy Bypass -File "%SCRIPT_DIR%_write_capture.ps1" "%BOOT_DRIVE%:\live\custom-ocs\custom-ocs-capture"
-echo [OK] custom-ocs-capture erstellt (inline)
-goto :capture_done
+:capture_missing
+echo.
+echo FEHLER: custom-ocs\custom-ocs-capture fehlt im Repo!
+echo Der Boot-Stick wird nicht erstellt, weil der alte Inline-Fallback
+echo die 2-GB-Capture-Reserve nicht pruefen wuerde.
+echo.
+exit /b 1
 
 :capture_done
 
 :: ── custom-ocs-deploy ──
 if exist "%SCRIPT_DIR%custom-ocs\custom-ocs-deploy" goto :deploy_from_file
-goto :deploy_inline
+goto :deploy_missing
 
 :deploy_from_file
 copy /Y "%SCRIPT_DIR%custom-ocs\custom-ocs-deploy" "%BOOT_DRIVE%:\live\custom-ocs\" >nul
@@ -427,10 +430,13 @@ powershell -Command "$f='%BOOT_DRIVE%:\live\custom-ocs\custom-ocs-deploy'; [Syst
 echo [OK] custom-ocs-deploy kopiert (LF)
 goto :deploy_done
 
-:deploy_inline
-powershell -ExecutionPolicy Bypass -File "%SCRIPT_DIR%_write_deploy.ps1" "%BOOT_DRIVE%:\live\custom-ocs\custom-ocs-deploy"
-echo [OK] custom-ocs-deploy erstellt (inline)
-goto :deploy_done
+:deploy_missing
+echo.
+echo FEHLER: custom-ocs\custom-ocs-deploy fehlt im Repo!
+echo Der Boot-Stick wird nicht erstellt, weil der alte Inline-Fallback
+echo zu grosse Images nicht vor dem Pre-Wipe abfangen wuerde.
+echo.
+exit /b 1
 
 :deploy_done
 

@@ -163,14 +163,113 @@ log ""
 log "Quell-Disk Details:"
 lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL /dev/$TARGET_DISK 2>&1 | tee -a "$LOG_FILE"
 log ""
+SOURCE_SECTORS=$(blockdev --getsz /dev/$TARGET_DISK 2>/dev/null)
+SOURCE_BYTES=$(blockdev --getsize64 /dev/$TARGET_DISK 2>/dev/null)
 log "Sektoren (Quell-Disk):"
-blockdev --getsz /dev/$TARGET_DISK 2>&1 | tee -a "$LOG_FILE" || true
+log "$SOURCE_SECTORS"
 log "Groesse in Bytes (Quell-Disk):"
-blockdev --getsize64 /dev/$TARGET_DISK 2>&1 | tee -a "$LOG_FILE" || true
+log "$SOURCE_BYTES"
 log ""
 
 log "Verfuegbarer Speicher fuer Image:"
 df -h /home/partimag 2>&1 | tail -1 | tee -a "$LOG_FILE"
+log ""
+
+# ============================================
+# Capture-Reserve pruefen
+# ============================================
+# Das Referenz-Tablet muss am Ende der Disk 2 GB unpartitionierte Reserve
+# haben. Sonst kann ein "64 GB"-Image wenige MB groesser sein als ein anderes
+# "64 GB"-Tablet und der Restore bricht spaeter mit "Disk too small" ab.
+log_section "Capture-Reserve pruefen (2 GB Luft am Disk-Ende)"
+
+REQUIRED_RESERVE_SECTORS=$((2 * 1024 * 1024 * 1024 / 512))
+LAST_PART_END=$(sfdisk -d /dev/$TARGET_DISK 2>/dev/null | awk '
+    /^\/dev\// {
+        line = $0
+        gsub(/,/, "", line)
+        n = split(line, parts, " ")
+        start = ""
+        size = ""
+        for (i = 1; i <= n; i++) {
+            if (parts[i] ~ /^start=/) {
+                value = parts[i]
+                sub(/^start=/, "", value)
+                if (value == "" && i < n) {
+                    i++
+                    value = parts[i]
+                }
+                start = value + 0
+            }
+            if (parts[i] ~ /^size=/) {
+                value = parts[i]
+                sub(/^size=/, "", value)
+                if (value == "" && i < n) {
+                    i++
+                    value = parts[i]
+                }
+                size = value + 0
+            }
+        }
+        if (start != "" && size != "") {
+            end = start + size
+            if (end > max) max = end
+        }
+    }
+    END {
+        if (max > 0) print max
+    }
+')
+
+if [ -z "$SOURCE_SECTORS" ] || [ -z "$LAST_PART_END" ]; then
+    CAPTURE_STATUS="FEHLER"
+    ERROR_MESSAGE="Capture-Reserve konnte nicht geprueft werden"
+    log "FEHLER: Konnte Disk-/Partitionsgroessen nicht ermitteln."
+    log "Image-Erstellung wird abgebrochen, damit kein unsicheres Image entsteht."
+    read -p "Druecke Enter zum Neustarten..." dummy
+    reboot
+    exit 1
+fi
+
+TRAILING_SECTORS=$((SOURCE_SECTORS - LAST_PART_END))
+TRAILING_MB=$((TRAILING_SECTORS * 512 / 1024 / 1024))
+REQUIRED_MB=$((REQUIRED_RESERVE_SECTORS * 512 / 1024 / 1024))
+
+log "Ende der letzten Partition: $LAST_PART_END"
+log "Disk-Sektoren gesamt:      $SOURCE_SECTORS"
+log "Reserve am Disk-Ende:      ${TRAILING_MB} MB"
+log "Erforderliche Reserve:     ${REQUIRED_MB} MB"
+log ""
+
+if [ "$TRAILING_SECTORS" -lt "$REQUIRED_RESERVE_SECTORS" ]; then
+    CAPTURE_STATUS="FEHLER"
+    ERROR_MESSAGE="C: wurde vor dem Capture nicht um 2 GB verkleinert"
+    log "FEHLER: Es sind weniger als 2 GB Reserve am Ende der Disk frei."
+    log ""
+    log "LOESUNG:"
+    log "  1. Windows normal starten"
+    log "  2. deployment/01_referenz-tablet/prepare_master_for_capture.bat als Admin ausfuehren"
+    log "  3. Neu starten"
+    log "  4. deployment/01_referenz-tablet/defrag_and_check.bat als Admin ausfuehren"
+    log "  5. Danach Image-Capture erneut starten"
+    log ""
+    echo ""
+    echo "############################################"
+    echo "#                                          #"
+    echo "#   CAPTURE ABGEBROCHEN                    #"
+    echo "#                                          #"
+    echo "#   C: hat noch keine 2 GB Reserve.         #"
+    echo "#   So wuerde wieder ein zu grosses Image   #"
+    echo "#   entstehen.                             #"
+    echo "#                                          #"
+    echo "############################################"
+    echo ""
+    read -p "Druecke Enter zum Neustarten..." dummy
+    reboot
+    exit 1
+fi
+
+log "[OK] 2 GB Capture-Reserve vorhanden."
 log ""
 
 # ============================================

@@ -152,11 +152,9 @@ Fuer das Capture (Image-Erstellen) gibt es das gleiche System unter `FEXODATEN:\
 - Richtigen USB-Stick eingesteckt?
 
 **Restore bricht ab mit "Disk too small":**
-- Das Script hat drei Automatismen gegen dieses Problem:
-  1. **Pre-Wipe** entfernt OEM-/Recovery-/ebackup-Partitionen vor dem Restore
-  2. **`-icds` Flag** ignoriert minimale Groessenunterschiede der eMMC
-  3. **Post-Expand** streckt C nach dem Restore auf volle Disk-Groesse
-- **Wenn es trotzdem fehlschlaegt**: Log in `FEXODATEN:\deploy-logs\` oeffnen. Dort steht die exakte Sektorzahl von Quelle und Ziel. Falls das Ziel wirklich deutlich kleiner ist (nicht nur wenige Sektoren): Referenz-Tablet mit **kleinstmoeglicher eMMC** (32 GB) verwenden und Image neu capturen
+- Neue Images muessen vor dem Capture 2 GB freie Reserve am Ende der Referenz-Platte haben.
+- Das Deploy-Script bricht zu grosse Images jetzt **vor dem Pre-Wipe** ab, damit das Ziel-Tablet nicht geloescht wird.
+- Loesung: Referenz-Tablet in Windows vorbereiten: `prepare_master_for_capture.bat` als Admin, Neustart, `defrag_and_check.bat` als Admin. Danach Image neu erstellen und alte zu grosse Images vom Stick entfernen.
 - Nach Schritt 1 der Automatismen (Pre-Wipe) werden bestehende Partitionen auf dem Ziel-Tablet **unwiderruflich geloescht** - das ist gewollt. Auch "ebackup"-/Recovery-Partitionen von Lenovo sind danach weg und C nutzt nach Post-Expand die volle Disk-Groesse.
 
 **Tablet startet nach Restore nicht:**

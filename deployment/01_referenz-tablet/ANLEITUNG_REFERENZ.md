@@ -84,7 +84,7 @@ Die Tablets laufen offline — Updates sind unnoetig und koennen das Tablet lahm
    - Mit "fexobox-gallery" WLAN verbinden
    - Browser oeffnen, Galerie sollte erreichbar sein (wenn aktiviert)
 
-### 7. Aufraeumen (WICHTIG!)
+### 7. Aufraeumen und 2-GB-Reserve erstellen (WICHTIG!)
 
 Vor dem Image-Erstellen alles Unnoetige entfernen:
 
@@ -103,6 +103,12 @@ Vor dem Image-Erstellen alles Unnoetige entfernen:
 3. **Festplattenbelegung pruefen:**
    - Rechtsklick auf C: > Eigenschaften
    - Sollte unter 20 GB belegt sein
+
+4. **C: automatisch fuer das Image vorbereiten:**
+   - `prepare_master_for_capture.bat` als Administrator ausfuehren
+   - Tablet neu starten
+   - `defrag_and_check.bat` als Administrator ausfuehren
+   - Das Script verkleinert C: automatisch so, dass am Ende der Platte 2 GB Reserve frei bleiben
 
 ### 8. Verifikation
 

@@ -81,6 +81,7 @@ Waehle **"FexoBooth IMAGE ERSTELLEN"** mit den Pfeiltasten und druecke Enter.
 
 - Clonezilla bootet (schwarzer Bildschirm mit Text, das ist normal)
 - Das Script erkennt automatisch die eMMC-Festplatte
+- Das Script prueft, ob die 2-GB-Reserve vom Vorbereitungsschritt vorhanden ist
 - Du wirst einmal gefragt ob du fortfahren willst → **Y** druecken + Enter
 - Der Capture-Vorgang laeuft (~15-30 Minuten je nach Datenmenge)
 - Fortschrittsanzeige mit Prozent und geschaetzter Restzeit
@@ -124,6 +125,7 @@ Stecke den USB-Stick in einen PC und pruefe:
 **Capture bricht ab:**
 - USB-Stick voll? (32 GB reicht normalerweise)
 - USB-Verbindung stabil? (Hub wackelt nicht?)
+- Meldung "C: hat noch keine 2 GB Reserve"? Dann in Windows `prepare_master_for_capture.bat`, Neustart und `defrag_and_check.bat` als Administrator ausfuehren
 - Nochmal versuchen
 
 **Bildschirm bleibt schwarz nach Boot:**

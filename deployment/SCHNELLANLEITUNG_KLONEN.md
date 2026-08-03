@@ -84,6 +84,12 @@ Damit das Image sauber und klein bleibt:
    - `post_install_check.bat` ausfuehren (liegt in `deployment\01_referenz-tablet\`)
    - Alle Checks muessen **[OK]** zeigen
 
+4. **2-GB-Reserve fuer robustes Klonen erstellen:**
+   - `prepare_master_for_capture.bat` als Administrator ausfuehren
+   - Tablet neu starten
+   - `defrag_and_check.bat` als Administrator ausfuehren
+   - Das Script verkleinert C: automatisch, damit das Image auf leicht kleinere 64-GB-eMMCs passt
+
 ### 1.7 Herunterfahren
 
 **WICHTIG: Komplett herunterfahren, NICHT Neustart!**
