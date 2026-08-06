@@ -4,6 +4,31 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-08-06
+
+### Drucker-Fehlerfenster: Service-Ausstieg per PIN (Bug-Report #49 Werkstatt, Version 2.4.15)
+
+**Problem:** Hängt ein Druckjob, ohne dass der SELPHY selbst einen Fehler meldet, blieb das
+blockierende Fehler-Overlay endlos stehen — der „Problem behoben"-Check schlug immer wieder fehl,
+und der einzige Ausweg (Strg+Shift+Q) braucht eine Tastatur, die am Tablet fehlt. Werkstatt/Kunden
+mussten die Box hart ausschalten (Fall NX-138947).
+
+**Lösung:**
+- [printer_error.py](src/ui/dialogs/printer_error.py): Unauffälliges ✕ oben rechts im Overlay →
+  Touch-Numpad-PIN-Karte. Gültige PINs: Service (6588), Admin (config `admin_pin`), Kundenmenü (2015,
+  damit die Hotline telefonisch helfen kann). Bei korrekter PIN wird das Overlay OHNE Drucker-Check
+  geschlossen.
+- [app.py](src/app.py): Neues `snooze_printer_overlay(600)` — nach dem PIN-Schließen öffnet der
+  Sekunden-Poll das Overlay 10 Minuten lang nicht erneut (sonst wäre es sofort wieder da). Die rote
+  Top-Bar-Warnung läuft unverändert weiter, der Fehler wird also nicht versteckt.
+- [i18n.py](src/i18n.py): Neue Keys `printer.service_pin_title` / `printer.service_pin_wrong` in
+  allen 7 Sprachen.
+- [HOTLINE_PROMPT_FELIX.md](support/HOTLINE_PROMPT_FELIX.md): Neues Runbook „Großes Fehlerfenster
+  lässt sich nicht schließen" (ab 2.4.15) inkl. Fallback für ältere Versionen.
+
+**Getestet (Dev-Smoke-Test):** Overlay öffnet mit ✕; falsche PIN → bleibt offen; PIN 6588/3198
+schließt + setzt 600 s Snooze; Klassifizierung (consumable/jam/other) unverändert.
+
 ## 2026-07-03
 
 ### Kunden-Menü PIN 2015: „Neustart / Ausschalten" mit Rückfrage (Kundenwunsch Christian)

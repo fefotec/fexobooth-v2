@@ -205,6 +205,10 @@ class PhotoboothApp:
         self._printer_error_overlay = None
         # Letzter geloggter Drucker-Status (nur bei Wechsel loggen → keine Log-Flut)
         self._last_printer_problem = None
+        # Bug #49: Nach Service-Ausstieg (PIN im Fehler-Overlay) das automatische
+        # Wieder-Öffnen pausieren – sonst holt der Sekunden-Poll das Overlay
+        # sofort zurück. Top-Bar-Warnung läuft trotzdem weiter.
+        self._printer_overlay_snooze_until = 0.0
 
         # WICHTIG: Settings ZUERST laden, BEVOR UI erstellt wird!
         # Sonst zeigt die UI falsche Optionen (z.B. Single-Foto obwohl deaktiviert)
@@ -2272,6 +2276,16 @@ class PhotoboothApp:
         """
         from src.ui.dialogs.printer_error import PrinterErrorOverlay, classify_error
 
+        # Bug #49: Service hat das Overlay per PIN geschlossen → für die
+        # Snooze-Dauer nicht automatisch wieder öffnen (Top-Bar warnt weiter).
+        if time.time() < self._printer_overlay_snooze_until:
+            if log:
+                logger.info(
+                    f"Drucker-Fehler '{error_text}' → Overlay pausiert bis "
+                    f"{time.strftime('%H:%M:%S', time.localtime(self._printer_overlay_snooze_until))}"
+                )
+            return
+
         category = classify_error(error_text, log=log)
 
         # "other"-Fehler (offline, etc.) nur in Top-Bar anzeigen, kein Overlay
@@ -2287,6 +2301,17 @@ class PhotoboothApp:
             )
         self._printer_error_overlay = PrinterErrorOverlay(
             self.root, self, error_text, category
+        )
+
+    def snooze_printer_overlay(self, seconds: int):
+        """Bug #49: Pausiert das automatische Drucker-Fehler-Overlay.
+
+        Wird vom Service-Ausstieg im PrinterErrorOverlay aufgerufen, nachdem
+        das Overlay per PIN erzwungen geschlossen wurde.
+        """
+        self._printer_overlay_snooze_until = time.time() + max(0, int(seconds))
+        logger.warning(
+            f"Drucker-Overlay pausiert für {seconds}s (Service-Ausstieg per PIN)"
         )
 
     def trigger_printer_reset(self):

@@ -127,6 +127,13 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
         self.bind("<Control-Shift-Q>", lambda e: self._emergency_quit())
         self.bind("<Control-Shift-q>", lambda e: self._emergency_quit())
 
+        # Service-Ausstieg (Bug-Report #49): Hängt ein Druckjob ohne dass der
+        # Drucker einen Fehler meldet, kam man aus dem Overlay nie wieder raus
+        # (Bestätigungs-Check schlug endlos fehl; Ctrl+Shift+Q braucht eine
+        # Tastatur, die am Tablet fehlt → Box musste hart ausgeschaltet werden).
+        self._pin_frame = None
+        self._pin_entry_value = ""
+
         # Canon-Dialog sofort verstecken (SW_HIDE, nicht WM_CLOSE!)
         self._hide_canon_dialogs()
 
@@ -170,6 +177,23 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
         """Erstellt das UI je nach Fehler-Kategorie"""
         self.main_frame = ctk.CTkFrame(self, fg_color="#0a0a10", corner_radius=0)
         self.main_frame.pack(fill="both", expand=True)
+
+        # Dezenter Service-Ausstieg oben rechts (PIN-geschützt, Bug #49).
+        # Bewusst unauffällig (dunkelgrau auf dunklem Grund) – Gäste sollen ihn
+        # nicht als Einladung verstehen, Service/Hotline kennt ihn.
+        self._service_close_btn = ctk.CTkButton(
+            self.main_frame,
+            text="✕",
+            width=44,
+            height=44,
+            font=("Segoe UI", 20, "bold"),
+            fg_color="transparent",
+            hover_color=COLORS["bg_medium"],
+            text_color="#3a3a4a",
+            corner_radius=22,
+            command=self._show_service_pin
+        )
+        self._service_close_btn.place(relx=1.0, y=14, x=-14, anchor="ne")
 
         screen_w = self.winfo_screenwidth()
         screen_h = self.winfo_screenheight()
@@ -574,6 +598,147 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
         self.confirm_btn.configure(text=t(self.config, "printer.button_fixed"))
         self.confirm_btn.pack(pady=(15, 10))
         self.hint_label.configure(text=t(self.config, "printer.material_hint"))
+
+    # ========== Service-Ausstieg mit PIN (Bug #49) ==========
+
+    def _show_service_pin(self):
+        """Zeigt die PIN-Karte für den Service-Ausstieg (Touch-Numpad)."""
+        if self._pin_frame is not None:
+            return
+        logger.info("Service-Ausstieg: PIN-Karte geöffnet")
+
+        self._pin_entry_value = ""
+
+        screen_h = self.winfo_screenheight()
+        btn_size = min(64, max(46, int(screen_h * 0.07)))
+
+        self._pin_frame = ctk.CTkFrame(
+            self.main_frame,
+            fg_color=COLORS["bg_medium"],
+            border_color=COLORS["border"],
+            border_width=1,
+            corner_radius=16
+        )
+        self._pin_frame.place(relx=0.5, rely=0.5, anchor="center")
+        self._pin_frame.lift()
+
+        ctk.CTkLabel(
+            self._pin_frame,
+            text=t(self.config, "printer.service_pin_title"),
+            font=("Segoe UI", 18, "bold"),
+            text_color=COLORS["text_primary"]
+        ).pack(pady=(18, 8), padx=30)
+
+        self._pin_display = ctk.CTkLabel(
+            self._pin_frame,
+            text="",
+            font=("Segoe UI", 26, "bold"),
+            text_color=COLORS["text_primary"],
+            height=34
+        )
+        self._pin_display.pack(pady=(0, 4))
+
+        self._pin_error_label = ctk.CTkLabel(
+            self._pin_frame,
+            text="",
+            font=("Segoe UI", 13),
+            text_color=COLORS["error"],
+            height=18
+        )
+        self._pin_error_label.pack(pady=(0, 4))
+
+        numpad = ctk.CTkFrame(self._pin_frame, fg_color="transparent")
+        numpad.pack(pady=(0, 8), padx=20)
+        for row in [["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"], ["⌫", "0", "✓"]]:
+            row_frame = ctk.CTkFrame(numpad, fg_color="transparent")
+            row_frame.pack()
+            for key in row:
+                ctk.CTkButton(
+                    row_frame,
+                    text=key,
+                    width=btn_size,
+                    height=btn_size,
+                    font=("Segoe UI", int(btn_size * 0.36)),
+                    fg_color=COLORS["bg_light"] if key.isdigit() else COLORS["bg_dark"],
+                    hover_color=COLORS["bg_dark"],
+                    corner_radius=10,
+                    command=lambda k=key: self._pin_key(k)
+                ).pack(side="left", padx=3, pady=3)
+
+        ctk.CTkButton(
+            self._pin_frame,
+            text=t(self.config, "common.cancel"),
+            font=("Segoe UI", 13),
+            width=120,
+            height=30,
+            fg_color="transparent",
+            hover_color=COLORS["bg_light"],
+            text_color=COLORS["text_muted"],
+            command=self._hide_service_pin
+        ).pack(pady=(0, 14))
+
+    def _hide_service_pin(self):
+        if self._pin_frame is not None:
+            self._pin_frame.destroy()
+            self._pin_frame = None
+
+    def _pin_key(self, key: str):
+        """Numpad-Taste der Service-PIN-Karte."""
+        if key == "⌫":
+            self._pin_entry_value = self._pin_entry_value[:-1]
+        elif key == "✓":
+            self._check_service_pin()
+            return
+        else:
+            self._pin_entry_value += key
+            if len(self._pin_entry_value) >= 4:
+                self._check_service_pin()
+                return
+        self._pin_display.configure(text="●" * len(self._pin_entry_value))
+
+    def _check_service_pin(self):
+        """Prüft Service-/Admin-PIN und schließt das Overlay erzwungen."""
+        entered = self._pin_entry_value
+        self._pin_entry_value = ""
+        self._pin_display.configure(text="")
+
+        valid_pins = []
+        try:
+            from src.ui.screens.service import SERVICE_PIN
+            valid_pins.append(str(SERVICE_PIN))
+        except Exception:
+            pass
+        valid_pins.append(str(self.config.get("admin_pin", "3198")))
+        # Kundenmenü-PIN (2015, siehe admin.py): Die Hotline gibt diese PIN
+        # bereits an Kunden heraus – so kann Felix das Fenster telefonisch
+        # freigeben lassen, ohne die Service-PIN zu verraten.
+        valid_pins.append("2015")
+
+        if entered in valid_pins:
+            logger.warning(
+                f"Service-Ausstieg: Overlay per PIN geschlossen "
+                f"(Fehler war: '{self.error_text}') – Auto-Overlay 10 Min pausiert"
+            )
+            self._force_close()
+        else:
+            logger.info("Service-Ausstieg: falsche PIN eingegeben")
+            self._pin_error_label.configure(
+                text=t(self.config, "printer.service_pin_wrong")
+            )
+
+    def _force_close(self):
+        """Schließt das Overlay OHNE Drucker-Prüfung (Service-Entscheidung).
+
+        Wichtig: Der Status-Poll in app.py würde das Overlay sonst beim
+        nächsten Tick sofort wieder öffnen → Snooze setzen. Die rote
+        Top-Bar-Warnung bleibt sichtbar, der Fehler wird also nicht versteckt.
+        """
+        try:
+            if hasattr(self.app, "snooze_printer_overlay"):
+                self.app.snooze_printer_overlay(600)
+        except Exception as e:
+            logger.debug(f"snooze_printer_overlay Fehler: {e}")
+        self._close()
 
     # ========== Erfolg + Lifecycle ==========
 

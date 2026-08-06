@@ -6,6 +6,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.15] - 2026-08-06 - Drucker-Fehlerfenster: Service-Ausstieg per PIN
+
+### Behoben
+
+- **Blockierendes Drucker-Fehlerfenster ließ sich nicht schließen** (Bug-Report #49 Werkstatt):
+  Hing ein Druckjob, ohne dass der Drucker selbst einen Fehler meldete, schlug der
+  „Problem behoben"-Check endlos fehl — die Box musste hart ausgeschaltet werden.
+  Jetzt sitzt oben rechts im Fehlerfenster ein unauffälliges ✕: Nach PIN-Eingabe
+  (Service 6588, Admin-PIN oder Kundenmenü 2015 für die Hotline) schließt sich das
+  Fenster und bleibt 10 Minuten weg; die rote Top-Bar-Warnung bleibt sichtbar.
+  Neue i18n-Keys `printer.service_pin_title`/`printer.service_pin_wrong` (7 Sprachen),
+  Felix-Hotline-Runbook ergänzt.
+
+---
+
 ## [Unreleased] - App-Plattform-Fundament (Box-Seite)
 
 Einmaliger, zukunftssicherer Box-Umbau, damit künftige Features rein per App-Update kommen.

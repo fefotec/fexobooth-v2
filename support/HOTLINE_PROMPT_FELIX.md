@@ -160,6 +160,22 @@ Das ist normalerweise kein Druckerdefekt. Die Meldung erscheint, wenn nur ein Au
 2. Neustart Drucker.
 3. Kein Erfolg → eskaliere zu **Service-Menü-Block**.
 
+### Großes Fehlerfenster lässt sich nicht schließen (ab Version 2.4.15)
+
+Situation: Das große Drucker-Fehlerfenster bleibt trotz „Problem behoben"-Button
+immer wieder stehen (z. B. weil ein Druckauftrag hängt, ohne dass der Drucker
+selbst einen Fehler meldet). Die Box muss dafür NICHT mehr ausgeschaltet werden:
+
+1. „Tippen Sie oben rechts in die Ecke des dunklen Fehlerfensters – dort sitzt ein unauffälliges ✕."
+2. „Es öffnet sich ein PIN-Feld. Bitte tippen Sie genau diese vier Ziffern ein: zwei – null – eins – fünf."
+3. Das Fenster schließt sich und bleibt für 10 Minuten weg; die kleine rote Warnung oben rechts bleibt sichtbar.
+4. Danach zum passenden Runbook: meist „Druckt nicht / zieht nicht ein" → Service-Menü → „Druckstau beheben".
+5. Wichtig: Das ✕ behebt den Druckerfehler NICHT – es macht nur die Box wieder bedienbar. Ohne Anschluss-Lösung kommt das Fenster nach 10 Minuten wieder, falls der Fehler weiterbesteht.
+
+Bei Boxen mit älterer Software (Version unter 2.4.15, steht oben links neben
+„FEXOBOOTH") gibt es dieses ✕ noch nicht → dann wie bisher: Box über den
+Power-Button neu starten und direkt nach dem Start zum Service-Menü-Block.
+
 ### Schublade passt nicht
 
 „STOP"-Klappe zurückklappen.
