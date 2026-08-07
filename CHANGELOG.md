@@ -6,6 +6,42 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.16] - 2026-08-07 - LiveView-Performance: Bildaufbereitung raus aus dem UI-Thread
+
+> Anlass: Stresstest-Log `fexobooth_20260806_142249.log` (Miix, Webcam-Box) — LiveView schaffte
+> 2,5–5 fps statt 20, weil die komplette Bildaufbereitung (~150 ms/Frame) im Tk-UI-Thread lief;
+> dazu >140 UI-Hitches in 16 Minuten. In Einzelfällen kippt das mit Windows-Hintergrundlast
+> (Defender/Update) ins „Box hängt".
+
+### Geändert
+
+- **LiveView-Worker-Thread:** Kamera-Read, Spiegeln, Template-Overlay, Countdown-Zahl und die
+  komplette Skalierung auf Anzeigegröße laufen jetzt in einem Hintergrund-Thread. Der UI-Thread
+  zeigt nur noch das fertige Bild an (Frames werden exakt auf die CTkImage-Zielgröße vorskaliert
+  → PIL-Copy-Fastpath, keine Skalierung mehr im UI-Thread). Touch/Buttons bleiben dadurch auch
+  bei voller LiveView-Last reaktionsfähig.
+- **Overlay-Schnellpfad:** Statisches Komposit (bereits aufgenommene Fotos + Template-Overlay)
+  wird pro Foto-Wechsel EINMAL vorberechnet; pro Frame wird nur noch die aktuelle Box gefüllt
+  und der kleine Overlay-Ausschnitt darübergelegt (Cover-Fit per OpenCV statt PIL). Ergebnis
+  pixelidentisch (headless verifiziert), ~1,4× schneller.
+- **Adaptive Taktung statt starrer 20 fps:** Der Worker hält nach jedem Frame mindestens ~1/3
+  der Frame-Zeit Pause (sättigt die CPU nie komplett); der UI-Anzeige-Takt passt sich den
+  gemessenen Anzeige-Kosten an (Vorschau darf max. ~1/3 der UI-Thread-Zeit kosten).
+- **Countdown-Font gecacht** (wurde bisher pro Frame neu von Platte geladen).
+
+### Neu
+
+- **Windows-Leistung beim Start:** Prozess-Priorität wird auf ABOVE_NORMAL gehoben und der
+  Windows-Leistungsregler automatisch auf „Beste Leistung" gestellt (PowerSetActiveOverlayScheme —
+  dieselbe API wie der Schieberegler im Akku-Flyout, kein Admin nötig; der Miix drosselt im
+  Standard-Modus spürbar). Neues Modul `src/utils/system_load.py`.
+- **Systemlast-Diagnose (Dev-Mode):** Beim App-Start und bei UI-Hängern > 1 s loggt die Box
+  `SYSTEM-LAST: ...` mit CPU/RAM, Top-3-Prozessen und benannten Störern (Defender-Scan,
+  Windows-Update-Installer, Such-Indexer, …) — Feld-Hänger sind damit im Log sofort erklärbar.
+  Max. 1 Schnappschuss/Minute, läuft im Hintergrund-Thread.
+
+---
+
 ## [2.4.15] - 2026-08-06 - Drucker-Fehlerfenster: Service-Ausstieg per PIN
 
 ### Behoben

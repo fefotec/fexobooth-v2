@@ -58,7 +58,19 @@ class PhotoboothApp:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         apply_locale_to_config(self.config)
-        
+
+        # Windows-Leistung sicherstellen (2.4.16): Prozess-Priorität anheben
+        # und den Leistungsregler auf "Beste Leistung" stellen. Der Miix
+        # drosselt im Standard-Modus spürbar; Hintergrundlast (Defender/
+        # Update) darf die Kiosk-UI nicht aushungern.
+        try:
+            from src.utils.system_load import boost_process_priority, set_best_performance_power_overlay
+            boost_process_priority()
+            set_best_performance_power_overlay()
+        except Exception as e:
+            logger.debug(f"Windows-Leistungseinstellungen fehlgeschlagen: {e}")
+
+
         # CustomTkinter Setup
         ctk.set_appearance_mode("dark")
         
@@ -342,17 +354,46 @@ class PhotoboothApp:
             return
 
         interval_seconds = 0.2
+        self._last_load_snapshot = 0.0
 
         def _tick():
             now = time.perf_counter()
             late_ms = (now - self._ui_hitch_expected_at) * 1000
             if late_ms > 200:
                 logger.info(f"UI-HITCH: Tk-Hauptschleife war ~{late_ms:.0f}ms blockiert")
+                if late_ms > 1000:
+                    # Bei großen Hängern: Wer frisst gerade die CPU?
+                    self._log_system_load_async(f"UI-Hitch {late_ms:.0f}ms")
             self._ui_hitch_expected_at = time.perf_counter() + interval_seconds
             self.root.after(int(interval_seconds * 1000), _tick)
 
         self._ui_hitch_expected_at = time.perf_counter() + interval_seconds
         self.root.after(int(interval_seconds * 1000), _tick)
+
+        # Einmaliger Start-Schnappschuss: zeigt, ob die Box schon beim
+        # Hochfahren unter Windows-Hintergrundlast steht
+        self._log_system_load_async("App-Start")
+
+    def _log_system_load_async(self, reason: str):
+        """Dev-Mode: Systemlast-Schnappschuss im Hintergrund loggen (max. 1x/Minute).
+
+        Zeigt bei großen UI-Hängern, ob Windows-Hintergrundlast (Defender-Scan,
+        Update-Worker, Such-Indexer) die CPU wegnimmt — die häufigste Ursache
+        für 'Box hängt' auf den Miix-Tablets.
+        """
+        now = time.monotonic()
+        if now - getattr(self, "_last_load_snapshot", 0.0) < 60.0:
+            return
+        self._last_load_snapshot = now
+
+        def _worker():
+            try:
+                from src.utils.system_load import snapshot_system_load
+                snapshot_system_load(reason)
+            except Exception as e:
+                logger.debug(f"Systemlast-Schnappschuss fehlgeschlagen: {e}")
+
+        threading.Thread(target=_worker, daemon=True, name="load-snapshot").start()
 
     def _warmup_nikon_async(self):
         """Startet die FexoNikonBridge im Hintergrund vor (nur wenn camera_type == 'nikon').

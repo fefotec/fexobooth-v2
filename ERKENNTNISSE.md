@@ -6,6 +6,23 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### LiveView: Producer/Consumer-Thread statt Aufbereitung im Tk-UI-Thread (2.4.16)
+
+| | |
+|---|---|
+| **Kontext** | Stresstest `fexobooth_20260806_142249.log`: LiveView 2,5–5 fps statt 20, weil Spiegeln/Overlay/Skalieren/Anzeigen ~150 ms pro Frame komplett im Tk-Hauptthread liefen; >140 UI-Hitches in 16 min. Sobald Windows-Hintergrundlast (Defender/Update) dazukommt, kippt die Box in „hängt". |
+| **Entscheidung** | Aufbereitung in einen Daemon-Worker-Thread; Übergabe über eine Ein-Frame-Variable (`_lv_latest`, nur der neueste Frame — bewusst KEINE Queue, kein Rückstau). Der Worker skaliert auf exakt `round(logisch*scaling)` vor: PIL `resize()` mit identischer Zielgröße ist ein `copy()` (Fastpath, verifiziert), CTkImage skaliert damit intern nichts mehr. `winfo_*` bleibt strikt im UI-Thread — der Worker bekommt die Zielgröße über eine vom UI-Takt gepflegte Variable. Kamera-Zugriff zusätzlich per `_cam_access_lock` serialisiert (nicht jedes Kamera-Backend ist intern gelockt). |
+| **Alternativen** | (a) Nur Compositing optimieren: reicht nicht, die Anzeige selbst blockierte ~110 ms. (b) `tk.Label` + `ImageTk.PhotoImage` statt CTkLabel: minimal schneller, aber Umbau aller Anzeige-Pfade (Flash/Fotoanzeige) — unnötig, da der Fastpath dieselbe Wirkung hat. (c) Kamera dauerhaft 1080p (spart 3 s Umschaltung/Foto): von Christian verworfen, aktueller Weg ist auf normalen Miix schneller. |
+| **Merke** | Bei Tk auf schwacher Hardware gilt: Der UI-Thread darf Bilder nur noch ANZEIGEN, nie aufbereiten. PhotoImage/CTkImage-Erzeugung muss im UI-Thread bleiben (Tk ist nicht thread-sicher) — deshalb im Worker exakt auf die Zielgröße vorskalieren, damit die UI-seitige Erzeugung nur noch ein Memcpy ist. Adaptive Taktung beidseitig: Worker schläft mind. ~1/3 der Frame-Zeit (CPU nie sättigen), UI-Takt = 3× gemessene Anzeige-Kosten. |
+
+### Windows-Leistungsregler per API setzen statt Benutzer-Doku (2.4.16)
+
+| | |
+|---|---|
+| **Kontext** | Der Miix drosselt im Standard-Energiemodus spürbar; der Schieberegler im Akku-Flyout stand in der Flotte zufällig. Kunden-Anleitung wäre fehleranfällig (>200 Geräte). |
+| **Entscheidung** | Beim App-Start `PowerSetActiveOverlayScheme` (powrprof.dll) mit dem „Best Performance"-GUID `ded574b5-…` aufrufen — exakt das, was der Schieberegler tut, ohne Admin-Rechte. Windows persistiert die Wahl pro Stromquelle; einmaliges Setzen am Netz genügt. Zusätzlich Prozess-Priorität ABOVE_NORMAL (bewusst nicht HIGH — würde Treiber/Audio aushungern). |
+| **Merke** | Für Slider-/Flyout-Einstellungen von Windows gibt es fast immer eine User-Mode-API — die App beim Start selbstheilen lassen ist zuverlässiger als Setup-Skripte oder Anleitungen. Scheitert die API (altes Windows), leise weitermachen und nur loggen. |
+
 ### Build-Version: Lokale Quelle ist `src/__init__.py`, GitHub-Release ist nur Veröffentlichung
 
 | | |

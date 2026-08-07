@@ -37,8 +37,12 @@ Aufgabenliste mit Prioritäten.
   „Webcam-Codec: MJPG aktiv" und im `High-Res Capture Timing` `fourcc=MJPG` mit `set`+`read`
   deutlich unter den bisherigen ~1300+700 ms. Falls stattdessen „Kamera lehnt MJPG ab" →
   Kamera-Modell notieren; dann bleibt YUY2, aber ohne Zusatzkosten (Latch).
-- [ ] Optional/später: Tk-Anzeigepfad (~110 ms/Frame, größter LiveView-Posten laut Overlay-Split);
-  Countdown-Ziffern vorrendern (Font + 8 Schatten pro Frame).
+- [x] Tk-Anzeigepfad (~110 ms/Frame, größter LiveView-Posten laut Overlay-Split) —
+  *erledigt 2.4.16 (2026-08-07): komplette Aufbereitung im LiveView-Worker-Thread, Frames auf
+  CTkImage-Zielgröße vorskaliert (PIL-Copy-Fastpath), Countdown-Font gecacht; Details FORTSCHRITT.md*
+- [ ] **Nachtest 2.4.16 (Miix, Webcam-Box):** Stresstest-Log prüfen — erwartet: `Anzeige (UI-Thread)`
+  avg < ~40 ms, deutlich weniger `UI-HITCH`-Zeilen, höhere fps in der Worker-Zeile,
+  `SYSTEM-LAST`-Zeile beim Start, `Leistungsregler auf 'Beste Leistung' gestellt` im Log.
 - [ ] Bekannt, nach dem Release angehen: ~3 s UI-Hänger beim tatsächlichen SELPHY-Druck
   (Druckpfad ist live-flotten-kritisch — nicht vorher umbauen); Startscreen-Neuaufbau mit
   USB-Template ~5 s (läuft zwischen Sessions, kein Gast-Kontakt).

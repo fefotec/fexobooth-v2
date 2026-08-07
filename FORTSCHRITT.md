@@ -4,6 +4,52 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-08-07
+
+### LiveView-Performance: Bildaufbereitung raus aus dem UI-Thread (Version 2.4.16)
+
+**Anlass:** Einzelne Miix-Boxen laufen „übel langsam" bis „hängt". Stresstest-Log
+`fexobooth_20260806_142249.log` ausgewertet: LiveView 2,5–5 fps statt Ziel 20; pro Frame
+Kamera nur 1–4 ms, aber Aufbereitung+Anzeige 140–175 ms (davon Overlay 40–58 ms) — **alles im
+Tk-UI-Thread**. Dazu >140 UI-Hitches (200–2700 ms) in 16 Minuten. Grundlast am Anschlag +
+Windows-Hintergrundlast (Defender/Update) = gefühlter Hänger. Keine Verschlechterung über die
+Zeit, kein Speicherleck, kein Absturz im Log.
+
+**Umbau (Christian hat P1/P3/P4/P5 freigegeben, P2 „Kamera dauerhaft 1080p" bewusst verworfen):**
+
+1. **LiveView-Worker-Thread** (`session.py`): kompletter Aufbereitungspfad (get_frame, Spiegeln,
+   Overlay, Countdown, Skalieren) im Daemon-Thread; `self._lv_latest` hält nur den neuesten
+   fertigen Frame (kein Rückstau). UI-Takt zeigt fertige Bilder nur noch an. Frames werden auf
+   exakt `round(logisch*scaling)` vorskaliert → CTkImage trifft den PIL-Copy-Fastpath (PIL
+   `resize()` mit identischer Größe = `copy()`, verifiziert). `winfo_*` bleibt im UI-Thread
+   (Worker bekommt Zielgröße über `self._lv_target`). Neuer `_cam_access_lock` serialisiert
+   LiveView-Reads gegen High-Res-Capture/Preview-Restore (zusätzlich zu den bestehenden Flags).
+2. **Overlay-Schnellpfad:** `_get_overlay_static_composite()` (Basis-Canvas + Overlay einmal pro
+   Foto-Wechsel) + `_get_overlay_box_crop()` (Overlay-Ausschnitt pro Box, einmal geschnitten);
+   pro Frame nur noch: Box füllen (Cover-Fit per `cv2.resize`) + kleinen Ausschnitt compositen.
+   Headless-Äquivalenztest: außerhalb der Box pixelidentisch, innerhalb mittlere Diff 0,03
+   (Bilinear-Implementierung cv2 vs. PIL). Benchmark Dev-PC: 20,1 → 14,0 ms/Frame (1,4×),
+   der eigentliche Gewinn ist aber die Verlagerung aus dem UI-Thread.
+3. **Adaptive Taktung:** Worker pausiert nach jedem Frame mind. ~35 % der Frame-Zeit (CPU nie
+   sättigen); UI-Anzeige-Takt = max(Config-Takt, 3× gemessene Anzeige-Kosten, gedeckelt 250 ms).
+4. **Windows-Leistung** (`src/utils/system_load.py`, neu; in `app.py.__init__` verdrahtet):
+   Prozess-Priorität ABOVE_NORMAL + Leistungsregler „Beste Leistung" per
+   `PowerSetActiveOverlayScheme` (kein Admin nötig, Windows merkt sich das pro Stromquelle).
+5. **Systemlast-Diagnose (Dev-Mode):** `SYSTEM-LAST:`-Logzeile beim App-Start und bei
+   UI-Hitches > 1 s (max. 1×/Minute, im Hintergrund-Thread): CPU/RAM, Top-3-Prozesse, benannte
+   Störer (MsMpEng=Defender-Scan, TiWorker=Update-Installer, SearchIndexer, …).
+
+**Log-Format geändert:** `LIVEVIEW-PERF`-Aufbereitungszeile kommt jetzt aus dem Worker
+(`[Worker-Thread]`-Suffix, Feld heißt `Aufbereitung` statt `Aufbereitung+Anzeige`); neue Zeile
+`LIVEVIEW-PERF: Anzeige (UI-Thread): …` zeigt die verbleibenden UI-Kosten. Erwartung Nachtest:
+Anzeige-avg deutlich unter ~40 ms, UI-Hitches drastisch reduziert, fps-Anstieg.
+
+**Ergänzend:** `src.utils.system_load` in `fexobooth.spec` hiddenimports aufgenommen (gleiche
+Falle wie damals `src.camera.nikon`). Test-Skript (headless, ohne Tk):
+Scratchpad `test_liveview_pipeline.py` — 4/4 Tests bestanden.
+
+---
+
 ## 2026-08-06
 
 ### Drucker-Fehlerfenster: Service-Ausstieg per PIN (Bug-Report #49 Werkstatt, Version 2.4.15)

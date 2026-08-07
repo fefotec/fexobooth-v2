@@ -213,6 +213,7 @@ a = Analysis(
         "src.updater",
         "src.utils",
         "src.utils.logging",
+        "src.utils.system_load",
     ] + ctk_hiddenimports + certifi_hiddenimports + setuptools_hiddenimports,
     hookspath=[],
     hooksconfig={},
