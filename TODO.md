@@ -40,9 +40,14 @@ Aufgabenliste mit Prioritäten.
 - [x] Tk-Anzeigepfad (~110 ms/Frame, größter LiveView-Posten laut Overlay-Split) —
   *erledigt 2.4.16 (2026-08-07): komplette Aufbereitung im LiveView-Worker-Thread, Frames auf
   CTkImage-Zielgröße vorskaliert (PIL-Copy-Fastpath), Countdown-Font gecacht; Details FORTSCHRITT.md*
-- [ ] **Nachtest 2.4.16 (Miix, Webcam-Box):** Stresstest-Log prüfen — erwartet: `Anzeige (UI-Thread)`
-  avg < ~40 ms, deutlich weniger `UI-HITCH`-Zeilen, höhere fps in der Worker-Zeile,
-  `SYSTEM-LAST`-Zeile beim Start, `Leistungsregler auf 'Beste Leistung' gestellt` im Log.
+- [x] **Nachtest 2.4.16 (Miix, Webcam-Box):** bestanden 2026-08-07 — 8,5 fps (vorher 2,5–5),
+  Anzeige 56 ms, Session-Hitches weg. *Neue Funde (Kamera-Check-Freezes, Priorität, Regler)
+  → gefixt in 2.4.17, siehe FORTSCHRITT.md.*
+- [ ] **Nachtest 2.4.17 (Miix, Webcam-Box):** Log prüfen — erwartet: KEINE 8–16-s-UI-Hitches
+  mehr beim Start, keine ~500-ms-Hitches im 15-s-Takt im Leerlauf, `Prozess-Priorität auf
+  ABOVE_NORMAL gesetzt`, Leistungsregler-Zeile mit `VERIFIZIERT` (oder Warnung mit Ursache),
+  beim Foto kein Auslöse-Bild/kein Text mehr. Schieberegler im Akku-Flyout direkt nach
+  App-Start kontrollieren.
 - [ ] Bekannt, nach dem Release angehen: ~3 s UI-Hänger beim tatsächlichen SELPHY-Druck
   (Druckpfad ist live-flotten-kritisch — nicht vorher umbauen); Startscreen-Neuaufbau mit
   USB-Template ~5 s (läuft zwischen Sessions, kein Gast-Kontakt).

@@ -6,6 +6,38 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.17] - 2026-08-07 - Kamera-Check ohne UI-Freeze, Auslöse-Screen entfernt, Windows-Fixes
+
+> Anlass: Nachtest-Log 2.4.16 (`fexobooth_20260807_101128.log`) — die LiveView-Umbauten greifen
+> (8,5 statt 2,5–5 fps, Anzeige nur noch 56 ms im UI-Thread), aber das Log zeigte drei neue
+> Bremsen und Christian wünschte den Wegfall des Auslöse-Bild-Screens.
+
+### Behoben
+
+- **Kamera-Status-Check blockierte den UI-Thread massiv:** Ohne konfigurierte Kamera lief die
+  volle PowerShell-Geräte-Enumeration (Timeouts!) auf dem UI-Thread → beim Start bis zu
+  **16,5 s eingefrorene Oberfläche**, danach alle 15 s eine cv2-Testöffnung (~500 ms Hänger im
+  Leerlauf — exakt der Takt aus dem Log). Die Prüfung läuft jetzt im Hintergrund-Thread; geprüft
+  wird nur auf dem Start-Screen bei nicht initialisierter Kamera (keine Kollision mit
+  Session-Start/EDSDK), immer nur eine Prüfung gleichzeitig.
+- **Prozess-Priorität griff nicht** (`SetPriorityClass=0` im Log): Der ctypes-Aufruf übergab den
+  GetCurrentProcess-Pseudo-Handle falsch. Jetzt über psutil — verifiziert (nice=32768).
+- **Leistungsregler mit Verifikation:** Die API meldete Erfolg, der Regler stand aber nicht auf
+  Maximum. Jetzt wird nach dem Setzen das tatsächlich aktive Overlay zurückgelesen und geloggt
+  (VERIFIZIERT / Warnung mit aktivem Zustand); zusätzlich wird geprüft, ob überhaupt der
+  Basis-Plan „Ausbalanciert" aktiv ist — nur dort existiert der Regler.
+
+### Entfernt
+
+- **Auslöse-Bild-Screen („foto-screen.jpeg") + „Foto wird aufgenommen…"-Text** (Wunsch
+  Christian): Beides überbrückte die früher lange Umschaltzeit; seit dem LiveView-Worker wirkt es
+  nur noch als Geflacker. Ablauf jetzt: Countdown → kurzer weißer Auslöse-Blitz → letztes
+  LiveView-Bild steht ~1,8 s → Foto erscheint. Admin-Menü: Datei-Wahl „Bild beim Foto-Auslösen"
+  und Regler „Auslöse-Bild" entfernt (Config-Keys `flash_image`/`flash_duration` bleiben
+  ignoriert bestehen — kein Migrationsbedarf).
+
+---
+
 ## [2.4.16] - 2026-08-07 - LiveView-Performance: Bildaufbereitung raus aus dem UI-Thread
 
 > Anlass: Stresstest-Log `fexobooth_20260806_142249.log` (Miix, Webcam-Box) — LiveView schaffte

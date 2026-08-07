@@ -1392,6 +1392,7 @@ class PhotoboothApp:
         self.camera_status.pack(side="right", padx=4)
         self.camera_status.pack_forget()  # Verstecken wenn OK
         self._camera_blink_state = False
+        self._camera_check_running = False  # Hintergrund-Prüfung aktiv?
 
         # Strom-Status (kompakt, immer sichtbar)
         self.power_status = ctk.CTkLabel(
@@ -2367,13 +2368,50 @@ class PhotoboothApp:
     # → Ausgelagert nach src/printer/controller.py (PrinterController)
 
     def _check_camera_status(self):
-        """Prüft Kamera-Status - BLINKEND wenn keine Kamera erreichbar
+        """Prüft Kamera-Status - BLINKEND wenn keine Kamera erreichbar.
+
+        Seit 2.4.17 läuft die eigentliche Prüfung im Hintergrund-Thread:
+        Das Webcam-Probing (PowerShell-Geräte-Enumeration bis 15s Timeout,
+        cv2-Testöffnung ~500ms) blockierte vorher den UI-Thread — Miix-Log
+        2026-08-07: UI-Hitches bis 16,5s beim Start und ~500ms alle 15s im
+        Leerlauf. Der UI-Thread macht nur noch Anzeige + Terminplanung.
+
+        Schutzregeln:
+        - Immer nur EINE Prüfung gleichzeitig (_camera_check_running).
+        - Geprüft wird nur auf dem Start-Screen und solange die Kamera nicht
+          initialisiert ist — so kollidiert der Probe-Thread nicht mit
+          Session-/Vorinitialisierung (EDSDK ist NICHT thread-safe, und eine
+          DirectShow-Webcam verträgt keine zwei gleichzeitigen Öffner).
+        """
+        if getattr(self, "_camera_check_running", False):
+            self.root.after(2000, self._check_camera_status)
+            return
+
+        # Außerhalb des Start-Screens oder bei aktiver Kamera: nichts prüfen
+        # (Session läuft bzw. steht bevor) — nur Terminschleife weiterführen
+        if (self.current_screen_name != "start"
+                or self.camera_manager.is_initialized):
+            if self.camera_manager.is_initialized:
+                self._camera_blink_state = False
+                self.camera_status.pack_forget()
+            self.root.after(15000, self._check_camera_status)
+            return
+
+        self._camera_check_running = True
+        threading.Thread(
+            target=self._camera_status_probe, daemon=True, name="camera-check"
+        ).start()
+
+    def _camera_status_probe(self):
+        """Hintergrund-Thread: eigentliche Kamera-Erreichbarkeits-Prüfung.
 
         WICHTIG: EDSDK ist NICHT thread-safe (Windows COM STA)!
         Wenn die Kamera bereits initialisiert ist (z.B. System-Test oder Session),
-        dürfen KEINE EDSDK-Aufrufe vom UI-Thread gemacht werden - sonst DEADLOCK!
+        dürfen KEINE EDSDK-Aufrufe gemacht werden - sonst DEADLOCK!
+        (Der Aufrufer prüft das bereits; die Guards hier bleiben als zweite Ebene.)
         """
         problem_text = None
+        found_webcam_index = None
 
         try:
             camera_type = self.config.get("camera_type", "webcam")
@@ -2430,7 +2468,7 @@ class PhotoboothApp:
                         if best_idx >= 0:
                             best_name = next((c["name"] for c in available if c["index"] == best_idx), "?")
                             logger.info(f"📷 Externe Kamera gefunden: [{best_idx}] {best_name}")
-                            self.config["camera_index"] = best_idx
+                            found_webcam_index = best_idx
                             # Kein problem_text → Warnung verschwindet
                         else:
                             problem_text = t(self.config, "topbar.camera_missing")
@@ -2447,6 +2485,18 @@ class PhotoboothApp:
                         problem_text = t(self.config, "topbar.camera_missing")
         except Exception:
             problem_text = t(self.config, "topbar.camera_error")
+
+        # Ergebnis zurück auf den UI-Thread (Config-Änderung + Label-Update)
+        self.root.after(
+            0, lambda p=problem_text, idx=found_webcam_index: self._on_camera_status_result(p, idx)
+        )
+
+    def _on_camera_status_result(self, problem_text, found_webcam_index):
+        """UI-Thread: Ergebnis der Hintergrund-Prüfung anzeigen + neu planen."""
+        self._camera_check_running = False
+
+        if found_webcam_index is not None:
+            self.config["camera_index"] = found_webcam_index
 
         if problem_text:
             # Blinkend anzeigen (wie USB/Drucker-Warnung)

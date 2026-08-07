@@ -394,6 +394,19 @@ Betrifft: `_display_preview()`, `_build_flash_cache()`, `_show_main_preview()`, 
 
 ## Lessons Learned
 
+### Periodische Status-Checks (Kamera/Geräte) gehören NIE auf den UI-Thread
+
+- **Problem:** `_check_camera_status` lief alle 15 s auf dem Tk-Thread. Ohne Kamera: PowerShell-Geräte-Enumeration mit 10+5 s Timeout → **16,5 s eingefrorene Oberfläche** beim Boxstart (Miix-Log 2026-08-07). Mit Kamera: `cv2.VideoCapture`-Testöffnung → ~500 ms Hänger alle 15 s im Leerlauf.
+- **Ursache:** Auf dem Dev-PC sind PowerShell/Kamera-Öffnung schnell — auf dem Miix (Atom, kalter PS-Start, Defender) laufen dieselben Aufrufe in Timeouts. UI-Thread-Blockaden skalieren mit der SCHLECHTESTEN Hardware der Flotte.
+- **Lösung:** Probe im Daemon-Thread, Ergebnis per `after(0)` zurück; probing nur auf Start-Screen + Kamera nicht initialisiert (verhindert EDSDK-/DirectShow-Kollision mit Session-Start); `_camera_check_running`-Flag gegen Parallel-Probes.
+- **Merke:** Jeder wiederkehrende Check, der Subprozesse startet oder Geräte öffnet, ist ein UI-Freeze-Kandidat — im Zweifel Thread + after(0)-Callback. Und: Der UI-HITCH-Monitor + SYSTEM-LAST-Schnappschuss machen solche Verursacher im Feld-Log sofort sichtbar.
+
+### ctypes: GetCurrentProcess-Pseudo-Handle (-1) nicht ohne argtypes an SetPriorityClass geben
+
+- **Problem:** `SetPriorityClass(GetCurrentProcess(), ...)` via ctypes gab im Feld 0 zurück (Log 2026-08-07) — der -1-Pseudo-Handle wird ohne argtypes als 32-Bit-Wert übergeben und ist auf 64-Bit dann kein gültiger Handle.
+- **Lösung:** `psutil.Process().nice(psutil.ABOVE_NORMAL_PRIORITY_CLASS)` — psutil ist ohnehin Abhängigkeit und macht das Handle-Handling korrekt (verifiziert: nice=32768).
+- **Merke:** Windows-API über ctypes immer mit `argtypes`/`restype` deklarieren oder gleich psutil/pywin32 nutzen; „Rückgabewert 0 ohne Exception" heißt bei ctypes oft stille Parameter-Verstümmelung.
+
 ### Kamera-Manager nach JEDEM Apply-/Reload-Pfad synchronisieren — sonst läuft die Session auf dem falschen Backend
 
 | | |

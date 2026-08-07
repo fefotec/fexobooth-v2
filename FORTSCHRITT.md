@@ -6,6 +6,40 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-08-07
 
+### Nachtest 2.4.16 ausgewertet → drei neue Bremsen gefixt + Auslöse-Screen entfernt (2.4.17)
+
+**Nachtest-Ergebnis 2.4.16** (`fexobooth_20260807_101128.log`, Miix, Webcam):
+LiveView-Worker greift — **8,1–8,6 fps** (vorher 2,5–5), Aufbereitung 85–90 ms komplett im
+Worker, Overlay nur noch **11–17 ms** (vorher 40–58), Anzeige im UI-Thread **56 ms** avg bei
+adaptivem UI-Takt ~165 ms. Session-Hitches drastisch reduziert. ABER drei neue Funde:
+
+1. **Kamera-Check = UI-Killer:** `_check_camera_status` lief auf dem UI-Thread. Ohne
+   konfigurierte Kamera (Box bootet, USB-Hub braucht Zeit): volle `list_cameras()` mit
+   PowerShell-Enumeration, die auf der Box in **Timeouts** lief → UI-Freezes **16,5 s / 15,7 s /
+   8,4 s** beim Start. Mit Kamera: `cv2.VideoCapture`-Testöffnung alle 15 s → die ~500-ms-Hitches
+   im 15,6-s-Takt im Leerlauf. **Fix:** Probe in Hintergrund-Thread (`_camera_status_probe` +
+   `_on_camera_status_result`), nur auf Start-Screen + Kamera nicht initialisiert (keine
+   EDSDK-/DirectShow-Kollision mit Session-Start), nur eine Prüfung gleichzeitig. Blink-Takt
+   folgt jetzt der Probe-Dauer. Hinweis: Die einmalige Auto-Auswahl beim App-Start (Ladescreen)
+   bleibt synchron — dort zeigt die Box eine Lade-Anzeige.
+2. **Prozess-Priorität griff nicht** (`SetPriorityClass=0`): ctypes + GetCurrentProcess-
+   Pseudo-Handle (-1) scheitert; jetzt `psutil.Process().nice(ABOVE_NORMAL_PRIORITY_CLASS)` —
+   lokal verifiziert (nice=32768).
+3. **Leistungsregler:** API meldete Erfolg, Regler stand laut Christian trotzdem nicht auf max.
+   Jetzt: aktiven Basis-Plan loggen (Overlays wirken NUR auf „Ausbalanciert"!), nach dem Setzen
+   per `PowerGetEffectiveOverlayScheme` zurücklesen → Log sagt „VERIFIZIERT" oder warnt mit dem
+   tatsächlichen Zustand. Nächstes Box-Log zeigt damit die Ursache.
+
+**Auslöse-Screen + Ladetext entfernt (Wunsch Christian):** `foto-screen.jpeg`-Vollbild und
+„Foto wird aufgenommen…"-Balken waren Überbrückung für die früher lange Umschaltzeit — jetzt
+Geflacker. Neu: Countdown → weißer Kurz-Blitz (bleibt) → letztes LiveView-Bild steht → Foto.
+Entfernt: `show_flash`/`_display_flash`/`_build_flash_cache`/`_show_capture_loading` (session.py),
+Admin-Controls „Bild beim Foto-Auslösen" + „Auslöse-Bild"-Regler (admin.py). Config-Keys bleiben
+ignoriert bestehen. Hinweis für später: Bei Nikon dauert das Capture ~3,7 s — falls Gäste dort
+Feedback vermissen, gezielt NUR für DSLR einen dezenten Hinweis wieder einbauen.
+
+---
+
 ### LiveView-Performance: Bildaufbereitung raus aus dem UI-Thread (Version 2.4.16)
 
 **Anlass:** Einzelne Miix-Boxen laufen „übel langsam" bis „hängt". Stresstest-Log

@@ -1543,28 +1543,6 @@ class AdminDialog(ctk.CTkToplevel):
 
         self._create_box_id_control(scroll)
 
-        # Flash-Bild (beim Foto-Auslösen)
-        ctk.CTkLabel(
-            scroll,
-            text="📸 Bild beim Foto-Auslösen:",
-            font=FONTS["body"],
-            text_color=COLORS["text_secondary"]
-        ).pack(anchor="w", pady=(5, 2))
-
-        self.flash_image_path = self._create_file_picker(
-            scroll,
-            "",
-            self.config_data.get("flash_image", ""),
-            [("Bilder", "*.png *.jpg *.jpeg *.gif")]
-        )
-
-        ctk.CTkLabel(
-            scroll,
-            text="Leer = Standard-Smiley 😊",
-            font=FONTS["tiny"],
-            text_color=COLORS["text_muted"]
-        ).pack(anchor="w", pady=(0, 10))
-
         # Countdown
         self.countdown_slider = self._create_slider_with_value(
             scroll, "Countdown:", "countdown_time", 1, 15, " Sek"
@@ -1578,11 +1556,6 @@ class AdminDialog(ctk.CTkToplevel):
         # Auto-Return
         self.final_slider = self._create_slider_with_value(
             scroll, "Auto-Return:", "final_time", 10, 60, " Sek"
-        )
-
-        # Auslöse-Bild (Flash) Dauer
-        self.flash_slider = self._create_slider_with_value(
-            scroll, "Auslöse-Bild:", "flash_duration", 100, 1000, " ms"
         )
 
         # Max Drucke
@@ -3500,14 +3473,10 @@ class AdminDialog(ctk.CTkToplevel):
                 return
             self.config_data["box_id"] = box_id
         
-        # Flash-Bild
-        self.config_data["flash_image"] = self.flash_image_path.get().strip()
-        
         # Slider-Werte
         self.config_data["countdown_time"] = int(self.countdown_slider.get())
         self.config_data["single_display_time"] = int(self.single_slider.get())
         self.config_data["final_time"] = int(self.final_slider.get())
-        self.config_data["flash_duration"] = int(self.flash_slider.get())
         self.config_data["max_prints_per_session"] = int(self.prints_slider.get())
         
         # Checkboxen - alle auslesen und speichern
