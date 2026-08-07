@@ -6,6 +6,29 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-08-07
 
+### System-Test → echter Selbsttest mit Messwerten (Version 2.4.19)
+
+**Anlass:** Christian: „Das ist kein richtiger Test — Template wird befüllt und gedruckt,
+deckt nichts auf." Freigabe für das Mess-Konzept direkt erteilt.
+
+**Umbau (`src/ui/dialogs/system_test.py`):** 6 statt 5 Schritte, alle gemessen:
+1. **System prüfen** (neu, wirft nie): Speicherplatz App-Laufwerk, 8-MB-Schreibtest mit
+   `os.fsync` (echtes Platten-Tempo, eMMC-Frühwarnung), `psutil.cpu_percent` Fremdlast,
+   `snapshot_system_load("System-Test")` für Störer-Namen im Log.
+2. **Kamera prüfen:** `initialize()` gestoppt + 15 frische `get_frame(use_cache=False)` →
+   fps. Schwellen: Webcam 12 fps (YUY2-Fallback-Detektor bei 1080p), DSLR 5 fps, Init 5 s.
+3. Fotos (wie bisher, plus Latenz erstes Foto als Messwert).
+4. Render gestoppt (Schwelle 4,5 s).
+5. Druck: vorab `get_printer_controller().get_error()` als Warnung, GDI-Übergabe gestoppt
+   (Schwelle 10 s).
+6. Aufräumen (unverändert).
+Warnungen (`_warn`) brechen NICHT ab — Ergebnis dreistufig grün/orange/rot; Messwerte als
+eine Zeile `SYSTEMTEST-MESSWERTE: …`, Auffälligkeiten als `SYSTEMTEST-AUFFÄLLIG: …`.
+Schwellwerte als Modul-Konstanten mit Kalibrier-Kommentaren (Miix-Logs 2026-08).
+Timeout 90 → 120 s. Headless-Test des System-Check-Schritts auf Dev-PC bestanden.
+
+---
+
 ### Schnellhilfe-Button (Kunden-Menü 2015) + Exit-Bug behoben (Version 2.4.18)
 
 **Nachtest 2.4.17** (`fexobooth_20260807_104712.log`): Prozess-Priorität greift ✓,

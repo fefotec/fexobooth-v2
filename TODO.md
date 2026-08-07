@@ -50,11 +50,14 @@ Aufgabenliste mit Prioritäten.
   Task-Manager stehen, Installer läuft ohne Meldung durch. (2) Kunden-Menü 2015 →
   „🔧 Schnellhilfe" drücken → Lauftext, dann „Schnellhilfe abgeschlossen" + Neustart-Button;
   im Log `SCHNELLHILFE:`-Zeilen für alle 5 Schritte.
-- [ ] **Konzept „echter System-Test bei neuem Event"** (Christian-Wunsch 2026-08-07): statt
-  Template-Fülldruck ein Selbsttest mit Zeitmessung + Schwellwerten (Kamera-Frame-Zeiten,
-  High-Res-Capture, Render, Disk-Schreibtest, Drucker-Status+Testdruck, Speicherplatz,
-  Systemlast) und verständlichem OK/Warnung-Ergebnis pro Punkt. → Vorschlag liegt bei
-  Christian, Umsetzung nach Freigabe als eigene Etappe.
+- [x] **Echter System-Test bei neuem Event** — *umgesetzt in 2.4.19 (2026-08-07): 6 Schritte
+  mit Zeitmessung + Schwellwerten, dreistufiges Ergebnis (grün/orange/rot),
+  `SYSTEMTEST-MESSWERTE:`-Zeile im Log; Details FORTSCHRITT.md.*
+- [ ] **Nachtest 2.4.19:** Event-Wechsel auslösen → System-Test zeigt 6 Schritte („System
+  prüfen" + „Kamera prüfen" neu), am Ende grüne „Alle Messwerte im Normalbereich"-Meldung
+  (oder orange Auffälligkeiten in Klartext); im Log `SYSTEMTEST-MESSWERTE:`-Zeile prüfen.
+  Idee für später: Messwerte zusätzlich ans Monitoring/Dashboard melden (Box-Gesundheit
+  vor Event-Versand sichtbar).
 - [ ] Bekannt, nach dem Release angehen: ~3 s UI-Hänger beim tatsächlichen SELPHY-Druck
   (Druckpfad ist live-flotten-kritisch — nicht vorher umbauen); Startscreen-Neuaufbau mit
   USB-Template ~5 s (läuft zwischen Sessions, kein Gast-Kontakt).

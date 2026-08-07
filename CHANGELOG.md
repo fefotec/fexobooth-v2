@@ -6,6 +6,30 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.19] - 2026-08-07 - System-Test misst jetzt wirklich (Selbsttest mit Schwellwerten)
+
+### Geändert
+
+- **System-Test nach Event-Wechsel ist jetzt ein echter Selbsttest** (Wunsch Christian):
+  Bisher wurde nur das Template befüllt und gedruckt — Probleme fielen nicht auf. Jetzt wird
+  jeder Schritt **gemessen und gegen Schwellwerte einer gesunden Box verglichen**:
+  - **Neuer erster Schritt „System prüfen":** Speicherplatz (< 5 GB → Warnung),
+    Festplatten-Schreibtest 8 MB mit echtem Sync (< 8 MB/s → „Festplatte sehr langsam" —
+    eMMC-Frühwarnung), Hintergrund-CPU-Last (> 70 % → Warnung) + `SYSTEM-LAST`-Störer-Analyse
+    ins Log.
+  - **Kamera prüfen:** Startzeit (> 5 s → Warnung) und Liefergeschwindigkeit über 15 frische
+    Frames — entlarvt den YUY2-Codec-Fallback (1080p bricht dann von ~30 auf ~5 fps ein)
+    und lahme DSLR-Bridges.
+  - **Template rendern** (> 4,5 s → Warnung) und **Druck-Übergabe an den Spooler**
+    (> 10 s → Warnung); vor dem Druck wird zusätzlich der Drucker-Status abgefragt und
+    eine Fehlermeldung als Auffälligkeit angezeigt.
+  - Ergebnis: Grün „Alle Messwerte im Normalbereich", Orange „Test bestanden, aber mit
+    Auffälligkeiten: …" (Klartext mit Handlungshinweis), Rot wie bisher bei echten Fehlern.
+    Alle Messwerte landen als eine `SYSTEMTEST-MESSWERTE:`-Zeile im Log (gut vergleichbar).
+  - Testdruck und Ablauf bleiben wie gewohnt; Timeout 90 → 120 s (neue Messungen).
+
+---
+
 ## [2.4.18] - 2026-08-07 - Schnellhilfe-Button im Kunden-Menü + sauberes App-Beenden
 
 ### Neu

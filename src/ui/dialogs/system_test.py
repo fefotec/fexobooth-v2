@@ -1,9 +1,15 @@
 """Automatischer System-Test nach Event-Wechsel
 
-Führt eine komplette Test-Session durch:
-Kamera init → Foto pro Template-Slot → Template rendern → Testdruck
+Führt eine komplette Test-Session durch und MISST dabei (seit 2.4.18):
+Systemzustand → Kamera init → Foto pro Template-Slot → Template rendern → Testdruck
+
+Jeder Schritt wird gestoppt und gegen Schwellwerte einer gesunden Box
+verglichen. Auffälligkeiten (zu langsam, zu voll, Fremdlast) erscheinen als
+⚠-Warnungen im Ergebnis und im Log — so fällt eine kranke Box VOR dem Event
+auf, nicht erst beim Gast (Wunsch Christian 2026-08-07).
 """
 
+import os
 import threading
 import time
 import tempfile
@@ -24,13 +30,25 @@ logger = get_logger(__name__)
 ICON_PENDING = "⬜"
 ICON_RUNNING = "⏳"
 ICON_SUCCESS = "✅"
+ICON_WARNING = "⚠️"
 ICON_ERROR = "❌"
 
 # Pause zwischen Fotos (Sekunden) - Kamera braucht Zeit zum Nachregeln
 PHOTO_DELAY = 2.0
 
 # Maximale Gesamtdauer des Tests (Sekunden) - danach wird abgebrochen
-GLOBAL_TIMEOUT = 90
+GLOBAL_TIMEOUT = 120
+
+# Schwellwerte für "auffällig" — kalibriert an gesunden Miix-310-Logs (2026-08).
+# Überschreitung ist KEIN Testabbruch, sondern eine sichtbare Warnung.
+THRESHOLD_CAM_INIT_S = 5.0          # Kamera öffnen inkl. Codec-Verhandlung (gesund ~2s)
+THRESHOLD_LIVEVIEW_FPS_WEBCAM = 12.0  # 1080p-MJPG liefert ~30 fps; YUY2-Fallback bricht auf ~5 ein
+THRESHOLD_LIVEVIEW_FPS_DSLR = 5.0   # DSLR-LiveView (Bridge/EDSDK) ist prinzipbedingt langsamer
+THRESHOLD_RENDER_S = 4.5            # Template-Rendern (Miix gesund ~2,3s)
+THRESHOLD_PRINT_SUBMIT_S = 10.0     # Übergabe an den Windows-Spooler (nicht die Druckdauer!)
+THRESHOLD_DISK_WRITE_MBS = 8.0      # eMMC gesund 40+ MB/s; <8 = sterbend oder randvoll
+THRESHOLD_DISK_FREE_GB = 5.0        # Unter 5 GB wird Windows insgesamt zäh
+THRESHOLD_CPU_BUSY_PCT = 70.0       # Fremdlast VOR dem Test (Defender/Update aktiv?)
 
 
 class SystemTestDialog(ctk.CTkToplevel):
@@ -50,6 +68,8 @@ class SystemTestDialog(ctk.CTkToplevel):
         self._test_result: Optional[Image.Image] = None
         self._test_file: Optional[Path] = None
         self._errors: List[str] = []
+        self._warnings: List[str] = []   # Auffälligkeiten (Test läuft weiter)
+        self._metrics = {}               # Messwerte für Log + Ergebnis
         self._destroyed = False
         self._cancelled = threading.Event()  # Thread-sicheres Abbruch-Signal
 
@@ -59,7 +79,8 @@ class SystemTestDialog(ctk.CTkToplevel):
         # Schritte definieren (dynamisch je nach Template)
         foto_text = f"Fotos aufnehmen ({self._num_photos} Stück)"
         self.STEPS = [
-            ("Kamera initialisieren", "Kamera wird initialisiert..."),
+            ("System prüfen", "Speicherplatz, Festplatte und Auslastung werden geprüft..."),
+            ("Kamera prüfen", "Kamera wird initialisiert und gemessen..."),
             (foto_text, "Fotos werden aufgenommen..."),
             ("Template anwenden", "Template wird angewendet..."),
             ("Testdruck starten", "Testdruck wird gesendet..."),
@@ -312,6 +333,7 @@ class SystemTestDialog(ctk.CTkToplevel):
     def _run_test(self):
         """Führt alle Test-Schritte durch"""
         steps = [
+            self._step_system_check,
             self._step_init_camera,
             self._step_capture_photos,
             self._step_apply_template,
@@ -346,7 +368,8 @@ class SystemTestDialog(ctk.CTkToplevel):
                 logger.error(f"System-Test Schritt '{step_name}' fehlgeschlagen: {e}")
 
                 # Bei Kamera- oder Foto-Fehler: restliche Schritte überspringen
-                if i < 2:
+                # (Index 1 = Kamera, 2 = Fotos; der System-Check wirft nie)
+                if i in (1, 2):
                     for j in range(i + 1, len(steps)):
                         self.after(0, lambda idx=j: self._update_step(idx, "error", "Übersprungen"))
                     break
@@ -356,8 +379,67 @@ class SystemTestDialog(ctk.CTkToplevel):
             self.after(0, lambda: self._update_status("Test abgeschlossen", 1.0))
             self.after(100, lambda: self._show_result())
 
+    def _warn(self, text: str):
+        """Auffälligkeit vermerken (Test läuft weiter) + loggen."""
+        self._warnings.append(text)
+        logger.warning(f"SYSTEMTEST-AUFFÄLLIG: {text}")
+
+    def _step_system_check(self):
+        """Schritt 1: Systemzustand messen — wirft nie, nur Warnungen.
+
+        Deckt schleichende Probleme auf, BEVOR sie beim Event zuschlagen:
+        volle/sterbende eMMC, zu wenig Speicherplatz, Windows-Hintergrundlast.
+        """
+        # Speicherplatz auf dem App-Laufwerk
+        try:
+            import shutil
+            app_drive = os.path.splitdrive(os.path.abspath(__file__))[0] + os.sep
+            usage = shutil.disk_usage(app_drive)
+            free_gb = usage.free / (1024 ** 3)
+            self._metrics["disk_frei_gb"] = round(free_gb, 1)
+            if free_gb < THRESHOLD_DISK_FREE_GB:
+                self._warn(f"Wenig Speicherplatz: nur {free_gb:.1f} GB frei (unter {THRESHOLD_DISK_FREE_GB:.0f} GB wird Windows zäh)")
+        except Exception as e:
+            logger.debug(f"System-Test: Speicherplatz-Check fehlgeschlagen: {e}")
+
+        # Festplatten-Schreibtest: 8 MB mit echtem Sync auf die Platte
+        try:
+            test_file = Path(tempfile.gettempdir()) / "fexobooth_disktest.bin"
+            payload = b"\0" * (8 * 1024 * 1024)
+            t0 = time.perf_counter()
+            with open(test_file, "wb") as f:
+                f.write(payload)
+                f.flush()
+                os.fsync(f.fileno())
+            write_s = time.perf_counter() - t0
+            try:
+                test_file.unlink()
+            except OSError:
+                pass
+            mbs = 8 / write_s if write_s > 0 else 999
+            self._metrics["disk_schreiben_mbs"] = round(mbs, 1)
+            if mbs < THRESHOLD_DISK_WRITE_MBS:
+                self._warn(f"Festplatte sehr langsam: {mbs:.1f} MB/s schreiben (gesund: 40+; Speicher prüfen/aufräumen)")
+        except Exception as e:
+            logger.debug(f"System-Test: Schreibtest fehlgeschlagen: {e}")
+
+        # Fremdlast: Läuft gerade etwas Schweres im Hintergrund?
+        try:
+            import psutil
+            cpu = psutil.cpu_percent(interval=0.8)
+            ram = psutil.virtual_memory().percent
+            self._metrics["cpu_prozent"] = round(cpu)
+            self._metrics["ram_prozent"] = round(ram)
+            if cpu > THRESHOLD_CPU_BUSY_PCT:
+                self._warn(f"Hohe Hintergrund-Auslastung: CPU {cpu:.0f}% (Windows-Update/Defender? Details im Log)")
+            # Detaillierte Störer-Analyse zusätzlich ins Log (blockiert ~1s)
+            from src.utils.system_load import snapshot_system_load
+            snapshot_system_load("System-Test")
+        except Exception as e:
+            logger.debug(f"System-Test: Lastmessung fehlgeschlagen: {e}")
+
     def _step_init_camera(self):
-        """Schritt 1: Kamera initialisieren"""
+        """Schritt 2: Kamera initialisieren + Liefergeschwindigkeit messen"""
         if self._cancelled.is_set():
             raise Exception("Abgebrochen")
 
@@ -366,12 +448,45 @@ class SystemTestDialog(ctk.CTkToplevel):
         width = cam_settings.get("single_photo_width", 640)
         height = cam_settings.get("single_photo_height", 480)
 
+        t0 = time.perf_counter()
         success = self.app.camera_manager.initialize(cam_index, width, height)
+        init_s = time.perf_counter() - t0
         if not success:
             raise Exception("Kamera nicht erreichbar")
 
+        self._metrics["kamera_init_s"] = round(init_s, 1)
+        if init_s > THRESHOLD_CAM_INIT_S:
+            self._warn(f"Kamera-Start langsam: {init_s:.1f}s (gesund: ~2s; USB-Kabel/-Port prüfen)")
+
         # Kurz warten bis Kamera bereit
         time.sleep(1.0)
+
+        # Liefergeschwindigkeit: 15 frische Frames am Stück lesen. Bei der
+        # Webcam entlarvt das den YUY2-Fallback (MJPG abgelehnt → 1080p
+        # bricht von ~30 auf ~5 fps ein), bei DSLR eine lahme Bridge.
+        try:
+            frames = 0
+            t0 = time.perf_counter()
+            for _ in range(15):
+                if self._cancelled.is_set():
+                    raise Exception("Abgebrochen")
+                if self.app.camera_manager.get_frame(use_cache=False) is not None:
+                    frames += 1
+            elapsed = time.perf_counter() - t0
+            fps = frames / elapsed if elapsed > 0 else 0
+            self._metrics["kamera_fps"] = round(fps, 1)
+
+            is_webcam = self.app.config.get("camera_type", "webcam") == "webcam"
+            threshold = THRESHOLD_LIVEVIEW_FPS_WEBCAM if is_webcam else THRESHOLD_LIVEVIEW_FPS_DSLR
+            if fps < threshold:
+                self._warn(
+                    f"Kamera liefert nur {fps:.1f} Bilder/s (erwartet: über {threshold:.0f}; "
+                    f"{'Codec/USB prüfen' if is_webcam else 'Kamera/Bridge prüfen'})"
+                )
+        except Exception as e:
+            if "Abgebrochen" in str(e):
+                raise
+            logger.debug(f"System-Test: fps-Messung fehlgeschlagen: {e}")
 
     def _capture_single_photo(self) -> Image.Image:
         """Nimmt ein Foto für den System-Test auf.
@@ -415,9 +530,10 @@ class SystemTestDialog(ctk.CTkToplevel):
         return Image.fromarray(rgb)
 
     def _step_capture_photos(self):
-        """Schritt 2: Ein Foto pro Template-Slot aufnehmen"""
+        """Schritt 3: Ein Foto pro Template-Slot aufnehmen"""
         total = self._num_photos
         self._test_photos = []
+        first_photo_s = None
 
         for i in range(total):
             if self._cancelled.is_set():
@@ -427,27 +543,33 @@ class SystemTestDialog(ctk.CTkToplevel):
 
             # UI: "Foto 2 von 4 aufnehmen..."
             self.after(0, lambda n=nr, t=total:
-                self._update_step_text(1, f"Foto {n} von {t} aufnehmen..."))
+                self._update_step_text(2, f"Foto {n} von {t} aufnehmen..."))
             self.after(0, lambda n=nr, t=total:
                 self._update_status(
                     f"Foto {n} von {t} wird aufgenommen...",
-                    (1 + n / t) / 5  # Schritt 2 von 5, anteilig
+                    (2 + n / t) / 6  # Schritt 3 von 6, anteilig
                 ))
 
             # Zwischen Fotos kurz warten (nicht vor dem ersten)
             if i > 0:
                 time.sleep(PHOTO_DELAY)
 
+            t0 = time.perf_counter()
             photo = self._capture_single_photo()
+            if first_photo_s is None:
+                first_photo_s = time.perf_counter() - t0
             self._test_photos.append(photo)
             logger.info(f"System-Test: Foto {nr}/{total} aufgenommen ({photo.size})")
 
+        if first_photo_s is not None:
+            self._metrics["erstes_foto_s"] = round(first_photo_s, 1)
+
         # Finalen Step-Text setzen
         self.after(0, lambda t=total:
-            self._update_step_text(1, f"Fotos aufnehmen ({t} Stück)"))
+            self._update_step_text(2, f"Fotos aufnehmen ({t} Stück)"))
 
     def _step_apply_template(self):
-        """Schritt 3: Template mit allen Fotos rendern"""
+        """Schritt 4: Template mit allen Fotos rendern (mit Zeitmessung)"""
         if self._cancelled.is_set():
             raise Exception("Abgebrochen")
 
@@ -460,18 +582,32 @@ class SystemTestDialog(ctk.CTkToplevel):
         if not boxes:
             raise Exception("Keine Template-Boxen geladen")
 
+        t0 = time.perf_counter()
         self._test_result = self.app.renderer.render(
             self._test_photos, boxes, overlay
         )
-        logger.info(f"System-Test: Template angewendet ({self._test_result.size})")
+        render_s = time.perf_counter() - t0
+        self._metrics["render_s"] = round(render_s, 1)
+        if render_s > THRESHOLD_RENDER_S:
+            self._warn(f"Bild-Erstellung langsam: {render_s:.1f}s (gesund: ~2s; Box wird bei Gästen träge wirken)")
+        logger.info(f"System-Test: Template angewendet ({self._test_result.size}, {render_s:.1f}s)")
 
     def _step_print(self):
-        """Schritt 4: Testdruck ausführen"""
+        """Schritt 5: Drucker-Status prüfen + Testdruck ausführen (mit Zeitmessung)"""
         if self._cancelled.is_set():
             raise Exception("Abgebrochen")
 
         if self._test_result is None:
             raise Exception("Kein Testbild zum Drucken")
+
+        # Drucker-Status VOR dem Druck: meldet der SELPHY/Spooler ein Problem?
+        try:
+            from src.printer.controller import get_printer_controller
+            printer_problem = get_printer_controller().get_error()
+            if printer_problem:
+                self._warn(f"Drucker meldet: '{printer_problem}' — Testdruck wird trotzdem versucht")
+        except Exception as e:
+            logger.debug(f"System-Test: Drucker-Status-Check fehlgeschlagen: {e}")
 
         # Temporäre Datei speichern
         temp_dir = Path(tempfile.gettempdir())
@@ -482,8 +618,14 @@ class SystemTestDialog(ctk.CTkToplevel):
         img_rgb.save(str(self._test_file), "JPEG", quality=95)
         logger.info(f"System-Test: Testbild gespeichert: {self._test_file}")
 
-        # GDI-Druck
+        # GDI-Druck (gemessen wird die Übergabe an den Spooler, nicht der
+        # physische Druck — der dauert beim SELPHY immer ~45s)
+        t0 = time.perf_counter()
         self._print_via_gdi(self._test_file)
+        submit_s = time.perf_counter() - t0
+        self._metrics["druck_uebergabe_s"] = round(submit_s, 1)
+        if submit_s > THRESHOLD_PRINT_SUBMIT_S:
+            self._warn(f"Druck-Übergabe langsam: {submit_s:.1f}s (gesund: unter 5s; Spooler/USB prüfen)")
 
     def _print_via_gdi(self, image_path: Path):
         """Druckt über Windows GDI"""
@@ -578,7 +720,7 @@ class SystemTestDialog(ctk.CTkToplevel):
         get_printer_lifetime().increment()
 
     def _step_cleanup(self):
-        """Schritt 5: Testdateien aufräumen"""
+        """Schritt 6: Testdateien aufräumen"""
         if self._test_file and self._test_file.exists():
             try:
                 self._test_file.unlink()
@@ -610,16 +752,35 @@ class SystemTestDialog(ctk.CTkToplevel):
         # Abbrechen-Button durch OK-Button ersetzen
         self.cancel_btn.pack_forget()
 
-        if not self._errors:
+        # Alle Messwerte gesammelt ins Log (eine Zeile, gut vergleichbar)
+        if self._metrics:
+            metrics_text = ", ".join(f"{k}={v}" for k, v in self._metrics.items())
+            logger.info(f"SYSTEMTEST-MESSWERTE: {metrics_text}")
+
+        if not self._errors and not self._warnings:
             self.result_label.configure(
-                text=f"Alles OK! Testdruck mit {self._num_photos} Fotos gesendet.",
+                text=f"Alles OK! Testdruck mit {self._num_photos} Fotos gesendet.\nAlle Messwerte im Normalbereich.",
                 text_color=COLORS["success"]
             )
-            logger.info("System-Test: ERFOLGREICH")
+            logger.info("System-Test: ERFOLGREICH (keine Auffälligkeiten)")
+        elif not self._errors:
+            warn_text = (
+                f"{ICON_WARNING} Test bestanden, aber mit Auffälligkeiten:\n"
+                + "\n".join(f"• {w}" for w in self._warnings)
+            )
+            self.result_label.configure(
+                text=warn_text,
+                text_color=COLORS["warning"]
+            )
+            logger.warning(f"System-Test: BESTANDEN MIT {len(self._warnings)} AUFFÄLLIGKEIT(EN)")
         else:
             error_text = "Test fehlgeschlagen:\n" + "\n".join(
                 f"• {err}" for err in self._errors
             )
+            if self._warnings:
+                error_text += "\n\nZusätzliche Auffälligkeiten:\n" + "\n".join(
+                    f"• {w}" for w in self._warnings
+                )
             self.result_label.configure(
                 text=error_text,
                 text_color=COLORS["error"]
