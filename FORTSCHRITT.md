@@ -6,6 +6,18 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-08-07
 
+### Release v2.4.20 veröffentlicht + Dashboard-Ankündigung (2026-08-07, ~12:10)
+
+GitHub-Release **v2.4.20** erstellt (Tag + `fexobooth.zip` aus Christians lokalem Build 11:52,
+enthält den Exit-Fix von 11:49). Release-Notes decken den Sammelstand v2.4.15→v2.4.20 ab;
+die `### Highlights`-Bullets erscheinen im Update-Bestätigungsdialog der Boxen — erste Zeile
+ist die Bilder-Warnung. **Ab jetzt gilt:** Flotten-Boxen (≤2.4.14) updaten sich beim ersten
+Start im Firmen-WLAN noch STILL mit dem alten BAT → Bilder werden dabei gelöscht. Werkstatt-
+Anweisung (Dashboard-Ankündigung #68, Priorität high, 30 Tage): Rückläufer-Bilder IMMER
+sichern, BEVOR die Box ins Firmen-WLAN kommt. Ab 2.4.20 fragt jede Box vor dem Update.
+
+---
+
 ### Nachtest 2.4.19 + Exit-Crash-Fix (Version 2.4.20)
 
 **Nachtest 2.4.19** (`fexobooth_20260807_113438.log`): BILDER-Migration verschob **583 Dateien**
