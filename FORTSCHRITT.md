@@ -6,6 +6,20 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-08-07
 
+### Nachtest 2.4.19 + Exit-Crash-Fix (Version 2.4.20)
+
+**Nachtest 2.4.19** (`fexobooth_20260807_113438.log`): BILDER-Migration verschob **583 Dateien**
+nach `C:\FexoBooth\BILDER` ✓, Speicherpfad korrekt ✓, System-Test-Messwerte sauber
+(disk 54,7 MB/s, 20,9 GB frei, Kamera 34,3 fps, Render 0,9 s, Druck-Übergabe 0,8 s) inkl.
+korrekt gemeldeter Auffälligkeit „DRUCKER AUS!" ✓, Schnellhilfe alle 5 Schritte ok ✓.
+
+**Ein Fehler:** Beim Beenden erschien ein PyInstaller-Fehlerdialog — der harte Exit (2.4.18)
+rief `logging.shutdown()` ungeschützt auf; im Fenster-Build wirft colorama beim Flush des
+nicht vorhandenen Konsolen-Streams `AttributeError: 'NoneType' … 'flush'`. Fix: try/except
+um `logging.shutdown()` (exakt wie im OTA-Pfad `_quit_for_update`, der das schon abfing).
+
+---
+
 ### KRITISCH: OTA-Update löschte alle Fotos → Root-Cause-Fix + Update-Bestätigung (2.4.19)
 
 **Anlass:** Christian: „Bei zurückkommenden Boxen müssen erst die Bilder gezogen werden —

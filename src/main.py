@@ -186,8 +186,14 @@ def main():
     # non-daemon und hielten die EXE nach dem Menü-Beenden mit 0% CPU am Leben —
     # der Installer meldete dann "Anwendung läuft noch" (Befund Christian
     # 2026-08-07). Gleiches Muster wie beim App-OTA (_hard_exit_for_update).
+    # logging.shutdown() MUSS abgefangen werden: Im Fenster-Build (ohne Konsole)
+    # wirft colorama beim Stream-Flush AttributeError ('NoneType' hat kein
+    # 'flush') — das zeigte sonst einen PyInstaller-Fehlerdialog beim Beenden.
     import logging as _logging
-    _logging.shutdown()
+    try:
+        _logging.shutdown()
+    except Exception:
+        pass
     os._exit(0)
 
 

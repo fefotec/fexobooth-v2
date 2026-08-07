@@ -6,6 +6,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.20] - 2026-08-07 - Fehlerdialog beim Beenden behoben
+
+### Behoben
+
+- **PyInstaller-Fehlerdialog beim App-Beenden** („'NoneType' object has no attribute 'flush'",
+  Screenshot Christian): Der harte Exit aus 2.4.18 rief `logging.shutdown()` ungeschützt auf —
+  im Fenster-Build (ohne Konsole) wirft colorama beim Stream-Flush eine Exception. Jetzt
+  abgefangen (gleiche Absicherung wie im OTA-Pfad `_quit_for_update`). Nachtest-Log 2.4.19
+  bestätigt sonst alles: BILDER-Migration (583 Dateien), System-Test-Messwerte inkl.
+  korrekter „DRUCKER AUS!"-Auffälligkeit, Schnellhilfe alle 5 Schritte ok.
+
+---
+
 ## [2.4.19] - 2026-08-07 - System-Test misst jetzt wirklich (Selbsttest mit Schwellwerten)
 
 ### Geändert
