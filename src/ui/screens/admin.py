@@ -417,7 +417,19 @@ class AdminDialog(ctk.CTkToplevel):
             **btn_style
         ).pack(pady=4)
 
-        # 7. Neustart / Ausschalten
+        # 7. Schnellhilfe (Standard-Reparatur für "Box langsam/hängt" — Hotline
+        # sagt am Telefon nur noch: "Bitte im Menü auf Schnellhilfe drücken")
+        ctk.CTkButton(
+            btn_container,
+            text=f"  🔧 {self._tr('service.quick_fix')}",
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["bg_card"],
+            text_color=COLORS["text_primary"],
+            command=lambda: self._customer_quick_fix(menu_frame),
+            **btn_style
+        ).pack(pady=4)
+
+        # 8. Neustart / Ausschalten
         ctk.CTkButton(
             btn_container,
             text=f"  {self._tr('service.power_options')}",
@@ -1164,6 +1176,167 @@ class AdminDialog(ctk.CTkToplevel):
             text_color=COLORS["text_muted"],
             command=self.destroy
         ).pack(pady=(5, 15))
+
+    def _customer_quick_fix(self, parent_frame):
+        """Schnellhilfe: Standard-Reparaturschritte bei 'Box langsam / hängt'.
+
+        Für die Telefon-Hotline gedacht — ein Button, der die häufigsten
+        Windows-/App-Bremsen behebt und danach einen Neustart anbietet.
+        Jeder Schritt ist Best-Effort (Fehler eines Schritts stoppen die
+        anderen nicht) und wird einzeln geloggt (Präfix 'SCHNELLHILFE:').
+
+        Schritte:
+        1. Systemlast-Diagnose ins Log (wer frisst gerade die CPU?)
+        2. Prozess-Priorität + Windows-Leistungsregler neu setzen
+        3. Alte Template-Temp-Ordner aufräumen (> 24h, aktive bleiben)
+        4. Druckerwarteschlange zurücksetzen (Spooler-Neustart)
+        5. Kamera-Reset (wird bei nächster Session frisch initialisiert)
+        Danach: Neustart-Empfehlung mit Button (echter Windows-Neustart
+        räumt Treiber/Schnellstart-Altlasten ab — der wirksamste Einzelschritt).
+        """
+        parent_frame.destroy()
+
+        fix_frame = ctk.CTkFrame(self, fg_color="#0a0a10", corner_radius=0)
+        fix_frame.pack(fill="both", expand=True)
+
+        card = ctk.CTkFrame(
+            fix_frame,
+            fg_color=COLORS["bg_medium"],
+            border_color=COLORS["border"],
+            border_width=1,
+            corner_radius=16
+        )
+        card.place(relx=0.5, rely=0.5, anchor="center")
+
+        ctk.CTkLabel(
+            card,
+            text=f"🔧 {self._tr('service.quick_fix_title')}",
+            font=("Segoe UI", 20, "bold"),
+            text_color=COLORS["primary"]
+        ).pack(pady=(20, 10))
+
+        status_label = ctk.CTkLabel(
+            card,
+            text=self._tr("service.quick_fix_running"),
+            font=FONTS["body"],
+            text_color=COLORS["text_primary"],
+            justify="center",
+            wraplength=340
+        )
+        status_label.pack(pady=(0, 20), padx=25)
+
+        btn_frame = ctk.CTkFrame(card, fg_color="transparent")
+
+        def log_step(name, ok, detail=""):
+            suffix = f" ({detail})" if detail else ""
+            logger.info(f"SCHNELLHILFE: {name}: {'ok' if ok else 'FEHLGESCHLAGEN'}{suffix}")
+
+        def do_quick_fix():
+            import subprocess
+
+            # 1. Diagnose: Systemlast-Schnappschuss ins Log (blockiert ~1s)
+            try:
+                from src.utils.system_load import snapshot_system_load
+                snapshot_system_load("Schnellhilfe")
+                log_step("Diagnose", True)
+            except Exception as e:
+                log_step("Diagnose", False, str(e)[:80])
+
+            # 2. Windows-Leistung erneut sicherstellen
+            try:
+                from src.utils.system_load import (
+                    boost_process_priority, set_best_performance_power_overlay
+                )
+                boost_process_priority()
+                set_best_performance_power_overlay()
+                log_step("Windows-Leistung", True)
+            except Exception as e:
+                log_step("Windows-Leistung", False, str(e)[:80])
+
+            # 3. Alte Template-Temp-Ordner aufräumen (>24h — der aktuell
+            #    geladene Ordner ist von diesem App-Start und bleibt stehen)
+            try:
+                import tempfile, shutil, glob, time as _time
+                removed = 0
+                cutoff = _time.time() - 24 * 3600
+                for d in glob.glob(os.path.join(tempfile.gettempdir(), "fexobooth_template_*")):
+                    try:
+                        if os.path.getmtime(d) < cutoff:
+                            shutil.rmtree(d, ignore_errors=True)
+                            removed += 1
+                    except OSError:
+                        continue
+                log_step("Temp-Aufräumen", True, f"{removed} alte Ordner entfernt")
+            except Exception as e:
+                log_step("Temp-Aufräumen", False, str(e)[:80])
+
+            # 4. Druckerwarteschlange zurücksetzen (wie 'Druckstau beheben')
+            try:
+                subprocess.run(["net", "stop", "spooler"], capture_output=True, timeout=15,
+                               creationflags=0x08000000)
+                subprocess.run(["net", "start", "spooler"], capture_output=True, timeout=15,
+                               creationflags=0x08000000)
+                log_step("Drucker-Warteschlange", True)
+            except Exception as e:
+                log_step("Drucker-Warteschlange", False, str(e)[:80])
+
+            # 5. Kamera-Reset (Kundenmenü = keine Session aktiv; nächste
+            #    Session initialisiert die Kamera frisch)
+            try:
+                app = getattr(self.parent_window, '_photobooth_app', None)
+                if app is not None:
+                    app.camera_manager.release()
+                log_step("Kamera-Reset", app is not None)
+            except Exception as e:
+                log_step("Kamera-Reset", False, str(e)[:80])
+
+            # Fertig → Ergebnis + Neustart-Empfehlung anzeigen
+            def show_done():
+                status_label.configure(
+                    text=self._tr("service.quick_fix_done"),
+                    text_color=COLORS["success"]
+                )
+                btn_frame.pack(pady=(0, 15))
+            self.after(0, show_done)
+
+        threading.Thread(target=do_quick_fix, daemon=True, name="quick-fix").start()
+
+        def do_restart():
+            import subprocess
+            status_label.configure(
+                text=self._tr("service.restart_running"),
+                text_color=COLORS["warning"]
+            )
+            btn_frame.destroy()
+            logger.info("SCHNELLHILFE: Windows-Neustart ausgelöst")
+            subprocess.Popen(
+                ["shutdown", "/r", "/f", "/t", "5", "/c", "FexoBooth: Neustart nach Schnellhilfe"],
+                creationflags=0x08000000
+            )
+
+        # Buttons erscheinen erst, wenn die Schritte durch sind (show_done)
+        ctk.CTkButton(
+            btn_frame,
+            text=self._tr("service.restart_confirm"),
+            font=("Segoe UI", 16, "bold"),
+            width=160, height=45,
+            fg_color=COLORS["warning"],
+            hover_color="#ff6600",
+            corner_radius=12,
+            command=do_restart
+        ).pack(side="left", padx=6)
+
+        ctk.CTkButton(
+            btn_frame,
+            text=self._tr("service.close"),
+            font=("Segoe UI", 16, "bold"),
+            width=160, height=45,
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["bg_card"],
+            text_color=COLORS["text_primary"],
+            corner_radius=12,
+            command=self.destroy
+        ).pack(side="left", padx=6)
 
     def _customer_power_options(self, parent_frame):
         """Rückfrage: Neustart ODER Ausschalten (mit Wartehinweis)."""

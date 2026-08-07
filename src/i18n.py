@@ -1221,6 +1221,10 @@ SERVICE_TRANSLATIONS = {
         "service.shutdown_confirm": "Ausschalten",
         "service.shutdown_running": "Computer wird ausgeschaltet...\n\nSie können das Gerät gleich\nvom Strom trennen.",
         "service.abort": "Abbrechen",
+        "service.quick_fix": "Schnellhilfe",
+        "service.quick_fix_title": "Schnellhilfe",
+        "service.quick_fix_running": "Schnellhilfe läuft...\n\nDas Gerät wird geprüft und\naufgeräumt. Bitte warten.",
+        "service.quick_fix_done": "Schnellhilfe abgeschlossen!\n\nEin Neustart wird empfohlen,\ndamit alles frisch startet.",
     },
     "en-GB": {
         "service.menu_title": "Service",
@@ -1261,6 +1265,10 @@ SERVICE_TRANSLATIONS = {
         "service.shutdown_confirm": "Shut down",
         "service.shutdown_running": "Computer is shutting down...\n\nYou can unplug the device\nin a moment.",
         "service.abort": "Cancel",
+        "service.quick_fix": "Quick fix",
+        "service.quick_fix_title": "Quick fix",
+        "service.quick_fix_running": "Quick fix in progress...\n\nThe device is being checked and\ncleaned up. Please wait.",
+        "service.quick_fix_done": "Quick fix completed!\n\nA restart is recommended\nfor a fresh start.",
     },
     "fr-FR": {
         "service.menu_title": "Service",
@@ -1301,6 +1309,10 @@ SERVICE_TRANSLATIONS = {
         "service.shutdown_confirm": "Éteindre",
         "service.shutdown_running": "L'ordinateur s'éteint...\n\nVous pouvez débrancher\nl'appareil dans un instant.",
         "service.abort": "Annuler",
+        "service.quick_fix": "Aide rapide",
+        "service.quick_fix_title": "Aide rapide",
+        "service.quick_fix_running": "Aide rapide en cours...\n\nL'appareil est vérifié et\nnettoyé. Merci de patienter.",
+        "service.quick_fix_done": "Aide rapide terminée !\n\nUn redémarrage est recommandé\npour repartir à neuf.",
     },
     "nl-NL": {
         "service.menu_title": "Service",
@@ -1341,6 +1353,10 @@ SERVICE_TRANSLATIONS = {
         "service.shutdown_confirm": "Uitschakelen",
         "service.shutdown_running": "Computer wordt uitgeschakeld...\n\nJe kunt het apparaat zo\nvan de stroom halen.",
         "service.abort": "Annuleren",
+        "service.quick_fix": "Snelle hulp",
+        "service.quick_fix_title": "Snelle hulp",
+        "service.quick_fix_running": "Snelle hulp wordt uitgevoerd...\n\nHet apparaat wordt gecontroleerd en\nopgeruimd. Even geduld.",
+        "service.quick_fix_done": "Snelle hulp voltooid!\n\nEen herstart wordt aanbevolen\nvoor een frisse start.",
     },
     "it-IT": {
         "service.menu_title": "Servizio",
@@ -1381,6 +1397,10 @@ SERVICE_TRANSLATIONS = {
         "service.shutdown_confirm": "Spegni",
         "service.shutdown_running": "Il computer si sta spegnendo...\n\nTra poco puoi scollegare\nil dispositivo dalla corrente.",
         "service.abort": "Annulla",
+        "service.quick_fix": "Aiuto rapido",
+        "service.quick_fix_title": "Aiuto rapido",
+        "service.quick_fix_running": "Aiuto rapido in corso...\n\nIl dispositivo viene controllato e\nripulito. Attendere.",
+        "service.quick_fix_done": "Aiuto rapido completato!\n\nSi consiglia un riavvio\nper ripartire al meglio.",
     },
     "es-ES": {
         "service.menu_title": "Servicio",
@@ -1421,6 +1441,10 @@ SERVICE_TRANSLATIONS = {
         "service.shutdown_confirm": "Apagar",
         "service.shutdown_running": "Apagando el ordenador...\n\nPuedes desconectar el dispositivo\nde la corriente en un momento.",
         "service.abort": "Cancelar",
+        "service.quick_fix": "Ayuda rápida",
+        "service.quick_fix_title": "Ayuda rápida",
+        "service.quick_fix_running": "Ayuda rápida en curso...\n\nEl dispositivo se está comprobando y\nlimpiando. Espere, por favor.",
+        "service.quick_fix_done": "¡Ayuda rápida completada!\n\nSe recomienda reiniciar\npara empezar de cero.",
     },
     "pl-PL": {
         "service.menu_title": "Serwis",
@@ -1461,6 +1485,10 @@ SERVICE_TRANSLATIONS = {
         "service.shutdown_confirm": "Wyłącz",
         "service.shutdown_running": "Komputer się wyłącza...\n\nZa chwilę możesz odłączyć\nurządzenie od zasilania.",
         "service.abort": "Anuluj",
+        "service.quick_fix": "Szybka pomoc",
+        "service.quick_fix_title": "Szybka pomoc",
+        "service.quick_fix_running": "Szybka pomoc w toku...\n\nUrządzenie jest sprawdzane i\nczyszczone. Proszę czekać.",
+        "service.quick_fix_done": "Szybka pomoc zakończona!\n\nZalecane jest ponowne uruchomienie,\naby zacząć od nowa.",
     },
 }
 

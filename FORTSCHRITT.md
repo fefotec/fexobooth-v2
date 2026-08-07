@@ -6,6 +6,33 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-08-07
 
+### Schnellhilfe-Button (Kunden-Menü 2015) + Exit-Bug behoben (Version 2.4.18)
+
+**Nachtest 2.4.17** (`fexobooth_20260807_104712.log`): Prozess-Priorität greift ✓,
+Kamera-Check-Freezes weg ✓ (nur noch moderate Hitches 250–1400 ms bei Screen-Wechseln/Filter).
+**Leistungsregler-Rätsel gelöst:** Die Box läuft auf einem benutzerdefinierten Energiesparplan
+(GUID d1de12ad-…, nicht „Ausbalanciert") — auf dem existiert der Schieberegler im Akku-Flyout
+gar nicht, deshalb sah Christian ihn nicht. Das Overlay wird trotzdem gesetzt und wurde
+VERIFIZIERT — Box läuft auf voller Leistung, kein Handlungsbedarf.
+
+**Exit-Bug behoben:** Beenden über das 3198-Menü ließ die EXE mit 0 % CPU weiterlaufen
+(non-daemon Galerie-/Hotspot-Threads überleben das Ende der Tk-Hauptschleife) → Installer
+meldete „Anwendung läuft noch". Fix: `main.py` beendet nach „FEXOBOOTH BEENDET" hart mit
+`logging.shutdown()` + `os._exit(0)` (Muster vom App-OTA `_hard_exit_for_update`).
+
+**Neu: „🔧 Schnellhilfe" im Kunden-Menü PIN 2015** (`_customer_quick_fix` in admin.py):
+Hotline-tauglicher Ein-Knopf-Reparaturlauf, Schritte je einzeln best-effort + geloggt
+(`SCHNELLHILFE:`): (1) `snapshot_system_load("Schnellhilfe")` → Diagnose ins Log,
+(2) Priorität + Leistungsregler neu setzen, (3) `%TEMP%\fexobooth_template_*` älter 24 h
+löschen (aktueller Ordner ist vom laufenden App-Start und bleibt), (4) Spooler stop/start
+(wie „Druckstau beheben"), (5) `camera_manager.release()` (Kundenmenü = idle, nächste Session
+initialisiert frisch). Abschluss-Dialog mit „Neustart" (shutdown /r /f /t 5) + „Schließen".
+i18n: `service.quick_fix`, `_title`, `_running`, `_done` in allen 7 Sprachen; Dialog-Buttons
+nutzen bestehende Keys. Felix-Runbook (Service-Menü-Block, Wann-anbieten-Tabelle,
+Schritt-für-Schritt) + Übersetzungs-Inventar (fexobox-next, Abschnitte 0.000/3.4 L) gepflegt.
+
+---
+
 ### Nachtest 2.4.16 ausgewertet → drei neue Bremsen gefixt + Auslöse-Screen entfernt (2.4.17)
 
 **Nachtest-Ergebnis 2.4.16** (`fexobooth_20260807_101128.log`, Miix, Webcam):

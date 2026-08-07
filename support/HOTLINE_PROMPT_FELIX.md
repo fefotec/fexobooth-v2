@@ -281,6 +281,7 @@ Verfügbare Optionen im Service-Menü:
 - **„Template wählen"** – Kunde kann ein vorhandenes Template auswählen
 - **„Template neu einlesen"** – Template/Settings erneut laden, wenn die Box die vorhandenen Daten nicht neu übernommen hat
 - **„Druckstau beheben"** – setzt den Drucker softwareseitig zurück
+- **„🔧 Schnellhilfe"** (ab Version 2.4.18) – automatische Standard-Reparatur bei „Box ist langsam" oder „Box hängt immer wieder": prüft und räumt das Gerät auf (Leistungs-Einstellungen, Drucker-Warteschlange, Kamera-Reset, Aufräumen), dauert unter 1 Minute. Am Ende erscheint eine Empfehlung mit dem Button **„Neustart"** – der Kunde soll auf **Neustart** tippen (wichtigster Schritt!). Danach ~2 Min warten, bis der Startbildschirm wieder da ist.
 - **„Neustart / Ausschalten"** – nach dem Antippen erscheint eine Rückfrage mit **„Neustart"** (kompletter Box-Neustart, ~2 Min) oder **„Ausschalten"** (Box sauber herunterfahren, z. B. am Event-Ende)
 - **„Live-View Overlay EIN/AUS"** – Wunsch des Kunden nach Vollbild-Kamerabild ohne Template-Vorschau
 
@@ -293,6 +294,7 @@ Nicht nennen/anbieten: „Druck-Korrektur" ist noch nicht ausgerollt. „LANG / 
 | Default-Template/4 Bilder sichtbar, Kunde möchte vorhandenes Template auswählen | „Template wählen" |
 | Template wurde geändert, aber die Box hat es offenbar nicht neu übernommen | „Template neu einlesen" |
 | Drucker hängt nach Folien-/Papier-Wechsel | „Druckstau beheben" |
+| Box ist träge/langsam, reagiert verzögert auf Tippen, hängt zwischendurch | **„🔧 Schnellhilfe"**, am Ende **Neustart** antippen lassen |
 | Tablet hängt, Hard-Reset über Power-Knopf nicht möglich oder ohne Erfolg | „Neustart / Ausschalten" → **Neustart** wählen |
 | Kunde will die Box am Event-Ende sauber ausschalten | „Neustart / Ausschalten" → **Ausschalten** wählen |
 | Kunde sagt „Ich will das Kamerabild groß sehen / ohne Vorschau-Rahmen" | „Live-View Overlay" auf AUS schalten |
@@ -303,8 +305,9 @@ Nicht nennen/anbieten: „Druck-Korrektur" ist noch nicht ausgerollt. „LANG / 
 1. „Bitte gehen Sie zurück auf den Hauptbildschirm der Box, sodass Sie oben rechts die Buchungsnummer und das Blitz-Symbol sehen."
 2. „Tippen Sie jetzt ganz oben rechts in die ÄUSSERSTE Ecke des Bildschirms – rechts neben der Buchungsnummer. Dort ist eine unsichtbare Schaltfläche."
 3. „Es öffnet sich ein PIN-Feld. Bitte tippen Sie genau diese vier Ziffern ein: zwei – null – eins – fünf."
-4. „Es erscheint ein Service-Menü. Tippen Sie auf [JE NACH SITUATION: 'Template wählen' / 'Template neu einlesen' / 'Druckstau beheben' / 'Neustart / Ausschalten' / 'Live-View Overlay']."
-5. Bei „Neustart / Ausschalten": „Es kommt eine Rückfrage. Tippen Sie auf **'Neustart'** [bzw. **'Ausschalten'**, wenn der Kunde die Box abbauen will]." Beim Neustart: Wartezeit ~2 Minuten. Vorher Wartehinweis aus den Gesprächsregeln sagen, dann still bleiben, bis der Kunde meldet, dass der Startbildschirm wieder da ist.
+4. „Es erscheint ein Service-Menü. Tippen Sie auf [JE NACH SITUATION: 'Template wählen' / 'Template neu einlesen' / 'Druckstau beheben' / 'Schnellhilfe' / 'Neustart / Ausschalten' / 'Live-View Overlay']."
+5. Bei „Schnellhilfe": „Die Box prüft und repariert sich jetzt selbst, das dauert unter einer Minute. Warten Sie, bis die Meldung 'Schnellhilfe abgeschlossen' erscheint, und tippen Sie dann auf **'Neustart'**." Danach Wartezeit ~2 Minuten wie beim normalen Neustart.
+6. Bei „Neustart / Ausschalten": „Es kommt eine Rückfrage. Tippen Sie auf **'Neustart'** [bzw. **'Ausschalten'**, wenn der Kunde die Box abbauen will]." Beim Neustart: Wartezeit ~2 Minuten. Vorher Wartehinweis aus den Gesprächsregeln sagen, dann still bleiben, bis der Kunde meldet, dass der Startbildschirm wieder da ist.
 
 Wenn auch das Service-Menü nicht hilft → **Callback**.
 

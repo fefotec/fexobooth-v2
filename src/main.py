@@ -182,6 +182,14 @@ def main():
     logger.info("FEXOBOOTH BEENDET")
     logger.info("=" * 50)
 
+    # Prozess HART beenden: Galerie-Server-/Hotspot-/Kamera-Threads sind teils
+    # non-daemon und hielten die EXE nach dem Menü-Beenden mit 0% CPU am Leben —
+    # der Installer meldete dann "Anwendung läuft noch" (Befund Christian
+    # 2026-08-07). Gleiches Muster wie beim App-OTA (_hard_exit_for_update).
+    import logging as _logging
+    _logging.shutdown()
+    os._exit(0)
+
 
 if __name__ == "__main__":
     main()

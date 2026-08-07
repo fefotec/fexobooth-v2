@@ -6,6 +6,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.18] - 2026-08-07 - Schnellhilfe-Button im Kunden-Menü + sauberes App-Beenden
+
+### Neu
+
+- **„🔧 Schnellhilfe" im Kunden-Menü (PIN 2015):** Ein Button für die Telefon-Hotline bei
+  „Box ist langsam / hängt". Führt automatisch aus (jeder Schritt einzeln geloggt mit Präfix
+  `SCHNELLHILFE:`): Systemlast-Diagnose ins Log → Prozess-Priorität + Leistungsregler neu
+  setzen → alte Template-Temp-Ordner aufräumen (>24h) → Druckerwarteschlange zurücksetzen
+  (Spooler-Neustart) → Kamera-Reset. Danach Empfehlung mit **Neustart-Button** (echter
+  Windows-Neustart = wirksamster Schritt). Alle 7 Sprachen (`service.quick_fix*`),
+  Felix-Hotline-Runbook + Übersetzungs-Inventar aktualisiert.
+
+### Behoben
+
+- **EXE lief nach Menü-Beenden mit 0 % weiter** (Befund Christian beim Update-Installieren:
+  „Anwendung läuft noch", Task-Manager nötig): Nach dem Ende der Tk-Hauptschleife hielten
+  non-daemon Hintergrund-Threads (Galerie-Server/Hotspot) den Prozess am Leben. Jetzt beendet
+  `main.py` den Prozess nach dem Aufräumen hart (`os._exit(0)` — gleiches Muster wie beim
+  App-OTA). Gilt für alle Beenden-Wege (Admin-Menü 3198, Notfall-Beenden, Fehlerpfad).
+
+---
+
 ## [2.4.17] - 2026-08-07 - Kamera-Check ohne UI-Freeze, Auslöse-Screen entfernt, Windows-Fixes
 
 > Anlass: Nachtest-Log 2.4.16 (`fexobooth_20260807_101128.log`) — die LiveView-Umbauten greifen

@@ -43,11 +43,18 @@ Aufgabenliste mit Prioritäten.
 - [x] **Nachtest 2.4.16 (Miix, Webcam-Box):** bestanden 2026-08-07 — 8,5 fps (vorher 2,5–5),
   Anzeige 56 ms, Session-Hitches weg. *Neue Funde (Kamera-Check-Freezes, Priorität, Regler)
   → gefixt in 2.4.17, siehe FORTSCHRITT.md.*
-- [ ] **Nachtest 2.4.17 (Miix, Webcam-Box):** Log prüfen — erwartet: KEINE 8–16-s-UI-Hitches
-  mehr beim Start, keine ~500-ms-Hitches im 15-s-Takt im Leerlauf, `Prozess-Priorität auf
-  ABOVE_NORMAL gesetzt`, Leistungsregler-Zeile mit `VERIFIZIERT` (oder Warnung mit Ursache),
-  beim Foto kein Auslöse-Bild/kein Text mehr. Schieberegler im Akku-Flyout direkt nach
-  App-Start kontrollieren.
+- [x] **Nachtest 2.4.17 (Miix, Webcam-Box):** bestanden 2026-08-07 — Priorität ✓, Regler
+  VERIFIZIERT ✓ (Box nutzt Custom-Energieplan ohne Flyout-Slider — kein Handlungsbedarf),
+  Start-/Idle-Freezes weg ✓.
+- [ ] **Nachtest 2.4.18:** (1) App über 3198-Menü beenden → EXE darf NICHT mehr im
+  Task-Manager stehen, Installer läuft ohne Meldung durch. (2) Kunden-Menü 2015 →
+  „🔧 Schnellhilfe" drücken → Lauftext, dann „Schnellhilfe abgeschlossen" + Neustart-Button;
+  im Log `SCHNELLHILFE:`-Zeilen für alle 5 Schritte.
+- [ ] **Konzept „echter System-Test bei neuem Event"** (Christian-Wunsch 2026-08-07): statt
+  Template-Fülldruck ein Selbsttest mit Zeitmessung + Schwellwerten (Kamera-Frame-Zeiten,
+  High-Res-Capture, Render, Disk-Schreibtest, Drucker-Status+Testdruck, Speicherplatz,
+  Systemlast) und verständlichem OK/Warnung-Ergebnis pro Punkt. → Vorschlag liegt bei
+  Christian, Umsetzung nach Freigabe als eigene Etappe.
 - [ ] Bekannt, nach dem Release angehen: ~3 s UI-Hänger beim tatsächlichen SELPHY-Druck
   (Druckpfad ist live-flotten-kritisch — nicht vorher umbauen); Startscreen-Neuaufbau mit
   USB-Template ~5 s (läuft zwischen Sessions, kein Gast-Kontakt).
