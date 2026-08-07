@@ -6,6 +6,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.21] - 2026-08-07 - Boxen melden Event-Statistiken automatisch ans Dashboard
+
+### Neu
+
+- **Event-Statistiken automatisch ans Dashboard** (Wunsch Christian): Der Monitoring-Heartbeat
+  (läuft ohnehin bei jedem Start im Firmen-WLAN) sendet jetzt die Statistik der letzten bis zu
+  10 Buchungen mit (Sessions, Fotos, Drucke erfolgreich/fehlgeschlagen, Zeitraum). Das Dashboard
+  zeigt sie als Kachel „Box-Statistik" auf der Buchungs-Detailseite — bei Rückläufern mit Alarm
+  genügt es also, die Box in der Werkstatt anzuschalten, und die Zahlen stehen an der Buchung.
+  Kein Button, keine Handgriffe; Duplikate werden serverseitig zusammengeführt.
+
+### Hinweis
+
+- Release v2.4.20 wurde vor Verteilung pausiert (Draft) — der Rollout an die Flotte passiert
+  mit dieser Version 2.4.21 in einem Rutsch.
+
+---
+
 ## [2.4.20] - 2026-08-07 - Fehlerdialog beim Beenden behoben
 
 ### Behoben

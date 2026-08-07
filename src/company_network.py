@@ -141,6 +141,19 @@ def _send_monitoring_heartbeat(config: Dict[str, Any], ssid: str, app=None) -> N
         "ssid": ssid,
     }
 
+    # Event-Statistiken automatisch mitsenden (2.4.21, Wunsch Christian):
+    # Sobald die Box im Firmen-WLAN ist (= zurück in der Werkstatt), landen
+    # Sessions/Fotos/Drucke der letzten Buchungen automatisch an der
+    # jeweiligen Buchung im Dashboard — besonders wertvoll bei Alarm-Fällen.
+    try:
+        from src.storage.statistics import get_statistics_manager
+        event_stats = get_statistics_manager().get_events_for_reporting(limit=10)
+        if event_stats:
+            payload["event_stats"] = event_stats
+            logger.info(f"Monitoring: {len(event_stats)} Event-Statistik(en) werden mitgemeldet")
+    except Exception as e:
+        logger.debug(f"Monitoring: Event-Statistiken nicht ladbar — Meldung ohne ({e})")
+
     data = json.dumps(payload).encode("utf-8")
     request = Request(
         endpoint,

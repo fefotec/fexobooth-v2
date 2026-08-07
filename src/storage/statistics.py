@@ -255,6 +255,26 @@ class StatisticsManager:
         except Exception as e:
             logger.error(f"Statistiken speichern fehlgeschlagen: {e}")
     
+    def get_events_for_reporting(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Letzte Events (inkl. laufendem) für die automatische Dashboard-Meldung.
+
+        Liefert nur Events mit Buchungsnummer — das laufende Event wird wie in
+        _save_stats() in die Liste gemerged (Update statt Duplikat). Wird vom
+        Monitoring-Heartbeat mitgesendet, sobald die Box im Firmen-WLAN ist.
+        """
+        events = [dict(e) for e in self._all_stats]
+        if self._current_stats:
+            current = self._current_stats.to_dict()
+            for i, event in enumerate(events):
+                if (event.get("booking_id") == current["booking_id"]
+                        and event.get("start_time") == current["start_time"]):
+                    events[i] = current
+                    break
+            else:
+                events.append(current)
+        events = [e for e in events if str(e.get("booking_id", "")).strip()]
+        return events[-limit:]
+
     def get_all_events(self) -> List[EventStats]:
         """Gibt alle erfassten Events zurück"""
         events = []

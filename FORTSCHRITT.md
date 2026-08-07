@@ -6,6 +6,26 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-08-07
 
+### Event-Statistiken automatisch ans Dashboard + Release pausiert (2.4.21)
+
+**Christian-Wunsch:** Statistik einer Buchung ins Dashboard übertragen — per Button oder
+automatisch bei Alarm-Boxen. **Umgesetzt als einfachere Automatik:** Der bestehende
+Monitoring-Heartbeat sendet IMMER die letzten Events mit (`event_stats`, max. 10, nur mit
+Buchungsnummer; neue Methode `StatisticsManager.get_events_for_reporting()` merged das
+laufende Event ohne Duplikat — headless getestet). Kein Box-Button, keine Alarm-Abfrage
+nötig: Das Dashboard weiß selbst, welche Buchung einen Alarm hat.
+
+**Dashboard-Seite (adminFexobox, Commit 43078492, Auto-Deploy):** Tabelle `booth_event_stats`
+(Unique box_id+booking_id+start_time, Upsert), `BoothHeartbeatController` validiert/persistiert
+`event_stats`, Kachel „Box-Statistik (vom Gerät gemeldet)" auf BEIDEN Detailseiten
+(Standard + NX, Partial `appointments/partials/booth_event_stats.blade.php`).
+
+**Release-Steuerung:** v2.4.20 auf Christians Wunsch VOR Verteilung pausiert
+(`gh release edit --draft` → `/releases/latest` liefert wieder v2.4.14, Flotte bleibt still);
+Dashboard-Ankündigung #68 auf „in Kürze" umformuliert. Rollout dann mit v2.4.21.
+
+---
+
 ### Release v2.4.20 veröffentlicht + Dashboard-Ankündigung (2026-08-07, ~12:10)
 
 GitHub-Release **v2.4.20** erstellt (Tag + `fexobooth.zip` aus Christians lokalem Build 11:52,
