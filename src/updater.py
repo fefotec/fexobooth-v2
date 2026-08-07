@@ -588,6 +588,14 @@ if errorlevel 1 goto :rollback_internal
 if not exist "%INSTALL_DIR%\\_internal\\base_library.zip" goto :rollback_internal
 if not exist "%INSTALL_DIR%\\_internal" goto :rollback_internal
 
+:: SICHERHEITSNETZ (2.4.19): Falls noch Fotos im alten _internal\\BILDER liegen
+:: (Legacy-Speicherort vor dem Fix — Fotos gehoeren jetzt nach Root\\BILDER),
+:: VOR dem Loeschen in den sicheren Ort retten. Bug: "nach Update Bilder weg".
+if exist "%INSTALL_DIR%\\_internal_OLD\\BILDER" (
+    echo - Rette Fotos aus altem _internal\\BILDER nach BILDER\\...
+    xcopy "%INSTALL_DIR%\\_internal_OLD\\BILDER" "%INSTALL_DIR%\\BILDER" /E /I /Y /Q >nul 2>&1
+)
+
 :: Erfolg - alten Stand jetzt loeschen
 if exist "%INSTALL_DIR%\\_internal_OLD" rmdir /s /q "%INSTALL_DIR%\\_internal_OLD" 2>nul
 echo   _internal/ erfolgreich aktualisiert

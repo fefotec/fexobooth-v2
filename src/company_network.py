@@ -304,14 +304,17 @@ def trigger_monitoring_heartbeat_now(app=None, config: Optional[Dict[str, Any]] 
 
 
 def _silent_fallback(release: dict) -> None:
-    """Stiller Update-Pfad ohne UI — Fallback wenn der Dialog nicht geöffnet werden kann."""
+    """Fallback ohne UI: Update wird NICHT mehr still installiert (seit 2.4.19).
+
+    Updates brauchen eine Bestätigung am Screen (Bilder zurückkommender Boxen
+    müssen vorher gesichert sein). Ohne UI gibt es keine Bestätigung — also
+    nur loggen und beim nächsten Start mit UI erneut anbieten.
+    """
     try:
-        from src.updater import download_update, apply_update_and_restart
-        zip_path = download_update(release["download_url"])
-        logger.info(f"Auto-Update (still): Download fertig ({zip_path}) — wende an")
-        apply_update_and_restart(zip_path)
-        logger.info("Auto-Update (still): Beende App per os._exit damit BAT übernehmen kann")
-        import os
-        os._exit(0)
+        logger.warning(
+            f"Auto-Update: Version {release.get('tag')} verfügbar, aber kein UI für die "
+            f"Bestätigung erreichbar — Update wird NICHT automatisch installiert "
+            f"(Bestätigungspflicht seit 2.4.19)"
+        )
     except Exception as e:
         logger.error(f"Auto-Update (still): Fehlgeschlagen: {e}", exc_info=True)

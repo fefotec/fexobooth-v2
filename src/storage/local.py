@@ -1,6 +1,7 @@
 """Lokale Speicherung mit automatischer USB-Kopie"""
 
 import os
+import sys
 import shutil
 from pathlib import Path
 from datetime import datetime
@@ -11,11 +12,74 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+
+def _resolve_images_base() -> Path:
+    """Basis für BILDER/: IMMER neben der EXE, NIE in _internal.
+
+    Bug 2026-08-07 („nach jedem Update sind alle Bilder weg"): Im
+    PyInstaller-Build zeigt __file__ nach _internal → BILDER lag in
+    C:\\FexoBooth\\_internal\\BILDER. Das Update-BAT ersetzt _internal aber
+    ATOMISCH (move nach _internal_OLD, kopieren, _internal_OLD löschen) —
+    sein „BILDER/ wird geschützt" galt nur für den Install-Root. Jedes
+    OTA-Update löschte damit sämtliche Fotos. Fix wie in config.py:
+    im Build neben der EXE (C:\\FexoBooth\\BILDER), im Dev-Mode Repo-Root.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent.parent
+
+
 # Basis-Pfade
-BASE_PATH = Path(__file__).parent.parent.parent
+BASE_PATH = _resolve_images_base()
 IMAGES_PATH = BASE_PATH / "BILDER"
 SINGLES_PATH = IMAGES_PATH / "Single"
 PRINTS_PATH = IMAGES_PATH / "Prints"
+
+# Alter (falscher) Speicherort im Build — Quelle für die Einmal-Migration
+_LEGACY_INTERNAL_IMAGES = (
+    Path(sys.executable).resolve().parent / "_internal" / "BILDER"
+    if getattr(sys, "frozen", False) else None
+)
+
+
+def _migrate_legacy_internal_images() -> None:
+    """Einmal-Migration: Bilder aus _internal\\BILDER in den sicheren Ort holen.
+
+    Läuft beim ersten Start nach dem Update auf die gefixte Version. Verschiebt
+    alles (Single/, Prints/, .thumbs/, …) per merge und entfernt danach den
+    Legacy-Ordner. Best-effort: Ein Fehler darf den App-Start nicht verhindern.
+    """
+    legacy = _LEGACY_INTERNAL_IMAGES
+    if legacy is None or not legacy.exists():
+        return
+    try:
+        if legacy.resolve() == IMAGES_PATH.resolve():
+            return  # Sicherheitsnetz — sollte im Build nie passieren
+    except OSError:
+        return
+
+    moved = 0
+    try:
+        IMAGES_PATH.mkdir(parents=True, exist_ok=True)
+        for root, _dirs, files in os.walk(legacy):
+            rel = Path(root).relative_to(legacy)
+            target_dir = IMAGES_PATH / rel
+            target_dir.mkdir(parents=True, exist_ok=True)
+            for name in files:
+                src = Path(root) / name
+                dst = target_dir / name
+                try:
+                    if not dst.exists():
+                        shutil.move(str(src), str(dst))
+                        moved += 1
+                    else:
+                        src.unlink()  # Duplikat — neuer Ort gewinnt
+                except OSError as e:
+                    logger.warning(f"BILDER-Migration: '{name}' nicht verschiebbar: {e}")
+        shutil.rmtree(legacy, ignore_errors=True)
+        logger.info(f"BILDER-Migration: {moved} Dateien aus _internal\\BILDER nach {IMAGES_PATH} verschoben")
+    except Exception as e:
+        logger.error(f"BILDER-Migration fehlgeschlagen (Bilder bleiben in _internal): {e}")
 
 # Singleton USBManager - wird von allen geteilt
 _shared_usb_manager = None
@@ -33,6 +97,9 @@ class LocalStorage:
     """Verwaltet lokale Bildspeicherung mit automatischer USB-Kopie"""
     
     def __init__(self):
+        # Einmal-Migration von _internal\BILDER (siehe _resolve_images_base)
+        _migrate_legacy_internal_images()
+
         # Verzeichnisse erstellen
         SINGLES_PATH.mkdir(parents=True, exist_ok=True)
         PRINTS_PATH.mkdir(parents=True, exist_ok=True)

@@ -28,6 +28,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
     Alle Messwerte landen als eine `SYSTEMTEST-MESSWERTE:`-Zeile im Log (gut vergleichbar).
   - Testdruck und Ablauf bleiben wie gewohnt; Timeout 90 → 120 s (neue Messungen).
 
+### Behoben
+
+- **KRITISCH: OTA-Update löschte alle Fotos.** Die Bilder lagen im Build unter
+  `_internal\BILDER` (Pfad wurde relativ zum Code aufgelöst) — das Update-BAT ersetzt
+  `_internal` aber atomar und löscht den alten Stand; sein „BILDER/ wird geschützt" galt nur
+  für den Install-Root. **Fix:** BILDER liegt jetzt neben der EXE (`C:\FexoBooth\BILDER`,
+  gleiches Muster wie `config.json`); beim ersten Start werden vorhandene Bilder automatisch
+  aus `_internal\BILDER` dorthin migriert (Log: `BILDER-Migration: N Dateien …`). Zusätzlich
+  rettet das ab jetzt erzeugte Update-BAT als Sicherheitsnetz Rest-Fotos aus
+  `_internal_OLD\BILDER` vor dem Löschen. ⚠️ Achtung: Beim Update **AUF** diese Version läuft
+  noch das alte BAT der Vorversion — dort vorher Bilder sichern!
+
+### Geändert (Auto-Update)
+
+- **Updates brauchen jetzt eine Bestätigung am Bildschirm** (Wunsch Christian): Statt sofort
+  loszulegen zeigt der Update-Dialog „Update verfügbar — Soll das Update jetzt installiert
+  werden?" mit Warnhinweis auf ungesicherte Bilder und den Buttons **„Jetzt installieren"** /
+  **„Später"**. Ohne Antwort schließt sich der Dialog nach 5 Minuten und es wird NICHTS
+  installiert (beim nächsten App-Start kommt die Frage erneut). Der frühere stille
+  Fallback-Pfad (Update ohne UI) installiert ebenfalls nicht mehr, sondern loggt nur.
+
 ---
 
 ## [2.4.18] - 2026-08-07 - Schnellhilfe-Button im Kunden-Menü + sauberes App-Beenden

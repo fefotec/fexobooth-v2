@@ -6,6 +6,34 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-08-07
 
+### KRITISCH: OTA-Update löschte alle Fotos → Root-Cause-Fix + Update-Bestätigung (2.4.19)
+
+**Anlass:** Christian: „Bei zurückkommenden Boxen müssen erst die Bilder gezogen werden —
+nach dem Auto-Update sind auf einmal alle Bilder weg. Updates sollen erst bestätigt werden."
+
+**Root-Cause gefunden:** `src/storage/local.py` löste `BASE_PATH` relativ zu `__file__` auf —
+im PyInstaller-Build zeigt das nach `_internal` → `IMAGES_PATH = C:\FexoBooth\_internal\BILDER`
+(bestätigt durch Log „Speicherpfade initialisiert: …\_internal\BILDER"). Das Update-BAT
+ersetzt `_internal` atomar (move → xcopy → rmdir `_internal_OLD`); der dokumentierte
+„BILDER/-Schutz" galt nur für den Install-Root, wo keine Bilder lagen. **Jedes OTA-Update
+löschte sämtliche Fotos.**
+
+**Dreifacher Fix:**
+1. `_resolve_images_base()`: BILDER liegt im Build jetzt neben der EXE (`C:\FexoBooth\BILDER`,
+   Muster von `config.py`); Dev-Mode unverändert Repo-Root. Einmal-Migration
+   `_migrate_legacy_internal_images()` beim LocalStorage-Init verschiebt Bestandsbilder
+   (merge, best-effort, Log `BILDER-Migration: N Dateien`). Headless getestet ✓.
+2. Update-BAT (`create_update_script`): Sicherheitsnetz rettet `_internal_OLD\BILDER` →
+   Root-`BILDER` vor dem Löschen. **Merke (Bootstrap-Lektion):** greift erst bei Updates,
+   die VON 2.4.19+ ausgehen — beim Update AUF 2.4.19 läuft noch das alte BAT!
+3. **Update-Bestätigung** (`update_progress.py`): neue Phase vor dem Download —
+   „Update verfügbar — jetzt installieren?" mit Bilder-Warnhinweis, Buttons „Jetzt
+   installieren"/„Später", 5-Minuten-Timeout ohne Antwort = KEIN Update (nächster Start fragt
+   erneut). `_silent_fallback` (company_network.py) installiert nicht mehr, loggt nur noch
+   (Bestätigungspflicht). Alle Alt-Pfade kompilieren; Migrationslogik per Skript verifiziert.
+
+---
+
 ### System-Test → echter Selbsttest mit Messwerten (Version 2.4.19)
 
 **Anlass:** Christian: „Das ist kein richtiger Test — Template wird befüllt und gedruckt,

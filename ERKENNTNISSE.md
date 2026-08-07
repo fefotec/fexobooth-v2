@@ -394,6 +394,12 @@ Betrifft: `_display_preview()`, `_build_flash_cache()`, `_show_main_preview()`, 
 
 ## Lessons Learned
 
+### Daten-Pfade NIE relativ zu __file__ ableiten — im PyInstaller-Build landet das in _internal (Datenverlust!)
+
+- **Problem:** `local.py` bildete `BASE_PATH = Path(__file__).parent...` → im Build lag `BILDER` unter `_internal\BILDER`. Das Update-BAT ersetzt `_internal` atomar → **jedes OTA-Update löschte alle Fotos** (Feld-Befund Christian 2026-08-07). Der „BILDER/ wird geschützt"-Kommentar im BAT stimmte nur für den Install-Root.
+- **Lösung:** Nutzdaten-Pfade wie `config.py` auflösen: `sys.frozen` → `Path(sys.executable).parent`, sonst Repo-Root. Plus Einmal-Migration alter Bestände und BAT-Sicherheitsnetz.
+- **Merke:** Bei PyInstaller gilt: `__file__` = ersetzbarer Programmcode (`_internal`), `sys.executable` = Installationsort. ALLE Verzeichnisse mit Nutzdaten (Bilder, Statistiken, Caches) gehören neben die EXE oder nach ProgramData — und jeder „wird geschützt"-Claim im Update-Skript muss gegen die ECHTEN Laufzeitpfade (Log-Zeile!) geprüft werden, nicht gegen die Ordnernamen im Repo.
+
 ### Periodische Status-Checks (Kamera/Geräte) gehören NIE auf den UI-Thread
 
 - **Problem:** `_check_camera_status` lief alle 15 s auf dem Tk-Thread. Ohne Kamera: PowerShell-Geräte-Enumeration mit 10+5 s Timeout → **16,5 s eingefrorene Oberfläche** beim Boxstart (Miix-Log 2026-08-07). Mit Kamera: `cv2.VideoCapture`-Testöffnung → ~500 ms Hänger alle 15 s im Leerlauf.

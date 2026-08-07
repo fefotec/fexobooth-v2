@@ -61,8 +61,10 @@ class UpdateProgressDialog(ctk.CTkToplevel):
         size_mb = release.get("size", 0) / (1024 * 1024)
         logger.info(f"Update-Progress-Dialog geöffnet: v{new_ver} ({size_mb:.1f} MB)")
 
-        # Download automatisch starten
-        self._start_download()
+        # Seit 2.4.19: Update NIE ungefragt installieren — erst bestätigen lassen.
+        # Hintergrund (Christian 2026-08-07): Bei zurückkommenden Boxen müssen
+        # erst die Bilder gesichert werden, bevor ein Update laufen darf.
+        self._show_confirmation()
 
     @staticmethod
     def _extract_highlights(description: str, max_lines: int = 6) -> str:
@@ -280,6 +282,109 @@ class UpdateProgressDialog(ctk.CTkToplevel):
             command=self._on_skip,
         )
         self.skip_btn.pack(pady=(0, 24))
+
+    # ================= Bestätigung =================
+
+    def _show_confirmation(self):
+        """Bestätigungs-Phase: fragt, BEVOR irgendetwas passiert.
+
+        Ohne Antwort passiert NICHTS: Nach 5 Minuten schließt sich der Dialog
+        und die alte Version läuft weiter (beim nächsten App-Start wird erneut
+        gefragt). So kann kein Update mehr 'einfach so' durchlaufen, während
+        die Bilder einer zurückgekommenen Box noch nicht gesichert sind.
+        """
+        new_ver = self.release.get("version", "?")
+        self.title_label.configure(text=f"Update verfügbar — v{new_ver}")
+        self.status_label.configure(text="Soll das Update jetzt installiert werden?")
+
+        # Fortschritts-Elemente erst bei Bestätigung zeigen
+        self.progress_bar.pack_forget()
+        self.mb_label.pack_forget()
+        self.percent_label.pack_forget()
+        self.skip_btn.pack_forget()
+
+        self.hint_label.configure(
+            text="⚠️ Vor dem Installieren prüfen: Sind alle Bilder\n"
+                 "von der Box gesichert? (zurückgekommene Events!)",
+            text_color=COLORS["warning"],
+        )
+
+        self._confirm_frame = ctk.CTkFrame(self.card, fg_color="transparent")
+        self._confirm_frame.pack(pady=(0, 28))
+
+        ctk.CTkButton(
+            self._confirm_frame,
+            text="Jetzt installieren",
+            font=FONTS["button_large"],
+            width=220,
+            height=50,
+            fg_color=COLORS["primary"],
+            hover_color=COLORS["primary_hover"],
+            corner_radius=SIZES["corner_radius"],
+            command=self._on_install_confirmed,
+        ).pack(side="left", padx=8)
+
+        ctk.CTkButton(
+            self._confirm_frame,
+            text="Später",
+            font=FONTS["button_large"],
+            width=160,
+            height=50,
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["bg_card"],
+            text_color=COLORS["text_primary"],
+            corner_radius=SIZES["corner_radius"],
+            command=self._on_postpone,
+        ).pack(side="left", padx=8)
+
+        # Sicherheits-Timeout: keine Antwort = KEIN Update
+        self._confirm_timeout_id = self.after(5 * 60 * 1000, self._on_confirm_timeout)
+
+    def _on_install_confirmed(self):
+        """Werkstatt hat bestätigt → Fortschritts-Ansicht + Download starten."""
+        if self._destroyed:
+            return
+        try:
+            self.after_cancel(self._confirm_timeout_id)
+        except Exception:
+            pass
+        logger.info("Update vom Benutzer bestätigt — starte Download")
+
+        try:
+            self._confirm_frame.destroy()
+        except Exception:
+            pass
+
+        new_ver = self.release.get("version", "?")
+        self.title_label.configure(text=f"Update wird installiert — v{new_ver}")
+        self.status_label.configure(text="Lade Update herunter...")
+        self.hint_label.configure(
+            text="Bitte nicht ausschalten.\nDie App startet nach dem Update automatisch neu.",
+            text_color=COLORS["text_muted"],
+        )
+        # Fortschritts-Elemente in der richtigen Reihenfolge vor dem Hinweis einhängen
+        self.progress_bar.pack(pady=(0, 10), before=self.hint_label)
+        self.mb_label.pack(pady=(0, 6), before=self.hint_label)
+        self.percent_label.pack(pady=(0, 18), before=self.hint_label)
+        self.skip_btn.pack(pady=(0, 24))
+
+        self._start_download()
+
+    def _on_postpone(self):
+        """'Später' gedrückt — nichts installieren, beim nächsten Start erneut fragen."""
+        logger.info("Update verschoben (Benutzer) — wird beim nächsten App-Start erneut angeboten")
+        try:
+            self.after_cancel(self._confirm_timeout_id)
+        except Exception:
+            pass
+        self._close()
+
+    def _on_confirm_timeout(self):
+        """5 Minuten keine Antwort → sicherheitshalber NICHT installieren."""
+        if self._destroyed or self._finished:
+            return
+        logger.info("Update-Bestätigung: Timeout ohne Antwort — Update NICHT installiert")
+        self._close()
 
     # ================= Download =================
 

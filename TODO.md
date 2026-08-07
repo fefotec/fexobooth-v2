@@ -56,8 +56,14 @@ Aufgabenliste mit Prioritäten.
 - [ ] **Nachtest 2.4.19:** Event-Wechsel auslösen → System-Test zeigt 6 Schritte („System
   prüfen" + „Kamera prüfen" neu), am Ende grüne „Alle Messwerte im Normalbereich"-Meldung
   (oder orange Auffälligkeiten in Klartext); im Log `SYSTEMTEST-MESSWERTE:`-Zeile prüfen.
+  Zusätzlich: Log-Zeile `Speicherpfade initialisiert:` muss jetzt `C:\FexoBooth\BILDER`
+  zeigen (NICHT mehr `_internal`), ggf. `BILDER-Migration: N Dateien` beim ersten Start;
+  im Firmen-WLAN muss der Update-Dialog FRAGEN statt sofort zu installieren.
   Idee für später: Messwerte zusätzlich ans Monitoring/Dashboard melden (Box-Gesundheit
   vor Event-Versand sichtbar).
+- [ ] ⚠️ **Rollout-Hinweis Flotte:** Beim Update AUF 2.4.19 läuft noch das alte BAT der
+  Vorversion → dort werden `_internal\BILDER`-Fotos noch gelöscht. Werkstatt-Anweisung:
+  vor dem 2.4.19-Update Bilder ziehen (danach ist das Problem dauerhaft behoben).
 - [ ] Bekannt, nach dem Release angehen: ~3 s UI-Hänger beim tatsächlichen SELPHY-Druck
   (Druckpfad ist live-flotten-kritisch — nicht vorher umbauen); Startscreen-Neuaufbau mit
   USB-Template ~5 s (läuft zwischen Sessions, kein Gast-Kontakt).
