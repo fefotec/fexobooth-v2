@@ -27,6 +27,19 @@ logger = get_logger(__name__)
 COMPANY_WLAN_SSID = "fexon WLAN"
 COMPANY_WLAN_PASSPHRASE = "68045370152863146883"
 
+# Erkenntnis Mitarbeiter (2026-08-11): Boxen sollen sich nur mit EINEM
+# Firmen-WLAN verbinden. Gespeicherte Profile fuer mehrere fexon-Netze mit
+# Auto-Verbinden lassen Windows zwischen den Netzen springen bzw. am
+# schwaecheren kleben. Diese Alt-Profile werden bei der Selbstheilung
+# entfernt (NUR Verbindungs-Profile — die Erkennungs-Whitelist in der
+# Config bleibt unberuehrt).
+OTHER_COMPANY_SSIDS = [
+    "fexon_Buero_WLAN2",
+    "fexon_Buero_WLAN2_5GHZ",
+    "fexon Gast-WLAN",
+    "fexon_outdoor",
+]
+
 _CREATE_NO_WINDOW = 0x08000000
 
 # Profil-Vorlage: WPA2-PSK/AES, Auto-Verbinden, MAC-Randomisierung AUS
@@ -148,6 +161,18 @@ def ensure_company_wlan_profile() -> bool:
             pass
 
 
+def remove_other_company_profiles() -> int:
+    """Löscht gespeicherte Profile der ANDEREN fexon-Netze (nur ein
+    Verbindungs-Profil pro Box — Erkenntnis Mitarbeiter 2026-08-11)."""
+    removed = 0
+    for ssid in OTHER_COMPANY_SSIDS:
+        code, _ = _run_netsh(["wlan", "delete", "profile", f"name={ssid}"])
+        if code == 0:
+            removed += 1
+            logger.info(f"WLAN-Selbstheilung: Alt-Profil '{ssid}' entfernt (nur 'fexon WLAN' bleibt)")
+    return removed
+
+
 def connect_company_wlan() -> None:
     """Stößt die Verbindung mit dem Firmen-WLAN an (asynchron in Windows)."""
     _run_netsh(["wlan", "connect", f"name={COMPANY_WLAN_SSID}"])
@@ -173,6 +198,7 @@ def self_heal_company_wlan(wait_seconds: int = 20) -> str:
         f"(aktuell: {connected or 'kein WLAN'}) — repariere Profil und verbinde..."
     )
 
+    remove_other_company_profiles()
     ensure_company_wlan_profile()
     connect_company_wlan()
 

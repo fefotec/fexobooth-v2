@@ -65,6 +65,13 @@ $profileXml = @"
 $profilePath = Join-Path $env:TEMP "fexobooth_company_wlan.xml"
 
 try {
+    # Nur EIN Verbindungs-Profil pro Box (Erkenntnis 2026-08-11): Alt-Profile
+    # anderer fexon-Netze entfernen, sonst springt Windows zwischen den Netzen.
+    foreach ($oldSsid in @("fexon_Buero_WLAN2", "fexon_Buero_WLAN2_5GHZ", "fexon Gast-WLAN", "fexon_outdoor")) {
+        $delResult = netsh wlan delete profile name="$oldSsid" 2>&1 | Out-String
+        if ($delResult -notmatch "nicht|not") { Write-Log "Alt-Profil entfernt: $oldSsid" }
+    }
+
     Set-Content -Path $profilePath -Value $profileXml -Encoding utf8
 
     $addResult = netsh wlan add profile filename="$profilePath" user=all 2>&1
