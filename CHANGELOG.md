@@ -19,8 +19,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
   ob das Firmen-WLAN im Funk SICHTBAR, aber nicht verbunden ist (= Werkstatt, Anmeldung
   klemmt). Dann legt sie das Profil selbst frisch an — mit Klartext-Schlüssel (funktioniert
   auf jedem Image) und den zwei entscheidenden Einstellungen: automatisch verbinden AN,
-  MAC-Randomisierung AUS — und verbindet. Beim Kunden ist das Netz nie sichtbar → dort
-  passiert nie etwas. Auch als neuer Schnellhilfe-Schritt „Firmen-WLAN".
+  MAC-Randomisierung AUS — und verbindet. Zusätzlich werden Alt-Profile der anderen
+  fexon-Netze entfernt — nur EIN Verbindungs-Profil pro Box (Erkenntnis Werkstatt: mehrere
+  Auto-Verbinden-Profile lassen Windows zwischen den Netzen springen; die Erkennungs-
+  Whitelist `company_wifi_ssids` bleibt unverändert). Beim Kunden ist das Netz nie
+  sichtbar → dort passiert nie etwas. Auch als neuer Schnellhilfe-Schritt „Firmen-WLAN".
 - **Installer richtet das Firmen-WLAN jetzt als Pflicht-Schritt ein** (still, kein Neustart
   nötig; `setup/company_wlan_setup.ps1`) — durchbricht bei den 47 stummen Boxen den
   Teufelskreis beim einmaligen USB-Update. Hotspot-Einrichtung ist im Installer jetzt
