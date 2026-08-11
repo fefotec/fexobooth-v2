@@ -124,8 +124,13 @@ Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Fil
 ; Windows Icon-Cache per PowerShell löschen (erzwingt Rebuild beim nächsten Explorer-Start)
 ; ie4uinit.exe existiert nicht auf allen Geräten (z.B. Lenovo Miix 310), daher nur PowerShell
 Filename: "powershell.exe"; Parameters: "-NoProfile -Command ""Remove-Item -Path $env:LOCALAPPDATA\IconCache.db -Force -ErrorAction SilentlyContinue; Remove-Item -Path $env:LOCALAPPDATA\Microsoft\Windows\Explorer\iconcache_*.db -Force -ErrorAction SilentlyContinue"""; Flags: runhidden nowait; StatusMsg: "Aktualisiere Icon-Cache..."
-; Nach Installation ausführen
-Filename: "{app}\setup\einmalig_hotspot_einrichten.bat"; Description: "WLAN-Hotspot für Galerie einrichten (empfohlen)"; Flags: postinstall nowait skipifsilent runascurrentuser unchecked
+; Firmen-WLAN einrichten (Pflicht-Schritt, still): Profil mit Klartext-Schlüssel
+; frisch anlegen (auto-connect an, MAC-Randomisierung aus) + verbinden.
+; Kein Neustart nötig. Behebt die "Box bucht sich nicht ins WLAN ein"-Fälle.
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\setup\company_wlan_setup.ps1"" -InstallDir ""{app}"""; Flags: runhidden waituntilterminated; StatusMsg: "Firmen-WLAN wird eingerichtet..."
+
+; Nach Installation ausführen (Hotspot-Setup jetzt standardmäßig ANGEHAKT)
+Filename: "{app}\setup\einmalig_hotspot_einrichten.bat"; Description: "WLAN-Hotspot für Galerie einrichten (empfohlen)"; Flags: postinstall nowait skipifsilent runascurrentuser
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: postinstall nowait skipifsilent
 
 [Code]

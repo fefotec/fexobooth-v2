@@ -394,6 +394,13 @@ Betrifft: `_display_preview()`, `_build_flash_cache()`, `_show_main_preview()`, 
 
 ## Lessons Learned
 
+### Exportierte WLAN-Profile sind maschinengebunden — Profile immer mit Klartext-Schlüssel selbst erzeugen
+
+- **Problem:** 47 Flotten-Boxen buchten sich nicht ins Firmen-WLAN ein. Das Mitarbeiter-Fix-Skript importierte eine per `netsh wlan export` erzeugte Profil-XML — deren `keyMaterial` ist aber DPAPI-verschlüsselt und nur auf Maschinen mit identischem Schlüsselmaterial (= identisches Klon-Image) entschlüsselbar. Auf Boxen mit anderem Image-Stand griff der Fix nicht → „weitgehend" statt vollständig.
+- **Kernursache der Anmelde-Probleme selbst:** MAC-Randomisierung an (Router/DHCP verweigert wechselnde Geräte-Adressen) und/oder Auto-Verbinden aus bzw. korrupte Profile.
+- **Lösung (2.4.22):** Profil-XML zur Laufzeit mit `protected=false` + Klartext-Passphrase generieren (`src/utils/company_wlan.py`) — funktioniert auf jeder Box. Sicherer Automatik-Auslöser: „SSID im Scan sichtbar, aber nicht verbunden" (beim Kunden nie sichtbar → feuert dort nie). Sprachunabhängiges netsh-Parsing: die `SSID :`-Zeile in `show interfaces` existiert nur bei bestehender Verbindung — nie auf lokalisierte Statustexte („Verbunden") matchen.
+- **Merke:** Nach `netsh wlan delete profile name=*` SOFORT wieder ein Profil anlegen — der Gäste-Hotspot (Tethering-API) braucht mindestens ein gespeichertes WLAN-Profil. Und: Installer-Postinstall-Optionen mit `unchecked`-Flag werden in der Praxis nie ausgeführt — Pflicht-Schritte gehören als [Run]-Eintrag ohne Checkbox in den Installer.
+
 ### Daten-Pfade NIE relativ zu __file__ ableiten — im PyInstaller-Build landet das in _internal (Datenverlust!)
 
 - **Problem:** `local.py` bildete `BASE_PATH = Path(__file__).parent...` → im Build lag `BILDER` unter `_internal\BILDER`. Das Update-BAT ersetzt `_internal` atomar → **jedes OTA-Update löschte alle Fotos** (Feld-Befund Christian 2026-08-07). Der „BILDER/ wird geschützt"-Kommentar im BAT stimmte nur für den Install-Root.

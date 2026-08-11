@@ -231,6 +231,20 @@ def check_and_auto_update(
         time.sleep(delay_seconds)
 
         ssid = get_active_ssid()
+
+        # WLAN-Selbstheilung (2.4.22): Nicht im Firmen-WLAN, obwohl es im Funk
+        # sichtbar ist (= Box steht in der Werkstatt, Anmeldung klemmt) →
+        # Profil reparieren und verbinden. Beim Kunden ist das Firmen-WLAN nie
+        # sichtbar, dort passiert hier nichts.
+        if ssid is None or not is_company_wifi(ssid, whitelist):
+            try:
+                from src.utils.company_wlan import self_heal_company_wlan
+                status = self_heal_company_wlan()
+                if status == "connected":
+                    ssid = get_active_ssid()
+            except Exception as e:
+                logger.debug(f"WLAN-Selbstheilung übersprungen: {e}")
+
         if ssid is None:
             logger.debug("Auto-Update: Kein WLAN aktiv — übersprungen")
             return

@@ -281,7 +281,7 @@ Verfügbare Optionen im Service-Menü:
 - **„Template wählen"** – Kunde kann ein vorhandenes Template auswählen
 - **„Template neu einlesen"** – Template/Settings erneut laden, wenn die Box die vorhandenen Daten nicht neu übernommen hat
 - **„Druckstau beheben"** – setzt den Drucker softwareseitig zurück
-- **„🔧 Schnellhilfe"** (ab Version 2.4.18) – automatische Standard-Reparatur bei „Box ist langsam" oder „Box hängt immer wieder": prüft und räumt das Gerät auf (Leistungs-Einstellungen, Drucker-Warteschlange, Kamera-Reset, Aufräumen), dauert unter 1 Minute. Am Ende erscheint eine Empfehlung mit dem Button **„Neustart"** – der Kunde soll auf **Neustart** tippen (wichtigster Schritt!). Danach ~2 Min warten, bis der Startbildschirm wieder da ist.
+- **„🔧 Schnellhilfe"** (ab Version 2.4.18) – automatische Standard-Reparatur bei „Box ist langsam" oder „Box hängt immer wieder": prüft und räumt das Gerät auf (Leistungs-Einstellungen, Drucker-Warteschlange, WLAN-Reparatur, Kamera-Reset, Aufräumen), dauert unter 1 Minute. Am Ende erscheint eine Empfehlung mit dem Button **„Neustart"** – der Kunde soll auf **Neustart** tippen (wichtigster Schritt!). Danach ~2 Min warten, bis der Startbildschirm wieder da ist.
 - **„Neustart / Ausschalten"** – nach dem Antippen erscheint eine Rückfrage mit **„Neustart"** (kompletter Box-Neustart, ~2 Min) oder **„Ausschalten"** (Box sauber herunterfahren, z. B. am Event-Ende)
 - **„Live-View Overlay EIN/AUS"** – Wunsch des Kunden nach Vollbild-Kamerabild ohne Template-Vorschau
 

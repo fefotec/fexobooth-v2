@@ -1190,7 +1190,8 @@ class AdminDialog(ctk.CTkToplevel):
         2. Prozess-Priorität + Windows-Leistungsregler neu setzen
         3. Alte Template-Temp-Ordner aufräumen (> 24h, aktive bleiben)
         4. Druckerwarteschlange zurücksetzen (Spooler-Neustart)
-        5. Kamera-Reset (wird bei nächster Session frisch initialisiert)
+        5. Firmen-WLAN-Selbstheilung (nur wenn sichtbar + nicht verbunden)
+        6. Kamera-Reset (wird bei nächster Session frisch initialisiert)
         Danach: Neustart-Empfehlung mit Button (echter Windows-Neustart
         räumt Treiber/Schnellstart-Altlasten ab — der wirksamste Einzelschritt).
         """
@@ -1280,7 +1281,16 @@ class AdminDialog(ctk.CTkToplevel):
             except Exception as e:
                 log_step("Drucker-Warteschlange", False, str(e)[:80])
 
-            # 5. Kamera-Reset (Kundenmenü = keine Session aktiv; nächste
+            # 5. Firmen-WLAN-Selbstheilung (wirkt nur, wenn das Firmen-WLAN
+            #    sichtbar aber nicht verbunden ist — beim Kunden ein No-op)
+            try:
+                from src.utils.company_wlan import self_heal_company_wlan
+                status = self_heal_company_wlan(wait_seconds=15)
+                log_step("Firmen-WLAN", status in ("already_connected", "not_visible", "connected"), status)
+            except Exception as e:
+                log_step("Firmen-WLAN", False, str(e)[:80])
+
+            # 6. Kamera-Reset (Kundenmenü = keine Session aktiv; nächste
             #    Session initialisiert die Kamera frisch)
             try:
                 app = getattr(self.parent_window, '_photobooth_app', None)
@@ -1743,6 +1753,35 @@ class AdminDialog(ctk.CTkToplevel):
         self._add_checkbox(scroll, "Fertig-Button ausblenden", "hide_finish_button")
         self._add_checkbox(scroll, "Drucken aktivieren", "print_enabled")
 
+        # Werkstatt: WLAN-Radikal-Reparatur (Netzwerk-Werksreset + Neustart).
+        # Für Boxen, bei denen die automatische WLAN-Selbstheilung nicht reicht.
+        ctk.CTkLabel(
+            scroll,
+            text="🔧 Werkstatt: Netzwerk-Reparatur",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"]
+        ).pack(anchor="w", pady=(15, 2))
+
+        self._wlan_reset_armed = False
+        self._wlan_reset_btn = ctk.CTkButton(
+            scroll,
+            text="WLAN-Radikal-Reparatur (setzt Netzwerk zurück + Neustart)",
+            font=FONTS["small"],
+            height=36,
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["warning"],
+            text_color=COLORS["text_primary"],
+            command=self._on_wlan_radical_reset
+        )
+        self._wlan_reset_btn.pack(anchor="w", pady=(0, 5))
+
+        ctk.CTkLabel(
+            scroll,
+            text="Nur nutzen, wenn die Box sich trotz Schnellhilfe nicht ins Firmen-WLAN einbucht.",
+            font=FONTS["tiny"],
+            text_color=COLORS["text_muted"]
+        ).pack(anchor="w", pady=(0, 10))
+
         # Neue PIN
         pin_frame = ctk.CTkFrame(scroll, fg_color="transparent")
         pin_frame.pack(fill="x", pady=(15, 5))
@@ -2154,6 +2193,62 @@ class AdminDialog(ctk.CTkToplevel):
         if hasattr(self, "box_id_error"):
             self.box_id_error.configure(text="")
     
+    def _on_wlan_radical_reset(self):
+        """WLAN-Radikal-Reparatur mit Zwei-Klick-Bestätigung (3198-Menü).
+
+        Erster Klick scharfschalten, zweiter Klick führt aus: Netzwerk-
+        Werksreset (TCP/IP, Winsock, DNS, alle WLAN-Profile) + Firmen-WLAN-
+        Profil frisch anlegen, danach automatischer Windows-Neustart.
+        """
+        if not self._wlan_reset_armed:
+            self._wlan_reset_armed = True
+            self._wlan_reset_btn.configure(
+                text="Wirklich? Nochmal tippen — Box startet danach NEU!",
+                fg_color=COLORS["warning"],
+                text_color="#000000"
+            )
+            # Nach 10s ohne zweiten Klick wieder entschärfen
+            def _disarm():
+                if self._wlan_reset_armed:
+                    self._wlan_reset_armed = False
+                    try:
+                        self._wlan_reset_btn.configure(
+                            text="WLAN-Radikal-Reparatur (setzt Netzwerk zurück + Neustart)",
+                            fg_color=COLORS["bg_light"],
+                            text_color=COLORS["text_primary"]
+                        )
+                    except Exception:
+                        pass
+            self.after(10000, _disarm)
+            return
+
+        self._wlan_reset_armed = False
+        self._wlan_reset_btn.configure(text="Reparatur läuft...", state="disabled")
+        logger.info("3198-Menü: WLAN-Radikal-Reparatur bestätigt — starte")
+
+        def _worker():
+            import subprocess
+            try:
+                from src.utils.company_wlan import radical_network_reset
+                results = radical_network_reset()
+                summary = " | ".join(results)
+            except Exception as e:
+                summary = f"FEHLER: {e}"
+                logger.error(f"WLAN-Radikal-Reparatur fehlgeschlagen: {e}")
+
+            def _finish(text=summary):
+                try:
+                    self._wlan_reset_btn.configure(text=f"Fertig — Neustart in 10s... ({text[:60]})")
+                except Exception:
+                    pass
+                subprocess.Popen(
+                    ["shutdown", "/r", "/f", "/t", "10", "/c", "FexoBooth: Neustart nach WLAN-Radikal-Reparatur"],
+                    creationflags=0x08000000
+                )
+            self.after(0, _finish)
+
+        threading.Thread(target=_worker, daemon=True, name="wlan-radical-reset").start()
+
     def _create_templates_tab(self, parent):
         """Template-Einstellungen mit Datei-Dialogen"""
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")

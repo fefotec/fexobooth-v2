@@ -6,6 +6,33 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.22] - 2026-08-11 - Firmen-WLAN-Selbstheilung (47 stumme Boxen)
+
+> Anlass: 47 Flotten-Boxen melden sich nie im Dashboard, weil die WLAN-Anmeldung klemmt —
+> und ohne WLAN bekommen sie auch keine Updates (Teufelskreis). Das Mitarbeiter-Skript half
+> nur teilweise, weil das exportierte Profil-Passwort maschinengebunden verschlüsselt ist
+> (passt nur auf Boxen mit identischem Klon-Image).
+
+### Neu
+
+- **WLAN-Selbstheilung in der App** (`src/utils/company_wlan.py`): Beim Start prüft die Box,
+  ob das Firmen-WLAN im Funk SICHTBAR, aber nicht verbunden ist (= Werkstatt, Anmeldung
+  klemmt). Dann legt sie das Profil selbst frisch an — mit Klartext-Schlüssel (funktioniert
+  auf jedem Image) und den zwei entscheidenden Einstellungen: automatisch verbinden AN,
+  MAC-Randomisierung AUS — und verbindet. Beim Kunden ist das Netz nie sichtbar → dort
+  passiert nie etwas. Auch als neuer Schnellhilfe-Schritt „Firmen-WLAN".
+- **Installer richtet das Firmen-WLAN jetzt als Pflicht-Schritt ein** (still, kein Neustart
+  nötig; `setup/company_wlan_setup.ps1`) — durchbricht bei den 47 stummen Boxen den
+  Teufelskreis beim einmaligen USB-Update. Hotspot-Einrichtung ist im Installer jetzt
+  standardmäßig angehakt (vorher abgewählt!).
+- **3198-Menü: „WLAN-Radikal-Reparatur"** (Werkstatt, Zwei-Klick-Bestätigung): Netzwerk-
+  Werksreset (TCP/IP, Winsock, DNS, alle Profile) + Firmen-WLAN-Profil sofort frisch
+  anlegen (nie 0 Profile — der Gäste-Hotspot braucht mindestens eins!) + automatischer
+  Neustart. Zusätzlich `setup/werkstatt_netzwerk_reset.bat` für Boxen, auf denen die App
+  gar nicht startet.
+
+---
+
 ## [2.4.21] - 2026-08-07 - Boxen melden Event-Statistiken automatisch ans Dashboard
 
 ### Neu

@@ -61,6 +61,14 @@ Aufgabenliste mit Prioritäten.
   im Firmen-WLAN muss der Update-Dialog FRAGEN statt sofort zu installieren.
   Idee für später: Messwerte zusätzlich ans Monitoring/Dashboard melden (Box-Gesundheit
   vor Event-Versand sichtbar).
+- [ ] **Nachtest 2.4.22 (Werkstatt, idealerweise eine der 47 stummen Boxen):**
+  (1) Installer durchlaufen lassen → Schritt "Firmen-WLAN wird eingerichtet" + Log
+  `logs/company_wlan_setup.log`; Box haengt danach OHNE Neustart im fexon WLAN.
+  (2) App-Log: bei geklemmtem WLAN `WLAN-Selbstheilung: ... repariere Profil` →
+  `Erfolgreich mit Firmen-WLAN verbunden`; Box taucht im Dashboard auf.
+  (3) Schnellhilfe zeigt Schritt "Firmen-WLAN" im Log. (4) 3198-Menue → Allgemein →
+  WLAN-Radikal-Reparatur: 1. Klick warnt, 10s warten → entschaerft sich; 2x Klick →
+  Reset laeuft, Box startet neu, verbindet sich danach.
 - [ ] ⚠️ **Rollout-Hinweis Flotte:** Beim Update AUF 2.4.19 läuft noch das alte BAT der
   Vorversion → dort werden `_internal\BILDER`-Fotos noch gelöscht. Werkstatt-Anweisung:
   vor dem 2.4.19-Update Bilder ziehen (danach ist das Problem dauerhaft behoben).

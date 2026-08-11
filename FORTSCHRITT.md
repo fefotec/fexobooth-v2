@@ -4,6 +4,39 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-08-11 (nachmittags)
+
+### Firmen-WLAN-Selbstheilung gebaut — 47 stumme Boxen (Version 2.4.22)
+
+**Befund:** Dashboard zeigt 231x 2.4.14 (melden = WLAN ok, updaten beim naechsten
+Werkstatt-Start), aber **47x "Ohne Meldung"** = WLAN-Anmeldung klemmt → kein Heartbeat,
+kein OTA (Teufelskreis). Mitarbeiter-Skripte analysiert (hotspot-on.ps1, Profil-XML,
+2 BATs): Kern-Fix = sauberes Profil mit Auto-Verbinden AN + **MAC-Randomisierung AUS**;
+Schwaeche = exportiertes Passwort ist DPAPI-maschinengebunden (wirkt nur auf identischen
+Klon-Images — erklaert die Teil-Erfolge). Passwort von Christian erhalten.
+
+**Umsetzung (3 Ebenen + Werkzeug):**
+1. `src/utils/company_wlan.py`: Profil-Erzeugung mit key=clear (Template 1:1 wie die
+   funktionierende Mitarbeiter-XML inkl. SSID-Hex), `self_heal_company_wlan()` mit sicherem
+   Ausloeser "SSID sichtbar aber nicht verbunden" (sprachunabhaengiges netsh-Parsing:
+   SSID-Zeile in `show interfaces` erscheint nur bei bestehender Verbindung);
+   user=all mit Fallback user=current; `radical_network_reset()` legt nach dem
+   Profile-Loeschen SOFORT das Firmenprofil neu an (Lesson: Hotspot braucht >=1 Profil).
+2. App-Start: Selbstheilung im company_network-Worker VOR dem Firmen-WLAN-Check
+   (heilt auch OTA-aktualisierte Boxen); zusaetzlich Schnellhilfe-Schritt 5 "Firmen-WLAN".
+3. Installer: `setup/company_wlan_setup.ps1` als Pflicht-[Run]-Schritt (still, elevated,
+   kein Neustart noetig, Log company_wlan_setup.log); Hotspot-Postinstall-Haken jetzt
+   standardmaessig AN (war `unchecked` — erklaert nie eingerichtete Boxen!).
+4. 3198-Menue (Tab Allgemein): "WLAN-Radikal-Reparatur" mit Zwei-Klick-Bestaetigung
+   (10s-Entschaerfung), Worker-Thread, danach Auto-Neustart. Plus
+   `setup/werkstatt_netzwerk_reset.bat` (mit optionalem Umbenennen) fuer App-tote Boxen.
+
+`src.utils.company_wlan` in fexobooth.spec hiddenimports. Read-only-Tests auf Dev-PC
+bestanden (XML valide, Hex identisch zur Mitarbeiter-XML). Passwort liegt bewusst im
+privaten Repo (Modul + Setup-Skript, 2 Stellen) — Entscheidung Christian.
+
+---
+
 ## 2026-08-11
 
 ### Release v2.4.21 veroeffentlicht - Flotten-Rollout gestartet
