@@ -4,6 +4,24 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-08-11
+
+### Release v2.4.21 veroeffentlicht - Flotten-Rollout gestartet
+
+End-zu-End-Test bestanden (Log 085732 + DB-Gegenprobe): 10 Event-Statistiken der Test-Box
+korrekt im Dashboard an den Buchungen (booth_event_stats), Bilder in C:/FexoBooth/BILDER,
+Version 2.4.21 gemeldet. Windows-Update-Lockdown-Log geprueft: Skript (setup/
+disable_windows_update.ps1) wirkt seit 16.06. bei jedem Boot; die 2 WARNs (WaaSMedicSvc/
+DoSvc sc.exe Exit 5) sind bekannt-harmlos, Fallback greift.
+
+GitHub-Release v2.4.21 mit dem getesteten Build (11.08. 08:51) veroeffentlicht;
+Draft v2.4.20 + Tag geloescht. /releases/latest liefert v2.4.21 - Flotte updatet ab jetzt
+(Boxen <=2.4.14 noch still mit altem BAT -> Werkstatt-Regel aus Ankuendigung #68 gilt:
+Ruecklaeufer-Bilder sichern BEVOR die Box ins Firmen-WLAN kommt, bis die Flotte durch ist).
+Ankuendigung #68 auf "Ab sofort verteilt sich 2.4.21" aktualisiert.
+
+---
+
 ## 2026-08-07
 
 ### Event-Statistiken automatisch ans Dashboard + Release pausiert (2.4.21)
