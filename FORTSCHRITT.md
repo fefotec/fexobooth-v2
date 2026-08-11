@@ -4,6 +4,22 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-08-11 (spaetnachmittags) — Release v2.4.24 veroeffentlicht
+
+Nachtest 2.4.24 (`fexobooth_20260811_111604.log`) komplett sauber: Kamera-Waechter ohne Crash,
+Kamera beim Start automatisch gefunden, Admin-Kamera-Tab ohne 9s-Freeze (Enumeration im
+Hintergrund, nur ~0,6s Tab-Hitch), System-Test ERFOLGREICH mit Messwerten, Event-Wechsel auf
+NX-FR-141705 + volle Session + Druck fehlerfrei, WLAN-Selbstheilung + Statistiken ok.
+
+GitHub-Release **v2.4.24** mit dem getesteten Build (11.08. 10:59) veroeffentlicht
+(Sammel-Release v2.4.21→v2.4.24; 2.4.22/23 waren Test-Builds). /releases/latest liefert jetzt
+v2.4.24 — Flotte updatet ab jetzt. Dashboard-Ankuendigung #70 (high, 30 Tage): WLAN-
+Selbstheilung + stumme-Boxen-USB-Hinweis + Ruecklaeufer-Bilder-Regel. Uebergangsregel bleibt:
+Boxen <=2.4.21 verlieren beim Update noch keine Bilder (BILDER-Fix ist ab 2.4.19 drin), aber
+Boxen <=2.4.14 loeschen noch mit altem BAT -> vor Update Bilder sichern, bis Flotte durch ist.
+
+---
+
 ## 2026-08-11 (nachmittags) — Kamera-Wächter-Crash + Admin-Tab + Ladebalken (2.4.24)
 
 **Nachtest-Log 2.4.23** (`fexobooth_20260811_104550.log`): WLAN-Selbstheilung erneut perfekt
