@@ -302,6 +302,8 @@ class StartScreen(ctk.CTkFrame):
 
         # Loading-Overlay (wird über allem angezeigt während VLC lädt)
         self._loading_overlay = None
+        self._loading_progress = None
+        self._loading_anim_after_id = None
         self._loading_visible = False
         self._loading_shown_at = 0.0
         self._vlc_warmup_after_id = None
@@ -954,7 +956,10 @@ class StartScreen(ctk.CTkFrame):
                 text_color=COLORS["text_secondary"]
             ).pack(pady=(0, 20))
 
-        # Progress-Bar
+        # Progress-Bar — selbst-animiert (2.4.23): CTk's "indeterminate" ruckelt,
+        # sobald der Haupt-Thread beim Booten beschäftigt ist. Eine eigene
+        # after()-Schleife im Determinate-Modus läuft zuverlässig weiter und
+        # signalisiert klar "die Box arbeitet".
         self._loading_progress = ctk.CTkProgressBar(
             content,
             width=300,
@@ -962,10 +967,14 @@ class StartScreen(ctk.CTkFrame):
             fg_color=COLORS["bg_light"],
             progress_color=COLORS["primary"],
             corner_radius=3,
-            mode="indeterminate"
+            mode="determinate"
         )
         self._loading_progress.pack(pady=(0, 10))
-        self._loading_progress.start()
+        self._loading_progress.set(0.0)
+        self._loading_progress_pos = 0.0
+        self._loading_progress_dir = 1
+        self._loading_anim_after_id = None
+        self._animate_loading_bar()
 
         # Start-Button blockieren
         self.start_btn.configure(state="disabled")
@@ -978,6 +987,23 @@ class StartScreen(ctk.CTkFrame):
             self.update_idletasks()
         except Exception:
             pass
+
+    def _animate_loading_bar(self):
+        """Schiebt den Ladebalken im Ping-Pong (eigene Animation, ~11 fps)."""
+        if not self._loading_visible or self._loading_progress is None:
+            return
+        try:
+            self._loading_progress_pos += 0.06 * self._loading_progress_dir
+            if self._loading_progress_pos >= 1.0:
+                self._loading_progress_pos = 1.0
+                self._loading_progress_dir = -1
+            elif self._loading_progress_pos <= 0.0:
+                self._loading_progress_pos = 0.0
+                self._loading_progress_dir = 1
+            self._loading_progress.set(self._loading_progress_pos)
+        except Exception:
+            return
+        self._loading_anim_after_id = self.after(90, self._animate_loading_bar)
 
     def _schedule_vlc_warmup(self):
         """Startet den VLC-Warmup erst nach dem ersten sichtbaren UI-Frame."""
@@ -1009,13 +1035,22 @@ class StartScreen(ctk.CTkFrame):
 
     def _hide_loading_overlay(self):
         """Entfernt das Loading-Overlay"""
+        # Eigene Balken-Animation stoppen
+        self._loading_visible = False
+        if getattr(self, "_loading_anim_after_id", None) is not None:
+            try:
+                self.after_cancel(self._loading_anim_after_id)
+            except Exception:
+                pass
+            self._loading_anim_after_id = None
+        self._loading_progress = None
+
         if self._loading_overlay:
             try:
                 self._loading_overlay.destroy()
             except Exception:
                 pass
             self._loading_overlay = None
-        self._loading_visible = False
         self._loading_shown_at = 0.0
 
         if self._vlc_warmup_after_id is not None:

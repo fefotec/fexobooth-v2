@@ -2903,15 +2903,16 @@ class AdminDialog(ctk.CTkToplevel):
             justify="center"
         ).pack(pady=(5, 10))
 
-    def _get_available_cameras(self) -> List[str]:
-        """Ermittelt verfügbare Kameras mit echten Gerätenamen"""
+    def _get_available_cameras(self, camera_type: Optional[str] = None) -> List[str]:
+        """Ermittelt verfügbare Kameras mit echten Gerätenamen.
+
+        camera_type wird vom Aufrufer auf dem UI-Thread ermittelt und
+        übergeben (das Enumerieren selbst läuft in einem Worker-Thread —
+        dort darf kein Tk-Widget wie camera_type_dropdown gelesen werden).
+        """
         cameras = []
 
-        # Prüfen welcher Kamera-Typ ausgewählt ist
-        camera_type = "webcam"
-        if hasattr(self, 'camera_type_dropdown'):
-            camera_type = self.camera_type_dropdown.get()
-        else:
+        if camera_type is None:
             camera_type = self.config_data.get("camera_type", "webcam")
 
         if camera_type == "canon":
@@ -2971,14 +2972,60 @@ class AdminDialog(ctk.CTkToplevel):
     def _on_camera_type_change(self, choice):
         """Wird aufgerufen wenn Kamera-Typ gewechselt wird"""
         logger.info(f"Kamera-Typ gewechselt: {choice}")
+        self._camera_list_cache = None  # Typ gewechselt → Cache verwerfen, neu suchen
         self._refresh_cameras()
     
     def _refresh_cameras(self):
-        """Aktualisiert die Kamera-Liste"""
-        cameras = self._get_available_cameras()
-        self.camera_dropdown.configure(values=cameras)
-        if cameras:
-            self.camera_dropdown.set(cameras[0])
+        """Aktualisiert die Kamera-Liste — im HINTERGRUND (2.4.23).
+
+        Die Kamera-Suche (PowerShell-Geräte-Enumeration + cv2-Öffnungsversuche)
+        dauert auf dem Miix ~8s und lief bisher im UI-Thread → der Kamera-Tab
+        fror bei jedem Aufruf ~8s ein („Admin-Menü träge"). Jetzt läuft die
+        Suche in einem Daemon-Thread; solange zeigt das Dropdown „Suche
+        Kameras…". Ergebnis wird gecacht (nur einmal pro Dialog suchen).
+        """
+        # Gecachtes Ergebnis sofort verwenden (kein erneutes 8s-Freeze)
+        if getattr(self, "_camera_list_cache", None):
+            self.camera_dropdown.configure(values=self._camera_list_cache)
+            self.camera_dropdown.set(self._camera_list_cache[0])
+            return
+
+        if getattr(self, "_camera_scan_running", False):
+            return
+        self._camera_scan_running = True
+
+        # Kamera-Typ HIER (UI-Thread) lesen, nicht im Worker (kein Tk im Thread!)
+        camera_type = "webcam"
+        if hasattr(self, 'camera_type_dropdown'):
+            camera_type = self.camera_type_dropdown.get()
+        else:
+            camera_type = self.config_data.get("camera_type", "webcam")
+
+        try:
+            self.camera_dropdown.configure(values=["Suche Kameras…"])
+            self.camera_dropdown.set("Suche Kameras…")
+        except Exception:
+            pass
+
+        def _worker():
+            try:
+                cameras = self._get_available_cameras(camera_type)
+            except Exception as e:
+                logger.warning(f"Kamera-Suche fehlgeschlagen: {e}")
+                cameras = ["[0] Standard-Kamera"]
+
+            def _apply(cams=cameras):
+                self._camera_scan_running = False
+                self._camera_list_cache = cams
+                try:
+                    self.camera_dropdown.configure(values=cams)
+                    if cams:
+                        self.camera_dropdown.set(cams[0])
+                except Exception:
+                    pass
+            self.after(0, _apply)
+
+        threading.Thread(target=_worker, daemon=True, name="admin-cam-scan").start()
     
     def _add_checkbox(self, parent, label: str, key: str):
         """Fügt eine Checkbox hinzu"""

@@ -6,6 +6,29 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.23] - 2026-08-11 - Kamera-Suche im Hintergrund + Ladebalken bewegt sich wieder
+
+> Anlass: Nachtest-Log 2.4.22 — Box startete kurz „ohne Kamera" und fing sich dann selbst;
+> der Kamera-Tab im Admin-Menü fror ~8s pro Aufruf ein; der Ladebalken im Willkommensscreen
+> bewegte sich kaum. Alle drei haben dieselbe Wurzel: die Kamera-Suche (PowerShell-Geräte-
+> Enumeration) lief auf dem Haupt-/Startup-Thread und blockierte die Oberfläche.
+
+### Behoben
+
+- **Kamera-Suche blockiert nicht mehr die Oberfläche:**
+  - Beim Start läuft die Kamera-Auswahl jetzt im Hintergrund (früher bis ~16s Blockade beim
+    Kaltstart unter Last → Box startete kurz „ohne Kamera"). Der laufende Kamera-Wächter
+    korrigiert den Index, sobald die Kamera gefunden ist.
+  - Der **Kamera-Tab im Admin-Menü** sucht jetzt im Hintergrund (zeigt „Suche Kameras…") und
+    cacht das Ergebnis — vorher fror der Tab bei jedem Aufruf ~8s ein („Admin-Menü träge").
+- **Ladebalken im Willkommensscreen bewegt sich wieder:** Der eingebaute „indeterminate"-Modus
+  animiert nur bei freier Tk-Mainloop — beim Booten war der Haupt-Thread aber beschäftigt, der
+  Balken fror ein und zuckte erst kurz vor dem Verschwinden. Jetzt eine eigene, ressourcen-
+  schonende Ping-Pong-Animation, die zuverlässig „die Box arbeitet" signalisiert (Startscreen
+  per after-Schleife, Startup-Screen schrittweise bei jedem Boot-Schritt).
+
+---
+
 ## [2.4.22] - 2026-08-11 - Firmen-WLAN-Selbstheilung (47 stumme Boxen)
 
 > Anlass: 47 Flotten-Boxen melden sich nie im Dashboard, weil die WLAN-Anmeldung klemmt —

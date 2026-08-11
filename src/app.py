@@ -130,13 +130,20 @@ class PhotoboothApp:
         )
         self._pump_startup_loading_screen()
 
-        # Webcam: Automatisch beste EXTERNE Kamera wählen
-        # Interne Tablet-Kameras werden ignoriert (physisch verdeckt)
+        # Webcam: Automatisch beste EXTERNE Kamera wählen — im HINTERGRUND
+        # (2.4.23). Die Suche nutzt eine PowerShell-Geräte-Enumeration, die auf
+        # dem Miix beim Kaltstart unter Last bis ~16s braucht/timeoutet; früher
+        # blockierte das den Startup-Thread komplett (Ladebalken fror ein, Box
+        # startete zunächst „ohne Kamera"). Jetzt läuft es nebenher; der
+        # laufende Kamera-Wächter (_check_camera_status) korrigiert den Index,
+        # sobald die Kamera gefunden ist.
         if camera_type == "webcam":
-            try:
-                from src.camera.webcam import WebcamManager
-                available = WebcamManager.list_cameras()
-                if available:
+            def _auto_select_webcam():
+                try:
+                    from src.camera.webcam import WebcamManager
+                    available = WebcamManager.list_cameras()
+                    if not available:
+                        return
                     best_idx = WebcamManager.find_best_camera(available)
                     if best_idx >= 0:
                         current_idx = config.get("camera_index", 0)
@@ -145,11 +152,12 @@ class PhotoboothApp:
                             logger.info(f"Kamera Auto-Auswahl: [{best_idx}] {best_name} (statt [{current_idx}])")
                             config["camera_index"] = best_idx
                     else:
-                        # Keine externe Kamera → Index auf -1 setzen damit Warnung blinkt
                         logger.warning("⚠️ Keine externe Kamera gefunden! Interne Kamera wird NICHT verwendet.")
                         config["camera_index"] = -1
-            except Exception as e:
-                logger.debug(f"Kamera Auto-Auswahl fehlgeschlagen: {e}")
+                except Exception as e:
+                    logger.debug(f"Kamera Auto-Auswahl fehlgeschlagen: {e}")
+
+            threading.Thread(target=_auto_select_webcam, daemon=True, name="cam-autoselect").start()
         self._pump_startup_loading_screen()
 
         self.usb_manager = get_shared_usb_manager()
@@ -484,6 +492,12 @@ class PhotoboothApp:
         )
         self._startup_loading_status_label.pack(pady=(0, 25))
 
+        # Determinate Bar, die wir SELBST bei jedem Startschritt weiterschieben
+        # (2.4.23). Der eingebaute "indeterminate"-Modus von CTk animiert nur
+        # bei laufender, freier Tk-Mainloop — die gibt es beim Start aber noch
+        # nicht (nur manuelle update()-Pumps). Deshalb fror der Balken ein und
+        # zuckte erst kurz vor dem Verschwinden. Manuelles Ping-Pong wirkt
+        # zuverlässig "die Box arbeitet" und kostet fast nichts.
         progress = ctk.CTkProgressBar(
             content,
             width=300,
@@ -491,10 +505,13 @@ class PhotoboothApp:
             fg_color=COLORS["bg_light"],
             progress_color=COLORS["primary"],
             corner_radius=3,
-            mode="indeterminate",
+            mode="determinate",
         )
         progress.pack(pady=(0, 10))
-        progress.start()
+        progress.set(0.0)
+        self._startup_loading_progress = progress
+        self._startup_loading_pos = 0.0
+        self._startup_loading_dir = 1
 
         self._startup_loading_frame = frame
         self._refresh_startup_loading_screen()
@@ -535,6 +552,20 @@ class PhotoboothApp:
     def _pump_startup_loading_screen(self):
         if self._startup_loading_frame is None:
             return
+        # Ladebalken bei jedem Startschritt ein Stück weiterschieben (Ping-Pong)
+        try:
+            bar = getattr(self, "_startup_loading_progress", None)
+            if bar is not None:
+                self._startup_loading_pos += 0.14 * self._startup_loading_dir
+                if self._startup_loading_pos >= 1.0:
+                    self._startup_loading_pos = 1.0
+                    self._startup_loading_dir = -1
+                elif self._startup_loading_pos <= 0.0:
+                    self._startup_loading_pos = 0.0
+                    self._startup_loading_dir = 1
+                bar.set(self._startup_loading_pos)
+        except Exception:
+            pass
         try:
             self.root.update_idletasks()
             self.root.update()

@@ -4,6 +4,32 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-08-11 (mittags) — Kamera-Suche entkoppelt + Ladebalken-Fix (2.4.23)
+
+**Nachtest-Log 2.4.22** (`fexobooth_20260811_101834.log`) ausgewertet: WLAN-Selbstheilung
+perfekt (Setup-Log: 4 Alt-Profile entfernt, in 3s verbunden), Statistiken/BILDER/USB/Session
+alles sauber. **3 Befunde, eine Wurzel:** Die Webcam-Enumeration (PowerShell C#-Add-Type +
+cv2-Öffnungsversuche, ~8-16s) lief auf dem UI-/Startup-Thread:
+1. Kaltstart unter 98% CPU → Enumeration-Timeout → Box kurz „ohne Kamera" (fing sich via
+   Hintergrund-`_check_camera_status` aus 2.4.17 nach ~1min selbst — daher „dann ging es").
+2. Admin „Kamera"-Tab: 5x hintereinander `UI-HITCH ~8200ms` (bei jedem Enumerieren) →
+   „Admin-Menü träge" (war vorher schon so, jetzt via Hitch-Log bewiesen).
+3. Willkommens-Ladebalken bewegte sich kaum: CTk-`indeterminate` animiert nur bei freier
+   Mainloop; beim Booten blockiert → fror ein.
+
+**Fixes:**
+- `app.py __init__`: Webcam-Auto-Auswahl in Daemon-Thread (`cam-autoselect`) statt 16s-Block.
+- `admin.py _refresh_cameras`: Enumeration in Daemon-Thread (`admin-cam-scan`), „Suche
+  Kameras…"-Platzhalter, Ergebnis-Cache `_camera_list_cache` (Cache-Reset bei Typ-Wechsel);
+  `_get_available_cameras(camera_type)` bekommt den Typ übergeben (kein Tk-Zugriff im Thread).
+- Ladebalken: beide Screens auf determinate + eigene Ping-Pong-Animation. `start.py` per
+  `after(90ms)`-Schleife (`_animate_loading_bar`, sauber in `_hide_loading_overlay` gestoppt),
+  `app.py`-Startup-Screen schrittweise in `_pump_startup_loading_screen`.
+
+Kompiliert; reine UI-/Threading-Verbesserung, WLAN-/Statistik-Stand von 2.4.22 unberührt.
+
+---
+
 ## 2026-08-11 (nachmittags)
 
 ### Firmen-WLAN-Selbstheilung gebaut — 47 stumme Boxen (Version 2.4.22)
