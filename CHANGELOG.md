@@ -6,6 +6,32 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.24] - 2026-08-11 - Kamera-Absturz behoben + Admin-Kamera-Tab + Ladebalken (Nachschärfung)
+
+> Anlass: Nachtest-Log 2.4.23 — der Kamera-Wächter stürzte beim Start ab (und blieb danach
+> tot → Box erkannte die Kamera erst nach manuellem Eingriff), der Admin-Kamera-Tab fror
+> weiterhin ~9s ein, und der Ladebalken bewegte sich weiter erst spät.
+
+### Behoben
+
+- **KRITISCH: Kamera-Wächter stürzte beim Start ab und blieb danach tot.** Der Hintergrund-
+  Prüf-Thread rief `root.after()` auf, bevor die Tk-Hauptschleife lief → `RuntimeError: main
+  thread is not in main loop` → der Thread starb und mit ihm die automatische Kamera-
+  Wiederherstellung. Folge: Fand die Kamera-Suche beim Kaltstart (unter Last) nichts, blieb die
+  Box „ohne Kamera", bis jemand ins Admin-Menü ging. Jetzt startet die Prüfung erst nach dem
+  Mainloop-Start, und die Ergebnis-Rückgabe ist crash-sicher (Retry). Die Kamera erholt sich
+  damit wieder von selbst innerhalb ~15s.
+- **Admin-Kamera-Tab fror weiterhin ~9s ein:** Die Kamera-Suche lief bei der Tab-Erstellung
+  noch synchron (2.4.23 hatte nur den Refresh-Button entkoppelt). Jetzt lädt der Tab sofort mit
+  „Suche Kameras…" und füllt die Liste aus dem Hintergrund; die zuvor gewählte Kamera bleibt
+  markiert.
+- **Ladebalken bewegt sich jetzt von Anfang an:** Der Balken läuft im Startup-Screen monoton
+  vorwärts (statt Ping-Pong) mit zusätzlichen Schritten während des StartScreen-Aufbaus. Der
+  Flask-Server-Start (blockiert ~1,5s) wandert von 4s auf 7s nach dem Boot — er landet damit
+  hinter dem Ladescreen statt mitten drin, wo er den Balken einfrieren ließ.
+
+---
+
 ## [2.4.23] - 2026-08-11 - Kamera-Suche im Hintergrund + Ladebalken bewegt sich wieder
 
 > Anlass: Nachtest-Log 2.4.22 — Box startete kurz „ohne Kamera" und fing sich dann selbst;

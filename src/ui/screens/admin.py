@@ -2819,26 +2819,23 @@ class AdminDialog(ctk.CTkToplevel):
             text_color=COLORS["text_secondary"]
         ).pack(anchor="w", pady=(5, 5))
         
-        # Verfügbare Kameras ermitteln
-        cameras = self._get_available_cameras()
-        current_index = self.config_data.get("camera_index", 0)
-        
+        # Dropdown erst mit Platzhalter anlegen — die eigentliche (langsame)
+        # Kamera-Suche läuft im Hintergrund, damit die Tab-Erstellung nicht
+        # ~9s einfriert (Feld-Befund 2026-08-11). _refresh_cameras füllt das
+        # Dropdown, sobald die Suche fertig ist (oder sofort aus dem Cache).
+        self._camera_dropdown_current_index = self.config_data.get("camera_index", 0)
+
         self.camera_dropdown = ctk.CTkOptionMenu(
             scroll,
-            values=cameras if cameras else ["(Keine Kamera gefunden)"],
+            values=["Suche Kameras…"],
             width=350,
             fg_color=COLORS["bg_card"],
             button_color=COLORS["primary"],
             button_hover_color=COLORS["primary_hover"]
         )
-        
-        # Aktuelle Kamera setzen
-        for cam in cameras:
-            if cam.startswith(f"[{current_index}]"):
-                self.camera_dropdown.set(cam)
-                break
-        
+        self.camera_dropdown.set("Suche Kameras…")
         self.camera_dropdown.pack(anchor="w", pady=(0, 10))
+        self._refresh_cameras()
         
         # Refresh-Button
         ctk.CTkButton(
@@ -2987,7 +2984,7 @@ class AdminDialog(ctk.CTkToplevel):
         # Gecachtes Ergebnis sofort verwenden (kein erneutes 8s-Freeze)
         if getattr(self, "_camera_list_cache", None):
             self.camera_dropdown.configure(values=self._camera_list_cache)
-            self.camera_dropdown.set(self._camera_list_cache[0])
+            self.camera_dropdown.set(self._select_current_camera(self._camera_list_cache))
             return
 
         if getattr(self, "_camera_scan_running", False):
@@ -3020,12 +3017,21 @@ class AdminDialog(ctk.CTkToplevel):
                 try:
                     self.camera_dropdown.configure(values=cams)
                     if cams:
-                        self.camera_dropdown.set(cams[0])
+                        self.camera_dropdown.set(self._select_current_camera(cams))
                 except Exception:
                     pass
             self.after(0, _apply)
 
         threading.Thread(target=_worker, daemon=True, name="admin-cam-scan").start()
+
+    def _select_current_camera(self, cams: List[str]) -> str:
+        """Wählt aus der Kameraliste die aktuell konfigurierte (Index) aus."""
+        idx = getattr(self, "_camera_dropdown_current_index",
+                      self.config_data.get("camera_index", 0))
+        for cam in cams:
+            if cam.startswith(f"[{idx}]"):
+                return cam
+        return cams[0] if cams else "(Keine Kamera gefunden)"
     
     def _add_checkbox(self, parent, label: str, key: str):
         """Fügt eine Checkbox hinzu"""

@@ -297,12 +297,14 @@ class PhotoboothApp:
             self.root.after(500, lambda: self._show_event_change_dialog(booking_id))
 
         # Galerie-Server starten wenn aktiviert (NACH Settings-Anwendung!).
-        # BEWUSST verzoegert: Der Flask-Server laedt sonst GLEICHZEITIG mit dem
-        # ersten Begruessungs-Video -> GIL-Contention -> der VLC-Status-Check auf
-        # dem Main-Thread blockiert (Symptom: Box "friert nach dem ersten Video
-        # ein", ein Touch loest es wieder). 4s spaeter ist die Wiedergabe stabil.
-        # Hotspot/Server kommen nur Sekunden spaeter hoch (unkritisch).
-        self.root.after(4000, self._init_gallery_server)
+        # BEWUSST verzoegert (2.4.24: 4s -> 7s): Der Flask-Server-Start blockiert
+        # den Main-Thread ~1,5s. Bei 4s landete das MITTEN im Willkommens-/Lade-
+        # screen -> der Ladebalken fror dort ein ("bewegt sich erst spaet").
+        # 7s spaeter ist der Ladescreen (VLC-Warmup) typisch schon weg und der
+        # Balken konnte frei durchlaufen; der Server-Start blockiert dann nur den
+        # statischen Startbildschirm (unsichtbar). Hotspot/Server sind in den
+        # ersten Sekunden ohnehin nicht noetig (kein Gast koppelt so schnell).
+        self.root.after(7000, self._init_gallery_server)
 
         # Developer Mode: Performance Overlay
         self._init_performance_overlay()
@@ -552,17 +554,14 @@ class PhotoboothApp:
     def _pump_startup_loading_screen(self):
         if self._startup_loading_frame is None:
             return
-        # Ladebalken bei jedem Startschritt ein Stück weiterschieben (Ping-Pong)
+        # Ladebalken bei jedem Startschritt monoton nach vorn schieben — das
+        # liest sich klar als „Fortschritt beim Booten" (0 → ~92%; den Rest
+        # füllt der Übergang zum StartScreen). Bewusst monoton statt Ping-Pong,
+        # damit sich der Balken von Anfang an sichtbar vorwärts bewegt.
         try:
             bar = getattr(self, "_startup_loading_progress", None)
             if bar is not None:
-                self._startup_loading_pos += 0.14 * self._startup_loading_dir
-                if self._startup_loading_pos >= 1.0:
-                    self._startup_loading_pos = 1.0
-                    self._startup_loading_dir = -1
-                elif self._startup_loading_pos <= 0.0:
-                    self._startup_loading_pos = 0.0
-                    self._startup_loading_dir = 1
+                self._startup_loading_pos = min(0.92, self._startup_loading_pos + 0.08)
                 bar.set(self._startup_loading_pos)
         except Exception:
             pass
@@ -1252,9 +1251,13 @@ class PhotoboothApp:
         self.screens = {}
         self.current_screen = None
         self.current_screen_name = None
-        
+
+        # Ladebalken auch während des (schwereren) StartScreen-Aufbaus bewegen
+        self._pump_startup_loading_screen()
+
         # Start-Screen anzeigen
         self.show_screen("start")
+        self._pump_startup_loading_screen()
     
     def _create_top_bar(self) -> ctk.CTkFrame:
         """Erstellt die Top-Bar mit Logo und Status"""
@@ -2414,6 +2417,15 @@ class PhotoboothApp:
           Session-/Vorinitialisierung (EDSDK ist NICHT thread-safe, und eine
           DirectShow-Webcam verträgt keine zwei gleichzeitigen Öffner).
         """
+        # Erst prüfen, wenn die Tk-Hauptschleife wirklich läuft. Sonst kann der
+        # Probe-Thread `root.after()` aufrufen, bevor die Mainloop aktiv ist →
+        # RuntimeError "main thread is not in main loop", der Thread stirbt und
+        # damit die gesamte automatische Kamera-Wiederherstellung (Feld-Crash
+        # 2026-08-11). Bis dahin nur neu terminieren (Main-Thread, sicher).
+        if not getattr(self, "_mainloop_started", False):
+            self.root.after(1000, self._check_camera_status)
+            return
+
         if getattr(self, "_camera_check_running", False):
             self.root.after(2000, self._check_camera_status)
             return
@@ -2517,10 +2529,21 @@ class PhotoboothApp:
         except Exception:
             problem_text = t(self.config, "topbar.camera_error")
 
-        # Ergebnis zurück auf den UI-Thread (Config-Änderung + Label-Update)
-        self.root.after(
-            0, lambda p=problem_text, idx=found_webcam_index: self._on_camera_status_result(p, idx)
-        )
+        # Ergebnis zurück auf den UI-Thread (Config-Änderung + Label-Update).
+        # Crash-sicher: Läuft die Mainloop (noch) nicht, würde root.after() aus
+        # diesem Thread eine RuntimeError werfen und die Kamera-Prüfung dauerhaft
+        # beenden. Deshalb bei Bedarf kurz warten und erneut versuchen.
+        for _attempt in range(30):
+            try:
+                self.root.after(
+                    0, lambda p=problem_text, idx=found_webcam_index: self._on_camera_status_result(p, idx)
+                )
+                return
+            except RuntimeError:
+                time.sleep(0.2)
+        # Konnte nicht zustellen → Flag zurücksetzen, damit die Prüfung
+        # (vom Main-Thread neu geplant) nicht dauerhaft blockiert bleibt.
+        self._camera_check_running = False
 
     def _on_camera_status_result(self, problem_text, found_webcam_index):
         """UI-Thread: Ergebnis der Hintergrund-Prüfung anzeigen + neu planen."""

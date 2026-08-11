@@ -4,6 +4,32 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-08-11 (nachmittags) — Kamera-Wächter-Crash + Admin-Tab + Ladebalken (2.4.24)
+
+**Nachtest-Log 2.4.23** (`fexobooth_20260811_104550.log`): WLAN-Selbstheilung erneut perfekt
+(Setup-Log), Statistiken/BILDER/Session ok. Drei Befunde:
+
+1. **KRITISCH — `_camera_status_probe` Crash:** `RuntimeError: main thread is not in main loop`
+   (Thread `camera-check`, 10:45:58). Der Probe-Thread rief `root.after()` VOR Mainloop-Start
+   auf → Thread starb → `_on_camera_status_result` (reschedule + Flag-Reset) lief nie → die
+   periodische Kamera-Prüfung war DAUERHAFT tot. Kaltstart-Enum (cam-autoselect, unter 99% CPU
+   + CompatTelRunner) timeoutete → Index -1 → Box blieb kameralos bis manueller Admin-Eingriff.
+   **Fix:** `_check_camera_status` spawnt den Thread erst wenn `_mainloop_started`; die
+   Ergebnis-Zustellung `root.after(0,…)` ist mit Retry/try-except gegen die RuntimeError
+   abgesichert (Flag-Reset im Fehlerfall, damit die Prüfung nie hängen bleibt).
+2. **Admin-Kamera-Tab fror weiter ~9s ein** (`UI-HITCH ~9597ms`, `~8625ms`): 2.4.23 hatte nur
+   `_refresh_cameras` (Button) entkoppelt, aber `_create_camera_tab` rief `_get_available_cameras()`
+   bei Tab-Erstellung synchron. **Fix:** Dropdown startet mit „Suche Kameras…", `_refresh_cameras`
+   (Hintergrund + Cache) füllt es; neue `_select_current_camera()` markiert den aktiven Index.
+3. **Ladebalken bewegt sich erst spät:** Haupt-Thread beim Boot in ~1s-Blöcken blockiert (v.a.
+   Flask-Server-Start), jede Tk-Animation friert mit ein. **Fix:** Startup-Balken monoton (statt
+   Ping-Pong) + Extra-Pumps um `show_screen("start")`; `_init_gallery_server`-Delay 4s→7s, damit
+   der blockierende Server-Start hinter dem Ladescreen liegt statt mittendrin.
+
+Kompiliert. `cam-autoselect` (2.4.23) berührt kein Tk → unproblematisch.
+
+---
+
 ## 2026-08-11 (mittags) — Kamera-Suche entkoppelt + Ladebalken-Fix (2.4.23)
 
 **Nachtest-Log 2.4.22** (`fexobooth_20260811_101834.log`) ausgewertet: WLAN-Selbstheilung
