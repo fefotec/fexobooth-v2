@@ -14,6 +14,7 @@ Ablauf beim App-Start (Background-Thread):
 """
 
 import json
+import random
 import re
 import socket
 import subprocess
@@ -29,6 +30,15 @@ logger = get_logger(__name__)
 
 MONITORING_HTTP_TIMEOUT = 3
 DEFAULT_MONITORING_TOKEN = "fexobooth-v2-monitoring-X2KWF8ZS5Ab4s1hy2sevRlaxkkGti5glvSZhcSpWh5o"
+
+# Heartbeat-Zustellung (2.4.25): Direkt nach dem WLAN-Verbinden ist die
+# Namensauflösung (DNS) oft noch nicht bereit (der Box-eigene Hotspot kommt
+# gleichzeitig hoch) → der EINE Startversuch schlug fehl und die Box meldete
+# sich bis zum nächsten Neustart nie (Feld-Logs 2026-08-11). Deshalb: mehrere
+# Versuche mit wachsendem Abstand + danach ein wiederkehrender Heartbeat.
+MONITORING_RETRY_DELAYS = [20, 30, 45, 60, 90]  # Sekunden zwischen den Startversuchen
+MONITORING_PERIODIC_SECONDS = 900               # danach alle ~15 min erneut melden
+MONITORING_PERIODIC_JITTER = 120                # ± Zufallsstreuung gegen Gleichzeitigkeit
 
 
 def get_active_ssid() -> Optional[str]:
@@ -100,27 +110,32 @@ def _get_booking_id(app=None) -> str:
     return str(booking_id or "").strip()
 
 
-def _send_monitoring_heartbeat(config: Dict[str, Any], ssid: str, app=None) -> None:
+def _send_monitoring_heartbeat(config: Dict[str, Any], ssid: str, app=None):
     """Sendet einen kurzen Software-Heartbeat ans Dashboard.
 
     Läuft nur mit expliziter 3-stelliger box_id und Endpoint. Der Token ist als
     Fallback eingebaut, damit keine Box einzeln provisioniert werden muss.
     Fehler werden bewusst nicht in den UI-Fluss getragen, damit Kundenbetrieb
     und Startzeit nicht von Netzwerk oder Dashboard abhängen.
+
+    Rückgabe (für die Retry-/Wiederhol-Logik im Aufrufer):
+    - True  = erfolgreich gemeldet
+    - False = Netzwerk-/DNS-Fehler (lohnt einen erneuten Versuch)
+    - None  = Konfig fehlt oder Dashboard hat abgelehnt (Retry sinnlos)
     """
     if not config.get("monitoring_enabled", True):
         logger.debug("Monitoring: Deaktiviert")
-        return
+        return None
 
     box_id = str(config.get("box_id", "")).strip()
     if not re.fullmatch(r"\d{3}", box_id):
         logger.debug("Monitoring: Keine gültige 3-stellige Box-ID gesetzt — übersprungen")
-        return
+        return None
 
     endpoint = str(config.get("monitoring_endpoint", "")).strip()
     if not endpoint:
         logger.debug("Monitoring: monitoring_endpoint fehlt — übersprungen")
-        return
+        return None
     token = str(config.get("monitoring_token", "")).strip() or DEFAULT_MONITORING_TOKEN
 
     try:
@@ -174,6 +189,7 @@ def _send_monitoring_heartbeat(config: Dict[str, Any], ssid: str, app=None) -> N
             response = urlopen(request, timeout=MONITORING_HTTP_TIMEOUT)
         with response:
             logger.info(f"Monitoring: Version {version} für Box-ID {box_id} gemeldet")
+        return True
     except HTTPError as e:
         try:
             error_body = e.read().decode("utf-8", errors="replace").strip()
@@ -181,10 +197,13 @@ def _send_monitoring_heartbeat(config: Dict[str, Any], ssid: str, app=None) -> N
             error_body = ""
         details = f": {error_body[:300]}" if error_body else ""
         logger.warning(f"Monitoring: Dashboard lehnt Meldung ab (HTTP {e.code}){details}")
+        return None  # Server erreicht, aber abgelehnt → kurzfristiger Retry sinnlos
     except (URLError, TimeoutError, OSError) as e:
-        logger.debug(f"Monitoring: Dashboard nicht erreichbar — übersprungen ({e})")
+        logger.debug(f"Monitoring: Dashboard nicht erreichbar — Retry folgt ({e})")
+        return False  # Netzwerk/DNS noch nicht bereit → erneut versuchen
     except Exception as e:
         logger.debug(f"Monitoring: Heartbeat fehlgeschlagen — übersprungen ({e})")
+        return False
 
 
 def check_and_auto_update(
@@ -255,7 +274,16 @@ def check_and_auto_update(
 
         logger.info(f"Firmennetzwerk: Firmen-WLAN erkannt ('{ssid}')")
 
-        _send_monitoring_heartbeat(config, ssid, app)
+        # Heartbeat mit Wiederholung: Der erste Versuch scheitert oft an noch
+        # nicht bereitem DNS (WLAN gerade verbunden + Hotspot startet). Deshalb
+        # mehrere Versuche mit wachsendem Abstand, bis es klappt.
+        _heartbeat_with_retry(config, ssid, app, whitelist)
+
+        # Danach dauerhaft in Intervallen erneut melden (mit Zufallsstreuung,
+        # damit sich nicht alle Boxen exakt gleichzeitig melden). So taucht eine
+        # Box auch dann im Dashboard auf, wenn DNS beim Start kurz gehakt hat.
+        if monitoring_enabled:
+            _start_periodic_monitoring(config, app, whitelist)
 
         if not update_enabled:
             logger.debug("Auto-Update: Deaktiviert — nur Monitoring geprüft")
@@ -306,6 +334,61 @@ def check_and_auto_update(
 
     t = threading.Thread(target=worker, name="AutoUpdateCheck", daemon=True)
     t.start()
+
+
+def _heartbeat_with_retry(config, ssid, app, whitelist) -> bool:
+    """Sendet den Monitoring-Heartbeat und wiederholt bei Netzwerk-/DNS-Fehler.
+
+    Bricht ab, sobald es klappt (True), das Dashboard ablehnt/Konfig fehlt
+    (None → False), oder die Box das Firmen-WLAN verlassen hat. Läuft im
+    bereits vorhandenen Background-Thread — blockiert die UI nicht.
+    """
+    for attempt, delay in enumerate([0] + MONITORING_RETRY_DELAYS, start=1):
+        if delay:
+            time.sleep(delay)
+            # Vor jedem erneuten Versuch prüfen, ob wir noch im Firmen-WLAN sind
+            current = get_active_ssid()
+            if not is_company_wifi(current, whitelist):
+                logger.debug("Monitoring: Firmen-WLAN verlassen — Retry gestoppt")
+                return False
+            ssid = current
+        result = _send_monitoring_heartbeat(config, ssid, app)
+        if result is True:
+            if attempt > 1:
+                logger.info(f"Monitoring: Erfolgreich gemeldet nach {attempt} Versuch(en)")
+            return True
+        if result is None:
+            return False  # Konfig fehlt oder Dashboard abgelehnt → nicht weiter versuchen
+        # result is False → DNS/Netzwerk noch nicht bereit, nächster Versuch
+    logger.info("Monitoring: Nach allen Startversuchen nicht zugestellt — der wiederkehrende Heartbeat versucht es weiter")
+    return False
+
+
+def _start_periodic_monitoring(config, app, whitelist) -> None:
+    """Startet einen Daemon-Thread, der dauerhaft in Intervallen meldet.
+
+    So bleibt die Box im Dashboard aktuell und meldet sich auch, wenn der
+    Start-Heartbeat nie durchkam (z.B. DNS beim Boot dauerhaft zu langsam).
+    Nur bei bestehendem Firmen-WLAN, mit Zufallsstreuung gegen Gleichzeitigkeit.
+    """
+    def loop():
+        while True:
+            time.sleep(MONITORING_PERIODIC_SECONDS + random.randint(-MONITORING_PERIODIC_JITTER, MONITORING_PERIODIC_JITTER))
+            ssid = get_active_ssid()
+            if not is_company_wifi(ssid, whitelist):
+                continue  # nicht im Firmen-WLAN (beim Kunden) → still weiterschlafen
+            _send_monitoring_heartbeat(config, ssid, app)
+
+    # Idempotent: pro Prozess nur einen periodischen Thread starten
+    global _periodic_monitoring_started
+    if _periodic_monitoring_started:
+        return
+    _periodic_monitoring_started = True
+    threading.Thread(target=loop, name="MonitoringPeriodic", daemon=True).start()
+    logger.info(f"Monitoring: Wiederkehrende Meldung aktiv (~alle {MONITORING_PERIODIC_SECONDS // 60} min)")
+
+
+_periodic_monitoring_started = False
 
 
 def trigger_monitoring_heartbeat_now(app=None, config: Optional[Dict[str, Any]] = None) -> None:

@@ -4,6 +4,28 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-08-12 — Dashboard-Meldung mit Wiederholung (Boxen meldeten sich nur einmal) (2.4.25)
+
+**Feld-Befund** (Logs 11.08. Box 188/043/102 von D:\): Boxen liefen 25+ min im Firmen-WLAN,
+meldeten sich aber NIE im Dashboard. Ursache im Log eindeutig: Der einzige Melde-Versuch
+~15 s nach Start scheiterte an `getaddrinfo failed` (Errno 11001) — DNS direkt nach dem
+WLAN-Verbinden + gleichzeitigem Hotspot-Start noch nicht bereit. `check_and_auto_update`-Worker
+lief EINMALIG (`time.sleep(15)` → 1 Heartbeat → Ende), KEIN Retry, KEIN periodischer Heartbeat.
+Box 188: 25 min online, 1 Versuch 14:30:02 (DNS-Fehler), danach Funkstille.
+
+**Fix (`src/company_network.py`):**
+- `_send_monitoring_heartbeat` gibt jetzt True/False/None zurück (Erfolg / Netz-DNS-Fehler
+  retrybar / Konfig-fehlt-oder-abgelehnt).
+- `_heartbeat_with_retry`: Startversuche nach 0/20/30/45/60/90 s, prüft vor jedem Retry, ob
+  noch im Firmen-WLAN; stoppt bei Erfolg oder Ablehnung.
+- `_start_periodic_monitoring`: Daemon-Thread meldet danach alle ~15 min (± 120 s Jitter),
+  nur bei bestehendem Firmen-WLAN; idempotent (ein Thread pro Prozess).
+- Jitter verteilt gleichzeitig startende Boxen → Christians „5-6 Boxen gleichzeitig"-Sorge ist
+  unkritisch: Payload ist winzig, Laravel-Endpoint macht nur Lookup+Upsert.
+Headless getestet (Retry bis Erfolg, Sofort-Stopp bei Ablehnung).
+
+---
+
 ## 2026-08-11 (spaetnachmittags) — Release v2.4.24 veroeffentlicht
 
 Nachtest 2.4.24 (`fexobooth_20260811_111604.log`) komplett sauber: Kamera-Waechter ohne Crash,

@@ -6,6 +6,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.25] - 2026-08-12 - Dashboard-Meldung mit Wiederholung (Boxen meldeten sich nur einmal)
+
+> Anlass: Feld-Logs 11.08. (Boxen 188/043/102) — die Boxen liefen 25+ Minuten im Firmen-WLAN,
+> meldeten sich aber NIE im Dashboard: Der einzige Melde-Versuch ~15 s nach dem Start scheiterte
+> an noch nicht bereitem DNS (`getaddrinfo failed`), direkt nach dem WLAN-Verbinden und dem
+> gleichzeitigen Hochfahren des Box-eigenen Hotspots. Es gab keinen zweiten Versuch.
+
+### Behoben
+
+- **Boxen melden sich jetzt zuverlässig ans Dashboard:**
+  - **Wiederholversuche beim Start:** Scheitert der erste Heartbeat an Netzwerk/DNS, versucht es
+    die Box mehrfach mit wachsendem Abstand (nach 20/30/45/60/90 s), bis es klappt — überbrückt
+    das kurze DNS-Loch nach dem WLAN-Verbinden.
+  - **Wiederkehrende Meldung:** Danach meldet sich die Box dauerhaft ~alle 15 Minuten erneut
+    (mit Zufallsstreuung), solange sie im Firmen-WLAN ist. So taucht sie auch auf, wenn der Start
+    komplett daneben ging, und der Dashboard-Status bleibt aktuell.
+  - Die Zufallsstreuung verteilt gleichzeitig startende Boxen automatisch — mehrere Boxen im
+    selben WLAN sind unkritisch (die Meldung ist winzig; der Server verkraftet das mühelos).
+
+---
+
 ## [2.4.24] - 2026-08-11 - Kamera-Absturz behoben + Admin-Kamera-Tab + Ladebalken (Nachschärfung)
 
 > Anlass: Nachtest-Log 2.4.23 — der Kamera-Wächter stürzte beim Start ab (und blieb danach
