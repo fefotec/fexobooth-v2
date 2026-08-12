@@ -4,6 +4,15 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-08-12 — Release v2.4.25 veroeffentlicht
+
+Build lokal erstellt (build_installer.bat) + GitHub-Release **v2.4.25** mit dem OTA-ZIP
+veroeffentlicht. Auf Wunsch Christian direkt raus (ohne vorherigen Box-Test; Fix ist headless
+getestet + rein additiv am Monitoring). /releases/latest = v2.4.25, Flotte updatet ab jetzt.
+Nachtest-Logs folgen von Christian.
+
+---
+
 ## 2026-08-12 — Dashboard-Meldung mit Wiederholung (Boxen meldeten sich nur einmal) (2.4.25)
 
 **Feld-Befund** (Logs 11.08. Box 188/043/102 von D:\): Boxen liefen 25+ min im Firmen-WLAN,
