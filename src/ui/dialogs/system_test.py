@@ -439,17 +439,26 @@ class SystemTestDialog(ctk.CTkToplevel):
             logger.debug(f"System-Test: Lastmessung fehlgeschlagen: {e}")
 
     def _step_init_camera(self):
-        """Schritt 2: Kamera initialisieren + Liefergeschwindigkeit messen"""
+        """Schritt 2: Kamera initialisieren + Liefergeschwindigkeit messen.
+
+        WICHTIG (2.4.26): Die Kamera wird in der PREVIEW-Auflösung geöffnet —
+        exakt wie im echten Betrieb. Früher öffnete der Test direkt in voller
+        Foto-Auflösung (1920x1080). Das ist NICHT der normale Ablauf (dort ist
+        die Vorschau 640x480 und 1080p kommt nur kurz pro Foto) und war auf
+        älteren C920-Webcams sehr langsam (~7,6s → Fehlalarm „Kamera langsam")
+        und teils sogar hängend (Box friert beim Kalt-Öffnen in 1080p ein,
+        Feld-Log 2026-08-13). Das eigentliche Foto nutzt weiter den High-Res-
+        Pfad (get_high_res_frame) — genau wie eine echte Session.
+        """
         if self._cancelled.is_set():
             raise Exception("Abgebrochen")
 
         cam_index = self.app.config.get("camera_index", 0)
         cam_settings = self.app.config.get("camera_settings", {})
-        width = cam_settings.get("single_photo_width", 640)
-        height = cam_settings.get("single_photo_height", 480)
+        live_res = cam_settings.get("live_view_resolution", 480)  # wie Session/Pre-Init
 
         t0 = time.perf_counter()
-        success = self.app.camera_manager.initialize(cam_index, width, height)
+        success = self.app.camera_manager.initialize(cam_index, live_res, int(live_res * 0.75))
         init_s = time.perf_counter() - t0
         if not success:
             raise Exception("Kamera nicht erreichbar")
@@ -491,29 +500,40 @@ class SystemTestDialog(ctk.CTkToplevel):
     def _capture_single_photo(self) -> Image.Image:
         """Nimmt ein Foto für den System-Test auf.
 
-        Nutzt immer LiveView-Frames (kein echtes Auslösen der DSLR).
-        Der System-Test prüft nur ob Kamera, Template und Drucker funktionieren -
-        volle DSLR-Qualität ist dafür nicht nötig und spart SD-Karten-Abhängigkeit.
+        Webcam (2.4.26): über den High-Res-Pfad `get_high_res_frame` — GENAU wie
+        eine echte Session (kurz auf 1080p umschalten, Bild holen). Damit prüft
+        der Test denselben Weg, den die Box im Betrieb nimmt, in voller Qualität.
+        DSLR (Canon/Nikon): weiterhin nur LiveView-Frame (kein echtes Auslösen,
+        spart SD-Karten-Abhängigkeit).
         """
         if self._cancelled.is_set():
             raise Exception("Abgebrochen")
 
-        # LiveView-Frame holen (funktioniert mit DSLR und Webcam)
+        mgr = self.app.camera_manager
         frame = None
 
-        # Bei Canon DSLR: LiveView starten falls nicht aktiv
-        if hasattr(self.app.camera_manager, 'start_live_view'):
-            if not self.app.camera_manager._live_view_active:
-                self.app.camera_manager.start_live_view()
+        # Webcam: echter High-Res-Aufnahmepfad (wie im Betrieb)
+        is_webcam = self.app.config.get("camera_type", "webcam") == "webcam"
+        if is_webcam and hasattr(mgr, "get_high_res_frame"):
+            cam_settings = self.app.config.get("camera_settings", {})
+            cap_w = cam_settings.get("single_photo_width", 1920)
+            cap_h = cam_settings.get("single_photo_height", 1080)
+            try:
+                frame = mgr.get_high_res_frame(cap_w, cap_h, restore_preview=False)
+            except TypeError:
+                frame = mgr.get_high_res_frame(cap_w, cap_h)
 
-        # Mehrere Versuche (LiveView braucht nach Start ~1-2s für gültige Frames)
-        for attempt in range(15):
-            if self._cancelled.is_set():
-                raise Exception("Abgebrochen")
-            frame = self.app.camera_manager.get_frame(use_cache=False)
-            if frame is not None:
-                break
-            time.sleep(0.3)
+        # DSLR bzw. Fallback: LiveView-Frame (mehrere Versuche, ~1-2s Anlauf)
+        if frame is None:
+            if hasattr(mgr, "start_live_view") and not getattr(mgr, "_live_view_active", True):
+                mgr.start_live_view()
+            for _attempt in range(15):
+                if self._cancelled.is_set():
+                    raise Exception("Abgebrochen")
+                frame = mgr.get_frame(use_cache=False)
+                if frame is not None:
+                    break
+                time.sleep(0.3)
 
         if frame is None:
             raise Exception("Kein Kamera-Frame verfügbar")
@@ -563,6 +583,16 @@ class SystemTestDialog(ctk.CTkToplevel):
 
         if first_photo_s is not None:
             self._metrics["erstes_foto_s"] = round(first_photo_s, 1)
+
+        # Webcam nach dem High-Res-Capture zurück auf Vorschau-Auflösung,
+        # damit die Kamera nicht auf 1080p stehen bleibt (sonst wäre die
+        # erste echte Vorschau nach dem Test unnötig langsam).
+        mgr = self.app.camera_manager
+        if hasattr(mgr, "restore_preview_resolution"):
+            try:
+                mgr.restore_preview_resolution()
+            except Exception as e:
+                logger.debug(f"System-Test: Vorschau-Restore übersprungen: {e}")
 
         # Finalen Step-Text setzen
         self.after(0, lambda t=total:

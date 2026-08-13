@@ -23,6 +23,14 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 | **Entscheidung** | Beim App-Start `PowerSetActiveOverlayScheme` (powrprof.dll) mit dem „Best Performance"-GUID `ded574b5-…` aufrufen — exakt das, was der Schieberegler tut, ohne Admin-Rechte. Windows persistiert die Wahl pro Stromquelle; einmaliges Setzen am Netz genügt. Zusätzlich Prozess-Priorität ABOVE_NORMAL (bewusst nicht HIGH — würde Treiber/Audio aushungern). |
 | **Merke** | Für Slider-/Flyout-Einstellungen von Windows gibt es fast immer eine User-Mode-API — die App beim Start selbstheilen lassen ist zuverlässiger als Setup-Skripte oder Anleitungen. Scheitert die API (altes Windows), leise weitermachen und nur loggen. |
 
+### Selbsttest muss den ECHTEN Betriebsweg testen, nicht einen eigenen (2.4.26)
+
+| | |
+|---|---|
+| **Kontext** | Der Event-Selbsttest öffnete die Webcam kalt in voller Foto-Auflösung (1920×1080) und maß die Init-Zeit. Auf älteren C920 dauert dieser Kalt-1080p-Open ~7,6 s (Fehlalarm „Kamera langsam") und kann die Box sogar einfrieren (Feld-Log Box 224, 13.08. — Log endet exakt bei „Kamera geöffnet"). Die Kamera war dabei kerngesund (16 fps, Foto in 0,1 s). Der Normalbetrieb öffnet aber NIE kalt in 1080p: Vorschau 640×480, pro Foto kurz `get_high_res_frame` auf 1080p und zurück (~1,5 s, robust). |
+| **Entscheidung** | Selbsttest exakt auf den Betriebsweg umgestellt: Kamera in Vorschau-Auflösung öffnen (wie `app.py`-Vor-Init), Testfoto über `get_high_res_frame`, danach `restore_preview_resolution()`. DSLR-Pfad unverändert (LiveView-Frame, kein echtes Auslösen). |
+| **Merke** | Ein Diagnose-/Selbsttest, der einen ANDEREN Code-/Hardware-Pfad nimmt als der echte Betrieb, erzeugt Fehlalarme ODER trifft Fehler, die im Betrieb gar nicht vorkommen (hier sogar ein Einfrieren, das der Betrieb nie hätte). Tests müssen denselben Weg gehen wie die Sache, die sie prüfen. Kamera-„langsam/hängt" beim Umstecken lösbar = USB-Zustand, nicht Kameradefekt. |
+
 ### Build-Version: Lokale Quelle ist `src/__init__.py`, GitHub-Release ist nur Veröffentlichung
 
 | | |

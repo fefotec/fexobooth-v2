@@ -4,6 +4,40 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-08-13 — Selbsttest öffnet Kamera wie im Betrieb (Fehlalarm + Einfrieren behoben) (2.4.26)
+
+**Feld-Befund** (zwei Logs von D:\, beide **dieselbe Box 224**, Webcam „HD Pro Webcam C920"):
+- `D:\kameraverzögerung\...055502.log`: Selbsttest **bestanden mit 1 Auffälligkeit** —
+  „Kamera-Start langsam: 7,6s / 7,7s". Aber die Kamera war **kerngesund**: `kamera_fps=16.2`,
+  drei Fotos je in ~0,1 s aufgenommen ((1920,1080)). Also KEIN echtes Kameraproblem.
+- `D:\Absturz bei Selbsttest\...054921.log`: Im Selbsttest **komplett eingefroren** — das Log
+  endet exakt bei `Kamera 0 geöffnet mit Backend 700` (DirectShow), also mitten im Kalt-Öffnen
+  auf 1080p, VOR `Kamera initialisiert: 1920x1080`.
+
+**Ursache:** Der Selbsttest öffnete die Kamera **kalt in voller Foto-Auflösung (1920×1080)**.
+Das ist nicht der Normalablauf: Im Betrieb läuft die Vorschau in 640×480 und schaltet nur kurz
+pro Foto auf 1080p (`get_high_res_frame`) — schnell (~1,5 s) und robust. Der Kalt-1080p-Open ist
+auf älteren C920 langsam (~7,6 s) und kann sogar hängen. Das „mit anderer Kamera geht's, mit der
+alten auch wieder" = USB-Zustand wird beim Umstecken zurückgesetzt.
+
+**Fix (`src/ui/dialogs/system_test.py`):**
+- `_step_init_camera`: öffnet jetzt in der Vorschau-Auflösung — exakt wie die Vor-Init in
+  `app.py:3038` (`live_res = live_view_resolution`; `initialize(idx, live_res, int(live_res*0.75))`).
+- `_capture_single_photo`: Webcam nutzt jetzt `get_high_res_frame(w, h, restore_preview=False)`
+  (echter Aufnahmeweg, volle Qualität). DSLR unverändert (LiveView-Frame).
+- `_step_capture_photos`: nach den Testfotos `restore_preview_resolution()`, damit die Kamera
+  nicht auf 1080p stehen bleibt.
+
+**Nebenbefund (nicht kritisch):** Box 224 läuft auf Energieplan **Höchstleistung**
+(GUID 8c5e7fda-…) — dort existiert der Windows-Leistungsregler-Overlay nicht, deshalb die
+Log-Warnung „Regler existiert auf diesem Plan nicht". Performance ist trotzdem am Anschlag
+(Höchstleistung = CPU voll), also unbedenklich. Ebenfalls im Log: ein einmaliger
+UI-Hitch ~2,5 s beim Template-Karten-Refresh vor dem Test (kein Dauerproblem).
+
+Version → **2.4.26**. Kompiliert. Noch **kein Release** — wartet auf Box-Test durch Christian.
+
+---
+
 ## 2026-08-12 — Release v2.4.25 veroeffentlicht
 
 Build lokal erstellt (build_installer.bat) + GitHub-Release **v2.4.25** mit dem OTA-ZIP

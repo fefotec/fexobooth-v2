@@ -6,6 +6,34 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.26] - 2026-08-13 - Selbsttest öffnet die Kamera wie im Betrieb (Fehlalarm „langsame Kamera" + Einfrieren behoben)
+
+> Anlass: Feld-Logs 13.08. von Box 224 (Webcam „HD Pro Webcam C920"). Der Selbsttest meldete
+> „Kamera-Start langsam: 7,6s" — obwohl die Kamera kerngesund war (16 Bilder/s, Fotos in 0,1s,
+> Test bestanden). Auffällig: dieselbe Box fror in einem anderen Lauf beim Selbsttest komplett
+> ein — das Log endet exakt beim Öffnen der Kamera. Ursache: Der Selbsttest öffnete die Kamera
+> KALT in voller Foto-Auflösung (1920×1080). Das ist NICHT der normale Ablauf und auf älteren
+> C920 langsam/fragil. Im echten Betrieb läuft die Vorschau in 640×480 und schaltet nur kurz
+> pro Foto auf 1080p — dieser Weg ist schnell und stabil.
+
+### Behoben
+
+- **Selbsttest nimmt jetzt exakt denselben Kamera-Weg wie eine echte Session:**
+  - **Kamera öffnen** in der Vorschau-Auflösung (wie im Betrieb) statt kalt in 1920×1080.
+    Damit verschwindet der Fehlalarm „Kamera langsam" auf gesunden C920 — und der gefährliche
+    Einfrier-Punkt beim Kalt-Öffnen in 1080p ist weg.
+  - **Testfoto** über den echten High-Res-Aufnahmepfad (`get_high_res_frame`, kurz auf 1080p
+    und zurück) — volle Fotoqualität wird weiterhin geprüft, aber über den erprobten Weg.
+  - Nach den Testfotos wird die Vorschau-Auflösung wiederhergestellt, damit die erste echte
+    Vorschau nach dem Test nicht unnötig langsam ist.
+  - Die DSLR (Canon/Nikon) bleibt unverändert: weiterhin LiveView-Frame ohne echtes Auslösen.
+
+> Hinweis für die Flotte: Verzögert/hängend war eine Eigenheit einzelner Boxen beim Kalt-Öffnen
+> in 1080p (USB-Zustand — Umstecken der Kamera setzt ihn zurück, deshalb „mit anderer Kamera
+> geht's, mit der alten wieder auch"). Der neue Weg umgeht das grundsätzlich.
+
+---
+
 ## [2.4.25] - 2026-08-12 - Dashboard-Meldung mit Wiederholung (Boxen meldeten sich nur einmal)
 
 > Anlass: Feld-Logs 11.08. (Boxen 188/043/102) — die Boxen liefen 25+ Minuten im Firmen-WLAN,
