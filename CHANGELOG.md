@@ -6,6 +6,165 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.30] - 2026-08-18 - Abstürze werden endlich sichtbar (+ vermutliche Ursache entschärft)
+
+> Anlass: Werkstatt 18.08. — zwei Boxen stürzten beim Hochfahren ab, andere beim Anstecken des
+> USB-Sticks. **Im Developer-Mode nie reproduzierbar.** Die mitgelieferten Dev-Logs liefen beide
+> sauber bis „FEXOBOOTH BEENDET" durch: Der Absturz war nirgends dokumentiert, weil die App im
+> Normalbetrieb gar nichts schreibt.
+
+### Neu
+
+- **`C:\FexoBooth\logs\absturz.log`** — jeder unbehandelte Fehler landet dort mit Zeitstempel,
+  Version und komplettem Stacktrace, **immer** und unabhängig vom Developer-Mode. Gleiche Stelle
+  wie `netzwerk.log`, kommt also automatisch mit, wenn jemand den logs-Ordner kopiert. Erfasst
+  werden: Hauptthread, Hintergrund-Threads und Tk-Callbacks.
+- **Fehler aus Tk-Callbacks reissen die App nicht mehr mit.** Bisher gab es gar keinen
+  `report_callback_exception`-Handler — Tkinter ging den Standardweg über `sys.stderr`. Im
+  Fenster-Build ist der aber `None` (siehe Kommentar in `main.py` zum selben Thema beim Beenden).
+  Jetzt wird der Fehler abgefangen, protokolliert, und die App läuft weiter.
+
+- **Native Abstürze werden mitgeschrieben** (`faulthandler`): Bei einem Speicherzugriffsfehler
+  in einer DLL stirbt der Prozess sofort — kein Python-Handler läuft mehr, `absturz.log` bliebe
+  leer. `faulthandler` hängt sich unterhalb von Python ein und schreibt im Moment des Absturzes
+  noch den Python-Stack **aller Threads** raus. Damit ist ablesbar, welche Stelle gerade lief
+  (Kamera, VLC, Drucker …). Kostet zur Laufzeit praktisch nichts, läuft deshalb immer mit.
+
+### Neu — Werkzeug für die Werkstatt
+
+- **`Absturz-Infos-sammeln.bat`** — Doppelklick genügt, nichts zu tippen. Sammelt alles, was
+  Windows über Abstürze der Box gespeichert hat (Ereignisprotokoll, Fehlerberichte, vorhandene
+  Speicherabbilder, Inhalt des logs-Ordners und die letzten Zeilen von `absturz.log`) und legt
+  es als Textdatei in `C:\FexoBooth\logs` ab. Danach nur noch den logs-Ordner auf den Stick
+  kopieren. Liegt an zwei Stellen: **neben der Setup-EXE** (wandert beim Kopieren auf den
+  USB-Stick automatisch mit) und **direkt in `C:\FexoBooth`** auf jeder installierten Box.
+- Als Administrator gestartet schaltet dasselbe Skript zusätzlich das **Speicherabbild für den
+  nächsten Absturz** ein (`C:\FexoBooth\logs\dumps`) — daraus lässt sich die schuldige DLL
+  eindeutig bestimmen. Ohne Adminrechte läuft alles andere trotzdem durch.
+
+> **Korrektur zum Tk-Handler:** Das Windows-Ereignisprotokoll einer betroffenen Box zeigt
+> `ntdll.dll` / Ausnahmecode `0xc0000005` (Speicherzugriffsfehler). Das ist **kein**
+> Python-Fehler — der Tk-Handler ist also NICHT die Ursache dieser Abstürze. Er bleibt als
+> sinnvolles Sicherheitsnetz drin, aber die eigentliche Spur liefert `faulthandler`.
+
+---
+
+## [2.4.29] - 2026-08-18 - Reparatur testet den Hauptverdächtigen ZUERST (Fall endlich reproduziert)
+
+> Anlass: Feld-Log 18.08. von **Box 056** (`fexobooth_20260818_111651.log`) — der erste Log, der
+> den Fehler wirklich zeigt UND in dem die 2.4.27-Reparatur anspringt:
+> ```
+> 11:17:05 | Gefundene IPs: ['192.168.137.1', '169.254.166.159']
+> 11:17:15 | Netz-Reparatur: ... hat aber KEINE brauchbare IP-Adresse — starte Reparatur
+> 11:17:16 | Netz-Reparatur: Neue IP-Adresse anfordern (Adapter: WLAN)...
+> 11:18:16 | Netz-Reparatur: renew Code 1 (TIMEOUT)      ← eine volle Minute vertan
+> 11:18:36 | Netz-Reparatur: Stufe 2 — WLAN trennen und neu verbinden...
+> 11:18:51 | FEXOBOOTH BEENDET                            ← Box ausgeschaltet, Stufe 3 nie erreicht
+> ```
+> Der entscheidende Test (Hotspot abschalten) stand ganz hinten und kam nie zum Zug.
+
+### Geändert
+
+- **Reihenfolge der Reparatur umgedreht.** Läuft der eigene Hotspot, wird er jetzt als **ERSTES**
+  abgeschaltet statt als Letztes. Erkannt wird er kostenlos an der Adresse `192.168.137.x` —
+  ohne zusätzliche Abfrage. Neue Reihenfolge: 1. Hotspot aus + neu verbinden, 2. DNS-Cache +
+  neue IP anfordern, 3. WLAN trennen/neu verbinden.
+- **`ipconfig /renew` bricht nach 20 s ab** statt nach 60 s. Antwortet der Router in 20 s nicht,
+  antwortet er auch später nicht — dann sind die anderen Stufen wichtiger als das Warten.
+- **Netz-Bilanz kommt sofort, nicht erst nach 4 Minuten.** Schlägt die Reparatur fehl, wird die
+  Bilanz jetzt SOFORT festgehalten (`Frühbefund`). Vorher lief zuerst die komplette
+  Wiederholkette (20+30+45+60+90 s = ~4 min) — so lange bleibt in der Werkstatt keine Box an,
+  und das Protokoll blieb wieder leer.
+- **Wartezeiten pro Stufe von 20 s auf 15 s gekürzt.** Ergebnis im Test: Ist der Hotspot der
+  Störer, steht das Ergebnis nach **~6 Sekunden** fest (vorher: erst nach ~2,5 Minuten, also nie).
+  Hilft keine Stufe, ist die komplette Reparatur nach gut 20 Sekunden durch — mit klarem Urteil
+  „Router vergibt keine Adresse → Lease-Liste prüfen".
+
+---
+
+## [2.4.28] - 2026-08-18 - Netz-Protokoll auch OHNE Developer-Mode (Werkstatt-Test lieferte keine Spur)
+
+> Anlass: Werkstatt-Test 18.08. mit 2.4.27 auf drei Boxen (073, 116, 016). Alle drei kamen ohne
+> Befund zurück — weil die App im Normalbetrieb **überhaupt kein Log schreibt**
+> (`setup_logging` hängt ohne Developer-Mode einen NullHandler ein). Zurück kamen nur die
+> Installer-Logs, und die melden auf allen drei Boxen brav „Mit 'fexon WLAN' verbunden - Setup
+> erfolgreich". Die eigentliche Frage — hatte die Box danach auch Netz? — war nicht beantwortbar.
+
+### Neu
+
+- **`C:\FexoBooth\logs\netzwerk.log`** wird ab jetzt **immer** geschrieben, unabhängig vom
+  Developer-Mode. Inhalt: die NETZ-BILANZ mit Zeitstempel, Box-ID und Version. Die Datei liegt
+  neben den Installer-Logs und kommt damit automatisch mit, wenn ein Mitarbeiter den
+  `logs`-Ordner kopiert — kein Dev-Mode, keine Extra-Handgriffe.
+- **Auch der Abbruch wird protokolliert:** Kommt die Box gar nicht erst ins Firmen-WLAN, steht das
+  jetzt ebenfalls drin (Grund + Ergebnis der Selbstheilung + Klartext-Urteil). Vorher endete der
+  Ablauf an dieser Stelle stumm.
+- Sparsam gehalten: Geschrieben wird **nur im Firmen-WLAN** (beim Kunden nie), ein kurzer Block
+  pro Start bzw. pro fehlgeschlagener Wiederholmeldung; die Datei wird bei ~200 KB vorne gekürzt.
+
+---
+
+## [2.4.27] - 2026-08-18 - Firmen-WLAN: Box war "verbunden" ohne Netz + Hotspot-Start war ein Blindgänger
+
+> Anlass: Feld-Log 18.08. von Box 200 (`fexobooth_20260818_102651.log`). Die Box war laut
+> Windows mit `fexon WLAN` VERBUNDEN, konnte aber nichts erreichen (`getaddrinfo failed`,
+> 3 Versuche). Der Grund stand eine Zeile vorher im Log: Als IP-Adressen hatte die Box nur
+> `169.254.183.239` (= Notfalladresse, der Router hat NICHTS vergeben) und `192.168.137.1`
+> (= den eigenen Hotspot). Eine echte Adresse vom Firmen-Router war nirgends dabei.
+> Nach außen sieht das aus wie "die Box verbindet sich nicht" — obwohl der WLAN-Name stimmt.
+
+### Behoben
+
+- **Hotspot-Start/-Stopp waren wirkungslos (stiller Blindgänger seit Langem).** In den
+  PowerShell-Befehlen standen doppelte geschweifte Klammern (`{{ }}`) — ein Überbleibsel einer
+  alten Textersetzung. PowerShell führt solche Blöcke NICHT aus, sondern gibt sie nur als Text
+  aus. Python hat diese Textausgabe anschließend als Erfolg gewertet und
+  "Hotspot erfolgreich gestartet" ins Log geschrieben. Tatsächlich hat die App den Hotspot nie
+  gestartet, nie gestoppt und nie richtig geprüft. Jetzt laufen die Befehle wirklich, und nur
+  eine echte Erfolgsmeldung von Windows gilt als Erfolg.
+- **Der eigene Hotspot wird nicht mehr über das Firmen-WLAN aufgezogen.** Bisher nahm die App
+  das erstbeste Netzwerk-Profil als Anker — im Firmen-WLAN also meist `fexon WLAN` selbst.
+  Windows teilt dann die Firmen-Verbindung über dieselbe WLAN-Karte, und genau dabei verliert
+  die Box ihre IP-Adresse vom Firmen-Router. Jetzt wird bevorzugt ein neutrales Profil
+  (`FexoBoothDummy`) benutzt; das Firmen-Profil nur noch als Notnagel (mit Warnung im Log).
+- **"Verbunden" wird nicht mehr am WLAN-Namen festgemacht.** Die Selbstheilung prüft jetzt, ob
+  wirklich eine brauchbare IP-Adresse da ist. Vorher meldete sie "alles gut", sobald der
+  richtige Netzwerkname dastand — auch wenn die Box gar kein Netz hatte.
+- **Neue Reparatur bei "verbunden, aber keine IP-Adresse"** (läuft nur im Firmen-WLAN, beim
+  Kunden nie), in drei Stufen: 1. DNS-Cache leeren + neue Adresse anfordern, 2. WLAN trennen
+  und neu verbinden, 3. eigenen Hotspot abschalten und nochmal verbinden. Hilft Stufe 3, ist
+  bewiesen, dass der Hotspot der Störer war — er bleibt dann für diesen Lauf im Firmen-WLAN aus
+  (in der Werkstatt sind Dashboard-Meldung und Updates wichtiger als der Gast-Hotspot).
+
+### Geändert
+
+- **Reihenfolge beim Start in der Werkstatt:** Steht die Box im Firmen-WLAN, laufen jetzt zuerst
+  Dashboard-Meldung und Update-Check, danach erst der eigene Hotspot (er teilt sich die
+  WLAN-Karte). Beim Kunden ändert sich nichts — dort wartet der Hotspot keine Sekunde.
+
+### Neu — Logging, das auch zeigt WENN es nicht hilft
+
+- **NETZ-BILANZ im Log** (`src/utils/network_diag.py`): ein klar erkennbarer Block mit
+  IP-Adressen, Router-Ping, Namensauflösung, Dashboard-Erreichbarkeit, Hotspot-Zustand und
+  einem Klartext-URTEIL. Damit ist im nächsten Log auf einen Blick unterscheidbar:
+  *keine IP-Adresse* ≠ *IP da, aber Router antwortet nicht* ≠ *kein DNS* ≠ *Dashboard down*.
+  Die Bilanz wird beim Start im Firmen-WLAN geschrieben und danach bei jeder fehlgeschlagenen
+  wiederkehrenden Meldung — ein nicht wirkender Fix fällt damit sofort auf.
+- Bei "Dashboard nicht erreichbar" stehen jetzt direkt die eigenen IP-Adressen daneben.
+
+### Nachgezogen nach dem ersten Feldtest (Box 200)
+
+- **Bildschirm fror nach dem Admin-Speichern ~9 Sekunden ein:** Der Hotspot-Start lief dort direkt
+  im Bildschirm-Ablauf statt im Hintergrund. Läuft jetzt im Hintergrund (bestand schon vorher, fiel
+  erst durch das neue Logging auf).
+- **Irreführende Warnung entfernt:** Lief der Hotspot bereits, meldete das Log trotzdem „musste das
+  Firmen-WLAN als Anker nehmen" — obwohl gar nichts umgestellt wurde. Die Warnung kommt jetzt nur
+  noch, wenn der Hotspot wirklich neu aufgezogen wird.
+- **Weniger Last beim Start:** Der Hotspot-Zustand wird für die NETZ-BILANZ nur noch abgefragt,
+  wenn die Dashboard-Meldung NICHT durchkam (spart einen PowerShell-Aufruf auf der schwachen Box).
+
+---
+
 ## [2.4.26] - 2026-08-13 - Selbsttest öffnet die Kamera wie im Betrieb (Fehlalarm „langsame Kamera" + Einfrieren behoben)
 
 > Anlass: Feld-Logs 13.08. von Box 224 (Webcam „HD Pro Webcam C920"). Der Selbsttest meldete

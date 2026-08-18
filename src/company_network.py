@@ -40,6 +40,42 @@ MONITORING_RETRY_DELAYS = [20, 30, 45, 60, 90]  # Sekunden zwischen den Startver
 MONITORING_PERIODIC_SECONDS = 900               # danach alle ~15 min erneut melden
 MONITORING_PERIODIC_JITTER = 120                # ± Zufallsstreuung gegen Gleichzeitigkeit
 
+# ─────────────────────────────────────────────
+# Start-Fenster fuers Netz (2.4.27)
+# ─────────────────────────────────────────────
+# Reihenfolge-Fix: Im Firmen-WLAN soll ZUERST die Netz-Arbeit laufen
+# (Dashboard-Meldung + Update-Check) und ERST DANACH der eigene Hotspot
+# hochfahren. Grund: Der Hotspot teilt sich die WLAN-Karte mit der
+# Firmen-Verbindung und kann sie stoeren (Feld-Log 18.08.2026).
+# Der Hotspot-Start wartet deshalb auf dieses Signal — aber NUR, wenn die Box
+# ueberhaupt im Firmen-WLAN haengt (beim Kunden wartet nichts).
+_startup_network_done = threading.Event()
+_startup_network_pending = False
+
+
+def wait_for_startup_network_window(timeout: float = 120.0) -> bool:
+    """Wartet, bis die Firmen-WLAN-Startarbeit durch ist.
+
+    Returns:
+        True wenn das Fenster zu ist (fertig oder gar nichts geplant),
+        False wenn die Wartezeit abgelaufen ist (dann trotzdem weitermachen).
+    """
+    if not _startup_network_pending:
+        return True
+    done = _startup_network_done.wait(timeout=timeout)
+    if not done:
+        logger.info(
+            f"Netz-Startfenster: Nach {timeout:.0f}s noch nicht fertig — es geht trotzdem weiter"
+        )
+    return done
+
+
+def _mark_startup_network_done() -> None:
+    """Gibt das Startfenster frei (wird immer erreicht, auch bei Fehlern)."""
+    if not _startup_network_done.is_set():
+        _startup_network_done.set()
+        logger.debug("Netz-Startfenster: freigegeben")
+
 
 def get_active_ssid() -> Optional[str]:
     """Gibt die aktuell verbundene WLAN-SSID zurück (Windows).
@@ -199,7 +235,16 @@ def _send_monitoring_heartbeat(config: Dict[str, Any], ssid: str, app=None):
         logger.warning(f"Monitoring: Dashboard lehnt Meldung ab (HTTP {e.code}){details}")
         return None  # Server erreicht, aber abgelehnt → kurzfristiger Retry sinnlos
     except (URLError, TimeoutError, OSError) as e:
-        logger.debug(f"Monitoring: Dashboard nicht erreichbar — Retry folgt ({e})")
+        # 2.4.27: Die eigene IP-Lage direkt mitloggen. Vorher stand hier nur
+        # "getaddrinfo failed" — daraus war nicht erkennbar, ob die Box gar
+        # keine IP-Adresse hat oder ob nur der DNS-Server nicht antwortet.
+        ip_info = ""
+        try:
+            from src.utils import network_diag as nd
+            ip_info = f" | eigene IPs: {nd.describe_ips()}"
+        except Exception:
+            pass
+        logger.debug(f"Monitoring: Dashboard nicht erreichbar — Retry folgt ({e}){ip_info}")
         return False  # Netzwerk/DNS noch nicht bereit → erneut versuchen
     except Exception as e:
         logger.debug(f"Monitoring: Heartbeat fehlgeschlagen — übersprungen ({e})")
@@ -245,7 +290,18 @@ def check_and_auto_update(
         logger.debug("Firmennetzwerk: Auto-Update und Monitoring deaktiviert — übersprungen")
         return
 
+    # Ab hier wartet der Hotspot-Start im Firmen-WLAN auf uns (2.4.27)
+    global _startup_network_pending
+    _startup_network_pending = True
+
     def worker():
+        try:
+            _worker_body()
+        finally:
+            # Startfenster IMMER freigeben — sonst wartet der Hotspot umsonst
+            _mark_startup_network_done()
+
+    def _worker_body():
         # Kurz warten damit die App fertig hochfährt und WLAN-Verbindung stabil ist
         time.sleep(delay_seconds)
 
@@ -255,29 +311,73 @@ def check_and_auto_update(
         # sichtbar ist (= Box steht in der Werkstatt, Anmeldung klemmt) →
         # Profil reparieren und verbinden. Beim Kunden ist das Firmen-WLAN nie
         # sichtbar, dort passiert hier nichts.
+        heilungs_status = ""
         if ssid is None or not is_company_wifi(ssid, whitelist):
             try:
                 from src.utils.company_wlan import self_heal_company_wlan
-                status = self_heal_company_wlan()
-                if status == "connected":
+                heilungs_status = self_heal_company_wlan()
+                if heilungs_status == "connected":
                     ssid = get_active_ssid()
             except Exception as e:
                 logger.debug(f"WLAN-Selbstheilung übersprungen: {e}")
+                heilungs_status = f"Fehler: {e}"
 
-        if ssid is None:
-            logger.debug("Auto-Update: Kein WLAN aktiv — übersprungen")
-            return
+        if ssid is None or not is_company_wifi(ssid, whitelist):
+            # 2.4.27: Auch dieser Abbruch muss dauerhaft protokolliert werden —
+            # "Box kommt gar nicht erst ins Firmen-WLAN" ist der Fall, den wir in
+            # der Werkstatt am dringendsten sehen müssen. NUR wenn das Firmen-WLAN
+            # überhaupt in Reichweite war: 'not_visible' heißt Kundenbetrieb,
+            # dort wird bewusst nichts geschrieben.
+            grund = (
+                "keine WLAN-Verbindung" if ssid is None
+                else f"verbunden mit '{ssid}' (nicht das Firmen-WLAN)"
+            )
+            logger.debug(f"Firmennetzwerk: übersprungen — {grund}")
 
-        if not is_company_wifi(ssid, whitelist):
-            logger.debug(f"Firmennetzwerk: SSID '{ssid}' nicht in Firmen-Whitelist — übersprungen")
+            if heilungs_status and heilungs_status != "not_visible":
+                _persist_short_report(config, [
+                    "  Zustand       : NICHT im Firmen-WLAN",
+                    f"  Grund         : {grund}",
+                    f"  Selbstheilung : {heilungs_status}",
+                    "  URTEIL        : Box kommt nicht ins Firmen-WLAN — Funk/Anmeldung prüfen "
+                    "(Reichweite, Passwort, Router-Sperre)",
+                ])
             return
 
         logger.info(f"Firmennetzwerk: Firmen-WLAN erkannt ('{ssid}')")
 
+        # ── 2.4.27: Ehrliche Prüfung statt WLAN-Name ──
+        # Eine Box kann verbunden sein und trotzdem keine IP-Adresse haben
+        # (Feld-Log 18.08.: nur 169.254.x.x = Router hat nichts vergeben).
+        # Dann hat das Melden keinen Zweck — erst reparieren.
+        try:
+            from src.utils import network_diag as nd
+            if not nd.has_usable_lan_ip():
+                from src.utils.company_wlan import repair_missing_ip
+                repariert = repair_missing_ip()
+                if not repariert:
+                    logger.warning(
+                        "Firmennetzwerk: Box bleibt ohne IP-Adresse — Meldung/Update werden "
+                        "trotzdem versucht, damit die Bilanz unten den echten Fehler zeigt"
+                    )
+                    # 2.4.29: Bilanz SOFORT festhalten, nicht erst nach der
+                    # Wiederholkette. Die läuft bei durchgehendem Fehlschlag
+                    # 20+30+45+60+90 s = ~4 Minuten — so lange bleibt in der
+                    # Werkstatt keine Box an (Feld-Log Box 056: nach 2 Minuten
+                    # ausgeschaltet). Ohne diesen Frühbefund stünde am Ende
+                    # wieder nichts im Protokoll.
+                    _log_verdict(config, ssid, heartbeat_ok=False,
+                                 context="Frühbefund (Reparatur erfolglos)")
+        except Exception as e:
+            logger.debug(f"Firmennetzwerk: IP-Prüfung übersprungen ({e})")
+
         # Heartbeat mit Wiederholung: Der erste Versuch scheitert oft an noch
         # nicht bereitem DNS (WLAN gerade verbunden + Hotspot startet). Deshalb
         # mehrere Versuche mit wachsendem Abstand, bis es klappt.
-        _heartbeat_with_retry(config, ssid, app, whitelist)
+        heartbeat_ok = _heartbeat_with_retry(config, ssid, app, whitelist)
+
+        # ── Netz-Bilanz: zeigt auch, WENN der Fix nicht geholfen hat ──
+        _log_verdict(config, ssid, heartbeat_ok)
 
         # Danach dauerhaft in Intervallen erneut melden (mit Zufallsstreuung,
         # damit sich nicht alle Boxen exakt gleichzeitig melden). So taucht eine
@@ -336,6 +436,86 @@ def check_and_auto_update(
     t.start()
 
 
+def _persist_short_report(config, lines) -> None:
+    """Kurzeintrag in netzwerk.log (auch ohne Developer-Mode sichtbar)."""
+    try:
+        from src.utils import network_diag as nd
+        try:
+            from src.updater import get_current_version
+            version = get_current_version()
+        except Exception:
+            version = ""
+        nd.write_network_report(
+            lines,
+            version=version,
+            box_id=str(config.get("box_id", "")).strip(),
+        )
+    except Exception as e:
+        logger.debug(f"Kurzeintrag ins Netz-Protokoll fehlgeschlagen ({e})")
+
+
+def _log_verdict(config, ssid, heartbeat_ok: bool, context: str = "Firmen-WLAN") -> None:
+    """Schreibt die NETZ-BILANZ ins Log (nur im Firmen-WLAN).
+
+    Zweck (Wunsch Christian): Wenn der 2.4.27-Fix NICHT wirkt, soll das im
+    naechsten Log sofort sichtbar sein — inkl. der Frage, ob der eigene
+    Hotspot laeuft und ob er als Stoerer erkannt wurde. Kein Rätselraten mehr
+    aus "Dashboard nicht erreichbar".
+    """
+    try:
+        from src.utils import network_diag as nd
+
+        extra = {"Meldung": "zugestellt ✓" if heartbeat_ok else "NICHT zugestellt"}
+
+        # Hotspot-Zustand nur abfragen, wenn es WIRKLICH klemmt.
+        # Grund: Die Abfrage startet PowerShell und braucht auf der Box mehrere
+        # Sekunden. Im Feld-Log 18.08. liefen dadurch parallel drei
+        # PowerShell-Abfragen (Kamera-Erkennung lief in Timeouts). Wenn die
+        # Meldung durchging, brauchen wir den Hotspot-Zustand ohnehin nicht.
+        if heartbeat_ok:
+            extra["Eig. Hotspot"] = "nicht abgefragt (Meldung kam durch)"
+        else:
+            try:
+                from src.gallery.hotspot import is_hotspot_active
+                extra["Eig. Hotspot"] = "AN" if is_hotspot_active() else "aus"
+            except Exception as e:
+                extra["Eig. Hotspot"] = f"unbekannt ({e})"
+
+        try:
+            from src.utils.company_wlan import hotspot_conflicts_with_company_wlan
+            extra["Hotspot-Konfl."] = (
+                "JA — Hotspot blockiert das Firmen-WLAN auf dieser Box"
+                if hotspot_conflicts_with_company_wlan() else "nein"
+            )
+        except Exception as e:
+            extra["Hotspot-Konfl."] = f"unbekannt ({e})"
+
+        endpoint = str(config.get("monitoring_endpoint", "")).strip()
+        host = "admin.fexobox.de"
+        if endpoint.startswith("http"):
+            try:
+                host = endpoint.split("//", 1)[1].split("/", 1)[0]
+            except Exception:
+                pass
+
+        try:
+            from src.updater import get_current_version
+            version = get_current_version()
+        except Exception:
+            version = ""
+
+        # persist=True: Die Bilanz landet zusaetzlich in C:\FexoBooth\logs\netzwerk.log,
+        # damit sie auch OHNE Developer-Mode existiert (Werkstatt-Test 18.08.:
+        # drei Boxen zurueck, kein einziges App-Log dabei).
+        nd.log_network_verdict(
+            context, ssid=ssid, hostname=host, extra=extra,
+            persist=True, version=version,
+            box_id=str(config.get("box_id", "")).strip(),
+        )
+    except Exception as e:
+        logger.debug(f"Netz-Bilanz konnte nicht erstellt werden ({e})")
+
+
 def _heartbeat_with_retry(config, ssid, app, whitelist) -> bool:
     """Sendet den Monitoring-Heartbeat und wiederholt bei Netzwerk-/DNS-Fehler.
 
@@ -377,7 +557,23 @@ def _start_periodic_monitoring(config, app, whitelist) -> None:
             ssid = get_active_ssid()
             if not is_company_wifi(ssid, whitelist):
                 continue  # nicht im Firmen-WLAN (beim Kunden) → still weiterschlafen
-            _send_monitoring_heartbeat(config, ssid, app)
+
+            # 2.4.27: Die IP kann auch SPAETER noch wegbrechen (z.B. wenn der
+            # Hotspot erst danach hochkommt). Deshalb vor jeder Meldung kurz
+            # gegenpruefen und notfalls reparieren.
+            try:
+                from src.utils import network_diag as nd
+                if not nd.has_usable_lan_ip():
+                    from src.utils.company_wlan import repair_missing_ip
+                    repair_missing_ip()
+            except Exception as e:
+                logger.debug(f"Monitoring: IP-Prüfung übersprungen ({e})")
+
+            result = _send_monitoring_heartbeat(config, ssid, app)
+            if result is False:
+                # Klappt es weiterhin nicht, kommt die volle Bilanz ins Log —
+                # damit auch ein NICHT wirkender Fix sichtbar wird.
+                _log_verdict(config, ssid, heartbeat_ok=False)
 
     # Idempotent: pro Prozess nur einen periodischen Thread starten
     global _periodic_monitoring_started

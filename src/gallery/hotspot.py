@@ -25,63 +25,110 @@ _DEFAULT_PASSWORD = "fotobox123"
 # PowerShell: Tethering API (mit allen Profilen, nicht nur Internet!)
 # ─────────────────────────────────────────────
 
+# ⚠️ ACHTUNG BEI AENDERUNGEN: Diese Scripts sind NORMALE Python-Strings und
+# werden NICHT mit .format() verarbeitet. Geschweifte Klammern gehoeren hier
+# deshalb EINFACH geschrieben — NIE doppelt!
+#
+# Warum der Hinweis (Bug gefunden 18.08.2026):
+# Bis 2.4.26 standen hier doppelte Klammern `{{ }}` (Rest einer alten
+# .format()-Nutzung). PowerShell versteht `if (...) {{ ... }}` aber als
+# "Block, der einen Script-Block ENTHAELT" — der innere Teil wird nie
+# ausgefuehrt, sondern nur als Text ausgegeben. Ergebnis: Der Hotspot wurde
+# NIE gestartet, NIE gestoppt, und Python hat die Text-Ausgabe trotzdem als
+# Erfolg gewertet ("Hotspot erfolgreich gestartet"). Ein stiller Blindgaenger.
+#
+# `__EXCLUDE_SSID__` wird per .replace() ersetzt (bewusst kein .format(),
+# damit die Klammer-Falle nicht zurueckkommt).
+
 _START_TETHERING_PS = '''
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 [Windows.Networking.Connectivity.NetworkInformation,Windows.Networking.Connectivity,ContentType=WindowsRuntime] | Out-Null
 [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager,Windows.Networking.NetworkOperators,ContentType=WindowsRuntime] | Out-Null
 
-$asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {{ $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' }})[0]
-function Await($WinRtTask, $ResultType) {{
+$asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]
+function Await($WinRtTask, $ResultType) {
     $asTask = $asTaskGeneric.MakeGenericMethod($ResultType)
     $netTask = $asTask.Invoke($null, @($WinRtTask))
     $netTask.Wait(-1) | Out-Null
     $netTask.Result
-}}
+}
+
+# SSID, die NICHT als Anker benutzt werden soll (= das gerade verbundene
+# Firmen-WLAN). Wird der Hotspot ueber das Firmen-Profil aufgezogen, teilt
+# Windows die Firmen-Verbindung ueber dieselbe WLAN-Karte (ICS) — und genau
+# dabei verliert die Box ihre IP-Adresse vom Firmen-Router.
+$excludeSsid = '__EXCLUDE_SSID__'
 
 $tetheringManager = $null
+$usedProfile = ''
+$fallbackManager = $null
+$fallbackProfile = ''
 
 # Methode 1: Alle Connection Profiles durchprobieren (funktioniert auch ohne Internet!)
+# Reihenfolge: alles ausser dem Firmen-WLAN zuerst, Firmen-WLAN nur als Notnagel.
 $profiles = [Windows.Networking.Connectivity.NetworkInformation]::GetConnectionProfiles()
-foreach ($profile in $profiles) {{
-    try {{
+foreach ($profile in $profiles) {
+    try {
         $tm = [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager]::CreateFromConnectionProfile($profile)
-        if ($tm) {{
+        if ($tm) {
+            $profileName = ''
+            try { $profileName = [string]$profile.ProfileName } catch { $profileName = '' }
+            if ($excludeSsid -ne '' -and $profileName -eq $excludeSsid) {
+                if (-not $fallbackManager) {
+                    $fallbackManager = $tm
+                    $fallbackProfile = $profileName
+                }
+                continue
+            }
             $tetheringManager = $tm
+            $usedProfile = $profileName
             break
-        }}
-    }} catch {{ continue }}
-}}
+        }
+    } catch { continue }
+}
+
+# Notnagel: doch das Firmen-Profil, wenn es sonst gar keinen Anker gibt
+if (-not $tetheringManager -and $fallbackManager) {
+    $tetheringManager = $fallbackManager
+    $usedProfile = $fallbackProfile
+    Write-Output "USED_EXCLUDED_PROFILE"
+}
 
 # Methode 2: Internet-Profil als letzter Versuch
-if (-not $tetheringManager) {{
-    try {{
+if (-not $tetheringManager) {
+    try {
         $connectionProfile = [Windows.Networking.Connectivity.NetworkInformation]::GetInternetConnectionProfile()
-        if ($connectionProfile) {{
+        if ($connectionProfile) {
             $tetheringManager = [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager]::CreateFromConnectionProfile($connectionProfile)
-        }}
-    }} catch {{}}
-}}
+            try { $usedProfile = [string]$connectionProfile.ProfileName } catch { $usedProfile = '' }
+        }
+    } catch {}
+}
 
-if (-not $tetheringManager) {{
-    Write-Host "NO_PROFILE"
+if (-not $tetheringManager) {
+    Write-Output "NO_PROFILE"
     exit 1
-}}
+}
+
+Write-Output "PROFILE=$usedProfile"
 
 # Status pruefen
 $state = $tetheringManager.TetheringOperationalState
-if ($state -eq "On") {{
-    Write-Host "ALREADY_ON"
+if ($state -eq "On") {
+    Write-Output "ALREADY_ON"
     exit 0
-}}
+}
 
 # Starten
-try {{
+try {
     $result = Await ($tetheringManager.StartTetheringAsync()) ([Windows.Networking.NetworkOperators.NetworkOperatorTetheringOperationResult])
-    Write-Host $result.Status
-}} catch {{
-    Write-Host "ERROR: $_"
+    Write-Output ("STATUS=" + [string]$result.Status)
+    if ([string]$result.Status -eq "Success") { exit 0 }
     exit 1
-}}
+} catch {
+    Write-Output "ERROR: $_"
+    exit 1
+}
 '''
 
 _STOP_TETHERING_PS = '''
@@ -89,56 +136,58 @@ Add-Type -AssemblyName System.Runtime.WindowsRuntime
 [Windows.Networking.Connectivity.NetworkInformation,Windows.Networking.Connectivity,ContentType=WindowsRuntime] | Out-Null
 [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager,Windows.Networking.NetworkOperators,ContentType=WindowsRuntime] | Out-Null
 
-$asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {{ $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' }})[0]
-function Await($WinRtTask, $ResultType) {{
+$asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]
+function Await($WinRtTask, $ResultType) {
     $asTask = $asTaskGeneric.MakeGenericMethod($ResultType)
     $netTask = $asTask.Invoke($null, @($WinRtTask))
     $netTask.Wait(-1) | Out-Null
     $netTask.Result
-}}
+}
 
 $tetheringManager = $null
 
 # Alle Connection Profiles durchprobieren
 $profiles = [Windows.Networking.Connectivity.NetworkInformation]::GetConnectionProfiles()
-foreach ($profile in $profiles) {{
-    try {{
+foreach ($profile in $profiles) {
+    try {
         $tm = [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager]::CreateFromConnectionProfile($profile)
-        if ($tm -and $tm.TetheringOperationalState -eq "On") {{
+        if ($tm -and $tm.TetheringOperationalState -eq "On") {
             $tetheringManager = $tm
             break
-        }}
-    }} catch {{ continue }}
-}}
+        }
+    } catch { continue }
+}
 
-if (-not $tetheringManager) {{
+if (-not $tetheringManager) {
     # Fallback: Internet-Profil
-    try {{
+    try {
         $connectionProfile = [Windows.Networking.Connectivity.NetworkInformation]::GetInternetConnectionProfile()
-        if ($connectionProfile) {{
+        if ($connectionProfile) {
             $tetheringManager = [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager]::CreateFromConnectionProfile($connectionProfile)
-        }}
-    }} catch {{}}
-}}
+        }
+    } catch {}
+}
 
-if (-not $tetheringManager) {{
-    Write-Host "NOT_RUNNING"
+if (-not $tetheringManager) {
+    Write-Output "NOT_RUNNING"
     exit 0
-}}
+}
 
 $state = $tetheringManager.TetheringOperationalState
-if ($state -eq "Off") {{
-    Write-Host "ALREADY_OFF"
+if ($state -eq "Off") {
+    Write-Output "ALREADY_OFF"
     exit 0
-}}
+}
 
-try {{
+try {
     $result = Await ($tetheringManager.StopTetheringAsync()) ([Windows.Networking.NetworkOperators.NetworkOperatorTetheringOperationResult])
-    Write-Host $result.Status
-}} catch {{
-    Write-Host "ERROR: $_"
+    Write-Output ("STATUS=" + [string]$result.Status)
+    if ([string]$result.Status -eq "Success") { exit 0 }
     exit 1
-}}
+} catch {
+    Write-Output "ERROR: $_"
+    exit 1
+}
 '''
 
 _CHECK_TETHERING_PS = '''
@@ -256,48 +305,39 @@ _DUMMY_PROFILE_XML = '''<?xml version="1.0"?>
 
 
 def _ensure_wlan_profile_exists() -> bool:
-    """Legt einmalig ein Dummy-WLAN-Profil an wenn noch keines existiert.
+    """Stellt sicher, dass das Dummy-WLAN-Profil als Anker existiert.
 
-    Auf frisch geklonten Tablets gibt es keine gespeicherten WLAN-Profile
-    -> NetworkOperatorTetheringManager.CreateFromConnectionProfile() findet
-    keinen Ankerpunkt und gibt immer null zurueck. Ein einmal gespeichertes
-    offenes Profil (muss nie verbinden) reicht damit die Tethering-API
-    dauerhaft funktioniert.
+    Zwei Gruende:
+
+    1. Auf frisch geklonten Tablets gibt es gar keine gespeicherten
+       WLAN-Profile -> CreateFromConnectionProfile() findet keinen Ankerpunkt
+       und gibt immer null zurueck.
+    2. Seit 2.4.27 zusaetzlich wichtig: Der Hotspot soll NICHT ueber das
+       Firmen-WLAN-Profil aufgezogen werden (sonst teilt Windows die
+       Firmen-Verbindung ueber dieselbe WLAN-Karte und die Box verliert ihre
+       IP-Adresse vom Firmen-Router). Dafuer muss es immer ein neutrales
+       Profil geben — auch dann, wenn schon andere Profile da sind.
+
+    Das Dummy-Profil ist offen, heisst 'FexoBoothDummy' und steht auf
+    "manuell verbinden" — es verbindet sich also nie mit irgendetwas.
 
     Returns:
-        True wenn mindestens ein Profil vorhanden ist (schon oder neu angelegt)
+        True wenn das Dummy-Profil vorhanden ist (schon oder neu angelegt)
     """
     if sys.platform != "win32":
         return False
 
-    # Pruefen welche Profile bereits existieren
+    # Pruefen ob GENAU das Dummy-Profil schon existiert
     success, output = _run_netsh(["wlan", "show", "profiles"])
     if not success:
         logger.warning("netsh wlan show profiles fehlgeschlagen")
         return False
 
-    # "Alle Benutzerprofile" (de) / "All User Profile" (en) gefolgt von SSID
-    # Wenn mind. ein Profil drin ist, tauchen Zeilen wie ":  SSID_NAME" auf
-    # unter der "Benutzerprofile" / "User profiles" Sektion
-    has_profile = False
-    for line in output.splitlines():
-        stripped = line.strip()
-        # Nur Zeilen die ein Profil beschreiben (mit Doppelpunkt und Inhalt)
-        if ": " in stripped and not stripped.startswith("Schnittstelle") \
-           and not stripped.startswith("Interface") \
-           and not stripped.startswith("Gruppenrichtlinie") \
-           and not stripped.startswith("Group policy"):
-            # Zeile wie "Alle Benutzerprofile     : fexon_Buero_WLAN2"
-            _, value = stripped.split(": ", 1)
-            if value.strip():
-                has_profile = True
-                break
-
-    if has_profile:
-        logger.debug("WLAN-Profil bereits vorhanden - kein Dummy noetig")
+    if _DUMMY_PROFILE_NAME in output:
+        logger.debug(f"Hotspot-Anker: Profil '{_DUMMY_PROFILE_NAME}' bereits vorhanden")
         return True
 
-    logger.info("Kein WLAN-Profil gefunden - lege Dummy-Profil an")
+    logger.info(f"Hotspot-Anker: Lege neutrales Profil '{_DUMMY_PROFILE_NAME}' an")
 
     # XML in Temp-Datei schreiben
     import tempfile
@@ -331,11 +371,57 @@ def _ensure_wlan_profile_exists() -> bool:
 # Oeffentliche API
 # ─────────────────────────────────────────────
 
+def _parse_tethering_output(output: str) -> dict:
+    """Zerlegt die Ausgabe der Tethering-Scripts in verwertbare Werte.
+
+    Seit 2.4.27 melden die Scripts klar definierte Zeilen (PROFILE=, STATUS=,
+    ALREADY_ON, NO_PROFILE, ...). Alles andere gilt bewusst als FEHLER — vorher
+    wurde jede unbekannte Ausgabe als Erfolg durchgewinkt, was den kaputten
+    Hotspot-Start jahrelang verdeckt hat.
+    """
+    result = {"status": "", "profile": "", "used_excluded": False, "raw": output}
+    for line in output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("PROFILE="):
+            result["profile"] = line[len("PROFILE="):].strip()
+        elif line.startswith("STATUS="):
+            result["status"] = line[len("STATUS="):].strip()
+        elif line == "USED_EXCLUDED_PROFILE":
+            result["used_excluded"] = True
+        elif line in ("ALREADY_ON", "ALREADY_OFF", "NOT_RUNNING", "NO_PROFILE"):
+            result["status"] = line
+        elif line.upper().startswith("ERROR"):
+            result["status"] = line
+    return result
+
+
+def _get_ssid_to_avoid() -> str:
+    """Firmen-WLAN, das NICHT als Hotspot-Anker dienen darf (leer = egal).
+
+    Nur relevant, wenn die Box gerade IM Firmen-WLAN haengt (Werkstatt).
+    Beim Kunden ist das nie der Fall -> leerer String -> Verhalten wie bisher.
+    """
+    try:
+        from src.utils.company_wlan import (
+            COMPANY_WLAN_SSID,
+            OTHER_COMPANY_SSIDS,
+            get_connected_ssid,
+        )
+        connected = get_connected_ssid()
+        if connected and connected in ([COMPANY_WLAN_SSID] + OTHER_COMPANY_SSIDS):
+            return connected
+    except Exception as e:
+        logger.debug(f"Hotspot: Firmen-WLAN-Pruefung uebersprungen ({e})")
+    return ""
+
+
 def start_hotspot(ssid: str = "", password: str = "") -> bool:
     """Startet den WLAN-Hotspot (funktioniert auch ohne Internet!)
 
     Versucht in Reihenfolge:
-    1. Windows Tethering API (alle Connection Profiles)
+    1. Windows Tethering API (bevorzugt ein NEUTRALES Connection Profile)
     2. netsh wlan hostednetwork (Offline-Fallback)
 
     Args:
@@ -353,23 +439,76 @@ def start_hotspot(ssid: str = "", password: str = "") -> bool:
     # ── Pre-Step: Dummy-WLAN-Profil sicherstellen ──
     # Ohne mind. ein gespeichertes Profil findet die Tethering API nichts.
     # Passiert auf frisch geklonten Tablets (sonst nur "NO_PROFILE").
+    # Ausserdem ist es der neutrale Anker, damit der Hotspot nicht ueber das
+    # Firmen-WLAN aufgezogen wird (2.4.27).
     _ensure_wlan_profile_exists()
 
-    # ── Methode 1: Tethering API (mit allen Profilen) ──
-    logger.info("Starte Hotspot (Tethering API)...")
-    success, output = _run_powershell(_START_TETHERING_PS)
+    # ── Methode 1: Tethering API ──
+    avoid_ssid = _get_ssid_to_avoid()
 
-    if output == "ALREADY_ON":
+    # 2.4.27: Wurde in diesem App-Lauf bereits bewiesen, dass der Hotspot auf
+    # DIESER Box das Firmen-WLAN abwuergt, bleibt er im Firmen-WLAN aus.
+    # In der Werkstatt sind Dashboard-Meldung und Updates wichtiger als der
+    # Gast-Hotspot; beim Kunden greift das nie (dort ist avoid_ssid leer).
+    if avoid_ssid:
+        try:
+            from src.utils.company_wlan import hotspot_conflicts_with_company_wlan
+            if hotspot_conflicts_with_company_wlan():
+                logger.info(
+                    f"Hotspot: Start uebersprungen — er blockiert auf dieser Box das "
+                    f"Firmen-WLAN '{avoid_ssid}' (gilt nur in der Werkstatt)"
+                )
+                return False
+        except Exception as e:
+            logger.debug(f"Hotspot: Konflikt-Merker nicht lesbar ({e})")
+
+    if avoid_ssid:
+        logger.info(
+            f"Starte Hotspot (Tethering API) — Firmen-WLAN '{avoid_ssid}' wird als "
+            f"Anker gemieden (sonst verliert die Box ihre IP-Adresse)"
+        )
+    else:
+        logger.info("Starte Hotspot (Tethering API)...")
+
+    script = _START_TETHERING_PS.replace("__EXCLUDE_SSID__", avoid_ssid)
+    success, output = _run_powershell(script)
+    parsed = _parse_tethering_output(output)
+
+    if parsed["profile"]:
+        logger.info(f"Hotspot: Tethering-Anker = Profil '{parsed['profile']}'")
+
+    if parsed["status"] == "ALREADY_ON":
+        # Lief schon: Es wurde NICHTS umgestellt — auch wenn als Anker nur das
+        # Firmen-WLAN in Frage kam. Deshalb hier bewusst keine Warnung
+        # (Feld-Log 18.08. 11:30: sah nach Problem aus, war aber ein No-Op).
+        if parsed["used_excluded"]:
+            logger.debug(
+                f"Hotspot: Anker waere nur '{avoid_ssid}' gewesen — egal, "
+                f"der Hotspot lief bereits (nichts umgestellt)"
+            )
         logger.info("Hotspot war bereits aktiv (Tethering)")
         _active_method = "tethering"
         return True
-    elif output == "Success" or (success and "Error" not in output and output != "NO_PROFILE"):
+
+    if parsed["used_excluded"]:
+        # Jetzt zaehlt es wirklich: Der Hotspot wird NEU ueber die
+        # Firmen-Verbindung aufgezogen — genau die Konstellation, die einer
+        # Box die IP-Adresse kosten kann.
+        logger.warning(
+            f"Hotspot: Kein neutrales Profil gefunden — musste doch das Firmen-WLAN "
+            f"'{avoid_ssid}' als Anker nehmen (Firmen-Verbindung kann darunter leiden)"
+        )
+
+    if parsed["status"] == "Success":
         logger.info("Hotspot erfolgreich gestartet (Tethering)")
         _active_method = "tethering"
         return True
 
     # Tethering hat nicht funktioniert - Fallback
-    logger.info(f"Tethering API fehlgeschlagen: {output}")
+    logger.info(
+        f"Tethering API fehlgeschlagen (Status='{parsed['status'] or 'unbekannt'}', "
+        f"Exit-ok={success}): {parsed['raw'].strip()[:200]}"
+    )
 
     # ── Methode 2: netsh hostednetwork (Offline!) ──
     logger.info("Versuche netsh hostednetwork (Offline-Methode)...")
@@ -413,8 +552,14 @@ def stop_hotspot() -> bool:
     if _active_method != "hostednetwork":
         logger.info("Stoppe Hotspot (Tethering)...")
         success, output = _run_powershell(_STOP_TETHERING_PS)
-        if output in ("ALREADY_OFF", "NOT_RUNNING", "Success") or success:
+        parsed = _parse_tethering_output(output)
+        logger.debug(f"Hotspot-Stop: Status='{parsed['status'] or 'unbekannt'}'")
+        if parsed["status"] in ("ALREADY_OFF", "NOT_RUNNING", "Success"):
             stopped = True
+        else:
+            logger.warning(
+                f"Hotspot-Stop (Tethering) unklar: {parsed['raw'].strip()[:200]}"
+            )
 
     # Hostednetwork stoppen (immer versuchen, falls es laeuft)
     if _active_method == "hostednetwork" or not stopped:

@@ -32,6 +32,15 @@ from src.utils.logging import setup_logging, get_logger
 from src.app import PhotoboothApp
 
 
+def _write_crash(context, exc_type=None, exc_value=None, exc_tb=None):
+    """Absturz dauerhaft festhalten — arbeitet unabhaengig vom Logging."""
+    try:
+        from src.utils.crashlog import write_crash_report
+        write_crash_report(context, exc_type, exc_value, exc_tb)
+    except Exception:
+        pass
+
+
 def _setup_global_exception_handlers():
     """Installiert globale Exception-Handler für Crashes"""
     logger = get_logger("crash")
@@ -46,6 +55,10 @@ def _setup_global_exception_handlers():
         # Taskleiste wiederherstellen bevor wir crashen
         _recover_taskbar()
 
+        # 2.4.30: IMMER mitschreiben (auch ohne Developer-Mode) — sonst ist der
+        # Absturz im Normalbetrieb komplett unsichtbar (Werkstatt 18.08.).
+        _write_crash("Hauptthread", exc_type, exc_value, exc_traceback)
+
         # Vollständigen Stacktrace loggen
         logger.critical("=" * 60)
         logger.critical("UNBEHANDELTE EXCEPTION (Hauptthread)")
@@ -58,6 +71,8 @@ def _setup_global_exception_handlers():
 
     def handle_thread_exception(args):
         """Handler für unbehandelte Exceptions in Threads"""
+        _write_crash(f"Thread: {args.thread.name}",
+                     args.exc_type, args.exc_value, args.exc_traceback)
         logger.critical("=" * 60)
         logger.critical(f"UNBEHANDELTE EXCEPTION (Thread: {args.thread.name})")
         logger.critical("=" * 60)
@@ -136,6 +151,17 @@ def main():
     # Globale Exception-Handler für Crash-Logging
     _setup_global_exception_handlers()
 
+    # 2.4.30: Native Abstürze (Access Violation in einer DLL) mitschreiben.
+    # Werkstatt-Befund 18.08.: Ereignisprotokoll meldete ntdll.dll / 0xc0000005 —
+    # da läuft KEIN Python-Code mehr, die normalen Handler sehen nichts.
+    # faulthandler schreibt im Moment des Absturzes noch den Python-Stack aller
+    # Threads nach C:\FexoBooth\logs\absturz.log.
+    try:
+        from src.utils.crashlog import install_faulthandler
+        install_faulthandler()
+    except Exception:
+        pass
+
     logger.info("=" * 50)
     logger.info("FEXOBOOTH STARTET")
     if developer_mode:
@@ -162,6 +188,7 @@ def main():
     except KeyboardInterrupt:
         logger.info("Beendet durch Benutzer (Ctrl+C)")
     except Exception as e:
+        _write_crash("Start/Hauptschleife")
         logger.exception(f"Kritischer Fehler: {e}")
         
         # Fehler-Dialog wenn möglich

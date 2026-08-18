@@ -402,6 +402,89 @@ Betrifft: `_display_preview()`, `_build_flash_cache()`, `_show_main_preview()`, 
 
 ## Lessons Learned
 
+### BEWIESEN: Der eigene Hotspot kostet die Box die IP-Adresse im Firmen-WLAN (2.4.29)
+
+- **Beweis** (Box 056, Log `fexobooth_20260818_114932.log` + Server-Gegenprobe):
+  ```
+  11:49:57 | KEINE brauchbare IP-Adresse — starte Reparatur
+  11:49:57 | Stufe 1 — eigener Hotspot laeuft (192.168.137.x) und wird abgeschaltet
+  11:50:00 | Hotspot gestoppt
+  11:50:08 | Nach Hotspot-Aus kam die IP-Adresse (Stufe 1) ✓   → 192.168.2.208
+  11:50:08 | Monitoring: Version 2.4.29 fuer Box-ID 056 gemeldet
+  ```
+  Dashboard-DB (`photoboxes`, Box S1116056): `software_version = 2.4.29`,
+  `software_reported_at` aktuell, Payload mit `ssid = "fexon WLAN"`. Die Meldung kam also
+  wirklich an — nicht nur lokal „gruen".
+- **Mechanik:** Die Box hat eine WLAN-Karte. Laeuft darauf der Windows-Hotspot (ICS,
+  `192.168.137.1`), bekommt der Client-Teil keine DHCP-Antwort mehr → nur noch APIPA
+  (`169.254.x.x`). Windows meldet trotzdem „verbunden".
+- **Wichtig:** Der Hotspot laeuft schon AB DEM BOOT (die Adresse steht im Log, bevor die App
+  ihn ueberhaupt anfasst). Die App kann ihn deshalb nur abschalten, nicht verhindern. Die
+  saubere Loesung waere, ihn auf betroffenen Boxen gar nicht erst automatisch starten zu lassen.
+- **Merke:** „STA + AP gleichzeitig" ist eine Treiber-/Chip-Eigenschaft — sie funktioniert auf
+  einem Teil der Flotte und auf dem anderen nicht. Das erklaert, warum es immer nur EINIGE Boxen
+  traf und die Fehlersuche jahrelang im Kreis lief.
+
+### Windows-Tethering: Ein gespeichertes WLAN-Profil ist KEIN Connection Profile (2.4.27)
+
+- **Annahme (falsch):** Ein angelegtes, neutrales WLAN-Profil (`FexoBoothDummy`) könne als Anker
+  für `NetworkOperatorTetheringManager.CreateFromConnectionProfile()` dienen und so verhindern,
+  dass der Hotspot über die Firmen-Verbindung aufgezogen wird.
+- **Realität (Feldtest 18.08., Box 200):** `GetConnectionProfiles()` liefert nur **tatsächliche
+  Verbindungen**, keine gespeicherten WLAN-Profile. Das Dummy-Profil wurde sauber angelegt und
+  tauchte trotzdem nie in der Liste auf. Auf einer Box mit nur einer WLAN-Karte, die im
+  Firmen-WLAN hängt, bleibt `fexon WLAN` deshalb zwangsläufig der einzige mögliche Anker.
+- **Konsequenz:** Der Ausschluss greift nur, wenn es eine zweite echte Verbindung gibt (z.B. LAN).
+  Wirksam gegen „verbunden ohne IP" ist damit die **Reihenfolge** (erst Dashboard-Meldung und
+  Update, dann Hotspot) — nicht der Anker-Tausch. Das Dummy-Profil bleibt trotzdem sinnvoll: auf
+  frisch geklonten Tablets mit NULL Profilen findet die Tethering-API sonst gar nichts.
+- **Merke:** Bei Windows-Runtime-APIs nie von „Profil gespeichert" auf „Profil nutzbar" schließen —
+  erst im Log gegenprüfen, WELCHER Anker tatsächlich genommen wurde. Genau diese eine Log-Zeile
+  (`Tethering-Anker = Profil '...'`) hat die falsche Annahme in einem einzigen Testlauf aufgedeckt.
+
+### Doppelte geschweifte Klammern in PowerShell-Strings = stiller Blindgänger (2.4.27)
+
+- **Problem:** In `src/gallery/hotspot.py` standen die PowerShell-Befehle mit doppelten Klammern
+  (`if (...) {{ ... }}`) — Rest einer früheren `.format()`-Nutzung, die entfernt wurde, ohne die
+  Klammern zurückzubauen. PowerShell versteht `{{ ... }}` aber als „Block, der einen Script-Block
+  ENTHÄLT": Der innere Teil wird **nie ausgeführt**, sondern nur als Text ausgegeben. Eine
+  Funktion mit doppeltem Klammerpaar liefert `ScriptBlock` statt eines Ergebnisses, ein
+  `exit 1` im Fehlerzweig feuert nie.
+- **Warum es so lange unentdeckt blieb:** Das Script endete mit Exit-Code 0 und gab Script-Text
+  aus. Die Python-Auswertung lautete `success and "Error" not in output and output != "NO_PROFILE"`
+  — also „alles, was kein bekannter Fehler ist, gilt als Erfolg". Ergebnis: Jahrelang
+  „Hotspot erfolgreich gestartet (Tethering)" im Log, obwohl nichts passiert ist.
+- **Lösung:** Klammern einfach schreiben (die Scripts werden nicht mehr `.format()`ed);
+  Platzhalter werden per `.replace("__EXCLUDE_SSID__", ...)` ersetzt, damit die Falle nicht
+  zurückkommt. Die Auswertung akzeptiert nur noch klar definierte Rückgaben (`STATUS=Success`,
+  `ALREADY_ON`) — alles andere ist ein Fehler.
+- **Merke:** (1) Externe Scripts (PowerShell/Batch/SQL) niemals mit `.format()` bauen — ihre
+  Syntax nutzt selbst geschweifte Klammern. (2) Ergebnisse von Fremdprozessen per **Positivliste**
+  auswerten („nur DAS ist Erfolg"), nie per Negativliste („alles außer Fehler ist Erfolg") —
+  sonst wird jede unerwartete Ausgabe zum stillen Erfolg. (3) Verdacht auf so einen Blindgänger
+  lässt sich in 10 Sekunden prüfen: Script ausführen und die Rückgabe ansehen.
+
+### „Verbunden" ist keine Aussage über Netz — immer die IP-Adresse prüfen (2.4.27)
+
+- **Problem:** Box 200 war laut `netsh wlan show interfaces` mit `fexon WLAN` verbunden, hatte
+  aber nur `169.254.183.239` (APIPA = der Router hat KEINE Adresse vergeben) und `192.168.137.1`
+  (den eigenen Hotspot). Jede Namensauflösung scheiterte (`getaddrinfo failed`). Die
+  Selbstheilung aus 2.4.22 meldete trotzdem `already_connected` und tat nichts — sie schaute nur
+  auf den Netzwerk-NAMEN.
+- **Ursache dahinter:** Der Windows-Hotspot (ICS, `192.168.137.1`) belegt dieselbe WLAN-Karte wie
+  die Firmen-Verbindung. Wird das Tethering über das Firmen-Profil aufgezogen, verliert die Box
+  ihre DHCP-Adresse. Trifft nur einen Teil der Flotte, weil es vom WLAN-Chip abhängt, ob er
+  gleichzeitig Client UND Access Point sein kann.
+- **Lösung (2.4.27):** `src/utils/network_diag.py` bewertet IP-Adressen ehrlich — `127.*`,
+  `169.254.*` (APIPA) und `192.168.137.*` (eigener Hotspot) zählen NICHT als Netz. Selbstheilung
+  und Monitoring prüfen das vor jedem Melden; Reparatur in 3 Stufen (neue Adresse anfordern →
+  neu verbinden → Hotspot abschalten).
+- **Merke:** Bei Netzwerk-Diagnose gilt die Reihenfolge **IP-Adresse → Router-Ping → DNS →
+  Zielserver**. Nur so ist unterscheidbar, ob der Router nichts vergibt, die Funkverbindung nur
+  auf dem Papier steht oder wirklich das Ziel down ist. Genau diese Kette schreibt die
+  NETZ-BILANZ ins Log — inklusive Klartext-Urteil, damit ein nicht wirkender Fix auffällt,
+  ohne dass jemand an die Box muss.
+
 ### Exportierte WLAN-Profile sind maschinengebunden — Profile immer mit Klartext-Schlüssel selbst erzeugen
 
 - **Problem:** 47 Flotten-Boxen buchten sich nicht ins Firmen-WLAN ein. Das Mitarbeiter-Fix-Skript importierte eine per `netsh wlan export` erzeugte Profil-XML — deren `keyMaterial` ist aber DPAPI-verschlüsselt und nur auf Maschinen mit identischem Schlüsselmaterial (= identisches Klon-Image) entschlüsselbar. Auf Boxen mit anderem Image-Stand griff der Fix nicht → „weitgehend" statt vollständig.

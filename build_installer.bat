@@ -159,6 +159,13 @@ if exist "assets\videos\end.mp4" (
     echo [OK] end.mp4 kopiert
 )
 
+REM Absturz-Helfer neben die Setup-EXE legen (2.4.30), damit er beim
+REM Kopieren auf den USB-Stick automatisch mitgeht.
+if exist "setup\Absturz-Infos-sammeln.bat" (
+    copy "setup\Absturz-Infos-sammeln.bat" "installer_output\" >nul
+    echo [OK] Absturz-Infos-sammeln.bat neben die Setup-EXE gelegt
+)
+
 REM ─────────────────────────────────────────────
 REM Schritt 7: Start-Script erstellen
 REM ─────────────────────────────────────────────

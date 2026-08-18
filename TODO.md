@@ -4,6 +4,70 @@ Aufgabenliste mit Prioritäten.
 
 ---
 
+## Abstuerze im Normalbetrieb (2.4.30) 🔴
+
+> Werkstatt 18.08.: 2 Boxen stuerzen beim Hochfahren ab, andere beim Anstecken des USB-Sticks —
+> im Developer-Mode NICHT reproduzierbar. Die Dev-Logs liefen beide sauber durch.
+
+- [x] `absturz.log` gebaut: jeder unbehandelte Fehler wird ab jetzt IMMER protokolliert
+      (Hauptthread, Threads, Tk-Callbacks) — unabhaengig vom Developer-Mode
+- [x] Tk-Fehler-Handler gesetzt (fehlte komplett) — Fehler in Callbacks reissen die App
+      nicht mehr mit
+- [x] **Ereignisprotokoll ausgewertet** (Mitarbeiter, 18.08. 14:13:45):
+      `fexobooth.exe` / fehlerhaftes Modul `ntdll.dll` / Ausnahmecode `0xc0000005`
+      = Speicherzugriffsfehler in nativem Code. **Damit ist der Tk-Handler als Ursache
+      widerlegt** — bei so einem Absturz laeuft kein Python-Code mehr.
+- [x] `faulthandler` eingebaut: schreibt bei genau diesem Absturztyp den Python-Stack aller
+      Threads nach `absturz.log` (mit echter Access Violation im Worker-Thread getestet ✓)
+- [ ] **Naechster Schritt auf einer abstuerzenden Box:** Absturz-Speicherabbild aktivieren
+      (WER LocalDumps, Registry-Befehl siehe unten) ODER vorhandene WER-Berichte einsammeln:
+      `C:\ProgramData\Microsoft\Windows\WER\ReportArchive\*fexobooth*`
+- [ ] Verdaechtige bei `ntdll` + `0xc0000005` eingrenzen: Kamera (OpenCV/DirectShow), VLC,
+      Druckertreiber. Die 2.4.29-Aenderungen sind reines Python + Subprozesse und koennen
+      so einen Absturz nicht direkt ausloesen — sie haben aber das Timing veraendert
+      (Hotspot-Start jetzt im Hintergrund-Thread), was einen latenten Fehler sichtbar machen kann.
+- [ ] Zweiter Befund pruefen: „Fehlermeldung bei Testdruck: zu hohe CPU-Hintergrundauslastung"
+      (Box 044) — Netz-Bilanz dort komplett gruen, also kein Netzproblem; vermutlich der
+      Selbsttest-Schwellwert. Separat ansehen.
+
+## Vor dem Flotten-Rollout von 2.4.29 🔴
+
+- [x] **Ursache bewiesen** (Box 056, 18.08.): Hotspot aus → IP-Adresse da → Meldung im Dashboard
+      angekommen (serverseitig gegengeprueft)
+- [ ] ⚠️ **Hotspot-Rueckkehr beim Kunden testen** — bis 2.4.26 waren Start UND Stopp wirkungslos,
+      der Hotspot lief einfach immer. Seit 2.4.29 schalten wir ihn in der Werkstatt WIRKLICH ab.
+      Damit haengt der Gast-Betrieb erstmals daran, dass das EINSCHALTEN funktioniert — ein Pfad,
+      der im Feld noch nie echt gelaufen ist. Test: Box aus der Werkstatt nehmen, ausserhalb des
+      Firmen-WLAN starten, pruefen ob `fexobox-gallery` wieder auftaucht.
+- [ ] GitHub-Release veroeffentlichen, falls die Flotte 2.4.29 per Auto-Update bekommen soll
+      (Box meldet aktuell: „Neuestes Release: v2.4.25" → Auto-Update verteilt NICHTS)
+- [ ] Danach: restliche stumme Boxen (073/116/016) mit 2.4.29 durchtesten
+
+## Firmen-WLAN 2.4.27 auf echter Hardware prüfen 🔴
+
+> Gebaut 2026-08-18 nach dem Feld-Log von Box 200. Alles ist am PC getestet (Logik, Scripts,
+> Bilanz), aber der entscheidende Beweis geht nur auf einer betroffenen Box.
+
+- [ ] Build 2.4.27 auf einer Box installieren, die sich bisher NICHT im Dashboard meldet,
+      in der Werkstatt einschalten und ~5 Minuten laufen lassen
+- [ ] Dev-Mode-Log auswerten: Block `NETZ-BILANZ [Firmen-WLAN]` suchen → Zeile `URTEIL`
+      sagt direkt, woran es liegt
+- [ ] Falls `URTEIL: KEINE IP-ADRESSE` UND `Hotspot-Konfl.: nein` → der Hotspot ist NICHT die
+      Ursache: DHCP-Bereich/Lease-Liste im Firmen-Router prüfen (bei 200+ Boxen realistisch,
+      dass der Adressbereich zu klein ist)
+- [ ] Falls `Hotspot-Konfl.: JA` → betroffene Boxen sammeln und prüfen, ob es an einem
+      bestimmten WLAN-Chip/Treiber hängt (dann Treiber-Update statt Software-Workaround)
+- [ ] Nachziehen: `setup/setup_hotspot.ps1` und `setup/diagnose_hotspot.ps1` nutzen noch die
+      alte „erstes Profil"-Logik ohne Firmen-WLAN-Ausschluss (nur Werkstatt-Skripte, laufen
+      nicht im Kundenbetrieb — aber irgendwann angleichen)
+- [x] Erster Feldtest auf Box 200 gelaufen (18.08., Log `fexobooth_20260818_112955.log`):
+      Reihenfolge greift, Meldung kam beim ERSTEN Versuch durch, NETZ-BILANZ „ALLES GRÜN" —
+      *aber der Fehlerfall selbst trat dort nicht auf, die Box hatte eine gültige IP*
+- [ ] ⚠️ Der Anker-Tausch (neutrales Profil statt Firmen-WLAN) wirkt auf WLAN-only-Boxen NICHT —
+      Windows liefert gespeicherte Profile nicht als Connection Profile (Details in ERKENNTNISSE).
+      Falls sich der Hotspot doch als echter Störer bestätigt: Gegenmittel ist dann das gezielte
+      Abschalten (Stufe 3 der Reparatur), nicht der Anker
+
 ## Galerie-Server: Thumbnail-Cache 🟡 (Etappe 2 des App-Plans „Offline-Galerie + Cloud-Relay", 2026-07-03)
 
 > Detailplan: [../fexobox-app/docs/PLAN-OFFLINE-GALERIE-CLOUD-RELAY.md](../fexobox-app/docs/PLAN-OFFLINE-GALERIE-CLOUD-RELAY.md) §5.

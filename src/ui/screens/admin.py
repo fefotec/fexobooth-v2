@@ -1286,7 +1286,13 @@ class AdminDialog(ctk.CTkToplevel):
             try:
                 from src.utils.company_wlan import self_heal_company_wlan
                 status = self_heal_company_wlan(wait_seconds=15)
-                log_step("Firmen-WLAN", status in ("already_connected", "not_visible", "connected"), status)
+                # 2.4.27: 'ip_repaired' = war verbunden ohne IP-Adresse, jetzt ok.
+                # 'no_ip' = verbunden, aber der Router gibt keine Adresse → Fehler.
+                log_step(
+                    "Firmen-WLAN",
+                    status in ("already_connected", "not_visible", "connected", "ip_repaired"),
+                    status,
+                )
             except Exception as e:
                 log_step("Firmen-WLAN", False, str(e)[:80])
 

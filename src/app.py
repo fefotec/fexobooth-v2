@@ -79,6 +79,18 @@ class PhotoboothApp:
         self.root.title("Fexobooth")
         self.root.configure(fg_color=COLORS["bg_dark"])
 
+        # 2.4.30: Fehler aus Tk-Callbacks abfangen, BEVOR irgendein Screen läuft.
+        # Ohne das geht Tkinter über sys.stderr — im Fenster-Build ist der aber
+        # None, der Fehler-Handler stirbt selbst und reisst die App mit. Genau
+        # das erklärt die Abstürze, die sich im Developer-Mode nie zeigen
+        # (dort gibt es eine Konsole). Siehe src/utils/crashlog.py.
+        try:
+            from src.utils.crashlog import install_tk_exception_handler
+            if install_tk_exception_handler(self.root, logger):
+                logger.debug("Tk-Fehler-Handler aktiv (Absturz-Schutz)")
+        except Exception as e:
+            logger.debug(f"Tk-Fehler-Handler nicht gesetzt: {e}")
+
         # Fenster-Icon setzen
         self._set_window_icon()
 
@@ -837,6 +849,27 @@ class PhotoboothApp:
             hs_password = gallery_config.get("hotspot_password", "")
             def _start_hs():
                 try:
+                    # 2.4.27 — Reihenfolge im Firmen-WLAN:
+                    # Der eigene Hotspot teilt sich die WLAN-Karte mit der
+                    # Firmen-Verbindung und kann sie stoeren. Steht die Box in
+                    # der Werkstatt, laeuft deshalb ZUERST die Netz-Arbeit
+                    # (Dashboard-Meldung + Update-Check) und erst danach der
+                    # Hotspot. Beim Kunden aendert sich nichts: dort ist keine
+                    # Firmen-SSID verbunden -> es wird nicht gewartet.
+                    try:
+                        from src.utils.company_wlan import get_connected_ssid
+                        from src.company_network import wait_for_startup_network_window
+
+                        aktuelle_ssid = get_connected_ssid()
+                        if aktuelle_ssid in self.config.get("company_wifi_ssids", []):
+                            logger.info(
+                                f"📶 Hotspot wartet: Firmen-WLAN '{aktuelle_ssid}' erkannt — "
+                                f"erst Dashboard-Meldung/Update, dann Hotspot"
+                            )
+                            wait_for_startup_network_window(timeout=120.0)
+                    except Exception as e:
+                        logger.debug(f"Hotspot-Reihenfolge: Prüfung übersprungen ({e})")
+
                     logger.info("📶 Starte Hotspot (Service-Kanal)...")
                     start_hotspot(ssid=hs_ssid, password=hs_password)
                 except Exception as e:
@@ -993,11 +1026,22 @@ class PhotoboothApp:
             )
 
             # Hotspot starten (auch wenn Server schon läuft - Hotspot könnte aus sein)
+            # 2.4.27: NICHT mehr direkt hier — der Aufruf geht über PowerShell und
+            # dauert auf der Box ~8 s. Da diese Methode auch aus dem Admin-Menü
+            # heraus läuft, fror der Bildschirm dabei ein (Feld-Log 18.08.:
+            # "UI-HITCH: Tk-Hauptschleife war ~9207ms blockiert" nach dem
+            # Speichern). Jetzt im Hintergrund-Thread wie beim App-Start.
             gallery_config = self.config.get("gallery", {})
-            start_hotspot(
-                ssid=gallery_config.get("hotspot_ssid", ""),
-                password=gallery_config.get("hotspot_password", "")
-            )
+            hs_ssid = gallery_config.get("hotspot_ssid", "")
+            hs_password = gallery_config.get("hotspot_password", "")
+
+            def _ensure_hs():
+                try:
+                    start_hotspot(ssid=hs_ssid, password=hs_password)
+                except Exception as e:
+                    logger.warning(f"Hotspot-Start fehlgeschlagen: {e}")
+
+            threading.Thread(target=_ensure_hs, daemon=True, name="Hotspot-Ensure").start()
 
             gallery_enabled = self.config.get("gallery_enabled", False)
 

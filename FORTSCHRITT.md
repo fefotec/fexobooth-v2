@@ -4,6 +4,176 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-08-18 (Box 056) — Fehler ENDLICH reproduziert, Reparatur zu langsam (2.4.29)
+
+**Der Log, auf den wir gewartet haben** (`fexobooth_20260818_111651.log`, Box 056, Buchung
+NX-141859, 2.4.27, Dev-Mode):
+
+| Zeit | Zeile | Bedeutung |
+|---|---|---|
+| 11:17:05.377 | `Hotspot wartet: Firmen-WLAN 'fexon WLAN' erkannt` | Reihenfolge-Fix greift |
+| 11:17:05.704 | `Gefundene IPs: ['192.168.137.1', '169.254.166.159']` | **Hotspot AN, keine DHCP-Adresse** — und zwar BEVOR die App den Hotspot startet |
+| 11:17:15.769 | `... KEINE brauchbare IP-Adresse — starte Reparatur` | IP-Prüfung greift |
+| 11:17:16.271 | `Neue IP-Adresse anfordern (Adapter: WLAN)...` | Stufe 1 alt |
+| 11:18:16.444 | `renew Code 1 (TIMEOUT)` | **60 s vertan, kein DHCP-Server antwortet** |
+| 11:18:36.463 | `Stufe 2 — WLAN trennen und neu verbinden...` | |
+| 11:18:51.424 | `FEXOBOOTH BEENDET` | Box ausgeschaltet — Stufe 3 nie erreicht |
+
+**Zwei harte Erkenntnisse:**
+1. Die Hotspot-Adresse `192.168.137.1` ist schon **vor** dem App-Hotspot-Start da (der wartete ja
+   noch auf das Netz-Fenster). Der Windows-Hotspot/ICS läuft also **ab dem Boot** — die App kann
+   ihn nur noch abschalten, nicht verhindern. Genau dazu passt, dass `ipconfig /renew` ins Leere
+   lief: Auf der Funkkarte läuft der AP, DHCP bekommt keine Antwort.
+2. `ipconfig /release` lief ohne Fehler durch (kein Elevation-Problem auf diesen Boxen) —
+   die Kiosk-Rechte reichen also für die Reparatur.
+
+**Umgesetzt (2.4.29):** Reihenfolge umgedreht (Hotspot zuerst, erkannt an `192.168.137.x` ohne
+Extra-Abfrage), `renew`-Timeout 60 s → 20 s, Wartezeiten 20 s → 15 s.
+
+**Test:** Feld-Situation von Box 056 nachgestellt → Hotspot als Ursache steht nach **6,0 s** fest,
+Konflikt-Merker wird gesetzt. Gegenprobe „nichts hilft" → sauberes Nein nach 21 s, Merker bleibt
+korrekt aus.
+
+---
+
+## 2026-08-18 (nachmittags) — Werkstatt-Test ohne Befund → Netz-Protokoll ohne Dev-Mode (2.4.28)
+
+**Befund:** Drei Boxen (073, 116, 016) mit 2.4.27 in der Werkstatt getestet, alle drei „geht wieder
+nicht". Von D:\ kamen pro Box aber nur **zwei Installer-Logs** zurück (`company_wlan_setup.log`,
+`windows_update_lockdown.log`) — **kein einziges App-Log**.
+
+**Ursache dafür:** `src/utils/logging.py` → `setup_logging(developer_mode=False)` setzt einen
+NullHandler. Im Normalbetrieb schreibt die App also *nichts*. Die ganze NETZ-BILANZ aus 2.4.27 war
+in der Werkstatt damit unsichtbar — sie existiert nur, wenn jemand `start_dev.bat` benutzt.
+
+**Was die vorhandenen Logs sagen:** Auf allen drei Boxen lief das WLAN-Setup sauber durch
+(`11:36:52` / `11:56:32` / `11:56:19` jeweils „Mit 'fexon WLAN' verbunden - Setup erfolgreich"),
+und der Installer lief mehrfach (Lockdown-Läufe 11:33–11:58). Die Funk-Anmeldung klappt also —
+ob danach eine IP-Adresse kam, ist aus diesen Logs **nicht** ablesbar. Das deckt sich exakt mit dem
+Muster von Box 200 am Vormittag.
+
+**Umgesetzt (2.4.28):**
+- `src/utils/network_diag.py`: `write_network_report()` + `log_network_verdict(persist=True)` →
+  schreibt nach `C:\FexoBooth\logs\netzwerk.log` (Fallback `C:\ProgramData\FexoBox`), mit
+  Zeitstempel/Box-ID/Version, Selbstkürzung bei ~200 KB.
+- `src/company_network.py`: Bilanz wird persistiert; zusätzlich neuer Kurzeintrag über
+  `_persist_short_report()`, wenn die Box **gar nicht** ins Firmen-WLAN kommt (inkl.
+  Selbstheilungs-Status). Gate: nur wenn das Firmen-WLAN in Reichweite war (`not_visible` =
+  Kundenbetrieb → es wird nichts geschrieben).
+
+**Test:** Bewusst **ohne** `setup_logging(developer_mode=True)` ausgeführt (= Werkstatt-Situation);
+`netzwerk.log` wurde angelegt und enthielt beide Blöcke (kaputter Fall mit Urteil „KEINE
+IP-ADRESSE" und der Fall „NICHT im Firmen-WLAN").
+
+---
+
+## 2026-08-18 — Firmen-WLAN: "verbunden ohne Netz" + wirkungsloser Hotspot-Start (2.4.27)
+
+**Feld-Befund** (`D:\fexobooth_20260818_102651.log`, Box 200, 2 Minuten Laufzeit):
+- `10:27:16 | Firmennetzwerk: Firmen-WLAN erkannt ('fexon WLAN')` — der Name stimmte also.
+- Direkt danach 3× `Dashboard nicht erreichbar (<urlopen error [Errno 11001] getaddrinfo failed>)`
+  (10:27:16 / 10:27:37 / 10:28:07). Die Box wurde danach ausgeschaltet, die späteren
+  Retry-Versuche (2.4.25) kamen nie zum Zug.
+- Entscheidende Zeile davor: `10:27:05 | Gefundene IPs: ['169.254.183.239', '192.168.137.1']`.
+  Das sind ALLE IPv4-Adressen des Rechners: eine Notfalladresse (APIPA = der Router hat nichts
+  vergeben) und der eigene Hotspot. **Keine Adresse vom Firmen-Router.**
+- Ergänzend `D:\company_wlan_setup.log` (09:21): Profil-Setup lief sauber durch und war
+  verbunden — der Installer-Schritt aus 2.4.22 funktioniert also. Das Problem sitzt danach.
+- `D:\windows_update_lockdown.log`: für dieses Thema ohne Befund (nur Update-Dienste/Tasks,
+  nichts Netzwerk-Relevantes).
+
+**Zweiter Fund bei der Code-Prüfung (der eigentliche Hammer):** In `src/gallery/hotspot.py`
+standen in den PowerShell-Befehlen doppelte geschweifte Klammern (`{{ }}`) — Rest einer alten
+`.format()`-Nutzung. Am echten PowerShell verifiziert: `if (...) {{ ... }}` wird **nicht
+ausgeführt**, sondern nur als Text ausgegeben. Der Rückgabewert war dadurch 6.287 Zeichen
+Script-Text bei Exit-Code 0 — und die Python-Bedingung
+`success and "Error" not in output and output != "NO_PROFILE"` wertete genau das als Erfolg.
+**Die App hat den Hotspot also nie gestartet, nie gestoppt, nie korrekt geprüft** und trotzdem
+immer „Hotspot erfolgreich gestartet (Tethering)" geloggt. Der Hotspot auf den Boxen stammt vom
+einmaligen Einrichten (`einmalig_hotspot_einrichten.bat`) und lief unabhängig von der App weiter.
+
+**Zusammenhang:** Der Windows-Hotspot (ICS, `192.168.137.1`) belegt dieselbe WLAN-Karte wie die
+Firmen-Verbindung. Wird er über das Firmen-Profil aufgezogen, verliert die Box ihre DHCP-Adresse
+→ verbunden, aber ohne Netz. Das erklärt auch, warum es nur EINIGE Boxen trifft: Es hängt vom
+WLAN-Chip (kann er gleichzeitig Client + Access Point?) und der Profil-Reihenfolge ab.
+
+**Umgesetzt:**
+1. `src/gallery/hotspot.py` — Klammer-Bug behoben (Syntax am echten PowerShell gegengeprüft),
+   Profilwahl meidet das verbundene Firmen-WLAN (neutraler Anker `FexoBoothDummy`, jetzt immer
+   vorhanden), ehrliche Auswertung (`_parse_tethering_output`) statt „alles außer Error = ok",
+   Konflikt-Merker: Hotspot bleibt im Firmen-WLAN aus, wenn er dort nachweislich stört.
+2. `src/utils/network_diag.py` (NEU) — IP-Bewertung (APIPA/eigener Hotspot zählen nicht als Netz),
+   Router-Ping, DNS- und Dashboard-Probe, DHCP-Erneuerung, **NETZ-BILANZ** mit Klartext-Urteil.
+3. `src/utils/company_wlan.py` — Selbstheilung prüft jetzt die IP-Adresse statt nur den Namen;
+   neue 3-Stufen-Reparatur `repair_missing_ip()`; neue Rückgaben `ip_repaired` / `no_ip`.
+4. `src/company_network.py` — Startfenster (`wait_for_startup_network_window`), IP-Prüfung vor
+   dem Melden, NETZ-BILANZ nach dem Start und bei jeder fehlgeschlagenen Wiederholmeldung,
+   eigene IPs direkt an der Fehlermeldung.
+5. `src/app.py` — im Firmen-WLAN erst Netz-Arbeit, dann Hotspot (beim Kunden unverändert).
+6. `src/ui/screens/admin.py` — Schnellhilfe kennt die neuen Status.
+
+**Tests (Dev-Mode-Logging aktiv):**
+- PowerShell-Semantik der doppelten Klammern reproduziert (Blöcke werden als Text ausgegeben,
+  Funktion liefert `ScriptBlock` statt Ergebnis) und das echte Alt-Script gegen Python geprüft:
+  Fehlbewertung „Erfolg" bestätigt.
+- Neue Scripts: Syntaxprüfung über `PSParser::Tokenize` (START/STOP/CHECK fehlerfrei),
+  Profilauswahl live getestet — ohne Ausschluss wurde Profil A gewählt, mit Ausschluss Profil B.
+  Der eigentliche Tethering-Start wurde dabei bewusst NICHT ausgeführt (Test-PC).
+- NETZ-BILANZ gegen ein gesundes Netz (alles grün) und gegen die nachgestellte Box-200-Lage
+  (`169.254.183.239` + `192.168.137.1`) → korrektes Urteil „KEINE IP-ADRESSE".
+- Startfenster: Kunde wartet 0,00 s / Werkstatt wartet bis fertig (1,50 s) / Hänger bricht nach
+  Timeout ab (2,00 s) — der Hotspot kann also nie dauerhaft blockiert werden.
+- Selbstheilung: 4 Fälle durchgespielt → `already_connected` / `ip_repaired` / `no_ip` /
+  `not_visible` (beim Kunden wird keine Reparatur angefasst).
+- Ausgabe-Auswertung: 7 Fälle inkl. der alten kaputten Textausgabe → wird jetzt korrekt als
+  Fehler gewertet.
+
+### Feldtest 2.4.27 auf Box 200 (Log `fexobooth_20260818_112955.log`) — Ergebnis
+
+**Was nachweislich funktioniert:**
+- `11:30:09 | Hotspot wartet: Firmen-WLAN 'fexon WLAN' erkannt — erst Dashboard-Meldung/Update,
+  dann Hotspot` → die neue Reihenfolge greift.
+- `11:30:20 | Monitoring: Version 2.4.27 für Box-ID 200 gemeldet` → **beim ERSTEN Versuch
+  zugestellt**, 14 s bevor der Hotspot überhaupt startet (11:30:34). Genau der gewünschte Effekt;
+  in 2.4.26 scheiterten an dieser Stelle alle Versuche.
+- NETZ-BILANZ wird geschrieben: IP-Adressen / Router-Ping / Namensauflösung / Dashboard alle OK,
+  `URTEIL: ALLES GRÜN`. Die Box hatte diesmal eine echte Adresse (`192.168.2.224`) — der Fehler
+  vom Vormittag (nur `169.254.x.x`) trat also NICHT auf, die Reparatur-Stufen liefen folgerichtig
+  nicht an.
+
+**Was NICHT wie geplant wirkt (wichtig):**
+- `11:30:44 | Hotspot: Kein neutrales Profil gefunden — musste doch das Firmen-WLAN als Anker nehmen`
+  Das Dummy-Profil `FexoBoothDummy` wurde zwar angelegt (11:30:35), aber Windows liefert über
+  `GetConnectionProfiles()` **nur tatsächliche Verbindungen** — ein gespeichertes, nie verbundenes
+  WLAN-Profil taucht dort nicht auf. Auf einer Box mit nur einer WLAN-Karte bleibt im Firmen-WLAN
+  also zwangsläufig `fexon WLAN` der einzige Anker. Der Ausschluss greift nur, wenn es eine zweite
+  Verbindung gibt (z.B. LAN). **Wirksam gegen das Problem ist damit die Reihenfolge, nicht der
+  Anker-Tausch.**
+- Die Warnung war in diesem Lauf zudem irreführend: Der Hotspot lief bereits (`ALREADY_ON`), es
+  wurde also gar nichts umgestellt. → korrigiert, Warnung kommt jetzt nur noch, wenn der Hotspot
+  wirklich neu über die Firmen-Verbindung aufgezogen wird.
+
+**Zwei Nebenbefunde aus demselben Log, beide behoben:**
+- `11:31:43 | UI-HITCH: Tk-Hauptschleife war ~9207ms blockiert` nach dem Admin-Speichern:
+  `_start_gallery_if_needed()` rief `start_hotspot()` direkt im UI-Thread auf (PowerShell,
+  ~8 s). Läuft jetzt im Hintergrund-Thread — kein eingefrorener Bildschirm mehr.
+  (Bestand schon vor 2.4.27, fiel nur durch das neue Logging auf.)
+- Kamera-Erkennung lief in Timeouts (`DirectShow-Enumeration ... timed out after 10 seconds`,
+  `Get-PnpDevice ... timed out after 5 seconds`, kurzzeitig „Keine externe Kamera gefunden!").
+  Die Box hatte 83 % CPU-Last beim Start und mehrere PowerShell-Aufrufe gleichzeitig. Die
+  NETZ-BILANZ fragt den Hotspot-Zustand deshalb nur noch ab, **wenn die Meldung NICHT durchkam** —
+  im Normalfall ein PowerShell-Aufruf weniger.
+
+**Offen:** Der eigentliche Fehlerfall (verbunden ohne IP-Adresse) ist damit noch nicht im Feld
+gegengeprüft — dafür braucht es eine Box, die ihn zeigt. Das Log würde ihn jetzt eindeutig
+ausweisen (siehe TODO).
+
+---
+
+**Offen:** Test auf echter Hardware (Build 2.4.27 auf einer betroffenen Box), siehe TODO.
+
+---
+
 ## 2026-08-13 — Selbsttest öffnet Kamera wie im Betrieb (Fehlalarm + Einfrieren behoben) (2.4.26)
 
 **Feld-Befund** (zwei Logs von D:\, beide **dieselbe Box 224**, Webcam „HD Pro Webcam C920"):

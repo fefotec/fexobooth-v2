@@ -72,6 +72,12 @@ Source: "installer_files\start_fexobooth.bat"; DestDir: "{app}"; Flags: ignoreve
 Source: "installer_files\start_dev.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "update_from_github.bat"; DestDir: "{app}"; Flags: ignoreversion
 
+; Absturz-Infos sammeln (2.4.30): Liegt direkt in C:\FexoBooth, damit ein
+; Mitarbeiter bei einem Absturz nur doppelklicken muss — auch wenn gerade kein
+; USB-Stick mit dem Skript zur Hand ist. Sammelt die Windows-Absturzmeldungen
+; und legt sie als Textdatei in C:\FexoBooth\logs ab.
+Source: "setup\Absturz-Infos-sammeln.bat"; DestDir: "{app}"; Flags: ignoreversion
+
 ; Setup-Skripte
 Source: "setup\*"; DestDir: "{app}\setup"; Flags: ignoreversion recursesubdirs createallsubdirs
 

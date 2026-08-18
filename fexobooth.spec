@@ -215,6 +215,8 @@ a = Analysis(
         "src.utils.logging",
         "src.utils.system_load",
         "src.utils.company_wlan",
+        "src.utils.network_diag",
+        "src.utils.crashlog",
     ] + ctk_hiddenimports + certifi_hiddenimports + setuptools_hiddenimports,
     hookspath=[],
     hooksconfig={},

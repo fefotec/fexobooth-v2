@@ -11,6 +11,11 @@ Einstellungen: automatisch verbinden = an, MAC-Randomisierung = aus.
 Sicherer Auslöser der Automatik: NUR wenn das Firmen-WLAN im Funk SICHTBAR,
 aber nicht verbunden ist (= Box steht in der Werkstatt und es klemmt).
 Beim Kunden ist das Netz nie sichtbar → dort löst nie etwas aus.
+
+Erweiterung 2.4.27 (Feld-Log 18.08.2026, Box 200): "Verbunden" wird nicht mehr
+nur am WLAN-NAMEN festgemacht. Eine Box kann mit 'fexon WLAN' verbunden sein
+und trotzdem keine IP-Adresse vom Router haben (nur `169.254.x.x`) — dann geht
+gar nichts, und die Selbstheilung hat das bisher als "alles gut" abgehakt.
 """
 
 import os
@@ -178,17 +183,162 @@ def connect_company_wlan() -> None:
     _run_netsh(["wlan", "connect", f"name={COMPANY_WLAN_SSID}"])
 
 
+def disconnect_wlan() -> None:
+    """Trennt die WLAN-Verbindung (erzwingt danach eine frische Anmeldung)."""
+    _run_netsh(["wlan", "disconnect"])
+
+
+# ─────────────────────────────────────────────
+# Hotspot-Konflikt (2.4.27)
+# ─────────────────────────────────────────────
+# Merker für DIESEN App-Lauf: Auf dieser Box vertragen sich der eigene
+# Hotspot und das Firmen-WLAN nicht (die WLAN-Karte kann nicht gleichzeitig
+# "Gast-Hotspot" und "Client im Firmennetz" sein). Wurde das einmal
+# festgestellt, wird der Hotspot im Firmen-WLAN nicht wieder hochgefahren —
+# in der Werkstatt sind Dashboard-Meldung und Updates wichtiger.
+# Beim Kunden ist der Merker immer aus (dort gibt es kein Firmen-WLAN).
+_hotspot_conflicts = False
+
+
+def hotspot_conflicts_with_company_wlan() -> bool:
+    """True, wenn auf dieser Box der eigene Hotspot das Firmen-WLAN blockiert."""
+    return _hotspot_conflicts
+
+
+def _mark_hotspot_conflict() -> None:
+    global _hotspot_conflicts
+    if not _hotspot_conflicts:
+        _hotspot_conflicts = True
+        logger.warning(
+            "Netz-Reparatur: Auf dieser Box blockiert der eigene Hotspot das Firmen-WLAN. "
+            "Der Hotspot bleibt im Firmen-WLAN aus, damit Dashboard-Meldung und Updates "
+            "durchkommen (beim Kunden läuft er normal)."
+        )
+
+
+def repair_missing_ip(wait_seconds: int = 15) -> bool:
+    """Repariert "verbunden, aber keine IP-Adresse" (Stufe für Stufe).
+
+    REIHENFOLGE UMGESTELLT (2.4.29) — Grund: Feld-Log 18.08., Box 056.
+    Dort lief die alte Reihenfolge (erst ipconfig, dann neu verbinden, zuletzt
+    Hotspot) direkt in eine Sackgasse:
+      `11:17:16 Neue IP-Adresse anfordern` → `11:18:16 renew Code 1 (TIMEOUT)`
+    Eine volle Minute für einen Schritt, der nichts brachte. Stufe 3 (Hotspot
+    abschalten) war um 11:18:51 noch nicht durch — da hatte der Mitarbeiter die
+    Box längst ausgeschaltet. Der entscheidende Test kam also nie zum Zug.
+
+    Deshalb jetzt: **Der Hauptverdächtige zuerst.** Läuft der eigene Hotspot
+    (erkennbar kostenlos an der Adresse 192.168.137.x), wird er als ERSTES
+    abgeschaltet — die WLAN-Karte kann nicht gleichzeitig Gast-Hotspot und
+    Client im Firmennetz sein.
+
+      1. Eigener Hotspot aus + neu verbinden  (nur wenn er überhaupt läuft)
+      2. DNS-Cache leeren + neue IP anfordern (`ipconfig /release+/renew`)
+      3. WLAN trennen und neu verbinden
+
+    Läuft NUR im Firmen-WLAN (Aufrufer stellt das sicher). Im Kundenbetrieb
+    passiert hier nie etwas.
+
+    Returns:
+        True wenn die Box danach eine echte Netzwerk-Adresse hat
+    """
+    from src.utils import network_diag as nd
+
+    logger.warning(
+        "Netz-Reparatur: Box ist mit dem Firmen-WLAN verbunden, hat aber KEINE "
+        "brauchbare IP-Adresse — starte Reparatur"
+    )
+    ips = nd.get_local_ipv4s()
+    nd.log_network_snapshot("vor Reparatur", COMPANY_WLAN_SSID)
+
+    # ── Stufe 1: Eigenen Hotspot abschalten (Hauptverdächtiger) ──
+    if nd.has_own_hotspot_ip(ips):
+        logger.info(
+            "Netz-Reparatur: Stufe 1 — eigener Hotspot läuft (192.168.137.x) und wird "
+            "abgeschaltet; die WLAN-Karte kann nicht beides gleichzeitig"
+        )
+        try:
+            from src.gallery.hotspot import stop_hotspot
+            stop_hotspot()
+            time.sleep(2)
+            disconnect_wlan()
+            time.sleep(2)
+            connect_company_wlan()
+
+            if _wait_for_company_wlan_with_ip(wait_seconds):
+                # Beweis erbracht: der Hotspot war der Blocker
+                _mark_hotspot_conflict()
+                logger.info("Netz-Reparatur: Nach Hotspot-Aus kam die IP-Adresse (Stufe 1) ✓")
+                nd.log_network_snapshot("nach Stufe 1", COMPANY_WLAN_SSID)
+                return True
+
+            logger.info(
+                "Netz-Reparatur: Auch ohne Hotspot keine IP-Adresse — der Hotspot ist "
+                "also NICHT die Ursache; weiter mit Stufe 2"
+            )
+        except Exception as e:
+            logger.warning(f"Netz-Reparatur: Hotspot-Stop nicht möglich ({e}) — weiter mit Stufe 2")
+    else:
+        logger.info("Netz-Reparatur: Eigener Hotspot läuft nicht — Stufe 1 entfällt")
+
+    # ── Stufe 2: DNS-Cache + neue IP anfordern ──
+    logger.info("Netz-Reparatur: Stufe 2 — DNS-Cache leeren und neue IP-Adresse anfordern...")
+    nd.flush_dns()
+    if nd.renew_dhcp_lease(wait_seconds=wait_seconds):
+        logger.info("Netz-Reparatur: Neue IP-Adresse erhalten (Stufe 2: ipconfig) ✓")
+        nd.log_network_snapshot("nach Stufe 2", COMPANY_WLAN_SSID)
+        return True
+
+    # ── Stufe 3: WLAN trennen und neu verbinden ──
+    logger.info("Netz-Reparatur: Stufe 3 — WLAN trennen und neu verbinden...")
+    disconnect_wlan()
+    time.sleep(2)
+    connect_company_wlan()
+    if _wait_for_company_wlan_with_ip(wait_seconds):
+        logger.info("Netz-Reparatur: Neue IP-Adresse erhalten (Stufe 3: neu verbinden) ✓")
+        nd.log_network_snapshot("nach Stufe 3", COMPANY_WLAN_SSID)
+        return True
+
+    logger.warning(
+        "Netz-Reparatur: Keine Stufe hat geholfen — die Box bekommt vom Firmen-Router "
+        "keine Adresse. Nächster Verdacht: DHCP-Bereich voll oder MAC-Sperre "
+        "→ Lease-Liste im Router prüfen"
+    )
+    nd.log_network_snapshot("nach Stufe 3 (erfolglos)", COMPANY_WLAN_SSID)
+    return False
+
+
+def _wait_for_company_wlan_with_ip(wait_seconds: int) -> bool:
+    """Wartet auf: wieder im Firmen-WLAN UND echte IP-Adresse vorhanden."""
+    from src.utils import network_diag as nd
+
+    deadline = time.monotonic() + wait_seconds
+    while time.monotonic() < deadline:
+        time.sleep(2)
+        if get_connected_ssid() == COMPANY_WLAN_SSID and nd.has_usable_lan_ip():
+            return True
+    return False
+
+
 def self_heal_company_wlan(wait_seconds: int = 20) -> str:
     """Kompletter Selbstheilungs-Ablauf. Rückgabe:
 
-    - 'already_connected' — Firmen-WLAN steht bereits, nichts zu tun
+    - 'already_connected' — Firmen-WLAN steht bereits MIT IP-Adresse
+    - 'ip_repaired'       — war verbunden ohne IP-Adresse, repariert ✓
+    - 'no_ip'             — verbunden, aber keine IP-Adresse (Reparatur erfolglos)
     - 'not_visible'       — Firmen-WLAN nicht im Funk (Box beim Kunden) → no-op
     - 'connected'         — repariert und erfolgreich verbunden
     - 'failed'            — sichtbar, aber Verbindung kam trotz Reparatur nicht
     """
+    from src.utils import network_diag as nd
+
     connected = get_connected_ssid()
     if connected == COMPANY_WLAN_SSID:
-        return "already_connected"
+        # 2.4.27: NICHT mehr blind "alles gut" melden, nur weil der WLAN-Name
+        # stimmt. Ohne IP-Adresse ist die Box trotzdem tot (Feld-Log 18.08.).
+        if nd.log_network_snapshot("Firmen-WLAN verbunden", connected):
+            return "already_connected"
+        return "ip_repaired" if repair_missing_ip(wait_seconds) else "no_ip"
 
     if not is_company_wlan_visible():
         return "not_visible"
@@ -207,7 +357,10 @@ def self_heal_company_wlan(wait_seconds: int = 20) -> str:
         time.sleep(2)
         if get_connected_ssid() == COMPANY_WLAN_SSID:
             logger.info("WLAN-Selbstheilung: Erfolgreich mit Firmen-WLAN verbunden ✓")
-            return "connected"
+            # Verbunden heisst noch nicht "hat Netz" — IP-Adresse gegenpruefen
+            if nd.log_network_snapshot("nach Selbstheilung", COMPANY_WLAN_SSID):
+                return "connected"
+            return "ip_repaired" if repair_missing_ip(wait_seconds) else "no_ip"
 
     logger.warning(
         f"WLAN-Selbstheilung: Keine Verbindung nach {wait_seconds}s — "
