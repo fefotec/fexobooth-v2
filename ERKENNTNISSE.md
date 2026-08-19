@@ -402,6 +402,51 @@ Betrifft: `_display_preview()`, `_build_flash_cache()`, `_show_main_preview()`, 
 
 ## Lessons Learned
 
+### Der LiveView-Engpass ist die ANZEIGE, nicht die Kamera (19.08.2026)
+
+- **Befund:** Der Gast sieht nicht die 8,5 Bilder/s aus dem Log, sondern nur **~4,7**.
+  Beweis aus demselben Feld-Log (Box 044, dieselben 5 Sekunden):
+  ```
+  LIVEVIEW-PERF: 43 Frames in 5.0s (~8.6 fps)          <- der Worker rechnet
+  LIVEVIEW-PERF: Anzeige (UI-Thread): 24x in 5.1s      <- das sieht der Gast = 4,7/s
+  ```
+  **45 % der berechneten Bilder erreichen den Bildschirm nie.**
+- **Ursache** (`session.py:370`):
+  ```python
+  delay = max(self._frame_delay_ms, int(self._display_ms_ema * 3))
+  self.after(min(delay, 250), self._update_live_view)
+  ```
+  Der UI-Takt ist absichtlich das **Dreifache** der Anzeigezeit, damit die Vorschau
+  hoechstens ein Drittel des UI-Threads frisst (sonst leidet die Touch-Reaktion).
+  Bei 56 ms Anzeigezeit sind das 168 ms Wartezeit — die echte Periode ist
+  56 + 168 = 224 ms, also **4,4 Bilder/s als harte Obergrenze**.
+- **Konsequenz — und das ist der entscheidende Punkt:** Eine schnellere Kamera,
+  eine hoehere Aufloesung oder eine optimierte Bildaufbereitung aendern daran
+  **NICHTS**. Solange die Anzeige 56 ms kostet, bleibt es bei ~4,5 Bildern/s.
+  Wer den LiveView fluessiger machen will, muss an der ANZEIGE ansetzen
+  (CTkImage-Erzeugung, Anzeigeflaeche), nicht an der Kamera.
+- **Folgerung fuer einen dslrBooth-artigen Schieberegler:** Er muesste die
+  **Anzeigegroesse** regeln, nicht die Kameraaufloesung. Die Anzeigekosten skalieren
+  mit der Flaeche des angezeigten Bildes.
+- **Merke:** Zwei Messwerte im selben Log, die nach demselben aussehen ("fps"),
+  koennen voellig Verschiedenes bedeuten — Produktionsrate vs. Anzeigerate. Wir
+  haben zwei Runden lang die falsche Zahl optimiert.
+
+### Vorschau ist 4:3, das Foto ist 16:9 — der Gast richtet sich nach dem falschen Bild
+
+- `live_view_resolution` ist **eine einzige Zahl**; die Hoehe wird an drei Stellen
+  fest als `int(live_res * 0.75)` gerechnet (`app.py:3093`, `session.py:245`,
+  `system_test.py:481`). Die Vorschau ist damit IMMER 4:3 (z.B. 640x480), das Foto
+  aber 16:9 (1920x1080).
+- Zwei Folgen:
+  1. **1080p ist heute gar nicht einstellbar** — `live_view_resolution: 1920` ergibt
+     1920x1440, nicht 1920x1080. Jeder Versuch mit 1080p-Vorschau braucht vorher
+     diese Codeaenderung.
+  2. Der **Bildausschnitt** der Vorschau entspricht nicht dem des Fotos. Wer sich
+     nach der Vorschau ausrichtet, sieht im Foto etwas anderes.
+- `defaults.py:49` sagt 640, alle drei Aufrufstellen fallen aber auf **480** zurueck —
+  Boxen ohne diesen Konfigschluessel laufen also mit 480x360.
+
 ### Kamera-Backend: DirectShow war nie gemessen worden (Verdacht, 2026-08-19)
 
 - **Ausgangslage:** In `webcam.py` steht `backends = [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]`.
@@ -429,6 +474,9 @@ Betrifft: `_display_preview()`, `_build_flash_cache()`, `_show_main_preview()`, 
 - **Merke:** Wenn eine Bibliothek mehrere Backends anbietet und der Code das erste
   nimmt, das funktioniert, ist die Wahl NICHT begruendet — sie ist zufaellig. Einmal
   messen kostet eine Stunde und kann ein Jahr Symptombekaempfung ersparen.
+- **⚠️ EINSCHRAENKUNG:** Am Entwickler-PC haengt eine generische "USB 2.0 Camera",
+  KEINE C922. Der gemessene Backend-Unterschied ist auf diesem Geraet real, aber
+  fuer die Logitech-Kameras der Flotte NICHT bewiesen.
 - **Noch offen:** Alles oben ist am Entwickler-PC gemessen, nicht auf einer Box mit
   Atom-CPU und C922. Dafuer gibt es seit 2.4.34 `fexobooth.exe --kamera-test`.
 
