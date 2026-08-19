@@ -402,6 +402,126 @@ Betrifft: `_display_preview()`, `_build_flash_cache()`, `_show_main_preview()`, 
 
 ## Lessons Learned
 
+### GELOEST: Firmen-WLAN + Router — warum sich Boxen nicht im Dashboard meldeten (19.08.2026)
+
+**Das war die eigentliche Hauptursache.** Drei Probleme hatten sich gegenseitig versteckt; dieses
+hier war das groesste und lag NICHT in unserer Software.
+
+#### Der Befund
+
+Der DHCP-Adressbereich des Firmen-Routers umfasste **51 Adressen** (`192.168.2.200`–`.250`)
+bei **200+ Fotoboxen** plus PCs, Telefonen, Access-Points und einem Haufen Smart-Home-Geraeten
+(Meross-Steckdosen, Netatmo, Amazon, Apple, Netgear-Repeater). Dazu eine **Lease Time von
+120 Minuten**: Eine Box, die 5 Minuten lief, blockierte ihre Adresse zwei Stunden lang.
+
+Der Beweis stand in der Router-Oberflaeche selbst: Unter *IP/MAC-Bindung* zeigte die Liste
+**"Summe der Objekte: 53"** — 51 Adressen im Haupt-Pool + 2 im Gaeste-Pool. Der Pool war zu
+**100 %** belegt. Boxen, die danach kamen, bekamen nichts und landeten bei `169.254.x.x` (APIPA).
+
+Nach aussen sah das aus wie "die Box verbindet sich nicht": Windows meldete
+**"fexon WLAN — Kein Internet, gesichert"**, obwohl die Funkverbindung stand.
+
+#### Der Router
+
+| Feld | Wert |
+|---|---|
+| Geraet | **Telekom Digitalisierungsbox Premium** (= umgelabelte **bintec elmeg be.IP plus**) |
+| Firmware | 11.01.03.115 (2023/09/13) |
+| Betriebsmodus | PBX (Router + Telefonanlage) |
+| Router-IP | `192.168.2.1` |
+| LAN-Netz | `192.168.2.0/24` |
+| Zugang | Weboberflaeche des Routers, Reiter *Internet & Netzwerk* |
+
+**Netz-Aufbau (wichtig):**
+- `br0` = Haupt-Bridge → **LAN UND das fexon WLAN haengen gemeinsam drin**. Die Boxen holen
+  ihre Adressen also aus demselben Topf wie die Buero-PCs.
+- `br0-1` = Gaeste-Bridge → Pool `fexon Gast-WLAN` (`192.168.3.251`–`.252`, nur **2** Adressen)
+- Ausserhalb des Pools war fast alles frei: nur `192.168.2.1` (Router) und `192.168.2.116`
+  (ein Geraet mit fester IP) waren belegt.
+
+#### Die Aenderung (19.08.2026)
+
+| Einstellung | vorher | nachher |
+|---|---|---|
+| IP-Adressbereich (Pool "DHCP Adressbereich") | `192.168.2.200` – `.250` (51) | **`192.168.2.130` – `.250` (121)** |
+| Lease Time (Schnittstelle `br0`) | 120 Min. | **30 Min.** |
+
+Start bewusst bei `.130` und nicht tiefer: Der Netzwerk-Scan sieht nur Geraete, die GERADE
+eingeschaltet sind. `.2`–`.129` bleibt als Reserve fuer feste Adressen (Drucker/NAS/Server, die
+zufaellig aus waren), damit es spaeter keine Adresskonflikte gibt.
+
+#### Klickpfad im Router (unbedingt merken — man findet es sonst nicht)
+
+Die DHCP-Einstellungen sind in der Standard-Oberflaeche **unsichtbar**. Erst die
+"Navigation fuer Experten" blendet den vollen bintec-Menuebaum links ein:
+
+1. **Home** → unten rechts **"Mehr anzeigen"** → **Globale Einstellungen**
+2. Auf der Seite unten rechts nochmal **"Mehr anzeigen"** → Abschnitt **GUI-Einstellungen**
+3. **"Navigation fuer Experten"** auf *Aktiviert* → **OK**
+   ⚠️ Gilt **nur fuer die laufende Browser-Sitzung** — nach dem Ausloggen wieder weg.
+   ⚠️ Erscheint nur bei **breitem Browserfenster** ("nur auf grossen Bildschirmen").
+4. Links im Baum: **Lokale Dienste → DHCP-Server**
+   - Reiter **IP-POOL-KONFIGURATION** → Adressbereich
+   - Reiter **DHCP-KONFIGURATION** → Lease Time (Stift-Symbol beim Eintrag `br0`)
+   - Reiter **IP/MAC-BINDUNG** → aktuelle Leases + "Summe der Objekte" (= Fuellstand!)
+5. **Zum Schluss oben rechts "Konfiguration speichern"** — sonst ist beim naechsten
+   Router-Neustart alles weg (Warndreieck neben dem Link = ungespeicherte Aenderungen).
+
+#### NICHT anfassen
+
+In der DHCP-Konfiguration von `br0` stehen Optionen, die andere Systeme brauchen:
+`Zeitserver 192.168.2.1`, `CAPWAP Controller 192.168.2.1` (steuert die bintec-Access-Points),
+`URL (Provisionierungsserver) http://192.168.2.1/eg_prov` und Hersteller-Option 43
+"Maxwell / Gigaset-Telefone". Finger weg — das hat mit DHCP-Adressen nichts zu tun.
+
+#### Wie man so etwas kuenftig in 2 Minuten pruefen kann
+
+Von einem PC im selben Netz (PowerShell) — findet ALLE belegten Adressen, auch mit fester IP:
+
+```powershell
+$p = 1..199 | ForEach-Object { (New-Object System.Net.NetworkInformation.Ping).SendPingAsync("192.168.2.$_", 400) }
+[Threading.Tasks.Task]::WaitAll($p) | Out-Null
+$p | Where-Object { $_.Result.Status -eq 'Success' } | ForEach-Object { $_.Result.Address.ToString() }
+arp -a | Select-String "192\.168\.2\."
+```
+
+#### Merke
+
+1. **"Die Box meldet sich nicht" heisst nicht, dass die Box schuld ist.** Wir haben zwei
+   Software-Runden (Hotspot, Kamera-Absturz) gebraucht, bis die Box ueberhaupt sagen KONNTE,
+   dass sie keine IP-Adresse bekommt. Erst `netzwerk.log` mit der Zeile
+   `Eig. Hotspot: aus` + `KEINE IP-ADRESSE` hat den Router ueberfuehrt.
+2. **APIPA (`169.254.x.x`) ist immer ein DHCP-Problem** — nie ein WLAN-Passwort- oder
+   Profil-Problem. Windows meldet trotzdem "verbunden".
+3. **Adress-Pools skalieren mit der Flotte.** Bei 200+ Geraeten, die durch die Werkstatt
+   rotieren, ist der Werks-Standardbereich von ~50 Adressen viel zu klein. Faustregel:
+   Pool >= dreifache Zahl der Geraete, die an einem Tag durchlaufen; Lease kurz halten
+   (30 Min.), damit Adressen schnell zurueckkommen.
+4. **Fuellstand steht direkt im Router**: *IP/MAC-Bindung* → "Summe der Objekte" mit der
+   Poolgroesse vergleichen. Gleich = voll = Problem.
+
+### @staticmethod umgeht jede Instanz-Sperre — bei Hardware ist das toedlich (2.4.31)
+
+- **Problem:** `WebcamManager` hatte `self._camera_lock` und benutzte es brav in allen
+  Instanz-Methoden. `list_cameras()` ist aber eine `@staticmethod` — sie hat gar kein `self`
+  und lief damit voellig ungeschuetzt. Zwei Threads (Kamera-Auto-Auswahl beim Start und der
+  Kamera-Waechter) oeffneten deshalb gleichzeitig dieselbe DirectShow-Kamera.
+- **Folge:** Heap-Zerstoerung im Prozess (`0xc0000374`), Windows meldet den Absturz erst
+  spaeter und an ganz anderer Stelle: `ntdll.dll` / `0xc0000005`. Aus dem Windows-Ereignis-
+  protokoll allein war die Ursache NICHT ableitbar — es zeigte nur den Ort des Zusammenbruchs,
+  nicht den Verursacher.
+- **Was es geloest hat:** `faulthandler` (2.4.30). Er schreibt im Moment des Absturzes den
+  Python-Stack ALLER Threads. Erst dadurch war sichtbar, dass zwei Threads gleichzeitig in
+  `cv2.VideoCapture(...)` standen. Kosten zur Laufzeit: praktisch null.
+- **Merke:**
+  1. Sperren fuer Hardware gehoeren auf **Modul-/Klassenebene**, nie an die Instanz — sonst
+     reicht eine einzige `@staticmethod`, um alles auszuhebeln.
+  2. Native Abstuerze (`0xc0000005`, `0xc0000374`) in Python-Apps IMMER mit `faulthandler`
+     absichern. Ohne ihn sucht man im Windows-Ereignisprotokoll nach einer DLL, die nur das
+     Opfer ist.
+  3. Solche Fehler zeigen sich im Developer-Mode oft NICHT — anderes Timing, andere Last.
+     „Nicht reproduzierbar" heisst bei Threads: „das Zeitfenster war zufaellig zu klein".
+
 ### BEWIESEN: Der eigene Hotspot kostet die Box die IP-Adresse im Firmen-WLAN (2.4.29)
 
 - **Beweis** (Box 056, Log `fexobooth_20260818_114932.log` + Server-Gegenprobe):

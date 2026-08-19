@@ -779,6 +779,20 @@ class StartScreen(ctk.CTkFrame):
 
         # Config könnte sich geändert haben (Admin-Dialog)
         self.config = self.app.config
+
+        # 2.4.31: Nach dem Schliessen des Admin-Dialogs kann on_show auf einem
+        # bereits zerstoerten StartScreen landen. Frueher warf das
+        #   _tkinter.TclError: invalid command name ".!ctkframe3.!startscreen...."
+        # aus einem Tk-Callback heraus (nachgewiesen im absturz.log von Box 044,
+        # 19.08. 08:43:54). Der Fehler-Handler faengt das inzwischen ab, aber der
+        # sauberere Weg ist: gar nicht erst auf toten Widgets arbeiten.
+        try:
+            if not self.start_btn.winfo_exists():
+                logger.debug("StartScreen.on_show: Screen bereits zerstoert - uebersprungen")
+                return
+        except Exception:
+            return
+
         self.start_btn.configure(text=f"▶  {t(self.config, 'common.start')}")
         self._position_main_content()
         app_template_active = self._ensure_app_template_active()

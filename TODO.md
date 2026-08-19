@@ -4,6 +4,46 @@ Aufgabenliste mit Prioritäten.
 
 ---
 
+## ROUTER pruefen — Boxen bekommen keine IP-Adresse 🔴🔴
+
+> Belegt durch `netzwerk.log` von Box 019 (19.08. 12:31) und Box 038 (18.08. 15:40), beide 2.4.32:
+> nur `169.254.x.x`, **eigener Hotspot AUS**, Reparatur erfolglos. Die Box ist entlastet.
+> Auffaellig: Arbeitende Boxen bekamen `192.168.2.207 / .208 / .224 / .235` — alles im oberen
+> Bereich. Bei 200+ Boxen liegt ein zu kleiner DHCP-Bereich sehr nahe.
+
+- [x] ✅ **ERLEDIGT 19.08.2026 — Ursache war der Router.** DHCP-Pool war zu 100 % voll
+      (51 Adressen fuer 200+ Boxen + PCs + Telefone + Access Points + Smart-Home).
+      Geaendert: Pool `192.168.2.200-.250` → **`192.168.2.130-.250`** (51 → 121 Adressen),
+      Lease Time **120 → 30 Minuten**. Details + Klickpfad in ERKENNTNISSE.md.
+- [ ] Gegentest: Box 19 oder 38 einschalten, 2 Min. laufen lassen, `netzwerk.log` muss
+      `ALLES GRÜN` zeigen
+- [ ] ~~Am Router pruefen~~ (erledigt, siehe oben):
+      1. Wie gross ist der DHCP-Adressbereich? Reicht er fuer alle Boxen, die durch die
+         Werkstatt laufen? (Arbeitende Boxen liegen bei .207-.235!)
+      2. Wie lang ist die Lease-Dauer? Zu lang = alte Boxen blockieren Adressen wochenlang.
+      3. MAC-Sperre / Zugangsliste aktiv?
+      4. Limit fuer gleichzeitige WLAN-Geraete erreicht?
+- [ ] Lease-Liste mit den MAC-Adressen der stummen Boxen abgleichen
+      (Box 019 laut Foto: `CC-79-CF-A7-4B-3E`, Realtek RTL8723BS)
+- [ ] Gegenprobe: Eine stumme Box am Router eine feste IP-Adresse zuweisen (Reservierung).
+      Meldet sie sich dann → DHCP-Bereich/Lease ist die Ursache, endgueltig bewiesen.
+
+## Boxen 19/31/38 melden sich nicht (offen) 🔴
+
+> Werkstatt 19.08. Alle drei mit 2.4.31, **kein Absturz mehr** (absturz.log nur Start-Zeilen),
+> WLAN-Setup laut Installer-Log erfolgreich verbunden — aber **keine netzwerk.log**.
+
+- [x] Ursache fuer die fehlende netzwerk.log gefunden: Boxen liefen nur 2,5-3 Min, die Bilanz
+      kam aber erst nach der Wiederholkette (~4 Min). Gefixt in 2.4.32 (Bilanz sofort).
+- [x] Gegengeprueft: `netzwerk.log` entsteht auch OHNE Dev-Mode (Test mit
+      `setup_logging(developer_mode=False)`). Zweites Loch dabei gefunden und geschlossen:
+      bei `not_visible` (Firmen-WLAN nicht in Reichweite) wurde vorher GAR NICHTS geschrieben —
+      ununterscheidbar von einem fehlgeschlagenen WLAN-Scan.
+- [ ] ⚠️ **WARUM sie sich nicht melden, wissen wir weiterhin NICHT** — es gibt schlicht keine
+      Daten. Mit 2.4.32 nochmal starten, diesmal reichen ~2 Minuten.
+- [ ] Danach `netzwerk.log` auswerten: Zeile `URTEIL` sagt, ob IP, Router, DNS oder das
+      Dashboard das Problem ist.
+
 ## Abstuerze im Normalbetrieb (2.4.30) 🔴
 
 > Werkstatt 18.08.: 2 Boxen stuerzen beim Hochfahren ab, andere beim Anstecken des USB-Sticks —
@@ -22,6 +62,20 @@ Aufgabenliste mit Prioritäten.
 - [ ] **Naechster Schritt auf einer abstuerzenden Box:** Absturz-Speicherabbild aktivieren
       (WER LocalDumps, Registry-Befehl siehe unten) ODER vorhandene WER-Berichte einsammeln:
       `C:\ProgramData\Microsoft\Windows\WER\ReportArchive\*fexobooth*`
+- [x] **Signatur bestaetigt** (Box 044, 2 Abstuerze am 18.08. mit identischen Werten:
+      `ntdll.dll` / `0xc0000005` / Offset `0x649e6`) → reproduzierbarer Heap-Fehler.
+      Box 087 taugt NICHT als Vergleich: laeuft noch die Version vom 11.08., keine Abstuerze.
+- [x] **Korrektur:** Der Absturz auf Box 044 war NICHT beim Start — laut `netzwerk.log`
+      Start um 14:47, Absturz um 15:16 (29 Min. Laufzeit).
+- [x] ✅ **URSACHE GEFUNDEN** (absturz.log Box 044, 19.08. 08:44, Code `0xc0000374`):
+      Zwei Threads oeffneten gleichzeitig dieselbe DirectShow-Kamera
+      (`_camera_status_probe` + `list_cameras`/`_auto_select_webcam`) → Heap-Zerstoerung.
+      Gefixt in 2.4.31 mit gemeinsamer Kamera-Sperre (Test: max. 1 statt 2 parallele Zugriffe).
+      Die Vermutung „haengt mit der Dashboard-Meldung zusammen" war FALSCH.
+- [ ] Nachtest 2.4.31 auf Box 044: mind. 35 Min. laufen lassen, `absturz.log` muss danach nur
+      noch Start-Zeilen enthalten (keine `fatal exception`)
+- [ ] Pruefen, ob der Absturz mit der wiederkehrenden Dashboard-Meldung (alle 900 s ± 120 s)
+      zusammenhaengt — das Zeitfenster passt. Beweis liefert der Python-Stack aus 2.4.30.
 - [ ] Verdaechtige bei `ntdll` + `0xc0000005` eingrenzen: Kamera (OpenCV/DirectShow), VLC,
       Druckertreiber. Die 2.4.29-Aenderungen sind reines Python + Subprozesse und koennen
       so einen Absturz nicht direkt ausloesen — sie haben aber das Timing veraendert

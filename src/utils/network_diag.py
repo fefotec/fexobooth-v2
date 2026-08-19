@@ -437,9 +437,19 @@ def log_network_verdict(context: str, ssid: Optional[str] = None,
 
     # Klartext-Urteil: Wo genau haengt es?
     if not ip_ok:
-        urteil = ("KEINE IP-ADRESSE → der Router hat der Box nichts vergeben "
-                  "(Verdacht: eigener Hotspot belegt die WLAN-Karte, oder "
-                  "DHCP-Bereich des Routers voll)")
+        # 2.4.33: Sauber trennen. Laeuft der eigene Hotspot NICHT, ist er auch
+        # nicht schuld — dann zeigt alles auf den Router. Feld-Befund 19.08.
+        # (Boxen 019 und 038): Hotspot aus, Reparatur erfolglos, trotzdem nur
+        # 169.254.x.x. Der alte Text nannte weiter den Hotspot als Verdacht und
+        # hat damit in die falsche Richtung gezeigt.
+        if has_own_hotspot_ip(ips):
+            urteil = ("KEINE IP-ADRESSE, und der eigene Hotspot laeuft → wahrscheinlich "
+                      "belegt er die WLAN-Karte (die Reparatur schaltet ihn ab und prueft das)")
+        else:
+            urteil = ("KEINE IP-ADRESSE, eigener Hotspot ist AUS → die Box ist entlastet, "
+                      "der ROUTER vergibt ihr keine Adresse. Zu pruefen: DHCP-Bereich voll "
+                      "(zu wenige Adressen fuer die Flotte), MAC-Sperre/Zugangsliste, "
+                      "oder Client-Limit des Routers erreicht")
     elif not gw_ok:
         urteil = ("IP da, aber Router antwortet nicht → Funkverbindung steht nur "
                   "auf dem Papier (Verdacht: WLAN-Karte im Hotspot-Betrieb)")

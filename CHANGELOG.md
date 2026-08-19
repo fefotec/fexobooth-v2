@@ -6,6 +6,112 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.33] - 2026-08-19 - Router als Ursache belegt: Urteil praezisiert + DHCP-Diagnose
+
+> **Befund aus den ersten echten `netzwerk.log`-Dateien** (Boxen 019 und 038, beide 2.4.32):
+> ```
+> IP-Adressen   : FEHLT | 169.254.27.205 (KEINE DHCP-Adresse/APIPA)
+> Eig. Hotspot  : aus          <-- der Hotspot laeuft GAR NICHT
+> Hotspot-Konfl.: nein
+> ```
+> Die 3-stufige Reparatur lief durch und fand nichts. Damit ist die Box entlastet:
+> **Der Router vergibt diesen Boxen keine Adresse.** Passend dazu zeigt Windows bei genau
+> diesen Boxen „fexon WLAN — Kein Internet, gesichert".
+
+### Geändert
+
+- **Das Urteil zeigt nicht mehr auf den Hotspot, wenn der gar nicht läuft.** Bisher stand
+  auch bei ausgeschaltetem Hotspot „Verdacht: eigener Hotspot belegt die WLAN-Karte" im
+  Bericht — das hat in die falsche Richtung gewiesen. Jetzt wird sauber getrennt:
+  Hotspot AN → Hotspot verdächtig; Hotspot AUS → **„die Box ist entlastet, der ROUTER
+  vergibt ihr keine Adresse"** samt Prüfliste (DHCP-Bereich voll, MAC-Sperre, Client-Limit).
+
+### Neu
+
+- **`Absturz-Infos-sammeln.bat` sammelt jetzt auch die DHCP-Lage**: `netsh wlan show
+  interfaces`, die WLAN-Zeilen aus `ipconfig /all` (inkl. MAC-Adresse und ob ein DHCP-Server
+  geantwortet hat) und die Windows-DHCP-Meldungen der letzten 7 Tage. Das ist der von der App
+  unabhängige Gegenbeweis — und liefert die MAC-Adressen, die man am Router braucht.
+
+---
+
+## [2.4.32] - 2026-08-19 - Netz-Bilanz kommt sofort + Selbsttest misst richtig
+
+> Anlass: Werkstatt 19.08. — die Boxen **19, 31 und 38** melden sich nicht im Dashboard, hatten
+> aber **gar keine `netzwerk.log`**. Alle drei liefen laut `absturz.log` nur **2,5–3 Minuten**
+> (zwei Start-Zeilen im Abstand von 2:29 bis 3:01). Ursache: Die Bilanz stand am Ende der
+> Wiederholkette (20+30+45+60+90 s ≈ 4 Minuten). Wer die Box vorher ausschaltet, bekommt
+> **kein einziges Protokoll**. Den blinden Fleck hatte ich in 2.4.29 nur für den Fall
+> „keine IP-Adresse" beseitigt — nicht für „IP da, Meldung klemmt trotzdem".
+
+### Behoben
+
+- **Die Netz-Bilanz wird jetzt IMMER direkt nach dem ersten Melde-Versuch geschrieben** —
+  spätestens ~40 Sekunden nach dem Start der Box, statt erst nach ~4 Minuten. Klappt die
+  Meldung erst bei einer Wiederholung, kommt ein zweiter Eintrag („nach Wiederholung").
+  Im Test: Eintrag nach **1,5 s** statt gar nicht.
+- **Selbsttest meldete fälschlich „Hohe Hintergrund-Auslastung (Windows-Update/Defender?)".**
+  Gemessen wurde die **Gesamt**-CPU — inklusive der App selbst, die während des Tests gerade
+  Fotos rendert. Feld-Log Box 044 (19.08.) belegt es: CPU gesamt 20–48 %, davon `fexobooth.exe`
+  19–39 %, `System Idle Process` 54–73 % — die Box war also gar nicht ausgelastet.
+  Jetzt wird die **eigene Last abgezogen** und nur noch echte Fremdlast gemeldet; beide Werte
+  stehen zusätzlich im Log.
+
+- **`netzwerk.log` wird jetzt bei JEDEM App-Start geschrieben — ausnahmslos.** Bisher schwieg
+  die Box komplett, wenn das Firmen-WLAN nicht in Reichweite war (`not_visible`). Das sollte
+  „Box ist beim Kunden" bedeuten — ist aber nicht unterscheidbar von „der WLAN-Scan ist
+  fehlgeschlagen" (netsh-Fehler, Funk aus, Adapter belegt). In der Werkstatt stand man dann
+  wieder ohne jede Spur da. Jetzt gibt es auch dafür eine kurze Zeile mit Klartext-Hinweis.
+  Kosten: eine Zeile pro Start, Datei wird bei 200 KB gekürzt.
+
+### Bestätigt
+
+- **`netzwerk.log` und `absturz.log` entstehen nachweislich OHNE Developer-Mode.** Gegengeprüft
+  mit `setup_logging(developer_mode=False)` (NullHandler, Logger unterdrückt) — Datei wird
+  trotzdem geschrieben. Feldbeweis zusätzlich: Boxen 19/31/38 hatten kein `fexobooth_*.log`
+  (also kein Dev-Mode), aber sehr wohl eine `absturz.log` — gleicher Mechanismus, gleicher Ordner.
+- **Der Absturz-Fix aus 2.4.31 wirkt.** Auf allen drei Boxen (19/31/38) enthält `absturz.log`
+  nur noch Start-Zeilen — kein `fatal exception`, keine Heap-Zerstörung mehr.
+
+---
+
+## [2.4.31] - 2026-08-19 - ABSTURZ-URSACHE GEFUNDEN: zwei Threads an derselben Kamera
+
+> Der `faulthandler` aus 2.4.30 hat geliefert. `absturz.log` von Box 044 (19.08. 08:44):
+> ```
+> Windows fatal exception: code 0xc0000374        <- HEAP CORRUPTION
+> Current thread:  src\app.py:2568 in _camera_status_probe   -> cv2.VideoCapture(...)
+> Thread:          src\camera\webcam.py:519 in list_cameras  -> cv2.VideoCapture(...)
+>                  src\app.py:156 in _auto_select_webcam
+> ```
+> Damit ist die Ursache eindeutig: **Zwei Threads öffnen gleichzeitig dieselbe
+> DirectShow-Kamera.** Das zerlegt den Heap des Prozesses — Windows meldet es später als
+> Absturz in `ntdll.dll` (`0xc0000005` / `0xc0000374`).
+
+### Behoben
+
+- **Eine gemeinsame Sperre für JEDEN Kamera-Zugriff** (`camera_hardware_lock()` in
+  `src/camera/webcam.py`). Der bisherige `self._camera_lock` war eine **Instanz**-Sperre —
+  `WebcamManager.list_cameras()` ist aber eine `@staticmethod` und lief komplett daran vorbei.
+  Jetzt teilen sich Instanz-Methoden und statische Kamera-Suche dieselbe modulweite Sperre.
+- **Die Kamera-Prüfung in `app.py` nimmt die Sperre ebenfalls** — genau die Zeile aus dem
+  Absturz-Protokoll (`cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW)`) lief vorher ungeschützt.
+- Nachweis im Test: mit Sperre **max. 1** gleichzeitiger Kamera-Zugriff, ohne Sperre **2**.
+
+> **Warum es nur „vereinzelt" auftrat:** Beide Threads starten beim Hochfahren fast zeitgleich.
+> Ob sie sich wirklich überlappen, hängt vom Timing ab (CPU-Last, wie schnell die Kamera
+> antwortet). Deshalb traf es nur manche Boxen und war im Developer-Mode praktisch nie
+> reproduzierbar — dort läuft alles etwas anders getaktet.
+
+### Ebenfalls behoben
+
+- **`StartScreen.on_show` auf zerstörtem Screen**: Nach dem Schliessen des Admin-Dialogs lief
+  `on_show` auf einem bereits zerstörten StartScreen (`invalid command name ".!ctkbutton.!label"`,
+  ebenfalls im `absturz.log` von Box 044). Der Tk-Handler aus 2.4.30 hat das abgefangen und die
+  App lief weiter — jetzt wird der tote Screen sauber übersprungen, statt den Fehler zu erzeugen.
+
+---
+
 ## [2.4.30] - 2026-08-18 - Abstürze werden endlich sichtbar (+ vermutliche Ursache entschärft)
 
 > Anlass: Werkstatt 18.08. — zwei Boxen stürzten beim Hochfahren ab, andere beim Anstecken des

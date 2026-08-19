@@ -141,6 +141,103 @@ foreach ($p in $werPfade) {
 }
 if ($werTreffer -eq 0) { Zeile 'Keine WER-Berichte zu fexobooth gefunden (evtl. Adminrechte noetig).' }
 
+# Speicherabbilder, die Windows beim Absturz SELBST angelegt hat, einsammeln.
+# Der WER-Bericht von Box 044 nannte eine .dmp-Datei - die liegt oft noch im
+# ReportArchive bzw. in WER\Temp und ist das Wertvollste ueberhaupt: daraus
+# laesst sich die schuldige DLL eindeutig bestimmen.
+Titel 'WINDOWS-SPEICHERABBILDER EINSAMMELN'
+$sammelDir = 'C:\FexoBooth\logs\dumps'
+$kopiert = 0
+$suchPfade = $werPfade + @('C:\ProgramData\Microsoft\Windows\WER\Temp')
+foreach ($p in $suchPfade) {
+    if (-not (Test-Path $p)) { continue }
+    $dmps = Get-ChildItem $p -Recurse -Include '*.dmp', '*.mdmp' -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 10
+    foreach ($d in $dmps) {
+        # Nur Abbilder, die zu fexobooth gehoeren (Ordnername oder Nachbar-Bericht)
+        $gehoert = $false
+        if ($d.FullName -like '*fexobooth*') { $gehoert = $true }
+        if (-not $gehoert) {
+            $nachbar = Join-Path $d.DirectoryName 'Report.wer'
+            if (Test-Path $nachbar) {
+                if ((Get-Content $nachbar -ErrorAction SilentlyContinue) -match 'fexobooth') { $gehoert = $true }
+            }
+        }
+        if (-not $gehoert) { continue }
+        try {
+            if (-not (Test-Path $sammelDir)) { New-Item -ItemType Directory -Path $sammelDir -Force | Out-Null }
+            $ziel = Join-Path $sammelDir ($d.LastWriteTime.ToString('yyyyMMdd_HHmmss') + '_' + $d.Name)
+            if (-not (Test-Path $ziel)) { Copy-Item $d.FullName $ziel -Force -ErrorAction Stop }
+            $kopiert++
+            Zeile ("  KOPIERT: " + $d.Name + "  (" + [math]::Round($d.Length/1MB,1) + " MB, " + $d.LastWriteTime + ")")
+            Zeile ("     von : " + $d.FullName)
+        } catch {
+            Zeile ("  GEFUNDEN (Kopieren fehlgeschlagen): " + $d.FullName)
+            Zeile ("     Grund: " + $_.Exception.Message)
+        }
+    }
+}
+if ($kopiert -gt 0) {
+    Zeile ''
+    Zeile ("  -> " + $kopiert + " Speicherabbild(er) nach " + $sammelDir + " kopiert.")
+    Zeile '  -> UNBEDINGT mitschicken! Darin steht, welche DLL den Absturz ausgeloest hat.'
+    Write-Host ('   [!] ' + $kopiert + ' Speicherabbild(er) gefunden und gesichert!') -ForegroundColor Green
+} else {
+    Zeile '  Keine Speicherabbilder von Windows gefunden (Windows raeumt sie nach dem Melden oft weg).'
+}
+
+# ---------------------------------------------------------------
+# 4b. DHCP: Warum bekommt die Box keine IP-Adresse?
+# ---------------------------------------------------------------
+# Feld-Befund 19.08. (Boxen 019/038): mit 'fexon WLAN' verbunden, eigener
+# Hotspot AUS, trotzdem nur 169.254.x.x. Windows protokolliert DHCP-Probleme
+# selbst - das ist der unabhaengige Gegenbeweis zur Box-Diagnose.
+Titel 'DHCP / NETZWERK-ZUSTAND'
+try {
+    $wlan = netsh wlan show interfaces 2>$null
+    foreach ($z in $wlan) { if ($z.Trim()) { Zeile ('    ' + $z.Trim()) } }
+} catch { Zeile '  netsh nicht lesbar' }
+
+Zeile ''
+Zeile 'IP-Konfiguration (WLAN):'
+try {
+    $ipc = ipconfig /all 2>$null
+    $imBlock = $false
+    foreach ($z in $ipc) {
+        if ($z -match 'adapter|Adapter') { $imBlock = ($z -match 'WLAN|Wi-Fi|Wireless') }
+        if ($imBlock -and $z.Trim()) { Zeile ('    ' + $z.Trim()) }
+    }
+} catch { Zeile '  ipconfig nicht lesbar' }
+
+Zeile ''
+Zeile 'Windows-DHCP-Meldungen (letzte 7 Tage):'
+$dhcpTreffer = 0
+foreach ($logName in @('Microsoft-Windows-Dhcp-Client/Admin',
+                       'Microsoft-Windows-Dhcp-Client/Operational',
+                       'System')) {
+    try {
+        $de = Get-WinEvent -FilterHashtable @{
+            LogName   = $logName
+            StartTime = (Get-Date).AddDays(-7)
+        } -MaxEvents 300 -ErrorAction SilentlyContinue |
+            Where-Object { $_.ProviderName -like '*Dhcp*' -or $_.Message -like '*DHCP*' } |
+            Select-Object -First 15
+        foreach ($e in $de) {
+            $dhcpTreffer++
+            $kurz = ($e.Message -split "`r?`n")[0].Trim()
+            Zeile ('  ' + $e.TimeCreated + ' | Id ' + $e.Id + ' | ' + $kurz)
+        }
+    } catch { }
+}
+if ($dhcpTreffer -eq 0) { Zeile '  Keine DHCP-Meldungen gefunden.' }
+Zeile ''
+Zeile 'HINWEIS: Steht hier "169.254.x.x" bzw. kein DHCP-Server, dann hat der'
+Zeile 'ROUTER der Box keine Adresse gegeben. Dann am Router pruefen:'
+Zeile '  - DHCP-Adressbereich gross genug fuer die ganze Flotte?'
+Zeile '  - MAC-Sperre / Zugangsliste aktiv?'
+Zeile '  - Maximale Anzahl WLAN-Geraete erreicht?'
+Zeile '  - Lease-Dauer zu lang (alte Adressen bleiben belegt)?'
+
 # ---------------------------------------------------------------
 # 5. Speicherabbilder + logs-Ordner
 # ---------------------------------------------------------------

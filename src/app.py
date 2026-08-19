@@ -2564,12 +2564,19 @@ class PhotoboothApp:
                 elif self.camera_manager.is_initialized:
                     pass  # Kamera aktiv → OK
                 else:
+                    # 2.4.31: NUR unter der gemeinsamen Kamera-Sperre anfassen.
+                    # Genau diese Zeile stand im Absturz-Protokoll von Box 044
+                    # (19.08.), waehrend ein zweiter Thread parallel in
+                    # WebcamManager.list_cameras() dieselbe DirectShow-Kamera
+                    # oeffnete -> Heap-Zerstoerung (0xc0000374) und die App war weg.
                     import cv2
-                    cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW)
-                    if cap.isOpened():
-                        cap.release()
-                    else:
-                        problem_text = t(self.config, "topbar.camera_missing")
+                    from src.camera.webcam import camera_hardware_lock
+                    with camera_hardware_lock():
+                        cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW)
+                        if cap.isOpened():
+                            cap.release()
+                        else:
+                            problem_text = t(self.config, "topbar.camera_missing")
         except Exception:
             problem_text = t(self.config, "topbar.camera_error")
 

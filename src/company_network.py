@@ -334,11 +334,26 @@ def check_and_auto_update(
             )
             logger.debug(f"Firmennetzwerk: übersprungen — {grund}")
 
-            if heilungs_status and heilungs_status != "not_visible":
+            # 2.4.32: Ab jetzt wird IMMER etwas geschrieben — auch bei
+            # 'not_visible'. Vorher galt "Firmen-WLAN nicht in Reichweite" als
+            # sicheres Zeichen fuer Kundenbetrieb und die Box schwieg komplett.
+            # Das ist aber NICHT unterscheidbar von "der WLAN-Scan ist
+            # fehlgeschlagen" (netsh-Fehler, Funk aus, Adapter belegt) — und
+            # dann steht man in der Werkstatt wieder ohne jede Spur da.
+            # Kosten: eine kurze Zeile pro App-Start, Datei wird bei 200 KB
+            # vorne gekuerzt. Das ist es wert.
+            if heilungs_status == "not_visible":
+                _persist_short_report(config, [
+                    "  Zustand       : Firmen-WLAN nicht in Reichweite",
+                    f"  Grund         : {grund}",
+                    "  URTEIL        : Normal beim Kunden. Steht die Box in der WERKSTATT, "
+                    "dann stimmt etwas nicht (Funk aus? Adapter belegt? Router weg?)",
+                ])
+            else:
                 _persist_short_report(config, [
                     "  Zustand       : NICHT im Firmen-WLAN",
                     f"  Grund         : {grund}",
-                    f"  Selbstheilung : {heilungs_status}",
+                    f"  Selbstheilung : {heilungs_status or 'nicht gelaufen'}",
                     "  URTEIL        : Box kommt nicht ins Firmen-WLAN — Funk/Anmeldung prüfen "
                     "(Reichweite, Passwort, Router-Sperre)",
                 ])
@@ -374,10 +389,26 @@ def check_and_auto_update(
         # Heartbeat mit Wiederholung: Der erste Versuch scheitert oft an noch
         # nicht bereitem DNS (WLAN gerade verbunden + Hotspot startet). Deshalb
         # mehrere Versuche mit wachsendem Abstand, bis es klappt.
-        heartbeat_ok = _heartbeat_with_retry(config, ssid, app, whitelist)
+        # ── 2.4.32: ERST melden, SOFORT protokollieren, DANN erst wiederholen ──
+        # Werkstatt-Befund 19.08. (Boxen 19/31/38): Alle drei liefen nur 2,5-3
+        # Minuten und hatten danach GAR KEINE netzwerk.log. Grund: Die Bilanz
+        # stand am Ende der Wiederholkette (20+30+45+60+90 s = ~4 min). Wer die
+        # Box vorher ausschaltet, bekommt kein einziges Protokoll — genau der
+        # blinde Fleck, den wir eigentlich schon beseitigt hatten (bisher nur
+        # fuer den Fall "keine IP-Adresse").
+        # Jetzt gilt IMMER: Nach dem ersten Melde-Versuch steht das Ergebnis in
+        # netzwerk.log — spaetestens ~40 s nach dem Start der Box.
+        erster_versuch = _send_monitoring_heartbeat(config, ssid, app)
+        heartbeat_ok = (erster_versuch is True)
+        _log_verdict(config, ssid, heartbeat_ok, context="Erstmeldung")
 
-        # ── Netz-Bilanz: zeigt auch, WENN der Fix nicht geholfen hat ──
-        _log_verdict(config, ssid, heartbeat_ok)
+        if erster_versuch is False:
+            # Netzwerk/DNS war noch nicht bereit -> Wiederholkette wie gehabt.
+            heartbeat_ok = _heartbeat_with_retry(
+                config, ssid, app, whitelist, erster_versuch_erledigt=True
+            )
+            if heartbeat_ok:
+                _log_verdict(config, ssid, True, context="nach Wiederholung")
 
         # Danach dauerhaft in Intervallen erneut melden (mit Zufallsstreuung,
         # damit sich nicht alle Boxen exakt gleichzeitig melden). So taucht eine
@@ -516,14 +547,17 @@ def _log_verdict(config, ssid, heartbeat_ok: bool, context: str = "Firmen-WLAN")
         logger.debug(f"Netz-Bilanz konnte nicht erstellt werden ({e})")
 
 
-def _heartbeat_with_retry(config, ssid, app, whitelist) -> bool:
+def _heartbeat_with_retry(config, ssid, app, whitelist, erster_versuch_erledigt: bool = False) -> bool:
     """Sendet den Monitoring-Heartbeat und wiederholt bei Netzwerk-/DNS-Fehler.
 
     Bricht ab, sobald es klappt (True), das Dashboard ablehnt/Konfig fehlt
     (None → False), oder die Box das Firmen-WLAN verlassen hat. Läuft im
     bereits vorhandenen Background-Thread — blockiert die UI nicht.
     """
-    for attempt, delay in enumerate([0] + MONITORING_RETRY_DELAYS, start=1):
+    # `erster_versuch_erledigt`: Der Aufrufer hat den Sofort-Versuch schon
+    # gemacht (2.4.32) — dann hier ohne den fuehrenden 0-Delay weitermachen.
+    abstaende = MONITORING_RETRY_DELAYS if erster_versuch_erledigt else ([0] + MONITORING_RETRY_DELAYS)
+    for attempt, delay in enumerate(abstaende, start=2 if erster_versuch_erledigt else 1):
         if delay:
             time.sleep(delay)
             # Vor jedem erneuten Versuch prüfen, ob wir noch im Firmen-WLAN sind

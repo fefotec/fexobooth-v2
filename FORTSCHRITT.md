@@ -4,6 +4,155 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-08-19 (Nachmittag) — GELOEST: Der Router war die Hauptursache
+
+Gemeinsam mit Christian die Router-Oberflaeche durchgegangen (Telekom Digitalisierungsbox
+Premium = bintec elmeg be.IP plus, Firmware 11.01.03.115, PBX-Modus).
+
+**Befund:** Der DHCP-Adressbereich fuer LAN + fexon WLAN (beide auf Bridge `br0`) umfasste
+`192.168.2.200`–`.250` = **51 Adressen** — bei 200+ Fotoboxen plus PCs, Gigaset-Telefonen,
+bintec-Access-Points und diversen Smart-Home-Geraeten. Dazu **120 Minuten Lease Time**.
+Die Router-Liste *IP/MAC-Bindung* zeigte **"Summe der Objekte: 53"** = 51 Haupt-Pool + 2 Gaeste:
+**der Pool war zu 100 % belegt.** Boxen, die danach kamen, bekamen nichts → `169.254.x.x`.
+
+**Gegenprobe per Netzwerk-Scan** (von Christians PC, 192.168.2.212): Unterhalb von `.200` waren
+nur `192.168.2.1` (Router) und `192.168.2.116` belegt — der ganze Bereich lag brach.
+
+**Aenderung im Router:**
+| Einstellung | vorher | nachher |
+|---|---|---|
+| Pool "DHCP Adressbereich" | `192.168.2.200`–`.250` (51) | **`192.168.2.130`–`.250` (121)** |
+| Lease Time (`br0`) | 120 Min. | **30 Min.** |
+
+Start bei `.130` mit Sicherheitsabstand: Der Scan sieht nur eingeschaltete Geraete, `.2`–`.129`
+bleibt Reserve fuer feste Adressen.
+
+**Dokumentiert** in ERKENNTNISSE.md ("GELOEST: Firmen-WLAN + Router") inkl. Router-Daten,
+Netz-Aufbau, komplettem Klickpfad zur versteckten Experten-Navigation, den DHCP-Optionen die
+man NICHT anfassen darf, und dem Scan-Befehl. Zusaetzlich als projektuebergreifende Notiz
+gesichert (Memory `reference_fexon_firmen_wlan_router`).
+
+**Rueckblick auf die ganze Kette — es waren DREI Probleme, die sich gegenseitig versteckt haben:**
+1. Der eigene Hotspot blockierte auf manchen Boxen die WLAN-Karte (2.4.29)
+2. Zwei Threads an derselben Kamera → Abstuerze mit Heap-Zerstoerung (2.4.31)
+3. **Der Router-Pool war voll** (heute, ohne Software-Aenderung)
+
+Der Durchbruch kam nicht durch Code, sondern dadurch, dass die Boxen ab 2.4.28 **von selbst
+protokollieren** (`netzwerk.log`, `absturz.log`) — ohne Developer-Mode. Erst die Zeile
+`Eig. Hotspot: aus` + `KEINE IP-ADRESSE` hat die Box entlastet und den Router ueberfuehrt.
+
+---
+
+## 2026-08-19 (nachmittags) — Absturz-Fix bestaetigt, neuer blinder Fleck geschlossen (2.4.32)
+
+**Absturz-Fix wirkt:** Boxen 19, 31 und 38 laufen mit 2.4.31; `absturz.log` enthaelt auf allen
+dreien nur noch `Start (Absturz-Ueberwachung aktiv)` — kein `fatal exception` mehr.
+
+**Neues Problem:** Dieselben drei Boxen melden sich nicht im Dashboard und hatten **gar keine
+`netzwerk.log`**. Aus den Start-Zeitstempeln in `absturz.log`:
+
+| Box | Start 1 | Start 2 | Laufzeit |
+|---|---|---|---|
+| 19 | 11:43:48 | 11:46:49 | 3:01 |
+| 31 | 10:15:30 | 10:17:59 | 2:29 |
+| 38 | 14:55:43 | 14:58:31 | 2:48 |
+
+Die Bilanz stand am Ende der Wiederholkette (20+30+45+60+90 s ≈ 4 Min) — die Boxen waren vorher
+aus. Mein Rat „3 Minuten reichen" war also fuer diesen Fall falsch: Er galt nur fuer
+„keine IP-Adresse" (dort schreibt seit 2.4.29 ein Fruehbefund).
+
+**Fix 2.4.32:** Erst melden, Bilanz SOFORT schreiben, dann erst die Wiederholkette.
+Test: Eintrag nach 1,5 s statt gar nicht.
+
+**Zweiter Fund (Box 044, Foto vom Selbsttest):** Warnung „Hohe Hintergrund-Auslastung: CPU 75 %
+(Windows-Update/Defender?)" war ein **Fehlalarm**. `psutil.cpu_percent()` misst die GESAMT-Last
+inklusive der App. Das Log derselben Box zeigt: CPU gesamt 20–48 %, davon `fexobooth.exe`
+19–39 %, `System Idle Process` 54–73 %. Die Box war nicht ausgelastet, und Windows-Update/
+Defender waren unbeteiligt. Jetzt wird die eigene Last abgezogen (`cpu_fremd_prozent`).
+
+**Weiterhin offen:** Warum sich 19/31/38 nicht melden. Dazu gibt es bislang KEINE Daten.
+
+---
+
+## 2026-08-19 — ABSTURZ GELOEST: zwei Threads an derselben Kamera (2.4.31)
+
+**Der `faulthandler` aus 2.4.30 hat geliefert.** `absturz.log` von Box 044 (19.08. 08:44:02):
+
+```
+Windows fatal exception: code 0xc0000374          <- HEAP CORRUPTION
+Current thread 0x000016bc:
+  src\app.py line 2568 in _camera_status_probe     -> cv2.VideoCapture(cam_idx, CAP_DSHOW)
+Thread 0x000005e4:
+  src\camera\webcam.py line 519 in list_cameras    -> cv2.VideoCapture(i, CAP_DSHOW)
+  src\app.py line 156 in _auto_select_webcam
+```
+
+**Ursache:** `WebcamManager.list_cameras()` ist eine `@staticmethod` und lief damit komplett an
+`self._camera_lock` vorbei (das ist eine INSTANZ-Sperre). Beim Start laufen zwei Threads los —
+die Kamera-Auto-Auswahl (`app.py:156`) und der Kamera-Waechter (`app.py:2568`) — und oeffnen
+zeitgleich dieselbe DirectShow-Kamera. Das zerstoert den Heap; Windows meldet den Absturz erst
+spaeter und woanders (`ntdll.dll` / `0xc0000005`). Aus dem Ereignisprotokoll allein war das
+NICHT ableitbar.
+
+**Warum nur „vereinzelt" und nie im Dev-Mode:** Ob sich die beiden Threads wirklich ueberlappen,
+haengt am Timing (CPU-Last, Antwortzeit der Kamera). Im Developer-Mode laeuft alles anders
+getaktet — das Zeitfenster war dort schlicht meist zu klein.
+
+**Fix (2.4.31):**
+- `src/camera/webcam.py`: modulweite `_CAMERA_HW_LOCK` + oeffentliche `camera_hardware_lock()`;
+  Instanz-Sperre zeigt jetzt auf dieselbe Sperre; `list_cameras()` haelt sie beim Hardware-Teil
+  (die Namens-Ermittlung laeuft in einem eigenen Prozess und bleibt bewusst draussen).
+- `src/app.py`: die Kamera-Pruefung nimmt dieselbe Sperre.
+- `src/ui/screens/start.py`: `on_show` bricht ab, wenn der Screen schon zerstoert ist
+  (der zweite Fund aus demselben `absturz.log`, 08:43:54 — vom Tk-Handler abgefangen).
+
+**Test:** Zwei „Sucher"-Threads + ein „Pruefer"-Thread gegen einen Zaehler laufen lassen:
+mit Sperre **max. 1** gleichzeitiger Zugriff, ohne Sperre **2**. Damit ist die Ueberlappung
+nachweislich weg.
+
+---
+
+## 2026-08-19 — Absturz-Signatur eingegrenzt (Box 044) + Speicherabbild-Sammler
+
+**Datenlage aus den zwei Werkstatt-Berichten:**
+
+| | Box 087 | Box 044 |
+|---|---|---|
+| EXE installiert | 11.08. 10:57 (**alte Version**) | 18.08. 12:42 (2.4.29) |
+| `netzwerk.log` vorhanden | nein | ja |
+| Abstürze in 21 Tagen | **keine** | 2 |
+
+Box 087 ist damit **kein Vergleichsfall** — sie läuft gar nicht auf 2.4.29 (der einzige Eintrag
+dort ist ein AppHang vom 09.02.2026 mit `FexoBooth.exe 2.0.0.0`, ein halbes Jahr alt).
+
+**Box 044 — die Signatur ist identisch zu der Meldung vom Vortag:**
+```
+fexobooth.exe 0.0.0.0 | Modul ntdll.dll 10.0.19041.6456
+Ausnahmecode 0xc0000005 | Fehleroffset 0x00000000000649e6
+```
+Zweimal exakt dieselben Werte (18.08. 14:13:45 und 15:16:03) → **derselbe Fehler, reproduzierbar**.
+Absturz in `ntdll` bei stets gleichem Offset ist das typische Muster für einen
+**Speicherverwaltungsfehler (Heap)**: Der Verursacher ist meist eine andere DLL, die über ihren
+Speicher hinausschreibt — `ntdll` fällt erst später darüber.
+
+**Wichtige Korrektur zur Annahme „stürzt beim Start ab":**
+`netzwerk.log` von Box 044 zeigt Starts um 13:35:16, 14:45:45 und 14:47:48 (jeder App-Start im
+Firmen-WLAN schreibt einen Block). Der letzte Start war **14:47**, der Absturz **15:16** — also
+**29 Minuten später, mitten im Betrieb**, nicht beim Hochfahren. Die Start-Abstürze müssen andere
+Boxen betroffen haben oder ein anderes Phänomen sein.
+
+**Zeitliche Auffälligkeit (Hinweis, kein Beweis):** Die wiederkehrende Dashboard-Meldung läuft
+alle 900 s ± 120 s. Ab Start 14:47 wäre die zweite Meldung zwischen 15:15:50 und 15:21:50 fällig —
+der Absturz um 15:16:03 fällt genau in dieses Fenster. Das ist zu prüfen, sobald `faulthandler`
+(2.4.30) den Python-Stack liefert.
+
+**Umgesetzt:** `setup/Absturz-Infos-sammeln.bat` sammelt jetzt zusätzlich die **Speicherabbilder,
+die Windows beim Absturz selbst angelegt hat** (`WER\ReportArchive` und `WER\Temp`) und kopiert
+sie nach `C:\FexoBooth\logs\dumps`. Der Bericht von Box 044 nannte eine solche Datei
+(`WER2CEE.tmp.dmp`) — mein Skript hatte sie vorher übersehen.
+
+---
+
 ## 2026-08-18 (Box 056) — Fehler ENDLICH reproduziert, Reparatur zu langsam (2.4.29)
 
 **Der Log, auf den wir gewartet haben** (`fexobooth_20260818_111651.log`, Box 056, Buchung

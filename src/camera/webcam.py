@@ -12,6 +12,37 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+# ─────────────────────────────────────────────
+# EINE Sperre fuer JEDEN Kamera-Hardwarezugriff (2.4.31)
+# ─────────────────────────────────────────────
+# Absturz-Beweis (Box 044, absturz.log vom 19.08.2026, Code 0xc0000374 =
+# HEAP CORRUPTION). Der faulthandler zeigte ZWEI Threads, die gleichzeitig
+# DirectShow-Kameras oeffneten:
+#
+#   Thread A: src\app.py:2568 in _camera_status_probe   -> cv2.VideoCapture(...)
+#   Thread B: src\camera\webcam.py:519 in list_cameras  -> cv2.VideoCapture(...)
+#
+# Ursache: `list_cameras()` ist eine @staticmethod und lief damit voellig
+# an `self._camera_lock` vorbei — das ist eine INSTANZ-Sperre und schuetzt
+# nur die Methoden am Objekt. Zwei parallele DirectShow-Oeffnungen auf
+# denselben Geraeteindex zerlegen den Heap des Prozesses; Windows meldet das
+# spaeter als Absturz in ntdll.dll (0xc0000005 / 0xc0000374).
+#
+# Deshalb: EINE modulweite Sperre, die sowohl die Instanz-Methoden als auch
+# die statische Suche benutzen. Reentrant (RLock), damit verschachtelte
+# Aufrufe im selben Thread nicht blockieren.
+_CAMERA_HW_LOCK = threading.RLock()
+
+
+def camera_hardware_lock() -> threading.RLock:
+    """Sperre fuer JEDEN direkten Kamerazugriff — auch ausserhalb dieser Datei.
+
+    Wer selbst `cv2.VideoCapture(...)` aufruft (z.B. die Kamera-Pruefung in
+    app.py), MUSS diese Sperre nehmen. Sonst ist der Absturz zurueck.
+    """
+    return _CAMERA_HW_LOCK
+
+
 class WebcamManager(CameraManager):
     """Verwaltet Webcam-Zugriff via OpenCV
 
@@ -30,7 +61,9 @@ class WebcamManager(CameraManager):
         self._active_width: int = 0
         self._active_height: int = 0
         self._mjpg_unsupported: bool = False  # Latch: Kamera lehnt MJPG ab
-        self._camera_lock = threading.RLock()
+        # Bewusst die MODULWEITE Sperre (nicht pro Objekt): Die statische
+        # Kamera-Suche laeuft sonst parallel dazu und korrumpiert den Heap.
+        self._camera_lock = _CAMERA_HW_LOCK
 
     def initialize(self, camera_index: int, width: int, height: int) -> bool:
         """Initialisiert die Kamera"""
@@ -511,7 +544,11 @@ public class DShowEnum {
         device_names = WebcamManager._get_device_names()
 
         cameras = []
-        for i in range(max_cameras):
+        # Ab hier wird echte Hardware angefasst -> Sperre PFLICHT (2.4.31).
+        # (Die Namens-Ermittlung oben laeuft in einem eigenen Prozess und ist
+        # ungefaehrlich, die bleibt bewusst ausserhalb der Sperre.)
+        with _CAMERA_HW_LOCK:
+          for i in range(max_cameras):
             cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
             if cap.isOpened():
                 w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))

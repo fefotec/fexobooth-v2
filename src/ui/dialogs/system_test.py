@@ -424,14 +424,34 @@ class SystemTestDialog(ctk.CTkToplevel):
             logger.debug(f"System-Test: Schreibtest fehlgeschlagen: {e}")
 
         # Fremdlast: Läuft gerade etwas Schweres im Hintergrund?
+        # 2.4.32: Vorher wurde die GESAMT-CPU gemessen — inklusive der App selbst.
+        # Die rendert waehrend des Tests aber gerade Fotos und braucht dabei
+        # locker 35-40%. Ergebnis: Die Box meldete "Hohe Hintergrund-Auslastung
+        # (Windows-Update/Defender?)", obwohl im Log stand, dass fexobooth.exe
+        # selbst der groesste Verbraucher war und reichlich Leerlauf herrschte
+        # (Feld-Log Box 044, 19.08.: CPU gesamt 20-48%, davon fexobooth 19-39%,
+        # System Idle 54-73%). Jetzt wird die EIGENE Last abgezogen.
         try:
             import psutil
+            eigener_prozess = psutil.Process()
+            eigener_prozess.cpu_percent(None)          # Nullpunkt setzen
             cpu = psutil.cpu_percent(interval=0.8)
+            kerne = psutil.cpu_count() or 1
+            # Process.cpu_percent zaehlt pro Kern (kann >100 sein) -> auf das
+            # Gesamtsystem umrechnen, damit die Werte vergleichbar sind.
+            eigen = min(100.0, eigener_prozess.cpu_percent(None) / kerne)
+            fremd = max(0.0, cpu - eigen)
             ram = psutil.virtual_memory().percent
             self._metrics["cpu_prozent"] = round(cpu)
+            self._metrics["cpu_eigen_prozent"] = round(eigen)
+            self._metrics["cpu_fremd_prozent"] = round(fremd)
             self._metrics["ram_prozent"] = round(ram)
-            if cpu > THRESHOLD_CPU_BUSY_PCT:
-                self._warn(f"Hohe Hintergrund-Auslastung: CPU {cpu:.0f}% (Windows-Update/Defender? Details im Log)")
+            logger.info(
+                f"System-Test: CPU gesamt {cpu:.0f}% | davon eigene App {eigen:.0f}% "
+                f"| Fremdlast {fremd:.0f}% (Schwelle {THRESHOLD_CPU_BUSY_PCT:.0f}%)"
+            )
+            if fremd > THRESHOLD_CPU_BUSY_PCT:
+                self._warn(f"Hohe Fremd-Auslastung: CPU {fremd:.0f}% durch andere Programme (Windows-Update/Defender? Details im Log)")
             # Detaillierte Störer-Analyse zusätzlich ins Log (blockiert ~1s)
             from src.utils.system_load import snapshot_system_load
             snapshot_system_load("System-Test")
