@@ -6,6 +6,37 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.34] - 2026-08-19 - Messmodus: Kann die Kamera dauerhaft in 1080p laufen?
+
+> Anlass: Der Ausloese-Blitz kommt sofort, das Bild wird aber erst ~1,7 s spaeter
+> belichtet — wer sich dazwischen bewegt, ist nicht mehr drauf. Ursache ist das
+> Umschalten der Aufloesung pro Foto (640x480 → 1920x1080 kostet ~1,5 s).
+> Die Frage „koennte die Kamera nicht einfach dauerhaft in 1080p laufen?" laesst
+> sich am Entwickler-PC NICHT beantworten: Dort ergab die Hochrechnung 21 ms
+> pro Bild, die Box meldet real 83 ms. Auf schwacher Hardware skaliert die
+> Speicherbandbreite ganz anders als die Rechenleistung.
+
+### Neu
+
+- **`fexobooth.exe --kamera-test`** — eigener Messmodus, startet keine Fotobox.
+  Misst auf der echten Box: Bildrate bei 640x480 / 1280x720 / 1920x1080, die
+  tatsaechliche Dauer des Aufloesungs-Wechsels, den Nutzen einer geaenderten
+  Reihenfolge in der Bildaufbereitung, und vergleicht DirectShow mit Media
+  Foundation. Ergebnis als Klartext-Urteil in `C:\FexoBooth\logs\kamera-messung.txt`.
+- Die Messung trennt dabei **Warten auf die Kamera** (`grab`) von **Rechenzeit
+  fuers Dekodieren** (`retrieve`). Ohne diese Trennung sieht man nur die Summe
+  und weiss nicht, ob die Kamera oder die CPU bremst — das entscheidet aber,
+  welche Loesung ueberhaupt etwas bringt.
+
+### Erkenntnis aus der Vorab-Analyse (Entwickler-PC)
+
+- Die Bildaufbereitung spiegelt und faerbt das **volle** Kamerabild um und
+  verkleinert erst danach. Dreht man die Reihenfolge um, kostet dieser Schritt
+  bei 1080p statt 4,14 ms nur noch 0,19 ms (**21x**). Die Aufloesung waere fuer
+  die Aufbereitung damit fast egal — der offene Posten ist allein das Dekodieren.
+
+---
+
 ## [2.4.33] - 2026-08-19 - Router als Ursache belegt: Urteil praezisiert + DHCP-Diagnose
 
 > **Befund aus den ersten echten `netzwerk.log`-Dateien** (Boxen 019 und 038, beide 2.4.32):

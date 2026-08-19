@@ -130,6 +130,26 @@ def main():
     # WICHTIG: Taskleiste wiederherstellen (Recovery von vorherigem Crash)
     _recover_taskbar()
 
+    # Kamera-Messung (2.4.34): eigener Modus, startet KEINE Fotobox-Oberflaeche.
+    # Beantwortet die Frage, ob die Kamera dauerhaft in 1080p laufen kann —
+    # das laesst sich nur auf der echten Box messen, nicht am Entwickler-PC.
+    if "--kamera-test" in sys.argv:
+        try:
+            from src.tools.kamera_messung import messung_ausfuehren
+            index = 0
+            if "--kamera-index" in sys.argv:
+                try:
+                    index = int(sys.argv[sys.argv.index("--kamera-index") + 1])
+                except Exception:
+                    index = 0
+            messung_ausfuehren(index)
+        except Exception as e:
+            print("Kamera-Messung fehlgeschlagen: " + str(e))
+            import traceback
+            traceback.print_exc()
+        input("\nZum Schliessen Eingabetaste druecken...")
+        return
+
     # Developer Mode NUR via Kommandozeile (--dev oder -d)
     # Config-Wert wird IGNORIERT - nur CLI zählt!
     developer_mode = "--dev" in sys.argv or "-d" in sys.argv

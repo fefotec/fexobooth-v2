@@ -402,6 +402,36 @@ Betrifft: `_display_preview()`, `_build_flash_cache()`, `_show_main_preview()`, 
 
 ## Lessons Learned
 
+### Kamera-Backend: DirectShow war nie gemessen worden (Verdacht, 2026-08-19)
+
+- **Ausgangslage:** In `webcam.py` steht `backends = [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]`.
+  DirectShow wird zuerst probiert, funktioniert immer — und damit hat nie jemand
+  gemessen, ob Media Foundation schneller waere. Die Feld-Logs zeigen durchgaengig
+  `Kamera 0 geoeffnet mit Backend 700` (= CAP_DSHOW).
+- **Messung am Entwickler-PC (gleiche Kamera, gleicher Rechner):**
+
+  | Backend | 640x480 | 1920x1080 | Dekodieren bei 1080p |
+  |---|---|---|---|
+  | DirectShow | 14,3 Bilder/s | **5,0 Bilder/s** | 200 ms |
+  | Media Foundation | 30,6 Bilder/s | **30,5 Bilder/s** | **9 ms** |
+
+  Ausserdem: Aufloesungswechsel per DirectShow = 1861 ms hoch + 460 ms erstes Bild
+  = 2,3 s (deckt sich mit den Feld-Logs der Boxen: ~1,7-1,9 s).
+- **Konsequenz, falls sich das auf der Box bestaetigt:** Nicht die Aufloesung ist das
+  Problem, sondern der Treiberpfad. Mit MSMF koennte die Kamera dauerhaft in 1080p
+  laufen, das Umschalten pro Foto entfiele — und damit auch die Luecke zwischen
+  Blitz und Belichtung.
+- **⚠️ RISIKO, das vorher geklaert werden muss:** Die Kamera-Erkennung dieses Projekts
+  ist auf die DirectShow-Reihenfolge gebaut (siehe Eintrag "DirectShow-Enumeration:
+  PnP-Reihenfolge != OpenCV-Reihenfolge"). Unter MSMF kann derselbe Index eine ANDERE
+  Kamera treffen — im schlimmsten Fall die interne statt der Logitech. Ein Wechsel
+  des Backends erfordert deshalb zwingend, die Zuordnung Index->Geraet neu abzusichern.
+- **Merke:** Wenn eine Bibliothek mehrere Backends anbietet und der Code das erste
+  nimmt, das funktioniert, ist die Wahl NICHT begruendet — sie ist zufaellig. Einmal
+  messen kostet eine Stunde und kann ein Jahr Symptombekaempfung ersparen.
+- **Noch offen:** Alles oben ist am Entwickler-PC gemessen, nicht auf einer Box mit
+  Atom-CPU und C922. Dafuer gibt es seit 2.4.34 `fexobooth.exe --kamera-test`.
+
 ### GELOEST: Firmen-WLAN + Router — warum sich Boxen nicht im Dashboard meldeten (19.08.2026)
 
 **Das war die eigentliche Hauptursache.** Drei Probleme hatten sich gegenseitig versteckt; dieses
