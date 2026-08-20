@@ -1,4 +1,4 @@
-r"""Kamera-Messung: Wie schnell ist die Box bei welcher Aufloesung? (2.4.35)
+r"""Kamera-Messung: Wie schnell ist die Box bei welcher Aufloesung? (2.4.37)
 
 WARUM ES DAS BRAUCHT:
 Beim Fotografieren wird die Kamera pro Bild kurz von der Vorschau-Aufloesung
@@ -49,6 +49,23 @@ Daraus folgen die drei Bauprinzipien hier:
   * Jeder ausgelassene Schritt hinterlaesst eine Zeile MIT Begruendung.
     Stilles `continue` macht einen Bericht unlesbar: Man kann "gemessen und
     leer" nicht von "stumm gescheitert" unterscheiden.
+
+WAS 2.4.37 NACHGEZOGEN HAT (Gegenpruefung des Umbaus):
+  * Die Kamera-SUCHE lief bis dahin ungeschuetzt VOR der Messung — genau auf
+    Christians BAT-Weg. Der ganze Wachhund-Apparat begann also erst hinter der
+    einzigen Stelle, die noch endlos haengen konnte. Jetzt: `kamera_suchen()`,
+    mit Zeitgrenze und mit einem Lebenszeichen auf der Platte davor.
+  * MJPG wird jetzt mit Nachpruefung und Rueckfall angefordert, genau wie
+    `WebcamManager._apply_mjpg`. Vorher konnte die Messung YUY2 messen,
+    waehrend die Fotobox im Betrieb MJPG bekommt — das haette 1080p zu
+    Unrecht als "zu langsam" verurteilt.
+  * Der Bericht sagt jetzt, WIE er entstanden ist ("Gestartet: ..."). Ueber
+    den Admin-Knopf laeuft die Fotobox-Software parallel mit und kostet
+    Bilder/s; ohne diese Zeile waeren zwei Berichte derselben Box unbemerkt
+    nicht vergleichbar.
+  * Die Beruhigungspause zwischen zwei Kamera-Zellen greift jetzt auf JEDEM
+    Ausgang (vorher nur im Erfolgsfall — also gerade nicht nach dem Fehler,
+    der sie noetig macht).
 
 Aufruf auf der Box:  fexobooth.exe --kamera-test
 Ergebnis:            C:\FexoBooth\logs\kamera-messung.txt

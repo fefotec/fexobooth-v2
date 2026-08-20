@@ -135,6 +135,10 @@ class KameraMessungDialog(ctk.CTkToplevel):
         self._takt_job = None
         self._kamera_freigegeben = False
         self._balken_zeigt_schritte = False
+        # Start ist gewuenscht, aber der Prozess laeuft noch nicht (siehe
+        # _warten_auf_freie_kamera). In diesem Fenster muss "Abbrechen"
+        # trotzdem greifen — sonst startet die Messung nach dem Abbrechen doch.
+        self._start_gewuenscht = False
 
         self.title("Kamera-Messung")
         self.configure(fg_color="#0a0a10")
@@ -183,7 +187,10 @@ class KameraMessungDialog(ctk.CTkToplevel):
                 "Sie läuft als eigenes Programm — diese Oberfläche bleibt bedienbar\n"
                 "und du kannst jederzeit abbrechen.\n\n"
                 "Solange die Messung läuft, ist die Kamera belegt:\n"
-                "Es kann keine Foto-Session gestartet werden."
+                "Es kann keine Foto-Session gestartet werden.\n\n"
+                "Hinweis: Hier läuft die Fotobox-Software nebenher mit und\n"
+                "kostet etwas Leistung. Für den genauesten Wert die Datei\n"
+                "„Kamera-Messung-starten.bat\" verwenden."
             ),
             font=FONTS["body"],
             text_color=COLORS["text_secondary"],
@@ -262,8 +269,9 @@ class KameraMessungDialog(ctk.CTkToplevel):
     # ------------------------------------------------------------------
 
     def _starten(self):
-        if self._prozess is not None:
+        if self._prozess is not None or self._start_gewuenscht:
             return
+        self._start_gewuenscht = True
 
         self.start_btn.pack_forget()
         self.schliessen_btn.pack_forget()
@@ -295,6 +303,44 @@ class KameraMessungDialog(ctk.CTkToplevel):
             except Exception as e:
                 logger.debug(f"Alter Messbericht nicht loeschbar ({pfad}): {e}")
 
+        self._warten_auf_freie_kamera()
+
+    def _warten_auf_freie_kamera(self, versuch: int = 0):
+        """Erst starten, wenn keine Kamera-Pruefung der App mehr laeuft.
+
+        Das Flag aus `_messung_flag` verhindert NEUE Pruefungen — eine bereits
+        LAUFENDE (Hintergrund-Thread `_camera_status_probe`) haelt die Kamera
+        aber vielleicht gerade noch offen. Wuerde der Messprozess jetzt starten,
+        griffen zwei Prozesse gleichzeitig auf dieselbe DirectShow-Kamera zu;
+        genau diese Klasse von Doppelzugriff war 2.4.31 der Absturz 0xc0000374.
+
+        Gewartet wird ueber `after()`, nicht mit sleep: Die Oberflaeche muss
+        bedienbar bleiben. Eine Pruefung dauert normalerweise deutlich unter
+        einer Sekunde; laeuft sie laenger, wird trotzdem gestartet — der
+        Messprozess meldet dann sauber "Kamera liess sich nicht oeffnen",
+        was allemal besser ist, als hier haengenzubleiben.
+        """
+        if self._prozess is not None or not self._start_gewuenscht:
+            return
+        laeuft = False
+        try:
+            laeuft = bool(getattr(self.app, "_camera_check_running", False))
+        except Exception:
+            laeuft = False
+
+        if laeuft and versuch < 10:
+            self._status("Kamera-Prüfung der Box läuft noch – kurz warten...")
+            self.after(300, lambda: self._warten_auf_freie_kamera(versuch + 1))
+            return
+        if laeuft:
+            logger.warning(
+                "Kamera-Pruefung der App laeuft seit >3 s — Messung startet trotzdem"
+            )
+
+        self._prozess_starten()
+
+    def _prozess_starten(self):
+        self._status("Messung wird gestartet...")
         befehl, arbeitsverzeichnis = _mess_befehl(self.kamera_index)
         logger.info(f"Kamera-Messung startet als eigener Prozess: {befehl}")
 
@@ -309,6 +355,7 @@ class KameraMessungDialog(ctk.CTkToplevel):
             )
         except Exception as e:
             logger.exception(f"Messprozess liess sich nicht starten: {e}")
+            self._start_gewuenscht = False
             self._messung_flag(False)
             self._abschluss_anzeigen(
                 "Die Messung ließ sich nicht starten.\n"
@@ -377,6 +424,7 @@ class KameraMessungDialog(ctk.CTkToplevel):
                 )
                 self._prozess_beenden()
                 self._prozess = None
+                self._start_gewuenscht = False
                 self._messung_flag(False)
                 self._abschluss_anzeigen(
                     f"Die Messung wurde nach {_HOECHSTDAUER_S // 60} Minuten "
@@ -395,6 +443,8 @@ class KameraMessungDialog(ctk.CTkToplevel):
 
         # Prozess ist fertig
         self._prozess = None
+        # Startwunsch zuruecknehmen, sonst blockiert "Messung wiederholen".
+        self._start_gewuenscht = False
         self._messung_flag(False)
         pfad = self._bericht_suchen()
         if pfad:
@@ -541,9 +591,12 @@ class KameraMessungDialog(ctk.CTkToplevel):
     # ------------------------------------------------------------------
 
     def _abbrechen(self):
-        if self._prozess is None:
+        if self._prozess is None and not self._start_gewuenscht:
             return
         logger.info("Kamera-Messung: vom Benutzer abgebrochen")
+        # ZUERST den Startwunsch zuruecknehmen: Sonst startet ein noch
+        # anstehendes _warten_auf_freie_kamera() die Messung gleich doch.
+        self._start_gewuenscht = False
         self._prozess_beenden()
         self._prozess = None
         self._messung_flag(False)
@@ -624,6 +677,7 @@ class KameraMessungDialog(ctk.CTkToplevel):
     def _schliessen(self):
         # Laeuft noch etwas, wird es beendet — ein weiterlaufender Messprozess
         # wuerde sonst dauerhaft die Kamera belegen und jede Session blockieren.
+        self._start_gewuenscht = False
         if self._prozess is not None:
             self._prozess_beenden()
             self._prozess = None
