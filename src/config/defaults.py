@@ -68,7 +68,6 @@ DEFAULT_CONFIG = {
     # Faellt irgendetwas aus (Kamera liefert kein 1080p, MJPG abgelehnt), geht
     # webcam.initialize() von selbst auf die kleine Vorschau zurueck und die
     # Box arbeitet exakt wie heute weiter — siehe dortiger Kommentarblock.
-    "camera_dauerbetrieb_hd": False,
     "liveview_template_overlay": True,  # Template-Overlay im LiveView anzeigen
     "camera_settings": {
         "single_photo_width": 1920,

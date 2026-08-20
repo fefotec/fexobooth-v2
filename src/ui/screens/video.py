@@ -376,10 +376,12 @@ class VideoScreen(ctk.CTkFrame):
             def _release():
                 if player is not None:
                     try:
-                        # Nur stoppen wenn noch am Spielen
-                        state = player.get_state()
-                        if state in (_vlc.State.Playing, _vlc.State.Paused, _vlc.State.Opening):
-                            player.stop()
+                        # 2.4.45: KEIN get_state() mehr davor. Der Statusabruf
+                        # im Oberflaechen-Thread (_vlc_check_status) haengt an
+                        # derselben Player-Sperre; hier daran zu ziehen hat den
+                        # Stillstand nur verschaerft. stop() auf einem bereits
+                        # gestoppten Player ist harmlos.
+                        player.stop()
                     except:
                         pass
                     try:
@@ -396,13 +398,30 @@ class VideoScreen(ctk.CTkFrame):
             cleanup_thread = threading.Thread(target=_release, daemon=True)
             cleanup_thread.start()
 
-            # Nur synchron warten wenn Callback existiert (= Zwischen-Video)
-            # Dann muss VLC DXVA2 freigeben bevor Kamera startet
-            # Bei Start/End-Videos (kein Callback) ist fire-and-forget OK
-            if self.on_complete:
-                cleanup_thread.join(timeout=1.0)
-                if cleanup_thread.is_alive():
-                    logger.warning("VLC-Cleanup dauert >1s - fahre fort")
+            # 2.4.45: HIER STAND EIN join(timeout=1.0) — ES WAR SELBST DIE BREMSE.
+            #
+            # Absicht war: nach einem Zwischen-Video warten, bis VLC die
+            # Grafikeinheit freigegeben hat, bevor die Kamera wieder startet.
+            # Tatsaechlich braucht `player.release()` aber genau DIESEN Thread,
+            # um das VLC-Kindfenster im Tk-Fenster abzubauen — der Aufraeum-
+            # Thread wartet also darauf, dass der Oberflaechen-Thread wieder
+            # Nachrichten verarbeitet, waehrend der Oberflaechen-Thread im
+            # join() auf den Aufraeum-Thread wartet.
+            #
+            # Belegt aus dem Feld-Log Box 101 vom 20.08.2026:
+            #   41.196  Video zu Ende
+            #   42.211  "VLC-Cleanup dauert >1s"     <- exakt 1,015 s = das
+            #                                          Zeitlimit selbst, nicht VLC
+            #   43.051  "VLC-Ressourcen freigegeben" <- erst 73 ms NACHDEM der
+            #                                          Thread wieder lief
+            # Das Warten hat die Verzoegerung also VERURSACHT und danach ohnehin
+            # aufgegeben — es gab nie eine echte Zusicherung, nur eine
+            # garantierte Sekunde Stillstand nach JEDEM Zwischen-Video.
+            #
+            # Jetzt: nicht warten. Der Abbau laeuft weiter, sobald die
+            # Nachrichtenschleife dran ist — im Log waren das ~70 ms.
+            # (self.update() waere hier falsch: Das betritt die Ereignisschleife
+            # erneut und kann Rueckrufe doppelt ausloesen.)
 
     # ─────────────────────────────────────────────
     # OpenCV-Fallback

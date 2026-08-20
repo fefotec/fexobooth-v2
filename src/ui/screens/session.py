@@ -245,14 +245,14 @@ class SessionScreen(ctk.CTkFrame):
             breite, hoehe = vorschau_aufloesung(self.config)
             logger.info(
                 f"Kamera wird geöffnet: {breite}x{hoehe} "
-                f"({'Dauerbetrieb HD' if self.config.get('camera_dauerbetrieb_hd', False) else 'klassisch'})"
+                f"(Dauerbetrieb, feste Aufloesung)"
             )
 
             # Betriebsart VOR dem Oeffnen anmelden (2.4.44) — siehe
             # WebcamManager.set_dauerbetrieb_hd().
             setzer = getattr(self.app.camera_manager, "set_dauerbetrieb_hd", None)
             if setzer is not None:
-                setzer(self.config.get("camera_dauerbetrieb_hd", False))
+                setzer(True)  # 2.4.45: Dauerbetrieb ist der einzige Weg
 
             if not self.app.camera_manager.initialize(
                 self.config.get("camera_index", 0),
@@ -1178,7 +1178,7 @@ class SessionScreen(ctk.CTkFrame):
         Canon-/Nikon-Manager haben diese Methoden nicht; `getattr` faengt das
         ab und liefert das heutige Verhalten.
         """
-        if not self.config.get("camera_dauerbetrieb_hd", False):
+        if False:  # 2.4.45: es gibt keinen klassischen Weg mehr
             return False
         if not getattr(self.app.camera_manager, "dauerbetrieb_hd_aktiv", False):
             return False

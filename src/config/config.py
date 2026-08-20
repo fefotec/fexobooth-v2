@@ -102,7 +102,6 @@ _MACHINE_SETTINGS_KEYS = (
     # Schalter wird auf EINER Testbox von Hand umgelegt — waere er nach dem
     # naechsten Update still wieder aus, waere die ganze Messreihe wertlos
     # und Christian wuerde einen Fehler suchen, den es nicht gibt.
-    ("camera_dauerbetrieb_hd",),
     ("liveview_template_overlay",),
     ("camera_settings", "single_photo_width"),
     ("camera_settings", "single_photo_height"),
@@ -369,46 +368,85 @@ def save_config(config: Dict[str, Any]) -> bool:
         return False
 
 
+# Aufloesungs-Stufen fuer den Regler im Admin-Menue (2.4.45).
+#
+# WARUM EINE FESTE LEITER UND KEIN FREIES EINTIPPEN: Bis 2.4.44 war die
+# Foto-Aufloesung ein freies Textfeld. Ein Tippfehler wie 2561x1440 ergibt
+# eine Aufloesung, die keine Kamera liefert — die Box haette sich dann still
+# irgendetwas anderes ausgehandelt. Mit festen Stufen kann das nicht passieren.
+#
+# UNTERGRENZE 1280x720, gemessen auf Box 101 am 20.08.2026:
+#     640x480  MJPG | 29,8 Bilder/s | 33,6 ms je Bild
+#    1280x720  MJPG | 30,5 Bilder/s | 32,8 ms je Bild
+#   1920x1080  MJPG | 13,9 Bilder/s | 71,9 ms je Bild
+# 720p kostet also praktisch genauso wenig wie 480p — unterhalb von 720p
+# gewinnt man keine Fluessigkeit mehr, verliert aber Bildqualitaet. Und da
+# das Foto seit 2.4.45 aus demselben Bildstrom kommt, waere ein 640x480-Foto
+# fuer den Druck unbrauchbar.
+#
+# Die Stufen oberhalb 1080p stehen fuer kuenftige Kameras bereit. Sie werden
+# im Menue erst angeboten, wenn eine Kamera-Messung belegt hat, dass die
+# angeschlossene Kamera sie liefert — geraten wird nichts.
+AUFLOESUNGS_STUFEN = [
+    (1280, 720),
+    (1600, 900),
+    (1920, 1080),
+    (2560, 1440),
+    (3840, 2160),
+]
+
+# Ohne Messergebnis angebotene Stufen. Beide sind auf der Flotte erprobt:
+# Die Logitech C922 liefert sie nachweislich (Kamera-Messung Box 101).
+STUFEN_OHNE_MESSUNG = [(1280, 720), (1920, 1080)]
+
+
+def naechste_stufe(breite: int, hoehe: int) -> tuple:
+    """Rundet eine Aufloesung auf die naechstgelegene gueltige Stufe.
+
+    Damit landet auch eine Box mit einem alten, frei eingetippten Wert
+    (z.B. 1920x1080 oder 1280x960) verlaesslich auf einer Stufe, die es
+    wirklich gibt — ohne dass jemand von Hand nacharbeiten muss.
+    """
+    ziel = max(1, int(breite) * int(hoehe))
+    return min(AUFLOESUNGS_STUFEN, key=lambda s: abs(s[0] * s[1] - ziel))
+
+
 def vorschau_aufloesung(config: Dict[str, Any]) -> tuple:
-    """Liefert (Breite, Hoehe), mit der die Kamera GEOEFFNET werden soll.
+    """Liefert (Breite, Hoehe), mit der die Kamera GEOEFFNET wird.
 
-    Das ist ab 2.4.43 die EINZIGE Stelle, an der diese Frage beantwortet wird.
-    Vorher stand die Rechnung `int(live_res * 0.75)` an drei Stellen identisch
-    im Code (app.py `_pre_init_camera`, session.py `on_show`, system_test.py
-    `_step_init_camera`). Eine Box haette sonst je nach Weg — mit Intro-Video,
-    ohne Intro-Video, im Selbsttest — in unterschiedlichen Aufloesungen laufen
-    koennen; ein Fehler waere damit nicht reproduzierbar gewesen.
+    Das ist die EINZIGE Stelle, an der diese Frage beantwortet wird. Vorher
+    stand die Rechnung `int(live_res * 0.75)` an drei Stellen identisch im Code
+    (app.py `_pre_init_camera`, session.py `on_show`, system_test.py). Eine Box
+    haette sonst je nach Weg — mit Intro-Video, ohne, im Selbsttest — in
+    unterschiedlichen Aufloesungen laufen koennen; ein Fehler waere damit nicht
+    reproduzierbar gewesen.
 
-    KLASSISCH (Grundwert, ganze Flotte):
-        live_view_resolution=640  ->  640x480 (4:3, wie bisher)
+    AB 2.4.45 GIBT ES NUR NOCH EINE AUFLOESUNG. Die Kamera laeuft dauerhaft in
+    der eingestellten Stufe, und das Foto kommt aus genau diesem Bildstrom. Das
+    Umschalten pro Foto (Vorschau 640x480 -> Foto 1920x1080 -> zurueck) ist
+    ersatzlos entfallen.
 
-    DAUERBETRIEB HD (`camera_dauerbetrieb_hd: true`, nur Testbox):
-        -> die Foto-Aufloesung selbst (1920x1080). Dadurch erkennt
-        `get_high_res_frame` von allein "Zielaufloesung ist bereits aktiv"
-        und schaltet pro Foto nicht mehr um.
+    WARUM (gemessen auf Box 101, 20.08.2026, drei Sessions):
+                          | Umschalten | fest 1080p
+      Ausloese-Verzoegerung|   1842 ms  |    86 ms
+      LiveView             |  8,5 B/s   |   6,9 B/s
+    Das Umschalten kostete 1,8 Sekunden pro Foto, und der Blitz kam ~1,8 s vor
+    der Belichtung — das ist die vom Kunden gemeldete "doppelte Ausloesung".
+    Der Preis sind 19 % weniger Vorschaubilder; Christian hat das auf der Box
+    geprueft und als verkraftbar eingestuft.
 
-    DECKEL AUF 1920x1080 — bewusst hart: Die Foto-Aufloesung ist im
-    Admin-Menue frei eintippbar. Ohne Deckel wuerde ein Tippfehler wie
-    2560x1440 die Vorschau dauerhaft in eine Aufloesung zwingen, die die
-    C922 gar nicht liefern kann.
+    `live_view_resolution` und `camera_dauerbetrieb_hd` werden nicht mehr
+    gelesen. Bestehende Boxen brauchen deshalb keine Handarbeit: Ihr Wert
+    `single_photo_width/height` ist auf der ganzen Flotte 1920x1080 und wird
+    hier nur noch auf die naechste gueltige Stufe gerundet.
     """
     cam_settings = config.get("camera_settings", {}) or {}
-
-    if config.get("camera_dauerbetrieb_hd", False):
-        try:
-            breite = int(cam_settings.get("single_photo_width", 1920))
-            hoehe = int(cam_settings.get("single_photo_height", 1080))
-        except (TypeError, ValueError):
-            breite, hoehe = 1920, 1080
-        breite = max(640, min(breite, 1920))
-        hoehe = max(480, min(hoehe, 1080))
-        return breite, hoehe
-
     try:
-        live_res = int(cam_settings.get("live_view_resolution", 480))
+        breite = int(cam_settings.get("single_photo_width", 1920))
+        hoehe = int(cam_settings.get("single_photo_height", 1080))
     except (TypeError, ValueError):
-        live_res = 480
-    return live_res, int(live_res * 0.75)
+        breite, hoehe = 1920, 1080
+    return naechste_stufe(breite, hoehe)
 
 
 def get_config() -> Dict[str, Any]:

@@ -491,7 +491,7 @@ class SystemTestDialog(ctk.CTkToplevel):
         cam_index = self.app.config.get("camera_index", 0)
         # Dieselbe Quelle wie Session und Vor-Init (2.4.43)
         breite, hoehe = vorschau_aufloesung(self.app.config)
-        hd_dauerbetrieb = self.app.config.get("camera_dauerbetrieb_hd", False)
+        hd_dauerbetrieb = True  # 2.4.45: fest
         logger.info(
             f"System-Test: Kamera öffnen mit {breite}x{hoehe} "
             f"({'Dauerbetrieb HD' if hd_dauerbetrieb else 'klassisch'})"
@@ -655,7 +655,7 @@ class SystemTestDialog(ctk.CTkToplevel):
         # einfach klassisch weiterzulaufen.
         ueberspringen = False
         braucht_restore = getattr(mgr, "braucht_preview_restore", None)
-        if (self.app.config.get("camera_dauerbetrieb_hd", False)
+        if (True  # 2.4.45: Dauerbetrieb ist der Weg
                 and getattr(mgr, "dauerbetrieb_hd_aktiv", False)
                 and braucht_restore is not None):
             try:

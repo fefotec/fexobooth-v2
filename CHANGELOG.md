@@ -6,6 +6,82 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.45] - 2026-08-20 - Umschalten pro Foto ersatzlos raus, Aufloesung per Regler
+
+> Christian, nachdem der Dauerbetrieb auf Box 101 ueber drei Sessions gemessen
+> war: „die volle aufloesung macht den live view zwar etwas laggyer aber das
+> ist verkraftbar. dafuer haben wir nicht den ausloesedelay." Und danach:
+> „den umschaltmist verwerfen wir komplett".
+> Anlass ist eine Kundenbeschwerde ueber die „doppelte Ausloesung".
+
+### Geaendert
+
+- **Die Kamera laeuft dauerhaft in EINER Aufloesung.** Das Umschalten pro Foto
+  (Vorschau 640x480 → Foto 1920x1080 → zurueck) ist ersatzlos entfallen —
+  auch als Schalter oder Notnagel. Gemessen auf Box 101, drei Sessions:
+
+  | | Umschalten | fest |
+  |---|---|---|
+  | Ausloese-Verzoegerung | **1842 ms** | **86 ms** |
+  | LiveView | 8,5 Bilder/s | 6,9 Bilder/s |
+
+  Der Blitz kam bisher rund 1,8 Sekunden vor der Belichtung — genau das hat
+  der Kunde als „zwei Ausloesungen" wahrgenommen. Der Preis sind 19 % weniger
+  Vorschaubilder.
+
+- **Regler statt zweier Textfelder.** Im Admin-Menue (Tab Kamera) waehlt ein
+  Schieberegler die Aufloesung; sie gilt fuer Vorschau UND Foto, denn das Foto
+  kommt aus demselben Bildstrom. Unter dem Regler steht die Folge der Wahl
+  („1920 x 1080 — rund 14 Bilder/s · beste Fotoqualität"), damit niemand blind
+  waehlt.
+
+  **Grundwert ist die hoechste Stufe** — eine frisch installierte Box laeuft
+  also in Full HD, ohne dass jemand etwas umlegen muss.
+
+  Feste Stufen statt freiem Eintippen: Ein Tippfehler wie 2561x1440 ergibt
+  eine Aufloesung, die keine Kamera liefert — die Box haette sich dann still
+  etwas anderes ausgehandelt.
+
+- **Untergrenze 1280x720.** Gemessen kostet 720p praktisch genauso wenig wie
+  480p (30,5 gegen 29,8 Bilder/s), erst 1080p halbiert die Rate. Unterhalb von
+  720p gewinnt man keine Fluessigkeit mehr, verliert aber Bildqualitaet — und
+  da das Foto aus demselben Strom kommt, waere ein 640x480-Foto fuer den Druck
+  unbrauchbar.
+
+- **`camera_dauerbetrieb_hd` und `live_view_resolution` entfallen als
+  Entscheidungsgrundlage.** Bestehende Boxen brauchen keine Handarbeit: Ihr
+  Wert `single_photo_width/height` ist auf der ganzen Flotte 1920x1080 und
+  wird nur noch auf die naechste gueltige Stufe gerundet.
+
+### Behoben
+
+- **Die Sekunde nach jedem Zwischen-Video ist weg.** In `_cleanup_vlc` stand
+  ein `join(timeout=1.0)`, mit dem der Oberflaechen-Thread auf das
+  VLC-Aufraeumen wartete. Das Aufraeumen braucht aber genau diesen Thread, um
+  das VLC-Kindfenster abzubauen — das Warten hat die Verzoegerung also selbst
+  verursacht und danach ohnehin aufgegeben. Belegt aus dem Feld-Log:
+
+  ```
+  41.196  Video zu Ende
+  42.211  "VLC-Cleanup dauert >1s"      <- exakt 1,015 s = das Zeitlimit selbst
+  43.051  "VLC-Ressourcen freigegeben"  <- erst 73 ms NACHDEM der Thread wieder lief
+  ```
+
+  Zusaetzlich rief der Aufraeum-Thread unnoetig `get_state()` und zog damit an
+  derselben Sperre wie der Statusabruf im Oberflaechen-Thread.
+
+### Weiterhin offen
+
+- Der **Video-Freeze** ist NICHT behoben. Das Video nach Foto 2 lief zweimal
+  viel zu lang (17,5 s und 33,5 s statt 2,0 s). Die Hypothese „kurz nach einer
+  Kamera-Umschaltung" ist widerlegt — das Video mit dem kuerzesten Abstand
+  (1,08 s) lief sauber. Der `join()`-Fix oben ist ein anderer Fehler.
+- Hoehere Stufen als 1080p stehen in der Leiter bereit (1440p, 2160p), werden
+  aber erst angeboten, wenn eine Kamera-Messung belegt, dass die
+  angeschlossene Kamera sie liefert. Diese Verbindung fehlt noch.
+
+---
+
 ## [2.4.44] - 2026-08-20 - Etappe 2 nachgebessert: Schalter haelt wirklich dicht, Kamera faengt sich selbst
 
 > Ergebnis der Gegenpruefung von 2.4.43. Nichts davon ist eine neue Funktion —

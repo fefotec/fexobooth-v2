@@ -143,7 +143,7 @@ class PhotoboothApp:
         # Zuletzt angewandter Stand des HD-Dauerbetrieb-Schalters (2.4.43).
         # Wird gebraucht, um nach dem Admin-Speichern zu erkennen, dass die
         # Kamera in einer ANDEREN Aufloesung neu geoeffnet werden muss.
-        self._camera_dauerbetrieb_hd = bool(config.get("camera_dauerbetrieb_hd", False))
+        self._camera_dauerbetrieb_hd = True  # 2.4.45: fest, kein Schalter mehr
         self.camera_manager = get_camera_manager(camera_type, config=self.config)
         logger.info(
             f"Kamera-Typ: {camera_type} "
@@ -550,7 +550,7 @@ class PhotoboothApp:
             logger.warning(f"Alte Kamera konnte nicht freigegeben werden: {e}")
 
         self._camera_type = camera_type
-        self._camera_dauerbetrieb_hd = bool(self.config.get("camera_dauerbetrieb_hd", False))
+        self._camera_dauerbetrieb_hd = True  # 2.4.45: fest, kein Schalter mehr
         self.camera_manager = get_camera_manager(camera_type, config=self.config)
 
         # Bei Wechsel auf Nikon die FexoNikonBridge im Hintergrund vorstarten.
@@ -573,7 +573,7 @@ class PhotoboothApp:
         `_pre_init_camera` (waehrend des Intro-Videos) bzw. `session.on_show`
         holt das Oeffnen nach — dort stoert es niemanden.
         """
-        gewuenscht = bool(self.config.get("camera_dauerbetrieb_hd", False))
+        gewuenscht = True  # 2.4.45: Dauerbetrieb ist der einzige Weg
         zuletzt = getattr(self, "_camera_dauerbetrieb_hd", None)
 
         if zuletzt is None:
@@ -3401,7 +3401,7 @@ class PhotoboothApp:
         # dreimal getrennt — eine Box haette je nach Weg in unterschiedlichen
         # Aufloesungen laufen koennen.
         breite, hoehe = vorschau_aufloesung(self.config)
-        betriebsart = ("Dauerbetrieb HD" if self.config.get("camera_dauerbetrieb_hd", False)
+        betriebsart = ("Dauerbetrieb" if True
                        else "klassisch")
         logger.info(
             f"🎥 Kamera-Vorinitialisierung während Video: {breite}x{hoehe} ({betriebsart})"
@@ -3410,7 +3410,7 @@ class PhotoboothApp:
         # damit am Schalter und nicht an der zufaellig angeforderten Aufloesung.
         setzer = getattr(self.camera_manager, "set_dauerbetrieb_hd", None)
         if setzer is not None:
-            setzer(self.config.get("camera_dauerbetrieb_hd", False))
+            setzer(True)  # 2.4.45: kein Schalter mehr, Dauerbetrieb ist der Weg
 
         if self.camera_manager.initialize(
             self.config.get("camera_index", 0),

@@ -13,6 +13,9 @@ from typing import Dict, Any, Optional, List
 import os
 import threading
 
+from src.config.config import (
+    AUFLOESUNGS_STUFEN, STUFEN_OHNE_MESSUNG, naechste_stufe, vorschau_aufloesung
+)
 from src.ui.theme import COLORS, FONTS, SIZES
 from src.utils.logging import get_logger
 from src.i18n import (
@@ -2970,71 +2973,67 @@ class AdminDialog(ctk.CTkToplevel):
         # Template-Overlay im LiveView
         self._add_checkbox(scroll, "Template im LiveView anzeigen", "liveview_template_overlay")
 
-        # Dauerbetrieb HD (2.4.43) — Etappe 2, bewusst nur für eine Testbox
-        self._add_checkbox(scroll, "Kamera dauerhaft in Full HD (nur Testbox)",
-                           "camera_dauerbetrieb_hd")
-        ctk.CTkLabel(
-            scroll,
-            text=(
-                "Die Kamera bleibt immer auf 1920x1080 und wird nicht mehr für\n"
-                "jedes Foto umgeschaltet. Der Blitz passt dann zum Bild — heute\n"
-                "wird erst rund 1,8 Sekunden nach dem Blitz belichtet.\n"
-                "Die Vorschau zeigt dann denselben Ausschnitt wie das Foto\n"
-                "(links/rechts enger, oben/unten weiter) und läuft dabei etwas\n"
-                "ruckeliger (rund 7 statt 9 Bilder je Sekunde). Nach dem\n"
-                "Speichern startet die Kamera neu."
-            ),
-            font=FONTS["small"],
-            text_color=COLORS["text_muted"],
-            justify="left"
-        ).pack(anchor="w", pady=(0, 8))
+        # ── Aufloesung (2.4.45) ─────────────────────────────────────────
+        # Ersetzt die frueheren frei eintippbaren Felder Breite/Hoehe UND den
+        # Schalter "Kamera dauerhaft in Full HD" aus 2.4.43.
+        #
+        # WARUM EIN REGLER STATT ZWEIER TEXTFELDER: Seit 2.4.45 laeuft die
+        # Kamera dauerhaft in EINER Aufloesung und das Foto kommt aus genau
+        # diesem Bildstrom. Diese eine Zahl bestimmt damit gleichzeitig die
+        # Fotoqualitaet UND die Fluessigkeit der Vorschau. Ein frei
+        # eintippbarer Wert waere hier gefaehrlich: Ein Tippfehler ergibt eine
+        # Aufloesung, die keine Kamera liefert, und die Box handelt still
+        # irgendetwas anderes aus.
+        #
+        # GEMESSEN AUF BOX 101 (20.08.2026), das ist die Entscheidungsgrundlage:
+        #      1280x720 MJPG | 30,5 Bilder/s | 32,8 ms je Bild
+        #     1920x1080 MJPG | 13,9 Bilder/s | 71,9 ms je Bild
+        aufl_frame = ctk.CTkFrame(scroll, fg_color=COLORS["bg_card"], corner_radius=10)
+        aufl_frame.pack(fill="x", pady=10)
 
-        # Auflösung
-        cam_settings = self.config_data.get("camera_settings", {})
-        
-        res_frame = ctk.CTkFrame(scroll, fg_color=COLORS["bg_card"], corner_radius=10)
-        res_frame.pack(fill="x", pady=10)
-        
         ctk.CTkLabel(
-            res_frame,
-            text="📷 Foto-Auflösung",
+            aufl_frame,
+            text="📷 Kamera-Auflösung",
             font=FONTS["body_bold"],
             text_color=COLORS["text_primary"]
-        ).pack(pady=(10, 10))
-        
-        size_frame = ctk.CTkFrame(res_frame, fg_color="transparent")
-        size_frame.pack(pady=(0, 10))
-        
-        ctk.CTkLabel(size_frame, text="Breite:", font=FONTS["small"], 
-                     text_color=COLORS["text_muted"]).pack(side="left", padx=(10, 5))
-        
-        self.photo_width = ctk.CTkEntry(
-            size_frame, width=80,
-            fg_color=COLORS["bg_light"], border_color=COLORS["border"]
-        )
-        self.photo_width.insert(0, str(cam_settings.get("single_photo_width", 1920)))
-        self.photo_width.pack(side="left")
-        
-        ctk.CTkLabel(size_frame, text="  Höhe:", font=FONTS["small"],
-                     text_color=COLORS["text_muted"]).pack(side="left", padx=(10, 5))
-        
-        self.photo_height = ctk.CTkEntry(
-            size_frame, width=80,
-            fg_color=COLORS["bg_light"], border_color=COLORS["border"]
-        )
-        self.photo_height.insert(0, str(cam_settings.get("single_photo_height", 1080)))
-        self.photo_height.pack(side="left")
+        ).pack(pady=(10, 2))
 
-        # Info-Hinweis zur Auflösung
         ctk.CTkLabel(
-            res_frame,
-            text=("Fotos: Obige Einstellung (Full HD)\n"
-                  "Live-Preview normal: 640x480 (Performance)\n"
-                  "Mit 'Kamera dauerhaft in Full HD': Preview = Foto-Auflösung"),
+            aufl_frame,
+            text=("Gilt für Vorschau UND Foto — die Kamera läuft dauerhaft\n"
+                  "in dieser Auflösung und schaltet nicht mehr um."),
             font=FONTS["small"],
             text_color=COLORS["text_muted"],
             justify="center"
-        ).pack(pady=(5, 10))
+        ).pack(pady=(0, 8))
+
+        self._aufl_stufen = self._verfuegbare_aufloesungen()
+        aktuell = vorschau_aufloesung(self.config_data)
+        try:
+            index = self._aufl_stufen.index(aktuell)
+        except ValueError:
+            index = len(self._aufl_stufen) - 1
+
+        self.aufl_regler = ctk.CTkSlider(
+            aufl_frame,
+            from_=0,
+            to=max(1, len(self._aufl_stufen) - 1),
+            number_of_steps=max(1, len(self._aufl_stufen) - 1),
+            width=360,
+            command=self._on_aufloesung_geregelt
+        )
+        self.aufl_regler.set(index)
+        self.aufl_regler.pack(pady=(0, 6))
+
+        self.aufl_label = ctk.CTkLabel(
+            aufl_frame,
+            text="",
+            font=FONTS["body"],
+            text_color=COLORS["text_primary"],
+            justify="center"
+        )
+        self.aufl_label.pack(pady=(0, 12))
+        self._on_aufloesung_geregelt(index)
 
         # ── Kamera-Messung ──────────────────────────────────────────────
         # Frueher nur ueber "Kamera-Messung-starten.bat" bzw.
@@ -3074,6 +3073,44 @@ class AdminDialog(ctk.CTkToplevel):
             command=self._open_kamera_messung
         ).pack(anchor="w", padx=15, pady=(0, 14))
 
+
+    def _verfuegbare_aufloesungen(self):
+        """Welche Stufen darf der Regler anbieten?
+
+        OHNE MESSUNG nur die auf der Flotte erprobten Stufen (720p und 1080p) —
+        die Logitech C922 liefert beide nachweislich. Hoehere Stufen werden
+        NICHT geraten: Eine Box wuerde sonst in eine Aufloesung laufen, die ihre
+        Kamera gar nicht kann, und sich still irgendetwas anderes aushandeln.
+
+        Die aktuell eingestellte Stufe kommt immer dazu, damit eine Box mit
+        abweichender Einstellung ihren eigenen Wert im Regler wiederfindet
+        statt beim Oeffnen des Menues stillschweigend verschoben zu werden.
+        """
+        stufen = list(STUFEN_OHNE_MESSUNG)
+        aktuell = vorschau_aufloesung(self.config_data)
+        if aktuell not in stufen:
+            stufen.append(aktuell)
+        return sorted(set(stufen), key=lambda st: st[0] * st[1])
+
+    def _on_aufloesung_geregelt(self, wert):
+        """Beschriftung unter dem Regler mitfuehren.
+
+        Zeigt neben der Aufloesung auch die FOLGE der Wahl — die gemessenen
+        Bilder pro Sekunde von Box 101. Ohne diese Zahl waere der Regler eine
+        Blindwahl: Man sieht der Aufloesung nicht an, dass 1080p die Vorschau
+        halbiert.
+        """
+        gemessen = {(1280, 720): "rund 30 Bilder/s", (1920, 1080): "rund 14 Bilder/s"}
+        stufen = getattr(self, "_aufl_stufen", None) or STUFEN_OHNE_MESSUNG
+        i = max(0, min(int(round(float(wert))), len(stufen) - 1))
+        breite, hoehe = stufen[i]
+        hinweis = gemessen.get((breite, hoehe), "Geschwindigkeit unbekannt")
+        if i == len(stufen) - 1:
+            hinweis += " · beste Fotoqualität"
+        try:
+            self.aufl_label.configure(text=f"{breite} x {hoehe}  —  {hinweis}")
+        except Exception:
+            pass
 
     def _open_kamera_messung(self):
         """Oeffnet die Kamera-Messung (Knopf im Kamera-Tab).
@@ -4165,8 +4202,14 @@ class AdminDialog(ctk.CTkToplevel):
             if "camera_settings" not in self.config_data:
                 self.config_data["camera_settings"] = {}
             
-            self.config_data["camera_settings"]["single_photo_width"] = int(self.photo_width.get())
-            self.config_data["camera_settings"]["single_photo_height"] = int(self.photo_height.get())
+            # 2.4.45: Die Aufloesung kommt aus dem Regler, nicht mehr aus zwei
+            # Textfeldern. Sie gilt fuer Vorschau UND Foto gleichzeitig.
+            if getattr(self, "aufl_regler", None) is not None:
+                stufen = getattr(self, "_aufl_stufen", None) or STUFEN_OHNE_MESSUNG
+                i = max(0, min(int(round(self.aufl_regler.get())), len(stufen) - 1))
+                breite, hoehe = stufen[i]
+                self.config_data["camera_settings"]["single_photo_width"] = breite
+                self.config_data["camera_settings"]["single_photo_height"] = hoehe
         
         # Neue PIN
         if self.new_pin.get() and len(self.new_pin.get()) == 4:
