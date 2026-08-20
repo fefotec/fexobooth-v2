@@ -3307,10 +3307,18 @@ class PhotoboothApp:
             video_key: Config-Key für Video (z.B. "video_start", "video_end")
             next_screen: Screen nach Video-Ende
         """
-        # Stress-Test: Videos überspringen für schnellere Zyklen
-        if self.stress_test_active:
-            self.show_screen(next_screen)
-            return
+        # 2.4.42: Der Stress-Test ueberspringt Videos NICHT mehr.
+        # Frueher stand hier "Videos ueberspringen fuer schnellere Zyklen".
+        # Das hat einen ganzen Teilbereich vom Test ausgenommen: VLC starten,
+        # ins Fenster einbetten und wieder abbauen, Bildschirmwechsel
+        # Session -> Video -> Session, Kamera freigeben und neu holen,
+        # LiveView-Worker beenden und neu starten.
+        # Genau dort trat am 20.08.2026 auf Box 101 ein 15-Sekunden-Freeze auf
+        # (ein 2-Sekunden-Video lief 17,5 s, UI-Thread 16,7 s blockiert bei
+        # 22 % CPU). Der Stress-Test haette ihn nie gefunden, egal wie lange er
+        # laeuft. Christians Entscheidung: "die videos muessen immer laufen,
+        # sonst ist es nicht realistisch". Weniger Zyklen pro Stunde ist der
+        # Preis dafuer, dass der Test abbildet, was im Betrieb wirklich passiert.
 
         video_path = self.config.get(video_key, "")
         
@@ -3360,10 +3368,8 @@ class PhotoboothApp:
             video_path: Direkter Pfad zum Video
             callback: Funktion die nach Video-Ende aufgerufen wird
         """
-        # Stress-Test: Videos überspringen, Callback verzögert aufrufen
-        if self.stress_test_active:
-            self.root.after(50, callback)
-            return
+        # 2.4.42: Auch die Zwischen-Videos laufen im Stress-Test mit.
+        # Begruendung siehe play_video() weiter oben.
 
         logger.info(f"🎬 play_video_and_return aufgerufen: path='{video_path}'")
         

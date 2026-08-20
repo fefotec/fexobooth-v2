@@ -6,6 +6,38 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.42] - 2026-08-20 - Stress-Test laesst die Videos nicht mehr aus
+
+> Anlass (Christian): „mir faellt gerade erst auf, dass im Stresstest im
+> Dev-Mode die Videos uebersprungen werden! das ist ja auch bloed oder?" —
+> und auf den Vorschlag, nur jede fuenfte Runde mit Video zu fahren:
+> „nein die videos muessen immer laufen! sonst ist es nicht realistisch!"
+
+### Geaendert
+
+- **Der Stress-Test spielt jetzt alle Videos ab** — Start-, Zwischen- und
+  Endvideo. Bisher wurden sie „fuer schnellere Zyklen" uebersprungen.
+
+  Damit war ein ganzer Teilbereich vom Test ausgenommen: VLC starten, ins
+  Fenster einbetten und wieder abbauen, Bildschirmwechsel
+  Session → Video → Session, Kamera freigeben und neu holen, LiveView-Worker
+  beenden und neu starten.
+
+  **Genau dort trat am 20.08. auf Box 101 ein Freeze auf:** Ein Video von
+  2,0 Sekunden lief 17,5 Sekunden, der Oberflaechen-Thread stand dabei
+  16,7 Sekunden bei 22 % CPU. Der Stress-Test haette das nie gefunden, egal
+  wie lange er laeuft — er lief durch und meldete „alles gut", waehrend das
+  Loch genau dort war, wo er nicht hingeschaut hat.
+
+  Der Preis sind weniger Foto-Zyklen pro Stunde. Das ist der Sinn der Sache:
+  Ein Test, der nicht abbildet was im Betrieb passiert, ist keiner.
+
+- `_stress_test_auto_proceed` greift beim Video-Bildschirm bewusst nicht ein
+  (es behandelt nur „start", „filter" und „final"). Die Videos laufen also
+  wirklich bis zum Ende durch, statt weggeklickt zu werden.
+
+---
+
 ## [2.4.41] - 2026-08-20 - Vorschau: erst verkleinern, dann spiegeln (Etappe 1 von 2)
 
 > Auftrag (Christian): „Nur die Vorschau-Aufbereitung umdrehen. Der Foto-Ablauf
