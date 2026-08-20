@@ -25,6 +25,14 @@ from src.i18n import (
 
 logger = get_logger(__name__)
 
+# Beschriftung des Werkstatt-Knopfes. An zwei Stellen gebraucht (Anlegen und
+# Entschaerfen) — als Konstante, damit die beiden nicht auseinanderlaufen.
+# Bewusst "Werksreset" statt "Reparatur": Der Knopf repariert nichts, er setzt
+# die Windows-Netzwerkeinstellungen zurueck und loescht alle gespeicherten
+# WLANs. Der alte Name "WLAN-Radikal-Reparatur" hat dazu verleitet, ihn an
+# gesunden Boxen auszuprobieren.
+WLAN_RESET_KNOPFTEXT = "Netzwerk-Werksreset ausführen (Box startet danach neu)"
+
 
 class AdminDialog(ctk.CTkToplevel):
     """Moderner Admin-Einstellungen Dialog"""
@@ -1763,7 +1771,7 @@ class AdminDialog(ctk.CTkToplevel):
         # Für Boxen, bei denen die automatische WLAN-Selbstheilung nicht reicht.
         ctk.CTkLabel(
             scroll,
-            text="🔧 Werkstatt: Netzwerk-Reparatur",
+            text="🔧 Werkstatt: Netzwerk-Werksreset",
             font=FONTS["body"],
             text_color=COLORS["text_secondary"]
         ).pack(anchor="w", pady=(15, 2))
@@ -1771,7 +1779,7 @@ class AdminDialog(ctk.CTkToplevel):
         self._wlan_reset_armed = False
         self._wlan_reset_btn = ctk.CTkButton(
             scroll,
-            text="WLAN-Radikal-Reparatur (setzt Netzwerk zurück + Neustart)",
+            text=WLAN_RESET_KNOPFTEXT,
             font=FONTS["small"],
             height=36,
             fg_color=COLORS["bg_light"],
@@ -1783,9 +1791,13 @@ class AdminDialog(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             scroll,
-            text="Nur nutzen, wenn die Box sich trotz Schnellhilfe nicht ins Firmen-WLAN einbucht.",
+            text=("Nur in der Werkstatt und nur, wenn die Box sich trotz Schnellhilfe\n"
+                  "nicht ins Firmen-WLAN einbucht. Setzt die Windows-Netzwerk-\n"
+                  "einstellungen zurück und löscht alle gespeicherten WLANs.\n"
+                  "Beim Kunden gesperrt — dort hilft er nicht."),
             font=FONTS["tiny"],
-            text_color=COLORS["text_muted"]
+            text_color=COLORS["text_muted"],
+            justify="left"
         ).pack(anchor="w", pady=(0, 10))
 
         # Neue PIN
@@ -2200,60 +2212,149 @@ class AdminDialog(ctk.CTkToplevel):
             self.box_id_error.configure(text="")
     
     def _on_wlan_radical_reset(self):
-        """WLAN-Radikal-Reparatur mit Zwei-Klick-Bestätigung (3198-Menü).
+        """Netzwerk-Werksreset (3198-Menue, nur Werkstatt).
 
-        Erster Klick scharfschalten, zweiter Klick führt aus: Netzwerk-
-        Werksreset (TCP/IP, Winsock, DNS, alle WLAN-Profile) + Firmen-WLAN-
-        Profil frisch anlegen, danach automatischer Windows-Neustart.
+        Setzt TCP/IP-Stack + Winsock zurueck, leert den DNS-Cache, loescht ALLE
+        WLAN-Profile und legt das Firmen-WLAN-Profil sofort neu an.
+
+        DREI SICHERUNGEN (Stand 2.4.38, nach Durchsicht am 20.08.2026):
+          1. Nur ausfuehrbar, wenn das Firmen-WLAN in Funkreichweite ist. Beim
+             Kunden hilft der Reset nicht (dort zaehlt nur der eigene Hotspot),
+             richtet aber Schaden an: Er loescht alle gespeicherten WLANs.
+          2. Zwei-Klick-Bestaetigung, die sich nach 10 s selbst entschaerft.
+          3. Neustart NUR bei Erfolg. Vorher wurde bedingungslos neu gestartet,
+             auch wenn ein Schritt fehlschlug — der Fehler stand nur im
+             Knopftext und war nach dem Neustart weg.
         """
         if not self._wlan_reset_armed:
-            self._wlan_reset_armed = True
-            self._wlan_reset_btn.configure(
-                text="Wirklich? Nochmal tippen — Box startet danach NEU!",
-                fg_color=COLORS["warning"],
-                text_color="#000000"
-            )
-            # Nach 10s ohne zweiten Klick wieder entschärfen
-            def _disarm():
-                if self._wlan_reset_armed:
-                    self._wlan_reset_armed = False
-                    try:
-                        self._wlan_reset_btn.configure(
-                            text="WLAN-Radikal-Reparatur (setzt Netzwerk zurück + Neustart)",
-                            fg_color=COLORS["bg_light"],
-                            text_color=COLORS["text_primary"]
-                        )
-                    except Exception:
-                        pass
-            self.after(10000, _disarm)
+            self._wlan_reset_pruefen_und_schaerfen()
             return
 
         self._wlan_reset_armed = False
-        self._wlan_reset_btn.configure(text="Reparatur läuft...", state="disabled")
-        logger.info("3198-Menü: WLAN-Radikal-Reparatur bestätigt — starte")
+        self._wlan_reset_btn.configure(text="Werksreset läuft...", state="disabled")
+        logger.info("3198-Menü: Netzwerk-Werksreset bestätigt — starte")
 
         def _worker():
-            import subprocess
             try:
                 from src.utils.company_wlan import radical_network_reset
-                results = radical_network_reset()
-                summary = " | ".join(results)
+                ergebnisse = radical_network_reset()
             except Exception as e:
-                summary = f"FEHLER: {e}"
-                logger.error(f"WLAN-Radikal-Reparatur fehlgeschlagen: {e}")
+                logger.error(f"Netzwerk-Werksreset fehlgeschlagen: {e}")
+                self.after(0, lambda: self._wlan_reset_ergebnis(
+                    [f"Abbruch: {e}"], erfolg=False, ohne_profil=False))
+                return
 
-            def _finish(text=summary):
-                try:
-                    self._wlan_reset_btn.configure(text=f"Fertig — Neustart in 10s... ({text[:60]})")
-                except Exception:
-                    pass
-                subprocess.Popen(
-                    ["shutdown", "/r", "/f", "/t", "10", "/c", "FexoBooth: Neustart nach WLAN-Radikal-Reparatur"],
-                    creationflags=0x08000000
-                )
-            self.after(0, _finish)
+            # "ok" / "FEHLER" pro Schritt — siehe radical_network_reset()
+            fehler = [z for z in ergebnisse if "FEHLER" in z]
+            # Sonderfall: Profile geloescht, aber neues Profil nicht angelegt.
+            # Dann hat die Box NULL WLAN-Profile — und der Gaeste-Hotspot
+            # braucht mindestens eines. Das darf niemand uebersehen.
+            ohne_profil = any("Profil neu anlegen: FEHLER" in z for z in ergebnisse)
+            self.after(0, lambda: self._wlan_reset_ergebnis(
+                ergebnisse, erfolg=not fehler, ohne_profil=ohne_profil))
 
-        threading.Thread(target=_worker, daemon=True, name="wlan-radical-reset").start()
+        threading.Thread(target=_worker, daemon=True, name="wlan-werksreset").start()
+
+    def _wlan_reset_pruefen_und_schaerfen(self):
+        """Erster Klick: pruefen, ob wir in der Werkstatt sind — dann scharfschalten.
+
+        Der Funkscan (`netsh wlan show networks`) dauert ein bis drei Sekunden,
+        laeuft also im Hintergrund. Solange zeigt der Knopf "Prüfe...", damit er
+        nicht tot wirkt.
+        """
+        self._wlan_reset_btn.configure(text="Prüfe Firmen-WLAN...", state="disabled")
+
+        def _worker():
+            try:
+                from src.utils.company_wlan import is_company_wlan_visible
+                sichtbar = is_company_wlan_visible()
+            except Exception as e:
+                logger.warning(f"Werksreset: WLAN-Prüfung fehlgeschlagen: {e}")
+                sichtbar = False
+            self.after(0, lambda: self._wlan_reset_schaerfen(sichtbar))
+
+        threading.Thread(target=_worker, daemon=True, name="wlan-werksreset-pruefung").start()
+
+    def _wlan_reset_schaerfen(self, sichtbar: bool):
+        """UI-Thread: scharfschalten — oder ablehnen, wenn wir nicht in der Werkstatt sind."""
+        try:
+            self._wlan_reset_btn.configure(state="normal")
+        except Exception:
+            return
+
+        if not sichtbar:
+            logger.info("Werksreset abgelehnt: Firmen-WLAN nicht in Reichweite")
+            self._wlan_reset_btn.configure(
+                text="Nicht möglich — fexon WLAN nicht in Reichweite",
+                fg_color=COLORS["bg_light"],
+                text_color=COLORS["text_muted"]
+            )
+            self.after(6000, self._wlan_reset_knopf_zuruecksetzen)
+            return
+
+        self._wlan_reset_armed = True
+        self._wlan_reset_btn.configure(
+            text="Wirklich? Nochmal tippen — Box startet danach NEU!",
+            fg_color=COLORS["warning"],
+            text_color="#000000"
+        )
+        # Nach 10 s ohne zweiten Klick wieder entschaerfen
+        def _entschaerfen():
+            if self._wlan_reset_armed:
+                self._wlan_reset_armed = False
+                self._wlan_reset_knopf_zuruecksetzen()
+        self.after(10000, _entschaerfen)
+
+    def _wlan_reset_knopf_zuruecksetzen(self):
+        try:
+            self._wlan_reset_btn.configure(
+                text=WLAN_RESET_KNOPFTEXT,
+                state="normal",
+                fg_color=COLORS["bg_light"],
+                text_color=COLORS["text_primary"]
+            )
+        except Exception:
+            pass
+
+    def _wlan_reset_ergebnis(self, ergebnisse, erfolg: bool, ohne_profil: bool):
+        """UI-Thread: Ergebnis anzeigen und NUR bei Erfolg neu starten."""
+        zusammenfassung = " | ".join(ergebnisse)
+        logger.info(f"Netzwerk-Werksreset Ergebnis (erfolg={erfolg}): {zusammenfassung}")
+
+        if erfolg:
+            try:
+                self._wlan_reset_btn.configure(text="Fertig — Neustart in 10s...")
+            except Exception:
+                pass
+            import subprocess
+            subprocess.Popen(
+                ["shutdown", "/r", "/f", "/t", "10", "/c",
+                 "FexoBooth: Neustart nach Netzwerk-Werksreset"],
+                creationflags=0x08000000
+            )
+            return
+
+        # Fehlgeschlagen: NICHT neu starten. Ein Neustart wuerde die Meldung
+        # wegwischen und die Box im halb zurueckgesetzten Zustand hochfahren.
+        if ohne_profil:
+            text = "FEHLER: Box hat jetzt KEIN WLAN-Profil! Nicht zum Kunden geben."
+            logger.error(
+                "Netzwerk-Werksreset: Profile geloescht, Neuanlage fehlgeschlagen — "
+                "Box hat kein WLAN-Profil mehr (Hotspot braucht mindestens eines)"
+            )
+        else:
+            text = f"Fehlgeschlagen — kein Neustart. {zusammenfassung[:70]}"
+
+        try:
+            self._wlan_reset_btn.configure(
+                text=text,
+                state="normal",
+                fg_color="#cc0000",
+                text_color="#ffffff"
+            )
+        except Exception:
+            pass
+
 
     def _create_templates_tab(self, parent):
         """Template-Einstellungen mit Datei-Dialogen"""

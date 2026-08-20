@@ -4,6 +4,23 @@ Aufgabenliste mit Prioritäten.
 
 ---
 
+## Werkstatt-Knopf „Netzwerk-Werksreset" endlich einmal testen 🟡
+
+> Steht seit 2.4.27 unabgehakt. Der Knopf ist die einzige per Fingertipp
+> erreichbare Stelle, die `netsh int ip reset` / `winsock reset` ausfuehrt —
+> aber es gibt bis heute keinen Beleg, dass er je etwas geheilt hat.
+
+- [ ] In der Werkstatt (fexon WLAN in Reichweite): 3198 → Allgemein →
+      1. Tippen zeigt „Prüfe Firmen-WLAN...", dann Warnung; 10 s warten →
+      entschaerft sich von selbst.
+- [ ] 2x tippen → Reset laeuft, Box startet neu und verbindet sich danach.
+- [ ] **Ausserhalb** des Firmen-WLAN antippen → muss „Nicht möglich — fexon
+      WLAN nicht in Reichweite" zeigen und NICHTS tun.
+- [ ] Danach pruefen: `netsh wlan show profiles` — es muss mindestens das
+      Firmen-Profil dastehen (bei 0 Profilen geht der Gaeste-Hotspot nicht).
+
+---
+
 ## Version 2.4.36 auf einer echten Box gegenpruefen 🔴
 
 - [ ] **Kamera-Messung-Knopf:** Admin-Menue → Tab Kamera → Messung starten.

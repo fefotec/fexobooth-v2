@@ -6,6 +6,57 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.38] - 2026-08-20 - Werkstatt-Knopf: ehrlicher Name, drei Sicherungen
+
+> Anlass (Christian): „koennen wir den Button fuer die WLAN-Reparatur (hard) nun
+> aus der Software entfernen? den brauchen wir doch nicht mehr weil der Fehler ja
+> am Router lag!"
+
+### Warum er NICHT entfernt wurde
+
+Die Praemisse traegt nicht: Der Knopf setzt den Windows-Netzwerkstack zurueck und
+loescht alle gespeicherten WLAN-Profile. Gegen einen vollen DHCP-Pool im Router
+konnte er noch nie etwas ausrichten — er war nie das Gegenmittel gegen diese
+Ursache und kann durch deren Behebung nicht ueberfluessig werden. Gebaut wurde er
+fuer die 47 stummen Boxen bei 2.4.22 (kaputte Profile aus dem Klon-Image).
+
+Ausserdem: Ursache 1 (eigener Hotspot blockiert die WLAN-Karte) ist erst in
+2.4.29 behoben, die Flotte meldet aber weiterhin „Neuestes Release: v2.4.25" —
+auf praktisch allen Boxen im Feld ist diese Ursache noch aktiv.
+
+**Korrektur einer frueheren Aussage:** Das Argument „Boxen haengen beim Kunden an
+fremden Routern" ist falsch. Es gibt in der Software keinen Weg, ein fremdes WLAN
+zu verbinden (kein `netsh wlan connect` ausser fuer das Firmen-WLAN), und
+`company_network.py` haelt fest: „Beim Kunden ist nie Internet". Beim Kunden
+zaehlt allein der eigene Hotspot.
+
+### Geaendert
+
+- **Ehrlicher Name.** Aus „WLAN-Radikal-Reparatur" wird „Netzwerk-Werksreset
+  ausführen (Box startet danach neu)", Ueberschrift „Werkstatt:
+  Netzwerk-Werksreset". Der Knopf repariert nichts — er setzt zurueck. Der alte
+  Name hat dazu verleitet, ihn an gesunden Boxen auszuprobieren.
+- **Beim Kunden gesperrt.** Der erste Klick prueft im Hintergrund, ob das
+  fexon WLAN in Funkreichweite ist. Wenn nicht: „Nicht möglich — fexon WLAN
+  nicht in Reichweite", keine Scharfschaltung. Dort haette der Reset nicht
+  geholfen, aber alle gespeicherten WLANs geloescht.
+- **Neustart nur bei Erfolg.** Vorher lief `shutdown /r /f /t 10`
+  bedingungslos — auch wenn ein Schritt fehlschlug; der Fehler stand nur im
+  Knopftext und war nach dem Neustart weg. Jetzt bleibt die Box stehen und
+  zeigt, was schiefging.
+- **Sonderwarnung „kein Profil".** Wurden die Profile geloescht, aber das
+  Firmen-Profil liess sich nicht neu anlegen, hat die Box NULL WLAN-Profile —
+  und der Gaeste-Hotspot braucht mindestens eines. Der Knopf meldet dann rot:
+  „Box hat jetzt KEIN WLAN-Profil! Nicht zum Kunden geben."
+
+### Weiterhin offen
+
+- Der Knopf wurde **nie auf einer echten Box ausprobiert** (TODO seit 2.4.27).
+  Wir wissen also nicht, ob er im Ernstfall tut, was draufsteht. Das sollte
+  einmal in der Werkstatt passieren.
+
+---
+
 ## [2.4.37] - 2026-08-20 - Messung lief sauber durch, lieferte aber keine Werte
 
 > Anlass: 2.4.36 hat auf der Box funktioniert — kein Einfrieren, sauberer
