@@ -69,6 +69,14 @@ _TAKT_MS = 1000
 # Kindprozess beendet, damit er nicht dauerhaft die Kamera belegt.
 _HOECHSTDAUER_S = 15 * 60
 
+# Warten auf die laufende Kamera-Pruefung der App, bevor die Messung startet.
+# 60 x 500 ms = 30 s. Klingt lang, ist aber gemessen: Auf der Box vom 20.08.2026
+# brauchte eine einzige Pruefung ueber 10 s, weil die PowerShell-Kamerasuche in
+# ihre Zeitgrenzen lief (10 s DirectShow-Enumeration + 5 s PnP, teils mehrfach).
+# Mit den frueheren 3 s startete die Messung mitten hinein und maass nichts.
+_WARTEN_AUF_KAMERA_MS = 500
+_WARTEN_AUF_KAMERA_TAKTE = 60
+
 # Ruhezeit nach dem Beenden des Messprozesses, bevor die App die Kamera wieder
 # oeffnet. Windows gibt den USB-Geraetehandle erst mit dem Prozessende frei;
 # sofort danach zu oeffnen kostet auf dem Miix mehrere Sekunden Fehlversuch.
@@ -154,6 +162,14 @@ class KameraMessungDialog(ctk.CTkToplevel):
         self.focus_force()
 
         self._baue_oberflaeche()
+
+        # Kamera-Waechter der App SOFORT pausieren, nicht erst beim Start.
+        # Die App prueft bei sichtbarer Kamera-Warnung alle 2 s und braucht auf
+        # dieser Hardware ueber 10 s pro Pruefung — sie waere also faktisch
+        # dauernd an der Kamera. Wer den Dialog oeffnet, will messen; ab jetzt
+        # startet keine neue Pruefung mehr und die laufende kann auslaufen,
+        # waehrend der Bediener noch den Text liest.
+        self._messung_flag(True)
 
     # ------------------------------------------------------------------
     # Oberflaeche
@@ -314,11 +330,29 @@ class KameraMessungDialog(ctk.CTkToplevel):
         griffen zwei Prozesse gleichzeitig auf dieselbe DirectShow-Kamera zu;
         genau diese Klasse von Doppelzugriff war 2.4.31 der Absturz 0xc0000374.
 
-        Gewartet wird ueber `after()`, nicht mit sleep: Die Oberflaeche muss
-        bedienbar bleiben. Eine Pruefung dauert normalerweise deutlich unter
-        einer Sekunde; laeuft sie laenger, wird trotzdem gestartet — der
-        Messprozess meldet dann sauber "Kamera liess sich nicht oeffnen",
-        was allemal besser ist, als hier haengenzubleiben.
+        FELDBEFUND BOX 20.08.2026, 10:27 — WARUM HIER LANGE GEWARTET WIRD:
+        Bis 2.4.37 wurde nur 3 s gewartet ("dauert normalerweise deutlich unter
+        einer Sekunde") und danach trotzdem gestartet. Auf der echten Box dauert
+        eine Pruefung aber ueber 10 Sekunden, weil die PowerShell-Kamerasuche in
+        ihre Zeitgrenzen laeuft (10 s DirectShow-Enumeration + 5 s PnP, teils
+        mehrfach). Ergebnis im Log:
+
+            10:27:45.029 Kamera-Pruefung laeuft seit >3 s — Messung startet trotzdem
+            10:27:45.030 Kamera-Messung startet als eigener Prozess
+            10:27:47.922 DirectShow Kamera-Namen: ['c922 Pro Stream Webcam']   <- die APP
+            10:27:48.585 Externe Kamera bevorzugt: [0] c922 Pro Stream Webcam  <- die APP
+
+        Die Messung begann um 10:27:47 — genau waehrend die App die Kamera
+        durchprobierte. Der Bericht meldete daraufhin "Kamera liess sich nicht
+        oeffnen" und verurteilte 1080p zu Unrecht. Haette der Dialog nur drei
+        Sekunden laenger gewartet, waere die Kamera frei gewesen.
+
+        Deshalb: warten bis die Pruefung wirklich durch ist. Und wenn sie es
+        nicht wird, NICHT starten — ein Messlauf, von dem wir schon wissen,
+        dass er nichts messen kann, ist schlimmer als eine ehrliche Meldung.
+
+        Gewartet wird ueber `after()`, nicht mit sleep: Die Oberflaeche bleibt
+        bedienbar und der Abbrechen-Knopf funktioniert.
         """
         if self._prozess is not None or not self._start_gewuenscht:
             return
@@ -328,14 +362,33 @@ class KameraMessungDialog(ctk.CTkToplevel):
         except Exception:
             laeuft = False
 
-        if laeuft and versuch < 10:
-            self._status("Kamera-Prüfung der Box läuft noch – kurz warten...")
-            self.after(300, lambda: self._warten_auf_freie_kamera(versuch + 1))
-            return
-        if laeuft:
-            logger.warning(
-                "Kamera-Pruefung der App laeuft seit >3 s — Messung startet trotzdem"
+        if laeuft and versuch < _WARTEN_AUF_KAMERA_TAKTE:
+            rest = int((_WARTEN_AUF_KAMERA_TAKTE - versuch) * _WARTEN_AUF_KAMERA_MS / 1000)
+            self._status(
+                "Die Fotobox-Software prüft gerade selbst die Kamera.\n"
+                f"Warte, bis sie fertig ist (noch bis zu {rest} s)...\n\n"
+                "Das ist normal und dauert auf dieser Box etwas."
             )
+            self.after(_WARTEN_AUF_KAMERA_MS,
+                       lambda: self._warten_auf_freie_kamera(versuch + 1))
+            return
+
+        if laeuft:
+            # Nicht starten: Die Kamera ist nachweislich belegt, der Lauf
+            # koennte nur "Kamera liess sich nicht oeffnen" liefern.
+            logger.warning(
+                "Kamera-Messung abgebrochen: Kamera-Pruefung der App laeuft seit "
+                f"{int(_WARTEN_AUF_KAMERA_TAKTE * _WARTEN_AUF_KAMERA_MS / 1000)} s noch immer"
+            )
+            self._start_gewuenscht = False
+            self._abschluss_anzeigen(
+                "Die Fotobox-Software kommt nicht von der Kamera los.\n\n"
+                "Eine Messung würde jetzt nur \"Kamera ließ sich nicht öffnen\""
+                " melden — das wäre kein echtes Ergebnis.\n\n"
+                "Bitte die Box einmal neu starten und es erneut versuchen.\n"
+                "Oder: Software beenden und \"Kamera-Messung-starten.bat\" nutzen."
+            )
+            return
 
         self._prozess_starten()
 

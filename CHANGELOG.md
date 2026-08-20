@@ -6,6 +6,54 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.39] - 2026-08-20 - Messung wartet, bis die App die Kamera loslaesst
+
+> Anlass: 2.4.37 lief auf der Box wieder sauber durch — und lieferte wieder
+> keinen Messwert. Der Parameter-Fehler aus 2.4.36 war behoben (die OpenCV-Datei
+> enthaelt ihn nicht mehr), aber DirectShow bekam die Kamera trotzdem nicht.
+
+### Behoben
+
+- **Die Messung startete mitten in die Kamera-Pruefung der App hinein.** Aus dem
+  Box-Log, 20.08. 10:27:
+
+  ```
+  10:27:45.029 Kamera-Pruefung der App laeuft seit >3 s — Messung startet trotzdem
+  10:27:45.030 Kamera-Messung startet als eigener Prozess
+  10:27:47.922 DirectShow Kamera-Namen: ['c922 Pro Stream Webcam']   <- die APP
+  10:27:48.585 Externe Kamera bevorzugt: [0] c922 Pro Stream Webcam  <- die APP
+  ```
+
+  Die Messung begann um 10:27:47 — genau waehrend die App dieselbe Kamera
+  durchprobierte. Der Bericht meldete daraufhin "Kamera liess sich nicht
+  oeffnen" und verurteilte 1080p zu Unrecht.
+
+  Der Dialog wartete nur **3 Sekunden**, mit der Begruendung im Code, eine
+  Pruefung dauere "normalerweise deutlich unter einer Sekunde". Auf der echten
+  Box dauert sie **ueber 10 Sekunden**: Die PowerShell-Kamerasuche laeuft in ihre
+  Zeitgrenzen (10 s DirectShow-Enumeration + 5 s PnP, teils mehrfach
+  hintereinander). Drei Sekunden laenger warten haette gereicht.
+
+  Jetzt: bis zu **30 Sekunden** warten, mit sichtbarer Restzeit. Wird die Kamera
+  in der Zeit nicht frei, startet die Messung **gar nicht** — stattdessen eine
+  ehrliche Meldung. Ein Lauf, von dem wir schon wissen, dass er nichts messen
+  kann, ist schlimmer als keiner: Er produziert ein falsches Urteil.
+
+- **Der Kamera-Waechter der App pausiert jetzt schon beim Oeffnen des Dialogs**,
+  nicht erst beim Druck auf "Messung starten". Bei sichtbarer Kamera-Warnung
+  prueft die App alle 2 s und braucht auf dieser Hardware ueber 10 s pro
+  Pruefung — sie waere also faktisch dauernd an der Kamera. So laeuft die
+  laufende Pruefung aus, waehrend der Bediener noch den Text liest.
+
+### Hinweis zur Messgenauigkeit
+
+Fuer die eigentliche 1080p-Entscheidung bleibt der Lauf ueber
+`Kamera-Messung-starten.bat` (mit beendeter Software) der verlaessliche Weg —
+der Bericht sagt das seit 2.4.37 auch selbst. Ueber den Admin-Knopf laeuft die
+Fotobox-Software parallel mit und kostet Bilder/s.
+
+---
+
 ## [2.4.38] - 2026-08-20 - Werkstatt-Knopf: ehrlicher Name, drei Sicherungen
 
 > Anlass (Christian): „koennen wir den Button fuer die WLAN-Reparatur (hard) nun
