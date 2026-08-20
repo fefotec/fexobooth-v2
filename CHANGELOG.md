@@ -6,6 +6,314 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.41] - 2026-08-20 - Vorschau: erst verkleinern, dann spiegeln (Etappe 1 von 2)
+
+> Auftrag (Christian): „Nur die Vorschau-Aufbereitung umdrehen. Der Foto-Ablauf
+> bleibt in dieser Etappe UNANGETASTET."
+
+### Was geaendert wurde
+
+Bisher wurde fuer JEDES Vorschaubild zuerst das **volle** Kamerabild gespiegelt und
+umgefaerbt und erst danach auf das kleine Collagen-Fach verkleinert. Jetzt laeuft es
+andersherum: **erst verkleinern und beschneiden, dann spiegeln und umfaerben.**
+Spiegeln und Umfaerben arbeiten dadurch nur noch auf der Fachgroesse
+(362x240 = 86.880 Punkte) statt auf dem ganzen Kameraframe.
+
+Geaendert ausschliesslich in `src/ui/screens/session.py`:
+`_prepare_live_frame`, `_compose_overlay_frame`, `_fit_frame_to_box_np`
+(neu `_mirror_frame`). **Der Foto-Pfad ist nicht angefasst** — das gespeicherte Foto
+bleibt 1920x1080, unskaliert und ungespiegelt.
+
+### Was man davon merkt — ehrlich
+
+Gemessen auf der Kette resize/spiegeln/beschneiden/umfaerben (ohne das
+PIL-Compositing drumherum), Median aus 9 Serien:
+
+| Vorschau-Aufloesung | vorher | nachher | Faktor |
+|---|---|---|---|
+| 320x240 | 0,13 ms | 0,13 ms | **1,0x — kein Gewinn** |
+| 480x360 | 0,17 ms | 0,16 ms | 1,1x |
+| 640x480 | 0,69 ms | 0,19 ms | 3,6x |
+| 1280x720 | 2,47 ms | 0,26 ms | 9,4x |
+| 1920x1080 | 5,42 ms | 2,82 ms | 1,9x |
+
+**Wichtig:** Der Gewinn entsteht nur, wenn die Vorschau GROESSER ist als das
+Collagen-Fach. Ist sie kleiner (320x240), vergroessert der Cover-Fit auf 362x271 —
+dann sind es hinterher sogar minimal mehr Punkte, unterm Strich ein Nullsummenspiel.
+Die `config.json` dieser Box steht auf `live_view_resolution: 320`, die Vorgabe in
+`defaults.py` auf 640. **Auf einer Box mit 320 oder 480 wird man nichts merken.**
+An `live_view_resolution` wurde bewusst nichts gedreht — das gehoert zu Etappe 2.
+
+### Sieht die Vorschau anders aus?
+
+Nein. Nachgerechnet ueber 320x240/640x480/1280x720/1920x1080 x drei Fachformen x
+`rotate_180` an/aus: gleicher Bildausschnitt, gleiches Seitenverhaeltnis, gleicher
+Beschnitt. Abweichung an echten Box-Fotos bei 640x480: **Mittelwert 0,00 von 255,
+maximal 1** — praktisch bitgleich.
+
+Ausnahme ab 1080p-Quelle: dort glaettet `pyrDown` vor dem Verkleinern (Aliasing-Schutz,
+von Christian ausdruecklich gefordert). Das Bild wird dadurch etwas ruhiger, ist also
+bewusst nicht woertlich identisch. Greift heute nicht — der Waechter verlangt
+1704x960 Quellgroesse, bei 320/480/640/1280 macht er null Halbierungen.
+
+### Zwei Fallen, die dabei vermieden wurden
+
+- **Gespiegelt wird VOR dem Beschneiden.** Der mittige Beschnitt ist nicht immer
+  symmetrisch (1920x1080 in ein 240x362-Fach: fit_w=643, Rest 403 = ungerade).
+  Nach dem Beschnitt zu spiegeln haette den Ausschnitt um einen Pixel verschoben.
+- **`fit_size` wird aus den ORIGINAL-Massen berechnet** und durchgereicht, nicht im
+  Fit neu aus dem eventuell geschrumpften Bild — sonst haette ein `pyrDown` den
+  Ausschnitt verschieben koennen.
+
+---
+
+## [2.4.40] - 2026-08-20 - Eine gescheiterte Namensabfrage galt als Beweis, dass die Kamera intern ist
+
+> Anlass (Christian): „der test zeigt 0 gefundene kamera aber die logitech ist ja
+> dran."
+
+### Der Fehler in einem Satz
+
+**Eine fehlgeschlagene NAMENSABFRAGE wurde als Beweis gewertet, dass die Kamera
+INTERN ist.** Das sind zwei voellig verschiedene Dinge — und die Kamera stand
+ueberhaupt nur in der Liste, WEIL cv2 sie erfolgreich oeffnen konnte. Sie war
+also nachweislich da.
+
+Aus dem Box-Log vom 20.08.2026:
+
+```
+10:27:31.176 DirectShow-Enumeration fehlgeschlagen: ... timed out after 10 seconds
+10:27:31.177 DirectShow-Enumeration fehlgeschlagen, nutze PnP-Fallback
+10:27:36.217 PnP Kamera-Abfrage fehlgeschlagen: ... timed out after 5 seconds
+10:27:36.990 Keine externe Kamera gefunden! Interne Kameras ignoriert: ['Kamera 0']
+10:27:37.639 Kamera gefiltert (Ghost): [0] Kamera 0
+10:27:37.640 Webcams gefunden: 1 gesamt, 0 extern
+10:27:47.922 DirectShow Kamera-Namen: ['c922 Pro Stream Webcam']   <- 11 s spaeter OK
+```
+
+Fehlte der Name, vergab `list_cameras()` den Platzhalter `"Kamera {i}"` —
+und `find_best_camera()` warf genau diesen Platzhalter wieder weg
+(`name_lower != f"kamera {cam['index']}"`). Ergebnis `-1` = „keine Kamera":
+Warnung blinkt, Messung findet nichts, und der Waechter startete alle 2 s eine
+neue Suche, die selbst ueber 10 s dauerte.
+
+### Behoben
+
+- **Die Namensabfrage laeuft nicht mehr ueber PowerShell, sondern in-process
+  ueber `ctypes`** (keine neue Abhaengigkeit, Standardbibliothek). Dieselbe
+  COM-Kette wie bisher im C#-Code: `ICreateDevEnum` → `IEnumMoniker` →
+  `IPropertyBag`, jetzt zusaetzlich mit `DevicePath` neben `FriendlyName`.
+
+  Gemessen waren **~4 ms echte Arbeit in ~560–670 ms Verpackung** (Prozessstart
+  + CLR + `csc.exe`-Kompilierung bei JEDEM Aufruf). Auf dem Atom x5-Z8350 mit
+  eMMC skaliert genau diese Verpackung und reisst die 10-s-Grenze — das war die
+  Ursache der Fehlmeldung, nicht die Kamera. In-Process: **auf diesem Rechner
+  2,6–6,6 ms** gemessen, ueber 200 Durchlaeufe stabil.
+
+  Nebenbei fallen vier weitere Ausfallbilder weg: kein `%TEMP%` noetig, keine
+  frische DLL fuer Defender/AMSI, kein ConstrainedLanguageMode-Problem, keine
+  Codepage-Verstuemmelung bei Umlauten (BSTR ist UTF-16). Ausserdem ist
+  `subprocess.run(timeout=)` auf Windows ohnehin keine harte Grenze: nach dem
+  Kill laeuft ein zweites `communicate()` OHNE Timeout, waehrend das verwaiste
+  `csc.exe` die Pipes haelt.
+
+  Der PowerShell-Weg bleibt fuer diese Version als **zweiter Versuch** stehen —
+  Robustheit vor Eleganz.
+
+- **Drei Antworten statt zwei.** Jede Kamera wird als `extern`, `intern` oder
+  **`unbestimmt`** eingeordnet. Die Regel `name_lower != f"kamera {index}"` ist
+  ersatzlos entfallen; sie stammt vom 27.03.2026 und war gegen namenlose
+  Phantom-Duplikate im Admin-Dropdown gebaut, nicht gegen eine gescheiterte
+  Abfrage. Reihenfolge der Regeln: Name schlaegt Bus (interne Kameras haengen in
+  manchen Geraeten intern per USB), danach Bus, danach Name-ohne-Intern-Wort.
+
+- **Neue, unabhaengige Gegenprobe ueber die Registry** (`winreg`,
+  KSCATEGORY_VIDEO, nur Eintraege mit `Control\Linked = 1`): „haengt gerade
+  genau eine USB-Videoquelle dran?" Kosten **0,08 ms** gemessen, kein
+  Prozessstart, kein Admin-Recht, keine Hardware wird angefasst. Ein
+  `unbestimmtes` Geraet wird nur uebernommen, wenn ALLE vier Bedingungen
+  gleichzeitig gelten: genau ein oeffenbares Geraet, Namensabfrage komplett
+  gescheitert, kein Geraet als intern erkannt, und die Registry meldet genau ein
+  verbundenes Videogeraet und das haengt am USB.
+
+- **Der PnP-Fallback ist als Namensquelle ersatzlos gestrichen.** Er war
+  gefaehrlicher als der gemeldete Bug: `Get-PnpDevice -Class Camera,Image` hat
+  im Test **zwei Drucker und null Kameras** geliefert (die Klasse „Image"
+  enthaelt Scanner/Multifunktionsgeraete). Diese Fremdnamen wurden positionsweise
+  auf die cv2-Indizes geklebt — Index 0 (auf dem Miix die abgeklebte interne
+  Kamera) haette „HP Color LaserJet…" geheissen, waere durch keinen Filter
+  gefallen und als „externe Kamera" gewaehlt worden. Das haetten schwarze Fotos
+  beim Kunden gegeben statt einer Warnung.
+
+- **Namenszuordnung ueber den Geraeteindex statt ueber `len(cameras)`.** Vorher
+  indizierte der Code mit der Anzahl der bisher erfolgreich geoeffneten Kameras:
+  liess sich ein Index gerade nicht oeffnen (belegt vom Waechter, von der
+  Messung, haengende interne Kamera), rutschten alle folgenden Namen um eine
+  Position — dann trug die C922 den Namen der internen Kamera und wurde
+  weggeworfen. Zweiter, vom Timeout voellig unabhaengiger Weg zu „0 gefundene
+  Kameras".
+
+- **`camera_index` wird nicht mehr aus Unwissen auf `-1` gesetzt** — aber auch
+  nicht mehr aus Unwissen BEHALTEN. Bis 2.4.39 ueberschrieb ein einziger
+  PowerShell-Aussetzer eine nachweislich funktionierende Einstellung —
+  ausgerechnet in dem Fall, in dem die meisten Beweise fuer vorhandene Hardware
+  vorlagen. Umgekehrt gilt aber genauso: ein Index, der einfach nur in der
+  Config steht, ist kein Beweis fuer eine externe Kamera (der Grundwert ist `0`,
+  und `0` ist auf dem Miix die abgeklebte interne Kamera). Ein bestehender Index
+  bleibt deshalb nur mit **Beweis** stehen: in diesem Lauf per Geraetenamen
+  bestaetigt, im Gedaechtnis per Name+DevicePath bestaetigt und laut Registry
+  wieder am Bus, oder im Admin-Menue von Hand gewaehlt
+  (`camera_index_manuell`). Sonst: `-1` und blinkende Warnung.
+
+- **`-1` klebt nicht mehr fest.** `save_config()` schrieb die `-1` nach
+  `C:\ProgramData\FexoBox`, und `_recover_machine_settings()` drueckte sie bei
+  JEDEM Start wieder in die Config, bevor irgendetwas anderes passierte. Ein
+  einziger Aussetzer konnte eine Box damit dauerhaft in den Blindzustand nageln.
+  `-1` ist kein Maschinenwert, sondern ein Fehlerbefund — er wird nicht mehr
+  gespeichert und ein bereits gespeicherter beim Lesen ignoriert. Betroffene
+  Boxen werden beim ersten Start mit dieser Version davon befreit.
+
+- **Kamera-Waechter: Blinken und Suchen sind getrennt.** Die Warnung blinkt
+  weiter alle 2 s (reine Anzeige), die volle Suche laeuft im Problemfall
+  hoechstens alle 20 s. Vorher plante der Waechter im `-1`-Zustand alle 2 s eine
+  neue Suche, obwohl ein Durchlauf ueber 10 s dauerte — die Box war praktisch
+  dauerhaft mit Kamerasuche beschaeftigt, auf einem Atom mit 4 GB. Genau dieser
+  Zustand hat die groesste Kollisionsflaeche fuer den Heap-Absturz `0xc0000374`
+  (Box 044). Preis: eine im Betrieb neu angesteckte Kamera wird schlimmstenfalls
+  20 statt 2 Sekunden spaeter erkannt.
+
+- **Es werden nur noch so viele Indizes geoeffnet, wie DirectShow meldet.** Auf
+  einer Ein-Kamera-Box spart das vier Geraeteoeffnungen pro Suche — nach der
+  PowerShell-Verpackung der groesste Einzelposten auf dem Atom.
+
+### Admin-Menue
+
+- Der Ghost-Filter (`name == "Kamera N"`) faellt. Gefiltert wird nach der
+  Einordnung: `intern` ausblenden, `extern` normal, **`unbestimmt` anzeigen und
+  kennzeichnen** (`[0] Kamera 0 (Name unbekannt)`). Bisher verschwand die
+  einzige funktionierende Kamera in genau dem Moment auch aus dem Auswahlfeld —
+  Christian hatte keinen manuellen Notausgang.
+- Der Notbehelf `[0] Standard-Kamera` bei leerer Liste wird zu
+  **`Keine Kamera gefunden`** — ohne Index. Vorher schrieb ein Klick auf
+  Speichern ungeprueft `camera_index = 0`, auf dem Miix also die abgeklebte
+  Kamera. Das war eines von drei Lecks in der Sperre.
+
+### Neu: `kamera_erkennung.json`
+
+Gedaechtnis **und** erstes dauerhaftes Diagnosemittel in einer Datei
+(`C:\ProgramData\FexoBox`, update-sicher). Enthaelt Zeitpunkt, welcher Weg
+genommen wurde (`ctypes` / `powershell` / gar keiner), Dauer, alle gefundenen
+Geraete samt USB-Ja/Nein und VID/PID, den gewaehlten Index und die Begruendung
+im Klartext.
+
+Gelesen wird sie **nur** im unbestimmten Fall und nur mit dieser Aussage:
+„Index N war zuletzt die bestaetigte externe Kamera, und genau dieses
+USB-Geraet haengt laut Registry JETZT wieder dran." Verworfen wird sie, sobald
+eine frische erfolgreiche Abfrage vorliegt, bei abweichender Geraetezahl, bei
+nicht mehr verbundener VID/PID, bei mehrdeutiger Registry-Lage und bei kaputter
+Datei. **Kein Zeitablauf** — das Risiko ist der Hardwaretausch, nicht das Alter.
+
+Hintergrund: Am 20.08. lieferte dieselbe Box 11 Sekunden spaeter das richtige
+Ergebnis; ein gemerktes Ergebnis haette den Aussetzer vollstaendig ueberbrueckt.
+Und im Feld war bisher NICHTS sichtbar, weil das App-Log nur mit `--dev`
+existiert.
+
+### Monitoring
+
+Der Heartbeat meldet drei zusaetzliche flache Felder: `camera_type`,
+`camera_state` (`extern` / `unbestimmt` / `keine` / `unbekannt`) und
+`camera_index`. Rein additiv, und er loest **keine** Kamerasuche aus — gelesen
+wird nur `kamera_erkennung.json`. Bisher war voellig unmoeglich zu sagen, wie
+viele der ~280 Boxen gerade blind sind.
+
+> **Vor dem Rollout pruefen:** Der adminFexobox-Endpunkt muss unbekannte Felder
+> tolerieren.
+
+### Richtiggestellt
+
+Die Behauptung, die abgeklebte interne Kamera „liefert nie ein Bild", ist im
+gesamten Repo durch nichts belegt und physikalisch unwahrscheinlich: Klebeband
+macht das Bild dunkel, es stoppt den Sensor nicht. Steht jetzt korrekt in
+`src/main.py` und im Messbericht — wichtig, damit daraus niemand eine
+Erkennungsregel baut („kein Frame = intern"). Der Rueckfall der Kamera-Messung
+auf Index 0 bleibt, wird im Protokoll aber klar als **Notbehelf** benannt und
+nutzt zuerst denselben Erkennungsweg wie die App.
+
+### Bewusst NICHT gebaut
+
+Kein Aufloesungstest (braucht ein Kalt-Oeffnen in 1080p — genau das hat Box 224
+am 13.08. eingefroren), keine Helligkeits-/Schwarzbild-Schwelle (eine echte C922
+in dunkler Location liefert ebenfalls dunkle Bilder — das wuerde die RICHTIGE
+Kamera mitten im bezahlten Event verwerfen), kein MSMF-Gegencheck (unter MSMF
+kann derselbe Index eine ANDERE Kamera treffen), kein MJPG-Test (der Code fuehrt
+selbst einen `_mjpg_unsupported`-Merker), kein `comtypes`/`pywin32` (neue
+Abhaengigkeit bzw. `CoCreateInstance` auf `ICreateDevEnum` scheitert dort
+nachweislich), kein `pnputil`.
+
+### Nachbesserung nach der Gegenpruefung (gleicher Tag)
+
+Die Gegenpruefung hat am ersten Entwurf zwei Wege gefunden, auf denen die
+abgeklebte interne Kamera doch als Fotokamera haette landen koennen, und eine
+Abfrage ohne Zeitgrenze. Alle drei sind behoben:
+
+- **Die „USB-Gegenprobe" ist ersatzlos raus.** Sie hat ein namenloses Geraet
+  schon dann zur externen Kamera erklaert, wenn die Registry genau eine
+  USB-Videoquelle meldete. Das beantwortet die falsche Frage: geprueft wurde
+  „haengt eine USB-Kamera am Bus?", gebraucht wird „ist DIESER cv2-Index diese
+  Kamera?". Ist das Kabel der C922 raus (bei ~280 Mietboxen der Normalfall) und
+  die interne Kamera selbst per USB angebunden — das kommt bei Tablets vor —,
+  meldet die Registry `gesamt=1, usb=1` fuer die INTERNE Kamera. Ergebnis waeren
+  schwarze Fotos ohne Warnung gewesen.
+- **Das Gedaechtnis braucht jetzt einen DevicePath-Beweis.** Gemerkt wird nur
+  noch eine Erkennung, die BEIDES hatte: echten Geraetenamen UND eigenen
+  `usb#`-DevicePath. Nur der DevicePath stammt aus derselben Aufzaehlung wie der
+  Index und bindet beide wirklich aneinander. Zusaetzlich muss die Zahl der
+  aufgezaehlten Geraete zum gemerkten Stand passen — sonst koennte ein
+  nicht-oeffenbarer Eintrag der C922 die interne Kamera auf deren Index
+  durchrutschen lassen.
+- **Vorzugsregel repariert.** Bisher stand dort nur „logitech" — der
+  FriendlyName der Fotobox-Kamera lautet aber `C922 Pro Stream Webcam` und
+  enthaelt das Wort nicht. Die Regel konnte also nie greifen, und bei zwei per
+  Namen extern eingestuften Geraeten gewann schlicht der kleinere Index (auf dem
+  Miix die interne Kamera). Neu: bekannte Kameranamen (`c922`, `c920`, `brio`, …)
+  zuerst, dann Geraete mit `usb#`-DevicePath, erst dann der kleinste Index.
+  Zusaetzlich kennt die Intern-Wortliste jetzt `easycamera`, `user facing`,
+  `world facing` und Verwandte.
+- **Die ctypes-Abfrage hat wieder eine Zeitgrenze (6 s).** Sie war die einzige
+  Kamera-Abfrage ohne eine solche; ein haengender Treiber haette den
+  Waechter-Thread fuer immer stehen lassen und mit `_camera_check_running=True`
+  die gesamte Kameraerkennung bis zum Neustart still totgelegt. Der aufgegebene
+  Thread wird nicht getoetet (bei haengendem COM nicht gefahrlos moeglich),
+  sondern gemerkt: solange er laeuft, wird der ctypes-Weg uebersprungen und das
+  vorhandene Netz (PowerShell-Weg) benutzt. Zusaetzlich gibt der Waechter
+  `_camera_check_running` nach 90 s selbst wieder frei.
+- **Der Waechter tippt einen gesetzten Index nicht mehr nur an.** „Laesst sich
+  Index N oeffnen?" beantwortet die abgeklebte Kamera mit Ja. Deshalb wird
+  hoechstens jede Minute vollstaendig neu erkannt; zeigt der eingestellte Index
+  nachweislich auf eine interne Kamera, wird sofort abgeschaltet.
+- **`WebcamManager.initialize()` lehnt einen negativen Index ab.**
+  `cv2.VideoCapture(-1)` heisst dort „irgendeine Kamera" — auf dem Miix waere
+  das die interne. Jetzt scheitert es sauber, die Session zeigt ihre Meldung.
+- `kamera_erkennung.json` wird atomar geschrieben (`.tmp` + `os.replace`).
+
+### Noch auf einer echten Box zu pruefen
+
+1. Ist `DevicePath` auf den Miix-Boxen wirklich gefuellt? Am Dev-PC nicht
+   messbar (kein Videogeraet vorhanden). **Wichtig geworden:** Ohne DevicePath
+   gibt es kein Gedaechtnis mehr — die Box funktioniert dann normal weiter,
+   ueberbrueckt eine tote Namensabfrage aber nicht mehr, sondern blinkt.
+2. Taucht die interne Kamera auf Christians Box in der Registry
+   (`verbundene_videogeraete()`) auf? Davon haengt ab, ob das Gedaechtnis dort
+   ueberhaupt greifen kann (`gesamt` muss 1 sein).
+3. Einmal die Registry-Ausgabe protokollieren (verbundene Videogeraete, USB
+   ja/nein).
+4. Einmal mit **abgezogener** Kamera starten: Meldet die Abfrage null Geraete,
+   wird bewusst kein Index mehr probiert — es muss die Warnung blinken, und es
+   duerfen KEINE Fotos aus der internen Kamera entstehen.
+5. Rollout-Reihenfolge: erst Christians Box, dann zwei Testboxen, dann die Flotte.
+
+---
+
 ## [2.4.39] - 2026-08-20 - Messung wartet, bis die App die Kamera loslaesst
 
 > Anlass: 2.4.37 lief auf der Box wieder sauber durch — und lieferte wieder

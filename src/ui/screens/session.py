@@ -439,6 +439,14 @@ class SessionScreen(ctk.CTkFrame):
         prep_ms = 0.0
         ov_ms_sum = 0.0
         max_ms = 0.0
+        # Vorschrumpf-Statistik (2.4.41): in wie vielen Frames wurde per pyrDown
+        # vorverkleinert — und von welcher auf welche Größe? Nur im Dev-Mode.
+        # ACHTUNG beim Lesen des Logs: "Vorschrumpf=nein" heißt NICHT, dass die
+        # Aufbereitung unbeschleunigt läuft. Der Gewinn von Etappe 1 kommt aus
+        # der umgedrehten Reihenfolge in _fit_frame_to_box_np und greift immer;
+        # das pyrDown ist nur der Aliasing-Schutz für 1080p-Quellen.
+        shrink_n = 0
+        shrink_last = None
 
         while not self._lv_stop.is_set():
             if (not self.is_live or self.photo_display_until > 0
@@ -468,7 +476,7 @@ class SessionScreen(ctk.CTkFrame):
                 continue
 
             try:
-                img, logical_size, overlay_ms = self._prepare_live_frame(
+                img, logical_size, overlay_ms, shrink_info = self._prepare_live_frame(
                     frame, target_w, target_h, scaling
                 )
             except Exception as e:
@@ -487,12 +495,20 @@ class SessionScreen(ctk.CTkFrame):
                 cam_ms += (t_cam - t0) * 1000
                 prep_ms += (t_end - t_cam) * 1000
                 ov_ms_sum += overlay_ms
+                if shrink_info is not None:
+                    shrink_n += 1
+                    shrink_last = shrink_info
                 frame_ms = elapsed * 1000
                 if frame_ms > max_ms:
                     max_ms = frame_ms
                 w_elapsed = t_end - win_start
                 if w_elapsed >= 5.0:
                     fps = n / w_elapsed
+                    if shrink_n:
+                        shrink_txt = f"{shrink_last} in {shrink_n}/{n} Frames"
+                    else:
+                        shrink_txt = ("nein (Quelle <4x Ziel — normal unter 1080p, "
+                                      "Reihenfolge ist trotzdem umgedreht)")
                     logger.info(
                         "LIVEVIEW-PERF: "
                         f"{n} Frames in {w_elapsed:.1f}s "
@@ -500,11 +516,13 @@ class SessionScreen(ctk.CTkFrame):
                         f"avg={(cam_ms + prep_ms) / n:.0f}ms/Frame "
                         f"(Kamera={cam_ms / n:.0f}ms, Aufbereitung={prep_ms / n:.0f}ms, "
                         f"davon Overlay={ov_ms_sum / n:.0f}ms), "
-                        f"max={max_ms:.0f}ms [Worker-Thread]"
+                        f"max={max_ms:.0f}ms, Vorschrumpf={shrink_txt} [Worker-Thread]"
                     )
                     win_start = t_end
                     n = 0
                     cam_ms = prep_ms = ov_ms_sum = max_ms = 0.0
+                    shrink_n = 0
+                    shrink_last = None
 
             # Adaptive Taktung: Ziel-FPS anstreben, aber die CPU nie mit
             # Aufbereitung sättigen — mindestens ~1/3 der Frame-Zeit Pause,
@@ -517,30 +535,120 @@ class SessionScreen(ctk.CTkFrame):
     def _prepare_live_frame(self, frame, target_w: int, target_h: int, scaling: float):
         """Bereitet einen BGR-Kameraframe komplett zur Anzeige auf (Worker-Thread).
 
-        Rückgabe: (PIL-Bild in physischen Pixeln, (logische Breite, Höhe), Overlay-ms).
+        Rückgabe: (PIL-Bild in physischen Pixeln, (logische Breite, Höhe),
+        Overlay-ms, Vorschrumpf-Text fürs Dev-Log oder None).
 
         Das Bild wird hier EXAKT auf die Größe gebracht, die CTkImage intern
         anfordert (round(logisch * scaling)) — dadurch greift der PIL-
         Copy-Fastpath und der UI-Thread muss nichts mehr skalieren.
+
+        REIHENFOLGE (Etappe 1, geändert 2026-08-20):
+        Früher wurde das VOLLE Kamerabild gespiegelt und umgefärbt und erst
+        danach auf das kleine Collagen-Fach verkleinert. Bei 1920x1080 liefen
+        Spiegeln und Umfärben also über 2.073.600 Bildpunkte, obwohl davon
+        gleich darauf nur noch ~86.880 (362x240-Fach) übrig blieben.
+        Jetzt gilt für den Collagen-Weg konsequent: ERST verkleinern (und
+        beschneiden), DANN spiegeln und umfärben — siehe _fit_frame_to_box_np.
+        Der Bildausschnitt bleibt dabei unverändert, siehe dortige Begründung.
+
+        WAS DAS BRINGT — und wo NICHT (Entwicklungs-PC, ein Thread, Median aus
+        9 Serien; nur die Kette resize/spiegeln/beschneiden/umfärben auf ein
+        362x240-Fach, OHNE das PIL-Compositing drumherum):
+            320x240  : 0,13 -> 0,13 ms = 1,0x   <-- KEIN GEWINN, siehe unten
+            480x360  : 0,17 -> 0,16 ms = 1,1x   <-- kaum Gewinn
+            640x480  : 0,69 -> 0,19 ms = 3,6x
+            1280x720 : 2,47 -> 0,26 ms = 9,4x
+            1920x1080: 5,42 -> 2,82 ms = 1,9x
+        Auf dem Miix sind die absoluten Zeiten rund 10x höher, die
+        Verhältnisse bleiben.
+
+        WARUM BEI 320x240 NICHTS HERAUSKOMMT (wichtig fürs Testen!):
+        Der Gewinn entsteht dadurch, dass Spiegeln und Umfärben nicht mehr
+        über den Kameraframe, sondern nur noch über die Fachgröße laufen —
+        bei 640x480 also über 86.880 statt 307.200 Punkte. Ist die Vorschau
+        aber KLEINER als das Fach, vergrößert der Cover-Fit (320x240 -> 362x271),
+        und dann sind es hinterher sogar minimal mehr Punkte (86.880 statt
+        76.800). Unterm Strich ein Nullsummenspiel.
+        Genau dieser Fall steht in der config.json dieser Box:
+        live_view_resolution = 320. Vorgabe in src/config/defaults.py ist 640,
+        config.example.json hat 480. Auf einer Box mit 320 oder 480 wird man
+        von Etappe 1 NICHTS merken; spürbar wird sie erst ab 640 aufwärts.
+        Bewusst NICHT dazugebaut: an live_view_resolution wird hier nichts
+        gedreht, das ist Christians Entscheidung (und Thema von Etappe 2).
+
+        WICHTIG ZUM VORSCHRUMPF (_preshrink_frame): der greift NUR ab
+        1080p-Quelle. Für ein 362x240-Fach ist die Cover-Fit-Größe 426x240,
+        der Wächter verlangt also 1704x960 Quellgröße. Bei 320x240, 640x480
+        und selbst 1280x720 macht er nachweislich NULL Halbierungen. Er ist
+        reine Vorsorge für Etappe 2 und darf nicht als Beschleunigung für
+        heute gezählt werden — die Gewinne oben kommen alle aus der
+        umgedrehten Reihenfolge, nicht aus dem pyrDown.
         """
-        # Spiegelung NUR für LiveView (intuitiver Spiegel-Effekt für User).
-        # Im _capture_worker (Webcam + DSLR) wird NICHT gespiegelt, damit Texte
-        # auf Kleidung im gespeicherten/gedruckten Foto richtig herum sind.
-        if self.config.get("rotate_180", False):
-            frame = cv2.rotate(frame, cv2.ROTATE_180)
-        frame = cv2.flip(frame, 1)
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # Originalframe merken (nur eine Namensbindung, KEINE Kopie): falls das
+        # Template-Compositing unten scheitert, braucht der Vollbild-Weg wieder
+        # das ganze Bild. Ein vorgeschrumpftes Bild würde dort auf
+        # Bildschirmgröße hochgezogen und sähe matschig aus.
+        orig_frame = frame
+        orig_h, orig_w = frame.shape[:2]
+
+        # --- 1) Zweig und Zielgröße bestimmen, BEVOR ein Pixel angefasst wird
+        # Template-Caches gehören dem UI-Thread und können mitten im Frame neu
+        # gebaut oder verworfen werden (on_hide, Container-Resize). Darum idx
+        # und boxes EINMAL in lokale Variablen holen und diesen Schnappschuss
+        # auch an _compose_overlay_frame weiterreichen — sonst könnte auf eine
+        # Größe verkleinert werden, die zum später benutzten Fach nicht passt.
+        overlay_active = (self._template_overlay_enabled
+                          and self._cached_template_composite is not None)
+        boxes = self._cached_template_boxes_scaled if overlay_active else []
+        idx = self.app.current_photo_index if overlay_active else 0
+
+        fit_size = None  # Cover-Fit-Zielgröße im Collagen-Fach
+        if overlay_active and idx < len(boxes):
+            x1, y1, x2, y2 = boxes[idx]["box"]
+            bw, bh = x2 - x1 + 1, y2 - y1 + 1
+            if bw > 0 and bh > 0:
+                # ACHTUNG: Ziel ist NICHT die Fachgröße, sondern die Cover-Fit-
+                # Größe (immer >= Fach, danach wird mittig beschnitten). Für
+                # 1920x1080 in ein 362x240-Fach sind das 426x240 — wer auf
+                # 362x240 verkleinert, verzerrt das Bild.
+                fit_size = self._cover_fit_size(orig_w, orig_h, bw, bh)
 
         overlay_ms = 0.0
+        shrink_info = None
         img = None
-        if self._template_overlay_enabled and self._cached_template_composite is not None:
+        rgb = None
+
+        # --- 2) Collagen-Weg: verkleinern/beschneiden zuerst, spiegeln zuletzt.
+        # Das Spiegeln und Umfärben läuft dadurch nur noch über die Fachgröße
+        # (z.B. 362x240 = 86.880 Punkte) statt über den ganzen Kameraframe.
+        if overlay_active:
+            work = frame
+            if fit_size is not None:
+                # Vorschrumpf nur als Aliasing-Schutz für sehr große Quellen
+                # (ab 1080p). Bei 320/480/640 passiert hier garantiert nichts.
+                work, shrink_steps = self._preshrink_frame(
+                    frame, fit_size[0], fit_size[1]
+                )
+                if self._perf_enabled and shrink_steps:
+                    sh, sw = work.shape[:2]
+                    shrink_info = (f"{orig_w}x{orig_h}->{sw}x{sh} ({shrink_steps}x pyrDown, "
+                                   f"Ziel {fit_size[0]}x{fit_size[1]})")
             t0 = time.perf_counter()
             try:
-                img = self._compose_overlay_frame(rgb)
+                img = self._compose_overlay_frame(work, idx, boxes, fit_size)
             except Exception as e:
                 logger.warning(f"Template-Overlay Fehler im LiveView: {e}")
                 img = None
             overlay_ms = (time.perf_counter() - t0) * 1000
+
+        # --- 3) Vollbild-Weg (kein Overlay, oder Overlay-Fehler): hier wird das
+        # Bild auf FAST BILDSCHIRMGRÖSSE gebracht, also meist vergrößert. Dort
+        # ist die alte Reihenfolge die billige: erst auf dem kleinen Kameraframe
+        # spiegeln, dann hochziehen. Deshalb bleibt dieser Zweig unverändert.
+        # Er rechnet bewusst wieder mit orig_frame — ein vorgeschrumpftes Bild
+        # würde hier aufgeblasen und sähe matschig aus.
+        if img is None:
+            rgb = self._mirror_and_rgb(orig_frame)
 
         if img is not None:
             src_w, src_h = img.size
@@ -549,17 +657,9 @@ class SessionScreen(ctk.CTkFrame):
 
         # Anzeigegröße: Seitenverhältnis in LOGISCHEN Pixeln einpassen
         # (winfo liefert Tk-Pixel; bei 125% DPI wäre das Bild sonst zu groß)
-        logical_w = target_w / scaling
-        logical_h = target_h / scaling
-        img_ratio = src_w / src_h
-        if img_ratio > logical_w / logical_h:
-            disp_w = int(logical_w)
-            disp_h = int(logical_w / img_ratio)
-        else:
-            disp_h = int(logical_h)
-            disp_w = int(logical_h * img_ratio)
-        phys_w = max(1, round(disp_w * scaling))
-        phys_h = max(1, round(disp_h * scaling))
+        disp_w, disp_h, phys_w, phys_h = self._display_size(
+            src_w, src_h, target_w, target_h, scaling
+        )
 
         if img is None:
             # Vollbild-LiveView: direkt per OpenCV auf Zielgröße (schneller als PIL)
@@ -574,7 +674,102 @@ class SessionScreen(ctk.CTkFrame):
         if self.is_countdown_active and self.countdown_value > 0:
             img = self._add_countdown_overlay(img)
 
-        return img, (disp_w, disp_h), overlay_ms
+        return img, (disp_w, disp_h), overlay_ms, shrink_info
+
+    def _mirror_frame(self, frame: np.ndarray) -> np.ndarray:
+        """Spiegelt einen LiveView-Frame (Farbraum bleibt, wie er ist).
+
+        Spiegelung NUR für LiveView (intuitiver Spiegel-Effekt für User).
+        Im _capture_worker (Webcam + DSLR) wird NICHT gespiegelt, damit Texte
+        auf Kleidung im gespeicherten/gedruckten Foto richtig herum sind.
+
+        rotate_180 + horizontaler Spiegel ergeben zusammen exakt EINEN
+        senkrechten Spiegel (beides sind reine Punktverschiebungen, es wird
+        nichts gerechnet — bitgleiches Ergebnis). Das spart bei gedrehten
+        Boxen einen kompletten Durchlauf durch das Bild.
+        """
+        if self.config.get("rotate_180", False):
+            return cv2.flip(frame, 0)
+        return cv2.flip(frame, 1)
+
+    def _mirror_and_rgb(self, frame: np.ndarray) -> np.ndarray:
+        """Spiegelt den LiveView-Frame und wandelt BGR nach RGB.
+
+        Wird nur noch vom Vollbild-Weg benutzt. Der Collagen-Weg spiegelt und
+        färbt erst nach dem Verkleinern um, siehe _fit_frame_to_box_np.
+        """
+        return cv2.cvtColor(self._mirror_frame(frame), cv2.COLOR_BGR2RGB)
+
+    @staticmethod
+    def _preshrink_frame(frame: np.ndarray, target_w: int, target_h: int):
+        """Halbiert den Frame schonend per pyrDown — nur solange es sicher ist.
+
+        Rückgabe: (Frame, Anzahl Halbierungen).
+
+        Drei Bedingungen müssen GLEICHZEITIG erfüllt sein, alle drei sind nötig:
+
+        1. Beide Kanten mindestens 4x so groß wie das Ziel. Nach der Halbierung
+           bleibt damit in BEIDEN Achsen noch das Doppelte der Zielgröße übrig —
+           der spätere Cover-Fit kann also nie hochskalieren (und damit nie
+           unschärfer werden als heute). Beispiel 640x480 in ein 362x240-Fach:
+           Ziel ist dort 362x271, eine Halbierung auf 320x240 wäre schon zu
+           klein — der Wächter verhindert sie.
+        2. Beide Kanten gerade. cv2.pyrDown rundet ungerade Kanten AUF
+           ((w+1)//2), dabei kippt das Seitenverhältnis minimal und der
+           Bildausschnitt könnte um einen Pixel wandern. Bei geraden Kanten
+           bleibt w/h rechnerisch exakt gleich, der Ausschnitt also identisch.
+        3. pyrDown statt einfachem resize, weil pyrDown vor dem Halbieren
+           glättet. Ein grobes einstufiges Verkleinern von 1080p auf ein
+           362px-Fach würde sichtbar grieseln (Aliasing).
+        """
+        if target_w < 1 or target_h < 1:
+            return frame, 0
+        h, w = frame.shape[:2]
+        steps = 0
+        while (w >= target_w * 4 and h >= target_h * 4
+               and w % 2 == 0 and h % 2 == 0):
+            frame = cv2.pyrDown(frame)
+            h, w = frame.shape[:2]
+            steps += 1
+        return frame, steps
+
+    @staticmethod
+    def _cover_fit_size(src_w: int, src_h: int, box_w: int, box_h: int):
+        """Zielgröße des Cover-Fits (immer >= Box, danach wird mittig beschnitten).
+
+        Hängt NUR am Seitenverhältnis, nicht an der absoluten Größe — deshalb
+        liefert sie vor und nach einem sauberen Halbieren dasselbe Ergebnis.
+        Rundung identisch zu _fit_to_box (int-Truncation), damit der
+        Bildausschnitt exakt dem bisherigen Verhalten entspricht.
+        """
+        img_aspect = src_w / src_h
+        box_aspect = box_w / box_h
+        if img_aspect > box_aspect:
+            new_h = box_h
+            new_w = max(box_w, int(new_h * img_aspect))
+        else:
+            new_w = box_w
+            new_h = max(box_h, int(new_w / img_aspect))
+        return new_w, new_h
+
+    @staticmethod
+    def _display_size(src_w: int, src_h: int, target_w: int, target_h: int, scaling: float):
+        """Anzeigegröße im Container: (logisch_w, logisch_h, physisch_w, physisch_h).
+
+        Rechnung unverändert aus _prepare_live_frame herausgezogen, damit die
+        Vorab-Zielgröße für den Vorschrumpf und die spätere Anzeigegröße
+        garantiert aus derselben Formel kommen.
+        """
+        logical_w = target_w / scaling
+        logical_h = target_h / scaling
+        img_ratio = src_w / src_h
+        if img_ratio > logical_w / logical_h:
+            disp_w = int(logical_w)
+            disp_h = int(logical_w / img_ratio)
+        else:
+            disp_h = int(logical_h)
+            disp_w = int(logical_h * img_ratio)
+        return disp_w, disp_h, max(1, round(disp_w * scaling)), max(1, round(disp_h * scaling))
 
     def _add_countdown_overlay(self, img: Image.Image) -> Image.Image:
         """Fügt ZENTRIERTEN Countdown zum Bild hinzu"""
@@ -777,49 +972,97 @@ class SessionScreen(ctk.CTkFrame):
         self._overlay_box_crops[idx] = crop
         return crop
 
-    def _compose_overlay_frame(self, rgb: np.ndarray) -> Image.Image:
+    def _compose_overlay_frame(self, frame: np.ndarray, idx=None, boxes=None,
+                               fit_size=None) -> Image.Image:
         """Setzt den Kameraframe in die aktuelle Template-Box (Schnellpfad).
+
+        ERWARTET SEIT 2026-08-20 EINEN ROHEN BGR-FRAME (ungespiegelt), nicht
+        mehr ein fertiges RGB-Bild. Gespiegelt und umgefärbt wird erst unten in
+        _fit_frame_to_box_np, wenn der Frame auf Fachgröße geschrumpft ist.
 
         Ergebnis ist identisch zum früheren Voll-Compositing: außerhalb der
         Box gilt das statische Komposit, innerhalb liegt der Overlay-
         Ausschnitt über dem (deckenden) LiveView-Bild.
+
+        idx/boxes/fit_size kommen aus _prepare_live_frame: dort wurde bereits
+        entschieden, in welches Fach dieser Frame gehört und auf welche Größe
+        er dafür vorverkleinert werden durfte. Dieser Schnappschuss MUSS hier
+        weiterbenutzt werden — würde hier erneut aus den Caches gelesen, könnte
+        der UI-Thread zwischendurch ein anderes Fach eingetragen haben und das
+        Bild wäre auf die falsche Größe verkleinert worden.
         """
-        idx = self.app.current_photo_index
-        boxes = self._cached_template_boxes_scaled
+        if idx is None:
+            idx = self.app.current_photo_index
+        if boxes is None:
+            boxes = self._cached_template_boxes_scaled
         if idx >= len(boxes):
-            return Image.fromarray(rgb)
+            # Kein gültiges Fach: Frame unverändert groß anzeigen — hier muss
+            # das Spiegeln/Umfärben also doch auf dem vollen Bild passieren.
+            return Image.fromarray(self._mirror_and_rgb(frame))
 
         canvas = self._get_overlay_static_composite().copy()
 
         x1, y1, x2, y2 = boxes[idx]["box"]
         bw, bh = x2 - x1 + 1, y2 - y1 + 1
         if bw > 0 and bh > 0:
-            fitted = self._fit_frame_to_box_np(rgb, bw, bh)
+            fitted = self._fit_frame_to_box_np(frame, bw, bh, fit_size)
             live_rgba = Image.fromarray(fitted).convert("RGBA")
             crop = self._get_overlay_box_crop(idx)
             region = Image.alpha_composite(live_rgba, crop) if crop is not None else live_rgba
             canvas.paste(region, (x1, y1))
         return canvas
 
-    def _fit_frame_to_box_np(self, rgb: np.ndarray, box_w: int, box_h: int) -> np.ndarray:
-        """Cover-Fit eines Kameraframes per OpenCV (schneller als PIL auf dem Miix)."""
-        h, w = rgb.shape[:2]
-        img_aspect = w / h
-        box_aspect = box_w / box_h
+    def _fit_frame_to_box_np(self, frame: np.ndarray, box_w: int, box_h: int,
+                             fit_size=None) -> np.ndarray:
+        """Cover-Fit eines BGR-Kameraframes per OpenCV, Ergebnis ist RGB.
 
-        # Rundung identisch zu _fit_to_box (int-Truncation), damit der
-        # Bildausschnitt exakt dem bisherigen Verhalten entspricht
-        if img_aspect > box_aspect:
-            new_h = box_h
-            new_w = max(box_w, int(new_h * img_aspect))
-        else:
-            new_w = box_w
-            new_h = max(box_h, int(new_w / img_aspect))
+        HIER STECKT DIE UMGEDREHTE REIHENFOLGE (Etappe 1, 2026-08-20).
+        Reihenfolge jetzt: verkleinern -> spiegeln -> beschneiden -> umfärben.
+        Früher: spiegeln -> umfärben -> verkleinern -> beschneiden.
+        Spiegeln und Umfärben laufen dadurch nur noch über die Fachgröße
+        (362x240 = 86.880 Punkte) statt über den ganzen Kameraframe
+        (640x480 = 307.200, bei 1080p sogar 2.073.600).
 
-        resized = cv2.resize(rgb, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        WARUM DAS DASSELBE BILD ERGIBT — die drei Punkte einzeln:
+
+        1. Verkleinern und Spiegeln sind vertauschbar. cv2.resize ist ein
+           separierbarer Filter mit symmetrischer Abtastung
+           (src = (dst+0,5)*scale - 0,5), gespiegelt trifft er also dieselben
+           Quellpixel. Nachgemessen über 320x240/640x480/1280x720/1920x1080
+           x drei Fachformen x rotate_180 an/aus: die Abweichung ist NIE
+           größer als 1 von 255 Graustufen und betrifft höchstens 0,8 % der
+           Punkte (reine Rundung im Festkomma-Filter). Unsichtbar.
+
+        2. Gespiegelt wird VOR dem Beschneiden, nicht danach. Das ist die
+           Stelle, an der man sich vertun kann: der mittige Beschnitt ist
+           nicht immer symmetrisch (1920x1080 in ein 240x362-Fach ergibt
+           fit_w=643, Rest 403 — ungerade). Nach dem Beschnitt zu spiegeln
+           würde den Ausschnitt um einen Pixel verschieben. Vorher zu
+           spiegeln nicht, weil dann derselbe Bildinhalt beschnitten wird.
+
+        3. Umfärben (BGR->RGB) ist eine reine Kanal-Vertauschung pro Pixel und
+           vertauscht deshalb EXAKT mit resize, flip und Beschnitt. Es steht
+           jetzt ganz am Schluss, wo das Bild am kleinsten ist.
+
+        fit_size ist die in _prepare_live_frame aus den ORIGINAL-Maßen des
+        Kameraframes berechnete Zielgröße. Sie wird durchgereicht statt hier
+        neu berechnet, damit ein vorheriges Halbieren (_preshrink_frame) den
+        Bildausschnitt garantiert nicht verschieben kann.
+
+        Filter bleibt bewusst INTER_LINEAR wie bisher: Etappe 1 soll dasselbe
+        Bild billiger erzeugen, nicht ein anderes.
+        """
+        if fit_size is None:
+            h, w = frame.shape[:2]
+            fit_size = self._cover_fit_size(w, h, box_w, box_h)
+        new_w, new_h = fit_size
+
+        resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        resized = self._mirror_frame(resized)
         left = (new_w - box_w) // 2
         top = (new_h - box_h) // 2
-        return resized[top:top + box_h, left:left + box_w]
+        cropped = resized[top:top + box_h, left:left + box_w]
+        return cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB)
 
     def _fit_to_box(self, img: Image.Image, box_w: int, box_h: int) -> Image.Image:
         """Passt ein Bild in eine Box ein (Cover-Modus, schnell)"""

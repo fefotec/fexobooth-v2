@@ -90,6 +90,12 @@ _MACHINE_SETTINGS_KEYS = (
     ("printer_name",),
     ("camera_type",),
     ("camera_index",),
+    # Merker "camera_index wurde im Admin-Menue von Hand gewaehlt" (2.4.40).
+    # MUSS neben camera_index stehen: Die Erkennung schaltet einen Index ab,
+    # fuer den sie keinen Beweis hat. Ginge der Merker bei einem Update
+    # verloren, waehrend der Index ueberlebt, waere der manuelle Notausgang
+    # still wieder zu.
+    ("camera_index_manuell",),
     ("rotate_180",),
     ("liveview_template_overlay",),
     ("camera_settings", "single_photo_width"),
@@ -188,6 +194,27 @@ def _read_machine_settings() -> Dict[str, Any]:
     return data
 
 
+def _ist_kein_maschinenwert(key_path, value) -> bool:
+    """Werte, die vorhandene Maschinenwerte NICHT ueberschreiben duerfen.
+
+    Neben leeren Strings gehoert dazu seit 2.4.40 auch `camera_index == -1`.
+    WARUM: -1 ist kein Maschinenwert, sondern ein FEHLERBEFUND ("gerade keine
+    externe Kamera gefunden"). Bis 2.4.39 klebte dieser Befund fest:
+    save_config() schrieb die -1 nach ProgramData, und _recover_machine_settings()
+    drueckte sie bei JEDEM Start wieder in die Config, bevor ueberhaupt etwas
+    anderes passierte. Ein einziger Aussetzer der Namensabfrage konnte eine Box
+    damit DAUERHAFT in den Blindzustand nageln. Ein Fehlerbefund gehoert nicht
+    in den dauerhaften Speicher.
+    """
+    if value is _MISSING:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    if tuple(key_path) == ("camera_index",) and value == -1:
+        return True
+    return False
+
+
 def _write_machine_settings(config: Dict[str, Any]) -> None:
     """Spiegelt stabile Maschinenwerte in ProgramData.
 
@@ -200,11 +227,9 @@ def _write_machine_settings(config: Dict[str, Any]) -> None:
 
     for key_path in _MACHINE_SETTINGS_KEYS:
         value = _get_nested(config, key_path)
-        if value is _MISSING or (isinstance(value, str) and not value.strip()):
+        if _ist_kein_maschinenwert(key_path, value):
             value = _get_nested(existing_data, key_path)
-            if value is _MISSING:
-                continue
-            if isinstance(value, str) and not value.strip():
+            if _ist_kein_maschinenwert(key_path, value):
                 continue
         _set_nested(data, key_path, value)
 
@@ -220,15 +245,19 @@ def _write_machine_settings(config: Dict[str, Any]) -> None:
 
 
 def _recover_machine_settings(config: Dict[str, Any]) -> bool:
-    """Wendet gespeicherte ProgramData-Maschinenwerte auf die Config an."""
+    """Wendet gespeicherte ProgramData-Maschinenwerte auf die Config an.
+
+    Ein bereits gespeichertes `camera_index: -1` wird beim Lesen ignoriert
+    (siehe _ist_kein_maschinenwert). Boxen, auf denen heute schon eine -1 in
+    ProgramData steht, werden dadurch beim ersten Start mit dieser Version
+    davon befreit — der naechste Schreibvorgang laesst den Wert weg.
+    """
     data = _read_machine_settings()
     changed = False
 
     for key_path in _MACHINE_SETTINGS_KEYS:
         value = _get_nested(data, key_path)
-        if value is _MISSING:
-            continue
-        if isinstance(value, str) and not value.strip():
+        if _ist_kein_maschinenwert(key_path, value):
             continue
         changed |= _assign_if_changed(config, key_path, value)
 

@@ -141,7 +141,12 @@ def _kamera_fuer_messung():
     Eine Messung, die eine ANDERE Kamera misst als die App benutzt, ist wertlos.
     Die App nimmt nie blind die 0, sondern die beste EXTERNE Kamera
     (`find_best_camera`) — auf manchen Boxen ist Index 0 die interne, abgeklebte
-    Tablet-Kamera, die sich zwar oeffnen laesst, aber nie ein Bild liefert.
+    Tablet-Kamera. Sie laesst sich oeffnen und liefert auch Bilder — nur eben
+    dunkle, unbrauchbare. (Bis 2.4.39 stand hier "liefert nie ein Bild". Das ist
+    im gesamten Repo durch nichts belegt und physikalisch unwahrscheinlich:
+    Klebeband macht das Bild dunkel, es stoppt den Sensor nicht. Wichtig, weil
+    daraus sonst irgendwann eine Erkennungsregel gebaut wird ("kein Frame =
+    intern") — die waere auf Sand gebaut.)
     (Auf Christians Box vom 20.08.2026 war Index 0 dagegen genau richtig: Dort
     meldete das Log "Externe Kamera bevorzugt: [0] c922 Pro Stream Webcam". Die
     harte 0 war dort also nicht die Ursache des Haengers — sie ist trotzdem

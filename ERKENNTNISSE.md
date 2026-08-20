@@ -6,6 +6,15 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### Bildkette: teure Pixel-Operationen ans ENDE, wo das Bild am kleinsten ist (2.4.41)
+
+| | |
+|---|---|
+| **Kontext** | LiveView spiegelte und färbte jeden Frame in voller Kameragröße um und verkleinerte erst danach aufs Collagen-Fach. Bei 640x480 also 307.200 Punkte Arbeit für ein Ergebnis mit 86.880 Punkten. |
+| **Entscheidung** | Reihenfolge umgedreht: verkleinern → spiegeln → beschneiden → umfärben. Spiegeln/Umfärben laufen nur noch über die Fachgröße. |
+| **Warum das erlaubt ist** | `cv2.resize` ist ein separierbarer Filter mit symmetrischer Abtastung (`src=(dst+0,5)*scale-0,5`), vertauscht also mit `flip`; die Abweichung ist reine Festkomma-Rundung (max 1 von 255). `cvtColor` BGR→RGB ist eine reine Kanal-Vertauschung pro Pixel und vertauscht **exakt** mit resize/flip/Beschnitt. |
+| **Merke** | Die Reihenfolge von Filter-Operationen ist oft frei wählbar — dann gehört die teure Operation dorthin, wo das Bild am kleinsten ist. Aber: **spiegeln VOR dem Beschneiden**, nie danach. Ein mittiger Beschnitt ist bei ungeradem Rest asymmetrisch (1920x1080 in ein 240x362-Fach: fit_w=643, Rest 403), ein Spiegeln danach verschiebt den Ausschnitt um einen Pixel. |
+
 ### LiveView: Producer/Consumer-Thread statt Aufbereitung im Tk-UI-Thread (2.4.16)
 
 | | |
@@ -113,6 +122,42 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 | **Entscheidung** | DirectShow-Geräte direkt via C#/.NET COM-Interop abfragen (`Add-Type` in PowerShell). Nutzt exakt dieselbe API wie OpenCV intern. PnP-Abfrage (ohne Sort) als Fallback |
 | **Alternativen** | ffmpeg `-list_devices` (nicht garantiert installiert), `comtypes` Python-Paket (neue Dependency), Resolution-Fingerprinting (fragil) |
 | **Merke** | NIE annehmen dass PnP/WMI Gerätereihenfolge = DirectShow/OpenCV Reihenfolge. Immer dieselbe Enumeration-API nutzen wie das Framework das die Geräte öffnet |
+
+> **Nachtrag 2.4.40:** Der PnP-Fallback ist ersatzlos gestrichen. Er war nicht nur
+> in der Reihenfolge falsch, sondern in der Auswahl: `-Class Camera,Image` lieferte
+> im Test **zwei Drucker und null Kameras** (die Klasse „Image" enthält Scanner und
+> Multifunktionsgeräte). Diese Fremdnamen wurden positionsweise auf die cv2-Indizes
+> geklebt — Index 0 (auf dem Miix die abgeklebte interne Kamera) hätte
+> „HP Color LaserJet…" geheißen und wäre als „externe Kamera" ausgewählt worden.
+> Ein Fallback, der falsche Daten liefert, ist schlimmer als gar keiner.
+
+### PowerShell + `Add-Type` ist auf dieser Hardware kein Abfrageweg, sondern eine Fehlerquelle (2.4.40)
+
+| | |
+|---|---|
+| **Problem** | Die DirectShow-Namensabfrage lief regelmäßig in ihre 10-Sekunden-Grenze (Box-Log 20.08.2026), die App schloss daraus „keine externe Kamera" und meldete die Box blind — obwohl die C922 angesteckt war und 11 Sekunden später problemlos gefunden wurde. |
+| **Ursache** | `powershell -Command "Add-Type -TypeDefinition <C#>; …"` startet bei **jedem** Aufruf einen Prozess, lädt die CLR und ruft `csc.exe` zum Kompilieren auf. Gemessen: **~4 ms echte Arbeit in ~560–670 ms Verpackung.** Auf dem Atom x5-Z8350 mit eMMC skaliert genau diese Verpackung — nicht die Arbeit. Dazu: `subprocess.run(timeout=)` ist auf Windows **keine harte Grenze** (nach dem Kill läuft ein zweites `communicate()` ohne Timeout, während das verwaiste `csc.exe` die Pipes hält). |
+| **Entscheidung** | Dieselbe COM-Kette in-process über `ctypes` (Standardbibliothek, keine neue Abhängigkeit): **2,6–6,6 ms gemessen**, über 200 Durchläufe stabil. Details, die verifiziert sind und so bleiben müssen: `ctypes.windll.ole32` statt `oledll` (sonst fliegt die Funktion bei `RPC_E_CHANGED_MODE` = 0x80010106 raus, obwohl COM in Ordnung ist — im MTA-Thread nachgestellt); `0`, `1` und `0x80010106` alle als brauchbar behandeln; `CoUninitialize` nur bei selbst durchgeführter Initialisierung; vtable-Slots CreateClassEnumerator=3, Next=3, BindToStorage=9, Read=3; `restype = c_long`, nicht `ctypes.HRESULT`. |
+| **Alternativen** | `comtypes` (neue Abhängigkeit, Randbedingung); `pywin32` — **kann es nachweislich nicht**: `CoCreateInstance` auf `ICreateDevEnum` scheitert mit „There is no interface object registered that supports this IID", auch über den Umweg `IUnknown`; `pnputil` (immer noch ein Prozessstart, immer noch PnP-Reihenfolge, `/enum-devices` erst ab Win10 1903). |
+| **Merke** | Auf schwacher Hardware ist nicht die Arbeit teuer, sondern die **Verpackung**. Ein Prozessstart pro Abfrage in einer Schleife, die alle 2 s läuft, ist auf einem Atom keine Kleinigkeit — er ist der Hauptposten. Bevor ein Timeout erhöht wird: nachmessen, wieviel davon überhaupt Nutzarbeit ist. Und: ein Timeout, das regelmäßig zuschlägt, verfälscht nicht nur die Laufzeit, sondern das **Ergebnis**. |
+
+### Fehlendes Wissen darf nie als negativer Befund verbucht werden (2.4.40)
+
+| | |
+|---|---|
+| **Problem** | `find_best_camera()` verwarf jede Kamera, deren Name dem Platzhalter `"Kamera {index}"` entsprach. Der Platzhalter entstand aber genau dann, wenn die **Namensabfrage** fehlschlug. Ergebnis: „Ich kenne den Namen nicht" wurde zu „Das ist die gesperrte interne Kamera" — und die Box meldete sich blind, obwohl cv2 die Kamera erfolgreich geöffnet hatte. |
+| **Ursache** | Zwei Zustände (`extern` / `intern`) für drei mögliche Sachverhalte. Für „weiß ich nicht" gab es keinen Platz, also landete er beim nächstbesten — und das war ausgerechnet die Variante mit der härtesten Konsequenz. Die Platzhalter-Regel stammte vom 27.03.2026 und war gegen namenlose **Phantom-Duplikate** gebaut, nicht gegen eine gescheiterte Abfrage; beide sahen im Code identisch aus. |
+| **Entscheidung** | Dritter Zustand `unbestimmt` plus ein Feld `namensquelle` (`dshow` / `luecke` / `fehlt`), das „Abfrage lief, kennt diesen Index nicht" von „Abfrage ist gar nicht gelaufen" trennt. Im unbestimmten Fall wird nicht geraten, sondern über eine **zweite, unabhängige Quelle** (Registry `KSCATEGORY_VIDEO`, nur `Linked=1`) gegengeprüft. Ein misslungener Suchlauf darf eine funktionierende Einstellung nie überschreiben. |
+| **Merke** | Wenn eine Erkennung nur zwei Antworten kennt, prüfen, ob es nicht drei Sachverhalte gibt — und wo „weiß ich nicht" gerade stillschweigend hinsortiert wird. Ein Platzhalter, der aus einem **Fehlerfall** entsteht, darf niemals Entscheidungsgrundlage sein; er ist Anzeigetext. Und ein Fehlerbefund (hier `camera_index = -1`) gehört nicht in den dauerhaften Speicher — bis 2.4.39 nagelte ein einziger Aussetzer die Box über `ProgramData` **dauerhaft** in den Blindzustand. |
+
+### Ein Indiz beantwortet oft eine ANDERE Frage als die gestellte (2.4.40, Nachbesserung)
+
+| | |
+|---|---|
+| **Problem** | Der erste Entwurf der neuen Erkennung nahm ein namenloses Gerät als externe Kamera, wenn die Registry „genau eine USB-Videoquelle" meldete. Klingt zwingend, ist es aber nicht: geprüft wurde **„hängt eine USB-Kamera am Bus?"**, gebraucht wurde **„ist DIESER cv2-Index diese Kamera?"**. Ist das Kabel der C922 raus und die interne Tablet-Kamera selbst per USB angebunden (kommt vor), bestätigt die Registry die interne Kamera sich selbst — schwarze Fotos beim Kunden statt blinkender Warnung. |
+| **Ursache** | Registry-Liste und DirectShow-Liste sind zwei getrennte Welten. Die Registry ist alphabetisch und kennt keine cv2-Indizes; sie kann eine Menge beschreiben, aber keine Zuordnung. Das einzige Feld, das aus **derselben** Aufzählung stammt wie der Index, ist der `DevicePath` des Geräts. |
+| **Entscheidung** | Übernahme eines namenlosen Geräts nur noch aus dem Gedächtnis — und ins Gedächtnis kommt nur, was Name **und** eigenen `usb#`-DevicePath hatte. Zusätzlich muss die Zahl der aufgezählten Geräte zum gemerkten Stand passen. Die reine USB-Gegenprobe ist gestrichen. |
+| **Merke** | Bei jeder Gegenprobe wörtlich aufschreiben, welche Frage sie beantwortet, und danebenlegen, welche Frage man eigentlich stellt. Sind es zwei verschiedene Sätze, ist der Schluss ein Fehlschluss — egal wie plausibel er klingt. Genauso: ein Wert, der einfach nur in der Config steht (`camera_index = 0`), ist **kein** Beweis, sondern ein Grundwert. |
 
 ### CTkImage DPI-Skalierung: winfo_width() vs CTkImage.size
 

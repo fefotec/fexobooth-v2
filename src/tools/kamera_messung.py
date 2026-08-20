@@ -834,7 +834,12 @@ def kamera_suchen(zeitlimit: float = ZEITLIMIT_KAMERA_SUCHE) -> Tuple[int, Optio
     def arbeit():
         from src.camera.webcam import WebcamManager
         kameras = WebcamManager.list_cameras()
-        return kameras, WebcamManager.find_best_camera(kameras)
+        # Exakt derselbe Erkennungsweg wie in der App (2.4.40). Eine Messung,
+        # die eine ANDERE Kamera misst als die App benutzt, ist wertlos —
+        # deshalb hier `erkenne_kamera()` statt einer eigenen Auswahl. Der
+        # Befund enthaelt zusaetzlich die BEGRUENDUNG im Klartext, die unten
+        # in den Bericht wandert.
+        return kameras, WebcamManager.erkenne_kamera(kameras)
 
     t0 = time.time()
     wert, fehler = _mit_zeitlimit(arbeit, zeitlimit)
@@ -854,19 +859,33 @@ def kamera_suchen(zeitlimit: float = ZEITLIMIT_KAMERA_SUCHE) -> Tuple[int, Optio
         protokoll.append("Kamera-Suche fehlgeschlagen (" + fehler[:60] + ") - nehme Index 0.")
         return 0, None, protokoll
 
-    kameras, bester = wert if wert else ([], -1)
+    leerbefund = {"index": -1, "zustand": "leer", "begruendung": "Suche lieferte kein Ergebnis"}
+    kameras, befund = wert if wert else ([], leerbefund)
+    if not isinstance(befund, dict):
+        befund = leerbefund
+    bester = befund.get("index", -1)
+
     _kamera_zugriff_vermerken()
     gefunden = ", ".join("[%s] %s" % (k.get("index"), k.get("name")) for k in kameras) or "keine"
     protokoll.append("Gefundene Kameras: " + gefunden + (" (%.0f s)" % dauer))
+    # Die Begruendung MUSS in den Bericht: sonst ist spaeter nicht mehr
+    # nachvollziehbar, ob die richtige Kamera gemessen wurde.
+    protokoll.append("Einordnung  : " + str(befund.get("begruendung", "?")))
 
     if bester is not None and bester >= 0:
         name = next((k.get("name") for k in kameras if k.get("index") == bester), None)
-        protokoll.append("Gewaehlt wurde die externe Kamera, die auch die Fotobox nimmt.")
+        protokoll.append("Gewaehlt wurde die Kamera, die auch die Fotobox nimmt.")
         return bester, name, protokoll
 
-    protokoll.append("Keine EXTERNE Kamera erkannt - gemessen wird Index 0.")
-    protokoll.append("Auf dem Miix ist das die interne, abgeklebte Tablet-Kamera:")
-    protokoll.append("Sie laesst sich oeffnen, liefert aber nie ein Bild.")
+    # NOTBEHELF - ausdruecklich so benannt:
+    protokoll.append("Keine verwendbare Kamera erkannt (Zustand: %s)."
+                     % befund.get("zustand", "?"))
+    protokoll.append("NOTBEHELF: gemessen wird trotzdem Index 0, damit ueberhaupt")
+    protokoll.append("Messwerte entstehen. Das muss NICHT die Kamera sein, die die")
+    protokoll.append("Fotobox benutzt - auf dem Miix ist Index 0 die interne,")
+    protokoll.append("abgeklebte Tablet-Kamera. Sie laesst sich oeffnen und liefert")
+    protokoll.append("auch Bilder, nur eben dunkle und unbrauchbare. Die Werte unten")
+    protokoll.append("sind in diesem Fall mit Vorsicht zu lesen.")
     return 0, None, protokoll
 
 

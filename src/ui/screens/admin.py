@@ -33,6 +33,14 @@ logger = get_logger(__name__)
 # gesunden Boxen auszuprobieren.
 WLAN_RESET_KNOPFTEXT = "Netzwerk-Werksreset ausführen (Box startet danach neu)"
 
+# Notbehelf-Eintrag für das Kamera-Auswahlfeld, wenn nichts gefunden wurde.
+# BEWUSST OHNE INDEX in eckigen Klammern (2.4.40): Der alte Text
+# "[0] Standard-Kamera" sah aus wie eine gefundene Kamera, und ein Klick auf
+# Speichern schrieb dann ungeprüft camera_index = 0 — auf dem Miix also
+# ausgerechnet die abgeklebte interne Kamera. Das war eines von drei Lecks in
+# der Sperre. Ohne "[" greift die Index-Auswertung in _save() gar nicht mehr.
+KEINE_KAMERA_TEXT = "Keine Kamera gefunden"
+
 
 class AdminDialog(ctk.CTkToplevel):
     """Moderner Admin-Einstellungen Dialog"""
@@ -3097,28 +3105,48 @@ class AdminDialog(ctk.CTkToplevel):
             except Exception as e:
                 logger.warning(f"Nikon Kamera-Suche Fehler: {e}")
         else:
-            # Webcams via OpenCV + echte Gerätenamen
-            # Interne Kameras und Ghost-Einträge werden ausgefiltert
+            # Webcams via OpenCV + echte Gerätenamen.
+            #
+            # 2.4.40: Gefiltert wird nach der EINORDNUNG, nicht mehr nach dem
+            # Anzeigetext. Der alte Ghost-Filter (name == "Kamera N") hat
+            # ausgerechnet die einzige funktionierende Kamera aus dem
+            # Auswahlfeld geworfen, sobald die Namensabfrage in ihr Zeitlimit
+            # lief — Christian sah dann "[0] Standard-Kamera" und hatte keinen
+            # manuellen Notausgang mehr.
+            #
+            # Neue Regel:
+            #   intern      -> ausblenden (bleibt gesperrt)
+            #   extern      -> normal anzeigen
+            #   unbestimmt  -> ANZEIGEN, aber ehrlich kennzeichnen
+            #
+            # Ja, ein Mitarbeiter kann damit theoretisch ein unbestimmtes Gerät
+            # wählen, das intern ist. Das ist eine bewusste, SICHTBARE
+            # Handentscheidung mit sofortigem Feedback (schwarzes Livebild) —
+            # und deutlich besser als der bisherige stumme Index-0-Notbehelf,
+            # der dasselbe ohne jede Kennzeichnung tat.
             try:
-                from src.camera.webcam import WebcamManager
-                webcams = WebcamManager.list_cameras()
-                internal_keywords = ["integrated", "internal", "ir camera", "infrarot",
-                                     "front camera", "rear camera", "built-in", "avstream"]
+                from src.camera.webcam import WebcamManager, klassifiziere_kameras
+                webcams = klassifiziere_kameras(WebcamManager.list_cameras())
                 for cam in webcams:
                     name = cam.get("name", "")
-                    name_lower = name.lower()
-                    # Interne Kameras ausblenden
-                    if any(kw in name_lower for kw in internal_keywords):
-                        logger.debug(f"Kamera gefiltert (intern): [{cam['index']}] {name}")
-                        continue
-                    # Ghost-Einträge ausblenden (kein WMI-Name → "Kamera N")
-                    if name_lower == f"kamera {cam['index']}":
-                        logger.debug(f"Kamera gefiltert (Ghost): [{cam['index']}] {name}")
+                    einordnung = cam.get("einordnung", "unbestimmt")
+                    if einordnung == "intern":
+                        logger.debug(
+                            f"Kamera gefiltert (intern): [{cam['index']}] {name} "
+                            f"— {cam.get('einordnung_grund', '')}"
+                        )
                         continue
                     w = cam.get("width", 0)
                     h = cam.get("height", 0)
-                    cameras.append(f"[{cam['index']}] {name} ({w}x{h})")
-                logger.info(f"Webcams gefunden: {len(webcams)} gesamt, {len(cameras)} extern")
+                    if einordnung == "unbestimmt":
+                        cameras.append(f"[{cam['index']}] {name} (Name unbekannt) ({w}x{h})")
+                    else:
+                        cameras.append(f"[{cam['index']}] {name} ({w}x{h})")
+                logger.info(
+                    f"Webcams gefunden: {len(webcams)} gesamt, {len(cameras)} wählbar "
+                    f"(Namensquelle: "
+                    f"{sorted({c.get('namensquelle', '?') for c in webcams})})"
+                )
             except Exception as e:
                 logger.warning(f"Webcam-Suche Fehler: {e}")
 
@@ -3126,7 +3154,7 @@ class AdminDialog(ctk.CTkToplevel):
             if camera_type == "nikon":
                 cameras = ["[0] Nikon via FexoNikonBridge"]
             else:
-                cameras = ["[0] Standard-Kamera"]
+                cameras = [KEINE_KAMERA_TEXT]
 
         return cameras
     
@@ -3173,7 +3201,9 @@ class AdminDialog(ctk.CTkToplevel):
                 cameras = self._get_available_cameras(camera_type)
             except Exception as e:
                 logger.warning(f"Kamera-Suche fehlgeschlagen: {e}")
-                cameras = ["[0] Standard-Kamera"]
+                # Kein "[0] …" mehr: eine fehlgeschlagene Suche darf beim
+                # Speichern keinen camera_index setzen (siehe KEINE_KAMERA_TEXT).
+                cameras = [KEINE_KAMERA_TEXT]
 
             def _apply(cams=cameras):
                 self._camera_scan_running = False
@@ -4084,8 +4114,25 @@ class AdminDialog(ctk.CTkToplevel):
                 try:
                     idx = int(cam_selection[1:cam_selection.index("]")])
                     self.config_data["camera_index"] = idx
+                    # 2.4.40: Handauswahl merken. Die automatische Erkennung
+                    # schaltet einen camera_index ab, für den sie keinen Beweis
+                    # hat (sonst könnte der Grundwert 0 = abgeklebte interne
+                    # Kamera überleben). Eine bewusste Auswahl aus dieser Liste
+                    # ist so ein Beweis: als intern erkannte Geräte stehen gar
+                    # nicht drin. Ohne diesen Merker wäre der manuelle Notausgang
+                    # beim nächsten Start wieder zu.
+                    self.config_data["camera_index_manuell"] = True
                 except:
                     pass
+            else:
+                # Kein Index im Text = kein echtes Gerät (KEINE_KAMERA_TEXT
+                # oder "Suche Kameras…"). Dann wird camera_index BEWUSST nicht
+                # angefasst: eine bestehende, funktionierende Einstellung darf
+                # ein leeres Auswahlfeld nicht überschreiben.
+                logger.info(
+                    f"Kamera-Auswahl ohne Index ({cam_selection!r}) — "
+                    f"camera_index bleibt unverändert"
+                )
             
             # camera_settings sicherstellen dass Dict existiert
             if "camera_settings" not in self.config_data:

@@ -192,6 +192,33 @@ def _send_monitoring_heartbeat(config: Dict[str, Any], ssid: str, app=None):
         "ssid": ssid,
     }
 
+    # Kamerazustand mitmelden (2.4.40) — rein additiv, drei flache Felder.
+    #
+    # WARUM: Heute ist völlig unmöglich zu sagen, wie viele der ~280 Boxen
+    # gerade blind sind. Der Heartbeat kannte kein Kamerafeld, und das App-Log
+    # existiert im Feld gar nicht (Logging läuft nur mit --dev). Ohne diese
+    # Zahl bleibt jede weitere Entscheidung Ratespiel.
+    #
+    # WICHTIG: Das löst KEINE neue Kamerasuche aus. Gelesen wird nur die
+    # Diagnosedatei, die die letzte Erkennung ohnehin geschrieben hat —
+    # eine Kamerasuche aus dem Netzwerk-Thread wäre genau der Dauerlauf,
+    # den 2.4.40 gerade abstellt.
+    try:
+        from src.camera.webcam import letzte_erkennung
+        zustand_map = {
+            "extern": "extern",
+            "intern": "keine",
+            "leer": "keine",
+            "unbestimmt_einzeln": "unbestimmt",
+            "unbestimmt_mehrere": "unbestimmt",
+        }
+        erkennung = letzte_erkennung()
+        payload["camera_type"] = str(config.get("camera_type", "webcam"))
+        payload["camera_state"] = zustand_map.get(str(erkennung.get("zustand", "")), "unbekannt")
+        payload["camera_index"] = int(config.get("camera_index", 0))
+    except Exception as e:
+        logger.debug(f"Monitoring: Kamerazustand nicht ermittelbar — Meldung ohne ({e})")
+
     # Event-Statistiken automatisch mitsenden (2.4.21, Wunsch Christian):
     # Sobald die Box im Firmen-WLAN ist (= zurück in der Werkstatt), landen
     # Sessions/Fotos/Drucke der letzten Buchungen automatisch an der

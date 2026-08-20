@@ -4,6 +4,102 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-08-20 (spät) — Vorschau umgedreht: erst verkleinern, dann spiegeln (2.4.41, Etappe 1 von 2)
+
+Auftrag Christian: *„Nur die Vorschau-Aufbereitung umdrehen. Der Foto-Ablauf bleibt in
+dieser Etappe UNANGETASTET."*
+
+**Was war:** Für jedes Vorschaubild wurde erst das volle Kamerabild gespiegelt und
+umgefärbt, dann auf das kleine Collagen-Fach verkleinert. Bei 640x480 liefen Spiegeln
+und Umfärben also über 307.200 Punkte, obwohl davon nur 86.880 übrig blieben.
+
+**Was ist:** Erst verkleinern und beschneiden, dann spiegeln, dann umfärben.
+Nur `src/ui/screens/session.py` (`_prepare_live_frame`, `_compose_overlay_frame`,
+`_fit_frame_to_box_np`, neu `_mirror_frame`). Foto-Pfad nicht angefasst.
+
+**Ergebnis ehrlich:** 640x480 → 3,6x, 1280x720 → 9,4x auf dieser Kette.
+**Aber bei 320x240 und 480x360 praktisch nichts** (1,0x / 1,1x), weil die Vorschau dort
+kleiner ist als das Fach und der Cover-Fit vergrößert statt verkleinert. Die
+`config.json` dieser Box steht auf 320 → **auf dieser Box ist kein Unterschied spürbar.**
+Vorgabe in `defaults.py` ist 640, dort schon.
+
+**Bild unverändert:** an echten Box-Fotos bei 640x480 mittlere Abweichung 0,00 von 255,
+max 1. Gleicher Ausschnitt, gleiches Seitenverhältnis, gleicher Beschnitt — nachgerechnet
+über 4 Auflösungen x 3 Fachformen x `rotate_180` an/aus.
+
+**Bewusst NICHT gebaut:** `live_view_resolution` wurde nicht angefasst. Ob der LiveView
+überhaupt höher laufen soll, ist Christians Entscheidung und Thema von Etappe 2.
+
+---
+
+## 2026-08-20 (Abend) — „0 gefundene Kameras", obwohl die Logitech dranhing (2.4.40)
+
+Meldung Christian: *„der test zeigt 0 gefundene kamera aber die logitech ist ja dran."*
+
+**Die Ursache in einem Satz:** Eine fehlgeschlagene **Namensabfrage** wurde als Beweis
+gewertet, dass die Kamera **intern** ist. Das sind zwei völlig verschiedene Dinge — und
+die Kamera stand überhaupt nur in der Liste, WEIL cv2 sie öffnen konnte.
+
+### Umgesetzt in `src/camera/webcam.py`
+
+| Was | Warum |
+|---|---|
+| Namensabfrage läuft in-process über `ctypes` (`ICreateDevEnum` → `IEnumMoniker` → `IPropertyBag`), PowerShell nur noch als zweiter Versuch | Gemessen: ~4 ms echte Arbeit in ~560–670 ms Verpackung (Prozessstart + CLR + `csc.exe` bei jedem Aufruf). Auf dem Atom reißt genau diese Verpackung die 10-s-Grenze. In-process hier gemessen: **2,6–6,6 ms**, 200 Durchläufe stabil |
+| Rückgabe ist `(geraete, abfrage_ok)` statt nur einer Namensliste | „0 Geräte gefunden" und „ich konnte nicht nachsehen" sind zwei Aussagen. Ihre Vermischung **war** der Bug |
+| PnP-Fallback als Namensquelle ersatzlos gestrichen | `Get-PnpDevice -Class Camera,Image` lieferte im Test **zwei Drucker und null Kameras**. Diese Namen wurden positionsweise auf cv2-Indizes geklebt → die abgeklebte Index-0-Kamera hätte „HP Color LaserJet…" geheißen und wäre als „extern" gewählt worden |
+| Drei Zustände `extern` / `intern` / **`unbestimmt`**, Regel `name != "kamera N"` entfällt | Die alte Regel stammt vom 27.03.2026 und war gegen namenlose Phantom-Duplikate gebaut, nicht gegen eine gescheiterte Abfrage |
+| Neue Registry-Gegenprobe (`KSCATEGORY_VIDEO`, nur `Linked=1`) | Zweite, völlig unabhängige Quelle für „hängt eine USB-Videoquelle dran?" — **0,08 ms gemessen**, kein Prozessstart, keine Hardware wird angefasst. `Linked=1` ist Pflicht: abgezogene Geräte bleiben als Karteileichen stehen |
+| Namenszuordnung über den Geräteindex `i` statt über `len(cameras)` | Ließ sich ein Index gerade nicht öffnen, rutschten alle folgenden Namen um eine Position — dann trug die C922 den Namen der internen Kamera. Zweiter, vom Timeout unabhängiger Weg zu „0 Kameras" |
+| Nur noch so viele Indizes öffnen, wie DirectShow meldet | Spart auf einer Ein-Kamera-Box vier Geräteöffnungen pro Suche und verkleinert die Kollisionsfläche für den Heap-Absturz von Box 044 |
+| Neu: `C:\ProgramData\FexoBox\kamera_erkennung.json` | Gedächtnis **und** erstes dauerhaftes Diagnosemittel — im Feld existiert kein Log (nur mit `--dev`). Greift nur, wenn die Registry unabhängig bestätigt, dass genau diese VID/PID jetzt wieder am Bus hängt. Kein Zeitablauf, das Risiko ist der Hardwaretausch |
+
+### `src/app.py`
+
+- `camera_index` wird **nicht mehr aus Unwissen** auf `-1` gesetzt. Nur noch bei
+  positivem „alles intern"-Befund oder bei mehreren unbestimmten Geräten ohne
+  Bestätigung. Vorher überschrieb ein einziger PowerShell-Aussetzer eine
+  nachweislich funktionierende Einstellung.
+- Wächter: Blinken (2 s, reine Anzeige) und volle Suche (höchstens alle 20 s) sind
+  getrennt. Vorher plante er im `-1`-Zustand alle 2 s eine Suche, die selbst über
+  10 s dauerte — die Box war praktisch dauerhaft mit Kamerasuche beschäftigt.
+
+### `src/config/config.py`
+
+`camera_index = -1` wird nicht mehr nach ProgramData geschrieben und beim Lesen
+ignoriert. Bis 2.4.39 drückte `_recover_machine_settings()` die `-1` bei **jedem**
+Start wieder in die Config — ein einziger Aussetzer konnte eine Box dauerhaft blind
+nageln. Betroffene Boxen werden beim ersten Start mit 2.4.40 davon befreit.
+
+### `src/ui/screens/admin.py`
+
+Ghost-Filter raus, Filter nach Einordnung rein: `intern` ausblenden, `unbestimmt`
+**anzeigen und kennzeichnen** (`[0] Kamera 0 (Name unbekannt)`). Christian hat damit
+wieder einen manuellen Notausgang. Der Notbehelf `[0] Standard-Kamera` wird zu
+`Keine Kamera gefunden` **ohne Index** — vorher schrieb ein Klick auf Speichern
+ungeprüft `camera_index = 0`, auf dem Miix also die abgeklebte Kamera.
+
+### `src/company_network.py`
+
+Heartbeat meldet zusätzlich `camera_type`, `camera_state` und `camera_index`
+(rein additiv, löst **keine** Kamerasuche aus — liest nur die Diagnosedatei).
+Bisher war unmöglich zu sagen, wie viele der ~280 Boxen gerade blind sind.
+**Vor dem Rollout:** adminFexobox-Endpunkt muss unbekannte Felder tolerieren.
+
+### Richtiggestellt
+
+„Die abgeklebte interne Kamera liefert nie ein Bild" ist durch nichts belegt und
+physikalisch unwahrscheinlich — Klebeband macht das Bild dunkel, es stoppt den Sensor
+nicht. Steht jetzt korrekt in `src/main.py` und im Messbericht, damit daraus niemand
+eine Erkennungsregel baut.
+
+### Rollout
+
+Erst Christians Box, dann zwei Testboxen, dann die Flotte. Auf der ersten echten Box
+prüfen: (1) ist `DevicePath` gefüllt? (2) Registry-Ausgabe protokollieren.
+(3) einmal mit abgezogener Kamera starten.
+
+---
+
 ## 2026-08-20 (Nachmittag) — Die Messung selbst kann nicht mehr endlos hängen (2.4.36)
 
 Der Umbau auf einen eigenen Prozess (siehe unten) hat die **Folge** entschärft: Die

@@ -143,28 +143,103 @@ class PhotoboothApp:
         self._pump_startup_loading_screen()
 
         # Webcam: Automatisch beste EXTERNE Kamera wählen — im HINTERGRUND
-        # (2.4.23). Die Suche nutzt eine PowerShell-Geräte-Enumeration, die auf
-        # dem Miix beim Kaltstart unter Last bis ~16s braucht/timeoutet; früher
-        # blockierte das den Startup-Thread komplett (Ladebalken fror ein, Box
-        # startete zunächst „ohne Kamera"). Jetzt läuft es nebenher; der
-        # laufende Kamera-Wächter (_check_camera_status) korrigiert den Index,
-        # sobald die Kamera gefunden ist.
+        # (2.4.23). Die Suche lief früher über eine PowerShell-Geräte-
+        # Enumeration, die auf dem Miix beim Kaltstart unter Last bis ~16s
+        # brauchte/timeoutete; früher blockierte das den Startup-Thread
+        # komplett (Ladebalken fror ein, Box startete zunächst „ohne Kamera").
+        # Jetzt läuft es nebenher; der laufende Kamera-Wächter
+        # (_check_camera_status) korrigiert den Index, sobald die Kamera
+        # gefunden ist. Seit 2.4.40 läuft die Namensabfrage in-process
+        # (ctypes, wenige Millisekunden statt Sekunden).
+        # Wurde der aktuelle camera_index in DIESEM Lauf per Gerätename als
+        # externe Kamera bestätigt? Muss VOR dem Start des Suchthreads stehen
+        # (sonst überschreibt die spätere Initialisierung das Ergebnis wieder).
+        # Solange das False ist, gilt ein camera_index nur dann als brauchbar,
+        # wenn es einen echten Beweis dafür gibt — der Grundwert 0 aus
+        # defaults.py ist auf dem Miix die abgeklebte interne Kamera.
+        self._camera_index_bestaetigt = False
         if camera_type == "webcam":
             def _auto_select_webcam():
                 try:
                     from src.camera.webcam import WebcamManager
                     available = WebcamManager.list_cameras()
-                    if not available:
-                        return
-                    best_idx = WebcamManager.find_best_camera(available)
+                    befund = WebcamManager.erkenne_kamera(available)
+                    best_idx = befund["index"]
+                    zustand = befund["zustand"]
+                    current_idx = config.get("camera_index", 0)
+                    manuell = bool(config.get("camera_index_manuell", False))
+
                     if best_idx >= 0:
-                        current_idx = config.get("camera_index", 0)
                         if best_idx != current_idx:
-                            best_name = next((c["name"] for c in available if c["index"] == best_idx), "?")
-                            logger.info(f"Kamera Auto-Auswahl: [{best_idx}] {best_name} (statt [{current_idx}])")
+                            best_name = next(
+                                (c["name"] for c in available if c["index"] == best_idx), "?")
+                            logger.info(
+                                f"Kamera Auto-Auswahl: [{best_idx}] {best_name} "
+                                f"(statt [{current_idx}]) — {befund['begruendung']}"
+                            )
                             config["camera_index"] = best_idx
+                            # Der Index kommt jetzt von der Erkennung, nicht
+                            # mehr von Hand -> Handmerker fällt weg.
+                            config["camera_index_manuell"] = False
+                        self._camera_index_bestaetigt = True
+                        return
+
+                    # KEIN Treffer. Ab 2.4.40 wird camera_index NICHT mehr aus
+                    # blossem Unwissen auf -1 gesetzt (bis 2.4.39 überschrieb
+                    # ein einziger PowerShell-Aussetzer eine funktionierende
+                    # Einstellung). Umgekehrt gilt aber genauso: Ein Index, der
+                    # einfach nur in der Config steht, ist KEIN Beweis für eine
+                    # externe Kamera. Stehen bleiben darf er nur mit Beweis.
+                    sicher = befund.get("bestaetigter_index", -1)
+
+                    if zustand == "intern":
+                        # Positiver Befund: alle sichtbaren Geräte sind
+                        # nachweislich intern. Hier hilft auch keine
+                        # Handauswahl mehr — abschalten.
+                        logger.warning(
+                            f"⚠️ Keine externe Kamera verwendbar ({zustand}): "
+                            f"{befund['begruendung']} — interne Kamera wird NICHT verwendet."
+                        )
+                        config["camera_index"] = -1
+                    elif sicher >= 0 and sicher != current_idx:
+                        # Das zuletzt per Name UND DevicePath bestätigte Gerät
+                        # hängt laut Registry wieder am Bus — aber unter einem
+                        # anderen Index als dem eingestellten.
+                        logger.warning(
+                            f"Kamera-Erkennung unbestimmt ({zustand}): "
+                            f"{befund['begruendung']} — bestätigte externe Kamera "
+                            f"ist [{sicher}], camera_index wird von "
+                            f"[{current_idx}] darauf gesetzt."
+                        )
+                        config["camera_index"] = sicher
+                        config["camera_index_manuell"] = False
+                        self._camera_index_bestaetigt = True
+                    elif sicher >= 0:
+                        logger.warning(
+                            f"Kamera-Erkennung unbestimmt ({zustand}): "
+                            f"{befund['begruendung']} — camera_index "
+                            f"[{current_idx}] bleibt: als externe Kamera bestätigt "
+                            f"(Gedächtnis + Registry)."
+                        )
+                        self._camera_index_bestaetigt = True
+                    elif manuell and current_idx >= 0:
+                        # Handauswahl aus dem Admin-Menü. Dort werden als
+                        # intern erkannte Geräte gar nicht erst angeboten, die
+                        # Auswahl war also eine sichtbare Personenentscheidung.
+                        # Die darf ein misslungener Suchlauf nicht kippen.
+                        logger.warning(
+                            f"Kamera-Erkennung unbestimmt ({zustand}): "
+                            f"{befund['begruendung']} — camera_index "
+                            f"[{current_idx}] bleibt: im Admin-Menü von Hand gewählt."
+                        )
                     else:
-                        logger.warning("⚠️ Keine externe Kamera gefunden! Interne Kamera wird NICHT verwendet.")
+                        logger.warning(
+                            f"⚠️ Kamera-Erkennung unbestimmt ({zustand}): "
+                            f"{befund['begruendung']} — camera_index "
+                            f"[{current_idx}] ist NICHT als extern bestätigt und "
+                            f"wird abgeschaltet. Lieber blinkende Warnung als "
+                            f"schwarze Fotos aus der abgeklebten Kamera."
+                        )
                         config["camera_index"] = -1
                 except Exception as e:
                     logger.debug(f"Kamera Auto-Auswahl fehlgeschlagen: {e}")
@@ -1471,6 +1546,24 @@ class PhotoboothApp:
         self.camera_status.pack_forget()  # Verstecken wenn OK
         self._camera_blink_state = False
         self._camera_check_running = False  # Hintergrund-Prüfung aktiv?
+        # Wann lief zuletzt eine VOLLE Kamerasuche (list_cameras)? 2.4.40:
+        # Blinken und Suchen sind getrennt. Die Warnung blinkt weiter alle 2 s
+        # (reine Anzeige), die teure Suche läuft im Problemfall höchstens alle
+        # 20 s. Vorher plante der Wächter im -1-Zustand alle 2 s eine neue
+        # Suche, obwohl ein Durchlauf über 10 s dauerte — die Box war damit
+        # praktisch dauerhaft mit Kamerasuche beschäftigt. Genau dieser Zustand
+        # hat die größte Kollisionsfläche für den Heap-Absturz 0xc0000374
+        # (Box 044). Preis: eine im Betrieb neu angesteckte Kamera wird
+        # schlimmstenfalls 20 statt 2 Sekunden später erkannt.
+        self._letzte_kamerasuche = 0.0
+        # Wann lief zuletzt die VOLLE Gegenprüfung eines bereits gesetzten
+        # camera_index (2.4.40, Nachbesserung)? Der reine „lässt sich öffnen"-
+        # Test kann eine interne Kamera nicht von einer externen unterscheiden;
+        # deshalb wird höchstens jede Minute neu erkannt statt nur angetippt.
+        self._letzte_vollpruefung = 0.0
+        # Seit wann läuft die Hintergrund-Prüfung? Gegen ein für immer
+        # gesetztes _camera_check_running (siehe _check_camera_status).
+        self._camera_check_start = 0.0
         # Läuft gerade die Kamera-Messung als eigener Prozess? Dann fasst der
         # Wächter die Kamera NICHT an (siehe _check_camera_status). Gesetzt und
         # zurückgesetzt wird das ausschließlich von
@@ -2476,8 +2569,25 @@ class PhotoboothApp:
             return
 
         if getattr(self, "_camera_check_running", False):
-            self.root.after(2000, self._check_camera_status)
-            return
+            # 2.4.40, Nachbesserung: Notausgang gegen einen hängenden
+            # Prüf-Thread. `_camera_check_running` wird sonst NUR in
+            # `_on_camera_status_result` zurückgesetzt — kommt der Thread nie
+            # zurück (hängender Kameratreiber), wäre die gesamte
+            # Kameraerkennung bis zum Neustart still tot: der Wächter plant
+            # sich alle 2 s neu und steigt hier jedes Mal sofort wieder aus.
+            # Nach 90 s wird das Flag deshalb freigegeben. Gefahrlos, weil
+            # jeder Hardwarezugriff ohnehin unter der gemeinsamen Kamera-Sperre
+            # läuft (ein zweiter Thread wartet dort, statt zu kollidieren).
+            laeuft_seit = time.time() - getattr(self, "_camera_check_start", 0.0)
+            if laeuft_seit > 90.0:
+                logger.warning(
+                    f"Kamera-Prüfung hängt seit {laeuft_seit:.0f} s — Sperre wird "
+                    f"freigegeben, damit die Kameraerkennung weiterläuft."
+                )
+                self._camera_check_running = False
+            else:
+                self.root.after(2000, self._check_camera_status)
+                return
 
         # 2.4.37: Waehrend der Kamera-Messung NICHTS anfassen.
         # Die Messung laeuft als eigener Prozess (src/ui/dialogs/kamera_messung.py)
@@ -2505,6 +2615,7 @@ class PhotoboothApp:
             return
 
         self._camera_check_running = True
+        self._camera_check_start = time.time()
         threading.Thread(
             target=self._camera_status_probe, daemon=True, name="camera-check"
         ).start()
@@ -2568,21 +2679,110 @@ class PhotoboothApp:
                 if cam_idx < 0:
                     # Keine externe Kamera konfiguriert → nochmal suchen
                     # (Kamera könnte im laufenden Betrieb angesteckt worden sein)
-                    from src.camera.webcam import WebcamManager
-                    available = WebcamManager.list_cameras()
-                    if available:
-                        best_idx = WebcamManager.find_best_camera(available)
+                    #
+                    # 2.4.40: NICHT bei jedem Blinken. Die volle Suche öffnet
+                    # echte DirectShow-Geräte und ist auf dem Atom der teuerste
+                    # Posten im Leerlauf; alle 2 s war das ein Dauerlauf.
+                    seit = time.time() - getattr(self, "_letzte_kamerasuche", 0.0)
+                    if seit < 20.0:
+                        # Nur blinken lassen, nichts anfassen.
+                        problem_text = t(self.config, "topbar.camera_missing")
+                    else:
+                        self._letzte_kamerasuche = time.time()
+                        from src.camera.webcam import WebcamManager
+                        available = WebcamManager.list_cameras()
+                        befund = WebcamManager.erkenne_kamera(available)
+                        best_idx = befund["index"]
                         if best_idx >= 0:
-                            best_name = next((c["name"] for c in available if c["index"] == best_idx), "?")
-                            logger.info(f"📷 Externe Kamera gefunden: [{best_idx}] {best_name}")
+                            best_name = next(
+                                (c["name"] for c in available if c["index"] == best_idx), "?")
+                            logger.info(
+                                f"📷 Externe Kamera gefunden: [{best_idx}] {best_name} "
+                                f"— {befund['begruendung']}"
+                            )
                             found_webcam_index = best_idx
                             # Kein problem_text → Warnung verschwindet
                         else:
+                            # Bei "unbestimmt" wird der Index NICHT laufend neu
+                            # überschrieben — nur die Warnung bleibt stehen.
+                            logger.debug(
+                                f"Kamera-Wächter: weiterhin keine Kamera "
+                                f"({befund['zustand']}) — {befund['begruendung']}"
+                            )
                             problem_text = t(self.config, "topbar.camera_missing")
-                    else:
-                        problem_text = t(self.config, "topbar.camera_missing")
                 elif self.camera_manager.is_initialized:
                     pass  # Kamera aktiv → OK
+                elif (time.time() - getattr(self, "_letzte_vollpruefung", 0.0)) >= 60.0:
+                    # ── VOLLE GEGENPRÜFUNG, höchstens jede Minute ──────────
+                    # 2.4.40, Nachbesserung: Bisher wurde bei gesetztem Index
+                    # NUR gefragt „lässt sich Index N öffnen?". Die abgeklebte
+                    # interne Kamera lässt sich anstandslos öffnen — die
+                    # Warnung verschwand also auch dann, wenn N längst auf sie
+                    # zeigt (z.B. weil das USB-Kabel der C922 im laufenden
+                    # Betrieb rausgerutscht ist und die Indizes nachrutschen).
+                    # Deshalb wird der Index regelmäßig neu belegt statt nur
+                    # angetippt. Kosten: eine Geräteaufzählung (wenige ms) plus
+                    # so viele cv2-Öffnungen, wie DirectShow Geräte meldet.
+                    self._letzte_vollpruefung = time.time()
+                    from src.camera.webcam import WebcamManager
+                    available = WebcamManager.list_cameras()
+                    befund = WebcamManager.erkenne_kamera(available)
+                    best_idx = befund["index"]
+                    aktuelle = next(
+                        (c for c in befund.get("kameras", []) if c.get("index") == cam_idx),
+                        None)
+
+                    if best_idx >= 0 and best_idx != cam_idx:
+                        best_name = next(
+                            (c["name"] for c in available if c["index"] == best_idx), "?")
+                        logger.warning(
+                            f"📷 Kamera-Index korrigiert: [{cam_idx}] → [{best_idx}] "
+                            f"{best_name} — {befund['begruendung']}"
+                        )
+                        found_webcam_index = best_idx
+                    elif best_idx >= 0:
+                        found_webcam_index = best_idx   # bestätigt, Warnung weg
+                    elif aktuelle is not None and aktuelle.get("einordnung") == "intern":
+                        # Der eingestellte Index zeigt nachweislich auf eine
+                        # interne Kamera. Sofort abschalten — das ist genau der
+                        # Fall, den die Sperre verhindern soll.
+                        logger.warning(
+                            f"⚠️ Eingestellte Kamera [{cam_idx}] ist eine INTERNE "
+                            f"Kamera ({aktuelle.get('einordnung_grund', '')}) — "
+                            f"wird abgeschaltet."
+                        )
+                        found_webcam_index = -1
+                        problem_text = t(self.config, "topbar.camera_missing")
+                    elif befund["zustand"] == "intern":
+                        logger.warning(
+                            f"⚠️ Nur noch interne Kameras sichtbar — "
+                            f"{befund['begruendung']}. Kamera wird abgeschaltet."
+                        )
+                        found_webcam_index = -1
+                        problem_text = t(self.config, "topbar.camera_missing")
+                    elif (getattr(self, "_camera_index_bestaetigt", False)
+                          or befund.get("bestaetigter_index", -1) == cam_idx
+                          or self.config.get("camera_index_manuell", False)):
+                        # Unbestimmter Befund, aber für DIESEN Index gibt es
+                        # einen Beweis (in diesem Lauf bestätigt, im Gedächtnis
+                        # bestätigt oder im Admin-Menü von Hand gewählt). Ein
+                        # misslungener Suchlauf kippt das NICHT — genau daran ist
+                        # 2.4.39 gescheitert. Trotzdem prüfen, ob er noch aufgeht.
+                        logger.debug(
+                            f"Kamera-Wächter: Befund unbestimmt "
+                            f"({befund['zustand']}), bestätigter camera_index "
+                            f"[{cam_idx}] bleibt — {befund['begruendung']}"
+                        )
+                        if not any(c.get("index") == cam_idx for c in available):
+                            problem_text = t(self.config, "topbar.camera_missing")
+                    else:
+                        logger.warning(
+                            f"⚠️ Kamera-Wächter: camera_index [{cam_idx}] ist nicht "
+                            f"als externe Kamera belegt ({befund['zustand']}: "
+                            f"{befund['begruendung']}) — wird abgeschaltet."
+                        )
+                        found_webcam_index = -1
+                        problem_text = t(self.config, "topbar.camera_missing")
                 else:
                     # 2.4.31: NUR unter der gemeinsamen Kamera-Sperre anfassen.
                     # Genau diese Zeile stand im Absturz-Protokoll von Box 044
@@ -2639,6 +2839,12 @@ class PhotoboothApp:
 
         if found_webcam_index is not None:
             self.config["camera_index"] = found_webcam_index
+            # Merken, ob dieser Index in DIESEM Lauf per Erkennung als extern
+            # belegt wurde. Nur ein so belegter (oder von Hand gewählter)
+            # Index überlebt später einen misslungenen Suchlauf.
+            self._camera_index_bestaetigt = found_webcam_index >= 0
+            if found_webcam_index >= 0:
+                self.config["camera_index_manuell"] = False
 
         if problem_text:
             # Blinkend anzeigen (wie USB/Drucker-Warnung)

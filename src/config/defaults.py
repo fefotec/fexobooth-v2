@@ -41,6 +41,11 @@ DEFAULT_CONFIG = {
     # Kamera
     "camera_type": "webcam",
     "camera_index": 0,
+    # Wurde camera_index im Admin-Menue von Hand gewaehlt? Grundwert False:
+    # Eine frische Box hat camera_index 0 — auf dem Miix 310 ist das die
+    # abgeklebte interne Kamera. Ohne Beweis (Erkennung oder Handauswahl)
+    # wird dieser Index abgeschaltet, statt blind benutzt zu werden.
+    "camera_index_manuell": False,
     "rotate_180": False,
     "liveview_template_overlay": True,  # Template-Overlay im LiveView anzeigen
     "camera_settings": {
