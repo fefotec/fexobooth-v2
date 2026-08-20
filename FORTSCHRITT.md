@@ -4,6 +4,56 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-08-20 (Nachmittag) — Die Messung selbst kann nicht mehr endlos hängen (2.4.36)
+
+Der Umbau auf einen eigenen Prozess (siehe unten) hat die **Folge** entschärft: Die
+Oberfläche friert nicht mehr mit ein. Die **Ursache** lag aber im Messcode selbst — er
+hatte keine einzige Zeitgrenze und schrieb den Bericht erst ganz am Ende.
+
+### Umgesetzt in `src/tools/kamera_messung.py`
+
+| Was | Warum |
+|---|---|
+| Jeder Kamerazugriff läuft in einem Wegwerf-Thread mit Zeitgrenze (640×480 = 25 s, 720p = 35 s, 1080p = 50 s, Umschalt-Test = 30 s), dazu ein Gesamtbudget von 8 Minuten | Vorher: 5× `read()` + 30× `grab()` je Zelle ohne jede Abbruchbedingung. Ein blockierender cv2-Aufruf lässt sich nicht abbrechen — nur **aufgeben**; das steht so auch im Code |
+| Bericht wird nach **jedem** Schritt atomar geschrieben (`.tmp` + `os.replace`), mit Statuskopf „Schritt 4 von 11 / läuft seit 00:02:13" | Einziges mögliches Lebenszeichen: `print()` fällt im Fenster-Build ins Leere. Ein Abbruch hinterlässt jetzt alle bis dahin fertigen Messwerte |
+| Nach einem aufgegebenen Schritt werden alle weiteren Kamera-Schritte übersprungen und begründet | Der aufgegebene Thread besitzt Kamera **und** Sperre weiter — ein zweiter Zugriff wäre die Heap-Korruption aus 2.4.31 |
+| Kamera-Sperre wird **im Worker-Thread** genommen, nicht außen | `camera_hardware_lock()` ist ein RLock und nur für denselben Thread reentrant |
+| Liefert ein Backend schon bei 640×480 nichts, fallen seine restlichen Zellen weg (mit Zeile im Bericht) | Sonst dreimal volle Wartezeit für null Erkenntnis |
+| Abschnitt 3 rechnet auf einem Bild aus Abschnitt 1 statt die Kamera erneut zu öffnen | Spart 3 Öffnungen + 18 blockierbare `read()`; die Kalt-1080p-Öffnung hatte am 13.08. schon einmal eine Box eingefroren |
+| Auflösung **vor** dem Codec setzen, danach beides zurücklesen und im Bericht ausweisen (`1920x1080 MJPG`) | Genau umgekehrt zur eigenen Erkenntnis aus 2.4.13 — gemessen wurde vermutlich YUY2 statt MJPG, also nicht die zentrale Frage |
+| OpenCV-Meldungen nicht mehr stumm, sondern (wenn möglich) in `kamera-messung-opencv.txt` | „can't grab frame" & Co. erklären den Hänger — für ein Diagnosewerkzeug war Stummschalten die falsche Richtung |
+
+### `src/main.py` (`--kamera-test`)
+
+- `install_faulthandler()` läuft jetzt **auch** in diesem Zweig (die BAT verspricht
+  „in absturz.log steht dann, woran es lag" — vorher gab es dort keinen).
+- Kamera-Index nicht mehr hart 0: `--kamera-index` > Config > `find_best_camera()`.
+  Index **und Gerätename** stehen im Berichtskopf, damit sofort sichtbar ist, welche
+  Kamera gemessen wurde. (Auf Christians Box war 0 richtig — die C922 hängt dort auf 0.
+  Auf Boxen mit interner Tablet-Kamera ist 0 die abgeklebte.)
+- Exit-Code 0 = Bericht geschrieben, 1 = nicht.
+
+### `setup/Kamera-Messung-starten.bat`
+
+Alter Bericht wird als `kamera-messung-vorher.txt` aufgehoben statt gelöscht; nach
+`taskkill` wird per `tasklist` nachgesehen statt blind 5 s gewartet; der Ausweichpfad
+`C:\ProgramData\FexoBox` wird geprüft; neuer Text sagt 2–4 Minuten an, erklärt die
+Fortschrittsanzeige über die mitwachsende Berichtsdatei und warnt: Das schwarze Fenster
+zuzuklicken beendet die Messung **nicht**.
+
+### Geprüft (lokal)
+
+| Test | Ergebnis |
+|---|---|
+| `python -m py_compile` alle drei Dateien | fehlerfrei |
+| Kamera, die nie ein Bild liefert (simuliert) | nach 3 s aufgegeben, Rest übersprungen **mit Begründung**, Bericht vorhanden |
+| Gesunde Kamera (simuliert) | alle 11 Schritte, Spalten sauber, Format MJPG ausgewiesen |
+| Abbruch mitten im Lauf | Status `ABGEBROCHEN`, gemessener Teil bleibt erhalten |
+| Bericht während des Laufs geöffnet | Kopf zeigt Schritt, Laufzeit und Warnhinweis |
+| Warteschleife der BAT (isoliert) | verlässt die Schleife nach der ersten Runde |
+
+---
+
 ## 2026-08-20 (Mittag) — Kamera-Messung fror die Box ein: Umbau auf eigenen Prozess (2.4.36)
 
 **Meldung Christian:** Erst „ich warte nun schon 5 min aber der test wird immernoch

@@ -135,21 +135,37 @@ def _beende_kindprozesse():
 
 
 def _kamera_fuer_messung():
-    """Welche Kamera soll gemessen werden? Liefert (Index, Geraetename|None).
+    """Welche Kamera soll gemessen werden? Liefert (Index, Geraetename|None, Protokoll).
 
-    WARUM NICHT EINFACH INDEX 0 (bis 2.4.34 stand hier eine harte 0):
-    Auf dem Miix 310 ist Index 0 die INTERNE Tablet-Kamera. Die ist physisch
-    abgeklebt — sie laesst sich zwar oeffnen, liefert aber nie ein Bild. Genau
-    das ist der Fall, der die Messung endlos warten liess (Feld-Befund
-    19.08.2026: "ich warte nun schon 5 min"). Die Fotobox selbst benutzt diese
-    Kamera bewusst NICHT (`find_best_camera` filtert avstream & Co. weg und
-    setzt sonst -1). Eine Messung, die eine andere Kamera misst als die App
-    benutzt, ist wertlos — deshalb dieselbe Auswahl wie in app.py.
+    WARUM NICHT EINFACH INDEX 0 (bis 2.4.36 stand hier eine harte 0):
+    Eine Messung, die eine ANDERE Kamera misst als die App benutzt, ist wertlos.
+    Die App nimmt nie blind die 0, sondern die beste EXTERNE Kamera
+    (`find_best_camera`) — auf manchen Boxen ist Index 0 die interne, abgeklebte
+    Tablet-Kamera, die sich zwar oeffnen laesst, aber nie ein Bild liefert.
+    (Auf Christians Box vom 20.08.2026 war Index 0 dagegen genau richtig: Dort
+    meldete das Log "Externe Kamera bevorzugt: [0] c922 Pro Stream Webcam". Die
+    harte 0 war dort also nicht die Ursache des Haengers — sie ist trotzdem
+    Gluecksache und wird hier durch dieselbe Auswahl ersetzt, die die App trifft.)
+
+    HAENGER-BEFUND 2.4.37 — WARUM STUFE 3 UMGEBAUT WURDE:
+    Die Suche lief bis 2.4.36 ungeschuetzt: `WebcamManager.list_cameras()`
+    oeffnet fuenf DirectShow-Indizes im HAUPT-Thread, ohne jede Zeitgrenze, und
+    zwar BEVOR die erste Berichtszeile geschrieben ist. Genau dieser Zweig
+    greift auf Christians Weg (`Kamera-Messung-starten.bat` uebergibt kein
+    `--kamera-index`, und `camera_index` ist im Normalfall 0 oder -1, womit die
+    alte Bedingung `index > 0` falsch war). Haengt dort ein Index, sieht man
+    exakt das gemeldete Bild: 5 Minuten schwarzes Fenster, keine Datei.
+    Deshalb laeuft die Suche jetzt ueber `kamera_messung.kamera_suchen()` —
+    mit Zeitgrenze, mit Wegwerf-Thread und mit einem Lebenszeichen auf der
+    Platte, bevor sie beginnt. Die Hardware-Sperre wird hier bewusst NICHT
+    genommen: `list_cameras()` nimmt sie selbst, und sie ist ein RLock — ein
+    haltender Hauptthread wuerde den Such-Thread garantiert verklemmen.
     """
     # 1. Ausdrueckliche Vorgabe auf der Kommandozeile schlaegt alles.
     if "--kamera-index" in sys.argv:
         try:
-            return int(sys.argv[sys.argv.index("--kamera-index") + 1]), None
+            return int(sys.argv[sys.argv.index("--kamera-index") + 1]), None, \
+                ["Index kam von der Kommandozeile (--kamera-index)."]
         except Exception:
             pass
 
@@ -160,25 +176,17 @@ def _kamera_fuer_messung():
     except Exception:
         index = 0
     if index > 0:
-        return index, None
+        return index, None, ["Index kam aus der Config (camera_index=%d)." % index]
 
-    # 3. Config sagt 0 oder -1: selbst suchen, wie die App es tut.
-    #    NUR in diesem Fall, denn list_cameras() oeffnet selbst Kameras — das
-    #    kostet auf dem Miix bis zu ~16 s und traegt ein eigenes Haenger-Risiko.
-    #    Die Hardware-Sperre ist dabei Pflicht (2.4.31). Schlaegt es fehl,
-    #    bleibt es bei 0 — also nie schlechter als bisher.
+    # 3. Config sagt 0 oder -1: selbst suchen, wie die App es tut — aber
+    #    abgesichert. Schlaegt es fehl, bleibt es bei 0, also nie schlechter
+    #    als die harte 0 von frueher.
     try:
-        from src.camera.webcam import WebcamManager, camera_hardware_lock
-        with camera_hardware_lock():
-            kameras = WebcamManager.list_cameras()
-        bester = WebcamManager.find_best_camera(kameras)
-        if bester >= 0:
-            name = next((k.get("name") for k in kameras if k.get("index") == bester), None)
-            return bester, name
-    except Exception:
-        pass
-
-    return (index if index >= 0 else 0), None
+        from src.tools.kamera_messung import kamera_suchen
+        return kamera_suchen()
+    except Exception as e:
+        return (index if index >= 0 else 0), None, \
+            ["Kamera-Suche nicht moeglich (%s) - nehme Index 0." % str(e)[:60]]
 
 
 def main():
@@ -203,8 +211,20 @@ def main():
         code = 1
         try:
             from src.tools.kamera_messung import messung_ausfuehren
-            index, name = _kamera_fuer_messung()
-            pfad = messung_ausfuehren(index, kamera_name=name)
+            # Woher kam der Start? Das MUSS in den Bericht: Ueber den
+            # Admin-Knopf laeuft die Fotobox-Software waehrend der Messung
+            # weiter und kostet auf dem Atom Bilder/s — ueber die BAT nicht.
+            # Ohne diese Angabe waeren zwei Berichte derselben Box unbemerkt
+            # nicht vergleichbar (und die 1080p-Entscheidung damit angreifbar).
+            if "--aus-dialog" in sys.argv:
+                herkunft = ("Admin-Knopf im Kundenmenue "
+                            "(Fotobox-Software laeuft parallel mit - kostet Leistung)")
+            else:
+                herkunft = ("Kamera-Messung-starten.bat / Kommandozeile "
+                            "(Fotobox-Software beendet - Messung ungestoert)")
+            index, name, vorlauf = _kamera_fuer_messung()
+            pfad = messung_ausfuehren(index, kamera_name=name,
+                                      herkunft=herkunft, vorlauf=vorlauf)
             code = 0 if pfad else 1
         except Exception as e:
             # Ohne Konsole (Fenster-Build) darf hier nichts crashen — der Fehler

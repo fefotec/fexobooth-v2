@@ -6,6 +6,61 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.37] - 2026-08-20 - Messung lief sauber durch, lieferte aber keine Werte
+
+> Anlass: 2.4.36 hat auf der Box funktioniert — kein Einfrieren, sauberer
+> Abbruch, Bericht nach 25 s. Nur stand in jeder Zeile "Kamera liess sich nicht
+> oeffnen" bzw. "abgebrochen". Die Messtechnik war also in Ordnung, die Messung
+> selbst kam nie an die Kamera.
+
+### Behoben
+
+- **DirectShow verweigerte das Oeffnen wegen der neuen Zeitgrenzen.** 2.4.36
+  uebergab `CAP_PROP_OPEN_TIMEOUT_MSEC` / `CAP_PROP_READ_TIMEOUT_MSEC` an JEDES
+  Backend, im Glauben, DirectShow ignoriere sie. Das tut es nicht — es lehnt sie
+  ab und oeffnet die Kamera gar nicht erst. Aus `kamera-messung-opencv.txt` der
+  Box:
+
+  ```
+  VIDEOIO(DSHOW): raised OpenCV exception:
+  (-213) Failed to apply invalid or unsupported parameter: [53]=4000
+  VIDEOIO(DSHOW): backend is generally available but can't be used to capture by index
+  ```
+
+  Folge: DirectShow scheiterte bei 640x480, wurde als totes Backend eingestuft,
+  alle weiteren DirectShow-Messungen wurden uebersprungen. Danach lief Media
+  Foundation in sein Zeitlimit — und der Bericht meldete faelschlich
+  „1920x1080 lieferte KEINE Bilder", also ein reines Messartefakt.
+
+  Die Zeitgrenzen gehen jetzt **nur noch an Media Foundation**. Zusaetzlich:
+  Ist die Kamera nach dem Versuch mit Parametern nicht offen, wird ohne
+  Parameter erneut geoeffnet. Beides ist noetig, weil OpenCV den Fehler INTERN
+  abfaengt und nur ein nicht geoeffnetes Objekt zurueckgibt — es fliegt keine
+  Python-Ausnahme, ein `try/except` allein haette nie gegriffen (im Test
+  nachgestellt).
+
+- **Kamera-Waechter der App legt sich waehrend der Messung schlafen.** Die
+  Messung laeuft seit 2.4.36 als eigener Prozess — `camera_hardware_lock()`
+  wirkt dort nicht mehr, denn die Sperre gilt nur INNERHALB eines Prozesses.
+  Im Box-Log ist zu sehen, wie die App waehrend der laufenden Messung weiter
+  Kameras suchte (10:03:33 bis 10:03:46). Fuer die Dauer der Messung ruht der
+  Waechter jetzt.
+
+- **Kamera-Wiederherstellung beim Schliessen blockiert die Oberflaeche nicht
+  mehr.** Sie lief bisher direkt im UI-Thread; `initialize()` probiert DSHOW,
+  MSMF und CAP_ANY nacheinander durch und haette ausgerechnet beim Knopf
+  „Schließen" wieder einfrieren koennen. Laeuft jetzt verzoegert in einem
+  Hintergrund-Thread.
+
+### Bestaetigt aus dem Feld (2.4.36)
+
+- Die Kamera-Messung liess sich **starten, beobachten und beenden, ohne die Box
+  einzufrieren** — genau das war in 2.4.35 unmoeglich. Laufzeit 25 s, Status-Kopf
+  im Bericht, aufgegebener Schritt sauber vermerkt, Urteil mit ehrlichem
+  Vorbehalt („stuetzt sich nur auf die tatsaechlich gemessenen Zeilen").
+
+---
+
 ## [2.4.36] - 2026-08-20 - Kamera-Messung friert die Box nicht mehr ein
 
 > Anlass (Christian, auf der Box): „ich warte nun schon 5 min aber der test wird
@@ -47,6 +102,36 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 - **Notbremse:** Laeuft die Messung laenger als 15 Minuten, wird der Prozess
   beendet — sonst bliebe die Kamera dauerhaft belegt und keine Session mehr
   moeglich. Dasselbe passiert beim Schliessen des Dialogs.
+
+### Ausserdem behoben: die Messung selbst haengt nicht mehr endlos
+
+- **Zeitgrenzen, wo vorher keine waren.** Der Messcode fragte die Kamera ueber
+  240-mal nach einem Bild und hatte fuer keinen dieser Versuche eine Zeitgrenze.
+  Jetzt laeuft jeder Kamerazugriff in einem eigenen Wegwerf-Thread mit
+  Zeitlimit (640x480 = 25 s, 720p = 35 s, 1080p = 50 s, Umschalt-Test = 30 s),
+  dazu ein Gesamtbudget von 8 Minuten. Ein blockierender `cv2`-Aufruf laesst
+  sich nicht abbrechen — nur aufgeben; danach werden alle weiteren
+  Kamera-Schritte uebersprungen, weil der aufgegebene Thread die Kamera
+  weiterhin besitzt.
+- **Der Bericht waechst jetzt mit.** Er wird nach JEDEM Schritt atomar
+  geschrieben und traegt oben einen Statuskopf: `Status`, `Schritt 4 von 11`,
+  `Laeuft seit 00:02:13`, `Aktueller Schritt`. Damit ist waehrend des Laufs
+  sichtbar, ob es noch vorangeht — vorher entstand die Datei erst ganz am Ende,
+  und `print()` faellt im Fenster-Build ins Leere. Ein Abbruch hinterlaesst
+  jetzt alle bis dahin fertigen Messwerte statt gar nichts.
+- **Jeder ausgelassene Schritt hinterlaesst eine Zeile mit Begruendung.**
+  Vorher liess sich "gemessen und leer" nicht von "stumm gescheitert"
+  unterscheiden.
+- **Richtiger Codec gemessen.** Die Aufloesung wird jetzt VOR dem Codec gesetzt
+  (wie in `webcam.py`, Erkenntnis aus 2.4.13) und beides zurueckgelesen — der
+  Bericht weist `1920x1080 MJPG` bzw. `YUY2 <-- nicht MJPG!` aus. Vorher wurde
+  vermutlich das Dekodieren von YUY2 gemessen, also nicht die eigentliche Frage.
+- **Kamera-Auswahl wie in der App**: `--kamera-index` schlaegt Config schlaegt
+  `find_best_camera()`. Index und Geraetename stehen im Berichtskopf.
+- **`Kamera-Messung-starten.bat`**: sagt 2 bis 4 Minuten an, erklaert die
+  Fortschrittsanzeige ueber die mitwachsende Berichtsdatei, warnt dass das
+  Zuklicken des schwarzen Fensters die Messung NICHT beendet, hebt den alten
+  Bericht als `kamera-messung-vorher.txt` auf und prueft auch den Ausweichpfad.
 
 ### Bestaetigt aus dem Feld (2.4.35)
 

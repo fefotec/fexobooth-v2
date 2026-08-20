@@ -1,6 +1,6 @@
 @echo off
 rem ============================================================
-rem  FexoBooth - Kamera-Messung starten  (2.4.35)
+rem  FexoBooth - Kamera-Messung starten  (2.4.37)
 rem ============================================================
 rem  Doppelklick genuegt. Das Programm misst 2 bis 4 Minuten, wie
 rem  schnell die Kamera bei verschiedenen Aufloesungen ist, und
@@ -61,10 +61,13 @@ if not errorlevel 1 (
     taskkill /IM fexobooth.exe /F >nul 2>&1
 
     rem Nicht blind warten, sondern nachsehen: Erst wenn der Prozess
-    rem wirklich weg ist, gibt Windows die Kamera frei. Harte Obergrenze
-    rem 15 Sekunden, sonst haengt am Ende diese Datei statt der Messung.
+    rem wirklich weg ist, gibt Windows die Kamera frei. Nach taskkill /F ist
+    rem das praktisch immer schon in der ersten Runde der Fall. Harte
+    rem Obergrenze 10 Runden (auf einer langsamen Box rund 30 Sekunden, weil
+    rem tasklist dort mehrere Sekunden braucht) - ohne Obergrenze haengt am
+    rem Ende diese Datei statt der Messung.
     set "WEG="
-    for /L %%i in (1,1,15) do (
+    for /L %%i in (1,1,10) do (
         if not defined WEG (
             tasklist /FI "IMAGENAME eq fexobooth.exe" 2>nul | find /I "fexobooth.exe" >nul
             if errorlevel 1 (
@@ -98,7 +101,8 @@ echo.
 echo   ===============================================
 echo    Die Messung dauert normalerweise 2 bis 4 Minuten.
 echo    Auf langsamen Boxen kann es laenger dauern -
-echo    das ist kein Fehler.
+echo    das ist kein Fehler. Nach spaetestens rund 10
+echo    Minuten beendet sich die Messung selbst.
 echo   ===============================================
 echo.
 echo   SO SEHEN SIE DEN FORTSCHRITT:
@@ -117,9 +121,34 @@ echo   NICHT! Die Messung laeuft dann unsichtbar weiter und haelt
 echo   die Kamera belegt.
 echo.
 
-"%EXE%" --kamera-test
-set "CODE=%ERRORLEVEL%"
+rem ------------------------------------------------------------
+rem  NOTBREMSE (2.4.37)
+rem  Bis 2.4.36 stand hier schlicht  "%EXE%" --kamera-test  und
+rem  diese Datei wartete OHNE JEDE OBERGRENZE auf das Programmende.
+rem  Genau so entstand der Feld-Befund vom 20.08.2026: "ich warte
+rem  nun schon 5 min aber der test wird immernoch angezeigt".
+rem  Jetzt wird die Messung losgeschickt und beobachtet - meldet
+rem  sie sich nach rund 10 Minuten nicht zurueck, wird sie hart
+rem  beendet. Der Bericht waechst mit, es geht also nichts verloren.
+rem  (Der Rueckgabewert des Programms geht dabei verloren; ob ein
+rem  Bericht existiert, ist das aussagekraeftigere Signal.)
+rem ------------------------------------------------------------
+start "" /B "%EXE%" --kamera-test
 
+set /a RUNDEN=0
+:MESSUNG_BEOBACHTEN
+ping -n 6 127.0.0.1 >nul
+tasklist /FI "IMAGENAME eq fexobooth.exe" 2>nul | find /I "fexobooth.exe" >nul
+if errorlevel 1 goto MESSUNG_ENDE
+set /a RUNDEN+=1
+if %RUNDEN% LSS 120 goto MESSUNG_BEOBACHTEN
+
+echo.
+echo   [!!] Die Messung kam nicht mehr weiter und wird jetzt beendet.
+echo   Der bis dahin geschriebene Bericht bleibt erhalten.
+taskkill /IM fexobooth.exe /F >nul 2>&1
+
+:MESSUNG_ENDE
 echo.
 if exist "%BERICHT%" (
     echo   [OK] Fertig! Der Bericht oeffnet sich jetzt.
@@ -133,7 +162,7 @@ if exist "%BERICHT%" (
         echo   Datei: %BERICHT2%
         start "" notepad.exe "%BERICHT2%"
     ) else (
-        echo   [!!] Es wurde KEIN Bericht geschrieben. ^(Code %CODE%^)
+        echo   [!!] Es wurde KEIN Bericht geschrieben.
         echo   Bitte trotzdem den Ordner C:\FexoBooth\logs mitschicken -
         echo   in absturz.log steht dann, woran es lag.
     )

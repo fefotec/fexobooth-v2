@@ -42,6 +42,7 @@ wieder bereitgestellt.
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -58,11 +59,20 @@ _CREATE_NO_WINDOW = 0x08000000
 
 # Takt der Fortschrittsanzeige. Bewusst gemuetlich: poll() und ein Blick auf die
 # Dateigroesse sind billig, aber die Box ist schwache Hardware.
-_TAKT_MS = 500
+# 2.4.37 von 500 auf 1000 ms: Der Takt liest jedes Mal den Kopf der
+# Berichtsdatei und zeichnet den Balken neu — parallel zur laufenden Messung auf
+# einem 2-Kern-Atom. Zweimal pro Sekunde war dafuer zu oft; einmal pro Sekunde
+# fuehlt sich genauso lebendig an und kostet die Haelfte.
+_TAKT_MS = 1000
 
 # Notbremse. Laeuft die Messung laenger, stimmt etwas nicht — dann wird der
 # Kindprozess beendet, damit er nicht dauerhaft die Kamera belegt.
 _HOECHSTDAUER_S = 15 * 60
+
+# Ruhezeit nach dem Beenden des Messprozesses, bevor die App die Kamera wieder
+# oeffnet. Windows gibt den USB-Geraetehandle erst mit dem Prozessende frei;
+# sofort danach zu oeffnen kostet auf dem Miix mehrere Sekunden Fehlversuch.
+_KAMERA_RUHE_MS = 1500
 
 
 def _berichts_pfade() -> List[Path]:
@@ -83,11 +93,18 @@ def _mess_befehl(kamera_index: int) -> Tuple[List[str], Optional[str]]:
     Returns:
         (Befehl, Arbeitsverzeichnis)
     """
+    # `--aus-dialog` ist reine Buchfuehrung: Der Messprozess schreibt daraufhin
+    # "Gestartet: Admin-Knopf ..." in den Bericht. Das ist wichtig, weil hier
+    # die komplette Fotobox-Software waehrend der Messung weiterlaeuft und auf
+    # dem Atom-Tablet Bilder/s kostet — ein Bericht von hier ist mit einem
+    # Bericht aus der BAT nicht vergleichbar, und ohne diese Zeile sieht man
+    # den Unterschied nicht.
     if getattr(sys, "frozen", False):
         # PyInstaller-Build: sys.executable IST die fexobooth.exe.
         # Exakt der Aufruf, den auch Kamera-Messung-starten.bat verwendet.
         return (
-            [sys.executable, "--kamera-test", "--kamera-index", str(kamera_index)],
+            [sys.executable, "--kamera-test",
+             "--kamera-index", str(kamera_index), "--aus-dialog"],
             str(Path(sys.executable).parent),
         )
 
@@ -97,7 +114,7 @@ def _mess_befehl(kamera_index: int) -> Tuple[List[str], Optional[str]]:
     hier = Path(__file__).resolve()
     return (
         [sys.executable, str(hier.parents[2] / "main.py"),
-         "--kamera-test", "--kamera-index", str(kamera_index)],
+         "--kamera-test", "--kamera-index", str(kamera_index), "--aus-dialog"],
         str(hier.parents[3]),
     )
 
@@ -263,6 +280,10 @@ class KameraMessungDialog(ctk.CTkToplevel):
         self.balken.start()
         self._status("Kamera wird freigegeben...")
 
+        # ZUERST den Kamera-Waechter der App stilllegen, DANN die Kamera
+        # freigeben — nicht umgekehrt (siehe _messung_flag).
+        self._messung_flag(True)
+
         # Kamera der App freigeben — sonst ist sie fuer den Messprozess belegt.
         self._kamera_freigeben()
 
@@ -288,6 +309,7 @@ class KameraMessungDialog(ctk.CTkToplevel):
             )
         except Exception as e:
             logger.exception(f"Messprozess liess sich nicht starten: {e}")
+            self._messung_flag(False)
             self._abschluss_anzeigen(
                 "Die Messung ließ sich nicht starten.\n"
                 f"{str(e)[:140]}\n\n"
@@ -297,6 +319,33 @@ class KameraMessungDialog(ctk.CTkToplevel):
 
         self._start_zeit = time.time()
         self._takt()
+
+    def _messung_flag(self, an: bool):
+        """Kamera-Waechter der App fuer die Dauer der Messung stilllegen.
+
+        WARUM DAS NOETIG IST (Doppelzugriff ueber die PROZESSGRENZE):
+        `_check_camera_status` in src/app.py probt die Kamera alle 15 s (bei
+        blinkender Warnung alle 2 s) — aber nur, solange der Start-Screen zu
+        sehen und die Kamera NICHT initialisiert ist. Genau diesen Zustand
+        stellt dieser Dialog aktiv her: Er gibt die Kamera frei, und weil er
+        nur ein modales Toplevel ist, bleibt `current_screen_name` "start" und
+        die Tk-Mainloop feuert ihre after-Timer weiter.
+        Ergebnis ohne diesen Riegel: Der App-Prozess oeffnet mitten in der
+        Messung dieselbe DirectShow-Kamera, die der Messprozess gerade streamt.
+        `camera_hardware_lock()` schuetzt davor NICHT — die Sperre gilt nur
+        innerhalb eines Prozesses.
+
+        Reihenfolge ist wichtig: erst das Flag setzen, dann die Kamera
+        freigeben. Andersherum gaebe es ein Zeitfenster, in dem der Waechter
+        die freie Kamera sieht und sofort losprobt.
+        """
+        if self.app is None:
+            return
+        try:
+            self.app._kamera_messung_laeuft = bool(an)
+            logger.debug(f"Kamera-Waechter der App {'pausiert' if an else 'wieder aktiv'}")
+        except Exception as e:
+            logger.warning(f"Kamera-Messung: Waechter-Flag nicht setzbar: {e}")
 
     def _kamera_freigeben(self):
         if self.app is None or self._kamera_freigegeben:
@@ -328,6 +377,7 @@ class KameraMessungDialog(ctk.CTkToplevel):
                 )
                 self._prozess_beenden()
                 self._prozess = None
+                self._messung_flag(False)
                 self._abschluss_anzeigen(
                     f"Die Messung wurde nach {_HOECHSTDAUER_S // 60} Minuten "
                     "abgebrochen,\nweil sie nicht mehr weiterkam.\n\n"
@@ -345,14 +395,26 @@ class KameraMessungDialog(ctk.CTkToplevel):
 
         # Prozess ist fertig
         self._prozess = None
+        self._messung_flag(False)
         pfad = self._bericht_suchen()
         if pfad:
             self.bericht_pfad = pfad
             logger.info(f"Kamera-Messung fertig nach {laeuft_seit:.0f}s: {pfad}")
+            # Musste ein Kamera-Schritt aufgegeben werden, haelt im Messprozess
+            # ein nicht stoppbarer Thread die Kamera — der Prozess ist zwar
+            # beendet und Windows hat den Handle zurueck, die Messwerte sind
+            # aber unvollstaendig. Das steht im Statuskopf des Berichts; ohne
+            # diesen Hinweis wuerde es niemand lesen.
+            warnung = ""
+            if self._kopf_lesen().get("kamera_belegt"):
+                warnung = ("\n\nACHTUNG: Mindestens ein Kamera-Schritt musste "
+                           "aufgegeben\nwerden — die Kamera hat nicht geantwortet. "
+                           "Bitte die Box\neinmal neu starten und den Bericht "
+                           "trotzdem mitschicken.")
             self._abschluss_anzeigen(
                 f"Fertig nach {self._dauer_text(laeuft_seit)}!\n"
                 f"Der Bericht wurde gespeichert:\n{pfad}\n\n"
-                "Bitte diese Datei an Claude schicken.",
+                "Bitte diese Datei an Claude schicken." + warnung,
                 bericht_vorhanden=True,
             )
         else:
@@ -406,11 +468,19 @@ class KameraMessungDialog(ctk.CTkToplevel):
                 if not pfad.is_file() or pfad.stat().st_size <= 0:
                     continue
                 with open(pfad, "r", encoding="utf-8", errors="replace") as f:
-                    kopf = f.read(600)
+                    # 1200 statt 600 Zeichen: Der Statuskopf ist laenger
+                    # geworden (Hinweisblock "Aendert sich diese Datei ..." und
+                    # die ACHTUNG-Zeile zur belegten Kamera). Mit 600 haette
+                    # die ACHTUNG-Zeile knapp ausserhalb liegen koennen.
+                    kopf = f.read(1200)
             except Exception:
                 continue
 
             ergebnis["vorhanden"] = True
+            if "aufgegeben werden" in kopf:
+                # Zeile aus Bericht._kopf(): "ACHTUNG: Ein Kamera-Schritt
+                # musste aufgegeben werden."
+                ergebnis["kamera_belegt"] = True
             for zeile in kopf.splitlines():
                 if zeile.startswith("Fortschritt"):
                     teile = zeile.split("Schritt")
@@ -476,6 +546,7 @@ class KameraMessungDialog(ctk.CTkToplevel):
         logger.info("Kamera-Messung: vom Benutzer abgebrochen")
         self._prozess_beenden()
         self._prozess = None
+        self._messung_flag(False)
 
         pfad = self._bericht_suchen()
         if pfad:
@@ -557,19 +628,7 @@ class KameraMessungDialog(ctk.CTkToplevel):
             self._prozess_beenden()
             self._prozess = None
 
-        # Kamera wieder bereitstellen. `_pre_init_camera()` nimmt die richtigen
-        # Werte aus der Config und macht nichts, wenn die Kamera schon offen ist.
-        # Klappt es nicht, ist das unkritisch: Der Session-Start initialisiert
-        # die Kamera ohnehin selbst, wenn sie nicht bereit ist (session.py).
-        if self.app is not None and self._kamera_freigegeben:
-            try:
-                self.app._pre_init_camera()
-                logger.info("Kamera-Messung: Kamera wieder bereitgestellt")
-            except Exception as e:
-                logger.warning(
-                    f"Kamera-Messung: Kamera nicht neu geöffnet ({e}) — "
-                    "der nächste Session-Start holt das nach"
-                )
+        self._kamera_spaeter_bereitstellen()
 
         try:
             self.grab_release()
@@ -586,6 +645,79 @@ class KameraMessungDialog(ctk.CTkToplevel):
                 self.parent_window.grab_set()
         except Exception:
             pass
+
+    def _kamera_spaeter_bereitstellen(self):
+        """Kamera der App wieder oeffnen — VERZOEGERT und NICHT im UI-Thread.
+
+        Bis 2.4.36 stand hier schlicht `self.app._pre_init_camera()`, direkt im
+        Tk-UI-Thread und unmittelbar nach dem Abschiessen des Messprozesses.
+        Beides ist falsch:
+          * `WebcamManager.initialize` probiert DSHOW, MSMF und CAP_ANY
+            nacheinander durch und nimmt dabei die Kamera-Hardware-Sperre.
+            Auf einer gerade erst freigegebenen USB-Kamera dauert allein der
+            MSMF-Fehlversuch auf dem Atom mehrere Sekunden — die Oberflaeche
+            fror also ausgerechnet beim Knopf "Schliessen" ein. Genau dieses
+            Einfrieren sollte 2.4.36 beseitigen.
+          * Windows gibt den Geraetehandle erst mit dem Prozessende frei.
+            Sofort danach zu oeffnen scheitert gern und kostet nur Zeit.
+        Deshalb: kurz Ruhe geben, dann in einem Hintergrund-Thread oeffnen.
+        Der Waechter bleibt bis dahin pausiert, damit er nicht parallel dazu
+        dieselbe Kamera anfasst; er wird im Thread am Ende wieder freigegeben.
+
+        Scheitert es, ist das unkritisch: Der Session-Start initialisiert die
+        Kamera ohnehin selbst, wenn sie nicht bereit ist (session.py).
+        """
+        app = self.app
+        if app is None:
+            return
+        if not self._kamera_freigegeben:
+            self._messung_flag(False)
+            return
+
+        def oeffnen():
+            try:
+                app._pre_init_camera()
+                logger.info("Kamera-Messung: Kamera wieder bereitgestellt")
+            except Exception as e:
+                logger.warning(
+                    f"Kamera-Messung: Kamera nicht neu geöffnet ({e}) — "
+                    "der nächste Session-Start holt das nach"
+                )
+            finally:
+                # IMMER wieder freigeben, auch nach einem Fehlschlag — sonst
+                # bliebe die Kamera-Warnung der Box dauerhaft stumm.
+                try:
+                    app._kamera_messung_laeuft = False
+                except Exception:
+                    pass
+
+        def starten():
+            threading.Thread(target=oeffnen, daemon=True,
+                             name="kamera-nach-messung").start()
+
+        try:
+            # Bewusst ueber die Wurzel der App: Dieser Dialog ist zu dem
+            # Zeitpunkt schon zerstoert.
+            app.root.after(_KAMERA_RUHE_MS, starten)
+        except Exception:
+            starten()
+
+    def destroy(self):
+        """Letzte Sicherung: Der Waechter darf nie dauerhaft pausiert bleiben.
+
+        `_schliessen` raeumt normal auf. Wird das Fenster auf einem anderen Weg
+        zerstoert (Fehler im Ablauf, App faehrt herunter), waere der Kamera-
+        Waechter sonst fuer den Rest der Laufzeit tot — die Box wuerde eine
+        fehlende Kamera nie wieder melden.
+        """
+        try:
+            if self._prozess is not None:
+                self._prozess_beenden()
+                self._prozess = None
+                self._messung_flag(False)
+        except Exception:
+            pass
+        return super().destroy()
 
     # ------------------------------------------------------------------
     # Hilfsmittel

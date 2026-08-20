@@ -1471,6 +1471,11 @@ class PhotoboothApp:
         self.camera_status.pack_forget()  # Verstecken wenn OK
         self._camera_blink_state = False
         self._camera_check_running = False  # Hintergrund-Prüfung aktiv?
+        # Läuft gerade die Kamera-Messung als eigener Prozess? Dann fasst der
+        # Wächter die Kamera NICHT an (siehe _check_camera_status). Gesetzt und
+        # zurückgesetzt wird das ausschließlich von
+        # src/ui/dialogs/kamera_messung.py.
+        self._kamera_messung_laeuft = False
 
         # Strom-Status (kompakt, immer sichtbar)
         self.power_status = ctk.CTkLabel(
@@ -2474,6 +2479,21 @@ class PhotoboothApp:
             self.root.after(2000, self._check_camera_status)
             return
 
+        # 2.4.37: Waehrend der Kamera-Messung NICHTS anfassen.
+        # Die Messung laeuft als eigener Prozess (src/ui/dialogs/kamera_messung.py)
+        # und streamt dieselbe USB-Kamera. `camera_hardware_lock()` hilft dagegen
+        # NICHT — die Sperre wirkt nur innerhalb eines Prozesses. Ohne diesen
+        # Riegel oeffnet der Waechter alle 2-15 s dieselbe DirectShow-Kamera und
+        # kann damit einen Messschritt scheitern lassen (im Bericht sieht das
+        # aus wie "1080p geht auf dieser Box nicht" — ein reines Messartefakt)
+        # oder im schlimmsten Fall selbst im Oeffnen haengen bleiben.
+        if getattr(self, "_kamera_messung_laeuft", False):
+            # Bewusst seltener nachsehen als sonst: Waehrend der Messung zaehlt
+            # jede CPU-Scheibe auf dem Atom-Tablet, und die Messwerte sollen
+            # nicht durch die eigene Oberflaeche verfaelscht werden.
+            self.root.after(5000, self._check_camera_status)
+            return
+
         # Außerhalb des Start-Screens oder bei aktiver Kamera: nichts prüfen
         # (Session läuft bzw. steht bevor) — nur Terminschleife weiterführen
         if (self.current_screen_name != "start"
@@ -2569,14 +2589,31 @@ class PhotoboothApp:
                     # (19.08.), waehrend ein zweiter Thread parallel in
                     # WebcamManager.list_cameras() dieselbe DirectShow-Kamera
                     # oeffnete -> Heap-Zerstoerung (0xc0000374) und die App war weg.
+                    #
+                    # 2.4.37: Die Sperre wird nur noch MIT Zeitgrenze genommen.
+                    # `with camera_hardware_lock():` wartet sonst unbegrenzt.
+                    # Haengt irgendwo ein Kamera-Aufruf und haelt die Sperre,
+                    # blockiert dieser Waechter-Thread fuer immer — und mit ihm
+                    # jeder spaetere Kamerazugriff, inklusive Session-Start.
+                    # Bekommen wir die Sperre nicht, wird NICHT geprueft und
+                    # auch KEINE Warnung gemeldet: "gerade belegt" ist kein
+                    # Beweis fuer "Kamera fehlt".
                     import cv2
                     from src.camera.webcam import camera_hardware_lock
-                    with camera_hardware_lock():
-                        cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW)
-                        if cap.isOpened():
-                            cap.release()
-                        else:
-                            problem_text = t(self.config, "topbar.camera_missing")
+                    sperre = camera_hardware_lock()
+                    if sperre.acquire(timeout=5.0):
+                        try:
+                            cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW)
+                            if cap.isOpened():
+                                cap.release()
+                            else:
+                                problem_text = t(self.config, "topbar.camera_missing")
+                        finally:
+                            sperre.release()
+                    else:
+                        logger.debug(
+                            "Kamera-Pruefung uebersprungen: Hardware-Sperre belegt"
+                        )
         except Exception:
             problem_text = t(self.config, "topbar.camera_error")
 
