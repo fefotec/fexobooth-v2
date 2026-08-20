@@ -3406,6 +3406,12 @@ class PhotoboothApp:
         logger.info(
             f"🎥 Kamera-Vorinitialisierung während Video: {breite}x{hoehe} ({betriebsart})"
         )
+        # Betriebsart VOR dem Oeffnen anmelden (2.4.44): Der Dauerbetrieb haengt
+        # damit am Schalter und nicht an der zufaellig angeforderten Aufloesung.
+        setzer = getattr(self.camera_manager, "set_dauerbetrieb_hd", None)
+        if setzer is not None:
+            setzer(self.config.get("camera_dauerbetrieb_hd", False))
+
         if self.camera_manager.initialize(
             self.config.get("camera_index", 0),
             breite,

@@ -497,6 +497,12 @@ class SystemTestDialog(ctk.CTkToplevel):
             f"({'Dauerbetrieb HD' if hd_dauerbetrieb else 'klassisch'})"
         )
 
+        # Betriebsart VOR dem Oeffnen anmelden (2.4.44) — siehe
+        # WebcamManager.set_dauerbetrieb_hd().
+        setzer = getattr(self.app.camera_manager, "set_dauerbetrieb_hd", None)
+        if setzer is not None:
+            setzer(hd_dauerbetrieb)
+
         t0 = time.perf_counter()
         success = self.app.camera_manager.initialize(cam_index, breite, hoehe)
         init_s = time.perf_counter() - t0
@@ -641,11 +647,27 @@ class SystemTestDialog(ctk.CTkToplevel):
         # Zurückschalten nicht nur überflüssig, es wäre falsch.
         mgr = self.app.camera_manager
         cam_settings = self.app.config.get("camera_settings", {})
+        # Dieselben drei Bedingungen wie in session._dauerbetrieb_aktiv()
+        # (2.4.44): Schalter an UND Kamera im Dauerbetrieb UND es steht
+        # wirklich kein Umschalten an. Ohne Schalter bleibt hier alles beim
+        # Alten. Der try/except fängt eine nicht-numerische Foto-Auflösung ab
+        # (im Admin frei eintippbar) — sonst bräche der Selbsttest ab, statt
+        # einfach klassisch weiterzulaufen.
+        ueberspringen = False
         braucht_restore = getattr(mgr, "braucht_preview_restore", None)
-        if braucht_restore is not None and not braucht_restore(
-            cam_settings.get("single_photo_width", 1920),
-            cam_settings.get("single_photo_height", 1080)
-        ):
+        if (self.app.config.get("camera_dauerbetrieb_hd", False)
+                and getattr(mgr, "dauerbetrieb_hd_aktiv", False)
+                and braucht_restore is not None):
+            try:
+                ueberspringen = not braucht_restore(
+                    cam_settings.get("single_photo_width", 1920),
+                    cam_settings.get("single_photo_height", 1080)
+                )
+            except Exception as e:
+                logger.debug(f"System-Test: Betriebsart nicht ermittelbar: {e}")
+                ueberspringen = False
+
+        if ueberspringen:
             logger.info("System-Test: Vorschau-Restore übersprungen (Dauerbetrieb HD)")
         elif hasattr(mgr, "restore_preview_resolution"):
             try:

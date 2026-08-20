@@ -6,6 +6,85 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.44] - 2026-08-20 - Etappe 2 nachgebessert: Schalter haelt wirklich dicht, Kamera faengt sich selbst
+
+> Ergebnis der Gegenpruefung von 2.4.43. Nichts davon ist eine neue Funktion —
+> es sind die Loecher, die eine Testbox-Veranstaltung still ruiniert haetten,
+> und zwei Stellen, an denen sich eine Box mit AUSGESCHALTETEM Schalter doch
+> anders verhalten haette als die uebrige Flotte.
+
+### Behoben — Boxen mit ausgeschaltetem Schalter
+
+- **Der Puffer wird wieder immer 2x geleert, ausser im echten Dauerbetrieb.**
+  Vorher haing die Ersparnis daran, ob gerade umgeschaltet wurde. Das trifft
+  auch eine ganz normale Flottenbox: Geht ein Preview-Restore einmal nicht
+  durch (das Log schreibt dann „nicht bestaetigt" und versucht es nie wieder),
+  steht die Kamera weiter auf 1080p — und ausgerechnet in dieser Lage, mit der
+  hoechsten Gefahr eines alten Pufferbildes, waere nur noch 1x geleert worden.
+  Also genau das gemeldete „als wenn 2 Fotos geschossen werden", auf Boxen
+  ohne Schalter. Jetzt haengt die Ersparnis strikt am Schalter.
+
+- **Der Dauerbetrieb wird nicht mehr an der Aufloesung erraten.** Session und
+  System-Test haben vorher allein verglichen, ob die Vorschau schon so gross
+  ist wie das Foto. Bei 640x480 gegen 1920x1080 ging das gut — aber die
+  Foto-Aufloesung ist im Admin frei eintippbar, und eine kuenftige Kamera, die
+  kein 640x480 liefert, haette die ganze neue Betriebsart von selbst
+  eingeschaltet. Jetzt muessen drei Dinge zusammenkommen: Schalter an, Kamera
+  hat den Dauerbetrieb wirklich angenommen, und es steht kein Umschalten an.
+
+- **Auch das Oeffnen haengt jetzt am Schalter** (`set_dauerbetrieb_hd()` vor
+  `initialize()`). Vorher entschied allein die angeforderte Breite. Wer
+  `live_view_resolution` von Hand hochsetzt, bekam damit die neue Betriebsart
+  ungefragt. Das zweistufige Warm-Oeffnen bleibt aber bei jeder grossen
+  Aufloesung aktiv — es ist der Schutz gegen das Einfrieren (Box 224) und
+  nicht Teil der neuen Betriebsart.
+
+### Behoben — Langlauf auf der Testbox
+
+- **Die Selbstheilung ist zurueck.** Der klassische Weg hatte sie eingebaut,
+  ohne dass es jemandem auffiel: Er setzte vor JEDEM Foto 1920x1080 neu.
+  Rutschte die Kamera zwischendurch ab (USB-Wackler, Energiesparen,
+  Treiber-Reset), zog der naechste Auslueser sie wieder gerade. Der
+  Dauerbetrieb setzte gar nichts mehr und glaubte seinem eigenen Merker —
+  ab dann waeren bis Abendende still Fotos in 640x480 gespeichert und
+  gedruckt worden, ohne Fehlermeldung. Jetzt wird der Ist-Zustand nach jedem
+  Foto am WIRKLICH gelieferten Bild nachgezogen; ist es zu klein, verlaesst
+  die Box den Dauerbetrieb, macht **fuer dieses Foto sofort einen zweiten
+  Anlauf auf dem klassischen Weg** und arbeitet danach wieder wie die Flotte.
+  Auf Boxen mit ausgeschaltetem Schalter bleibt das folgenlos: Dort ueberschreibt
+  der Preview-Restore nach jedem Foto denselben Wert ohnehin.
+
+- **Das Warm-Oeffnen beweist 1080p jetzt an einem echten Bild.** Vorher wurde
+  nur die gemeldete Eigenschaft geprueft (`cap.get(...)`) — das ist das
+  Versprechen des Treibers, nicht die Wirklichkeit. Jetzt wird nach dem
+  Hochsetzen ein Bild gelesen und seine Groesse geprueft. Geht das schief,
+  passiert es beim Oeffnen waehrend des Intro-Videos statt beim ersten Foto
+  vor einem Gast.
+
+- **Der Rueckfall laesst die Box nicht mehr in YUY2 zurueck.** Lehnte die
+  Kamera MJPG beim Hochsetzen auf 1080p ab, blieb der dauerhafte Merker
+  „kann kein MJPG" stehen — auch nach dem Rueckfall auf 640x480. Die Box haette
+  den ganzen Abend unkomprimiert gearbeitet (~5 Bilder/s) und waere damit
+  SCHLECHTER dran gewesen als eine normale Flottenbox, obwohl das Log
+  „arbeitet ab jetzt exakt wie die uebrige Flotte" versprach. Der Merker wird
+  jetzt genau dann zurueckgenommen, wenn er erst beim HD-Versuch entstand.
+
+- **Die Blitz-Notbremse steht auf 700 ms statt 400 ms.** Im Box-Log dauerte
+  allein das Auslesen 236 ms; dazu kommen Sperre, Farbumwandlung auf 1080p und
+  die Sofortanzeige. Bei 400 ms waere die Notbremse regelmaessig zu frueh
+  gekommen — und haette den gemeldeten Effekt in klein wieder erzeugt.
+
+- **Der System-Test bricht nicht mehr ab**, wenn in der Foto-Aufloesung etwas
+  steht, das keine Zahl ist. Er laeuft dann klassisch weiter.
+
+### Kleinigkeit
+
+- `config.example.json` enthaelt `camera_dauerbetrieb_hd: false` jetzt
+  ausdruecklich. Funktional aendert das nichts (der Grundwert griff auch
+  vorher), aber der Schalter war in der Beispieldatei unsichtbar.
+
+---
+
 ## [2.4.43] - 2026-08-20 - Etappe 2 von 2: Kamera dauerhaft in Full HD (umschaltbar)
 
 > Anlass (Christian): „wenn eine session gemacht wird und ein foto geschossen
@@ -68,8 +147,8 @@ haette die Box zwei verschiedene Fotos gemacht.
 - **Der Blitz haelt jetzt, bis das Foto da ist** (nur im Dauerbetrieb). Sonst
   waere zwischen Blitz-Ende (90 ms) und Fotoanzeige (~150-300 ms) wieder kurz
   das eingefrorene Vorschaubild zu sehen — dasselbe „zweite Foto", nur
-  10x kuerzer. Notbremse nach 400 ms, damit bei einem gescheiterten Capture
-  nie ein weisser Bildschirm stehenbleibt.
+  10x kuerzer. Notbremse nach 700 ms (bis 2.4.44: 400 ms), damit bei einem
+  gescheiterten Capture nie ein weisser Bildschirm stehenbleibt.
 
 ### Geaendert
 
@@ -78,10 +157,10 @@ haette die Box zwei verschiedene Fotos gemacht.
   Rechnung `int(live_res * 0.75)` dreimal getrennt im Code — dieselbe Box
   haette je nach Weg (mit Intro-Video, ohne, im Selbsttest) in
   unterschiedlichen Aufloesungen laufen koennen.
-- Der Puffer wird vor dem Foto nur noch 1x statt 2x geleert, wenn nicht
-  umgeschaltet wurde. Jedes ueberfluessige `grab()` kostet bei 1080p bis zu
-  ein volles Bildintervall (71,9 ms) und wirft genau den Moment weg, in dem
-  der Blitz kam.
+- Der Puffer wird vor dem Foto nur noch 1x statt 2x geleert — **nur im
+  Dauerbetrieb** (praezisiert in 2.4.44). Jedes ueberfluessige `grab()` kostet
+  bei 1080p bis zu ein volles Bildintervall (71,9 ms) und wirft genau den
+  Moment weg, in dem der Blitz kam.
 - Der Preview-Restore nach dem Foto entfaellt im Dauerbetrieb ersatzlos
   (er pausierte den LiveView und bremste den naechsten Countdown aus).
 - Der System-Test oeffnet die Kamera in der Betriebsart, die die Box wirklich
@@ -98,10 +177,11 @@ haette die Box zwei verschiedene Fotos gemacht.
   unveraendert geblieben.
 - **Das gespeicherte Foto aendert sich nicht** — 1920x1080, JPEG 95,
   ungespiegelt. Collage/Druck bleiben 1800x1200.
-- **Die Vorschau wird NICHT fluessiger.** Der Deckel dafuer ist die
-  Anzeigezeit im UI-Thread (`delay = max(..., display_ms * 3)`), nicht die
-  Kamera. Gewinn dieser Etappe sind der passende Blitz und der passende
-  Bildausschnitt.
+- **Die Vorschau wird nicht fluessiger, sondern etwas langsamer**
+  (ehrlicher formuliert in 2.4.44): Das Kamerabild kostet bei 1080p 71,9 statt
+  33,6 ms, das Einpassen ins Collagen-Fach rund 15 ms mehr. Grobe Erwartung:
+  von heute ~9,5 auf ~7 Bilder/s. Gewinn dieser Etappe sind der passende Blitz
+  und der passende Bildausschnitt — nicht mehr Bilder pro Sekunde.
 - **Der Bildausschnitt der Vorschau aendert sich sichtbar** und das ist so
   gewollt: heute 4:3 (oben/unten beschnitten), im Dauerbetrieb 16:9 — also
   exakt derselbe Ausschnitt wie das spaetere Foto. Der Gast sieht endlich,

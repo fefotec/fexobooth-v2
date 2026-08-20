@@ -1104,9 +1104,30 @@ class WebcamManager(CameraManager):
         # Zustand — nicht den Wunsch aus der Config. Scheitert das Oeffnen in
         # HD, steht hier False und die Box arbeitet wie die restliche Flotte.
         self._dauerbetrieb_hd: bool = False
+        # Der WUNSCH aus der Config (Schalter camera_dauerbetrieb_hd), bewusst
+        # getrennt vom Ist-Zustand oben. Grundwert False = ganze Flotte. Wird
+        # vor initialize() per set_dauerbetrieb_hd() gesetzt (2.4.44); ohne
+        # diesen Aufruf bleibt der Dauerbetrieb AUS, egal welche Aufloesung
+        # angefordert wird.
+        self._dauerbetrieb_hd_gewuenscht: bool = False
         # Bewusst die MODULWEITE Sperre (nicht pro Objekt): Die statische
         # Kamera-Suche laeuft sonst parallel dazu und korrumpiert den Heap.
         self._camera_lock = _CAMERA_HW_LOCK
+
+    def set_dauerbetrieb_hd(self, gewuenscht: bool) -> None:
+        """Meldet den Config-Schalter `camera_dauerbetrieb_hd` an die Kamera (2.4.44).
+
+        MUSS vor `initialize()` aufgerufen werden, sonst bleibt der
+        Dauerbetrieb aus. Genau so ist es gewollt: Der Dauerbetrieb haengt
+        damit AUSSCHLIESSLICH am Schalter und nicht mehr daran, welche
+        Aufloesung zufaellig angefordert wurde. Eine Box mit ausgeschaltetem
+        Schalter kann so nie versehentlich in die neue Betriebsart rutschen —
+        auch dann nicht, wenn jemand `live_view_resolution` von Hand hochsetzt.
+
+        Canon-/Nikon-Manager kennen die Methode nicht; die Aufrufer fragen
+        deshalb per `getattr` und ueberspringen sie dort.
+        """
+        self._dauerbetrieb_hd_gewuenscht = bool(gewuenscht)
 
     def initialize(self, camera_index: int, width: int, height: int) -> bool:
         """Initialisiert die Kamera"""
@@ -1151,9 +1172,15 @@ class WebcamManager(CameraManager):
             self._dauerbetrieb_hd = False
 
             if width >= _HD_OEFFNEN_AB_BREITE:
-                # DAUERBETRIEB HD (2.4.43): NICHT kalt in 1080p oeffnen —
-                # Begruendung im Kommentarblock von _oeffne_warm_in_hd().
-                actual_w, actual_h = self._oeffne_warm_in_hd(width, height)
+                # NICHT kalt in 1080p oeffnen — Begruendung im Kommentarblock
+                # von _oeffne_warm_in_hd(). Das ist eine reine SICHERHEITS-
+                # Weiche gegen das Einfrieren (Feld-Log Box 224): Sie greift
+                # bei jeder grossen angeforderten Aufloesung, auch wenn der
+                # Schalter aus ist. Ob daraus wirklich der Dauerbetrieb wird,
+                # entscheidet allein `_dauerbetrieb_hd_gewuenscht` (2.4.44).
+                actual_w, actual_h = self._oeffne_warm_in_hd(
+                    width, height, self._dauerbetrieb_hd_gewuenscht
+                )
             else:
                 # KLASSISCHER WEG — bewusst Zeile fuer Zeile unveraendert.
                 # Auf ~280 Boxen im Feld darf sich hier nichts bewegen.
@@ -1188,10 +1215,17 @@ class WebcamManager(CameraManager):
             self._is_initialized = True
             return True
 
-    def _oeffne_warm_in_hd(self, width: int, height: int) -> Tuple[int, int]:
+    def _oeffne_warm_in_hd(
+        self, width: int, height: int, gewuenscht: bool = False
+    ) -> Tuple[int, int]:
         """Bringt die BEREITS geoeffnete Kamera in zwei Stufen auf HD.
 
         Rueckgabe: die tatsaechlich aktive (Breite, Hoehe).
+
+        `gewuenscht` = steht der Config-Schalter auf AN? Nur dann wird am Ende
+        `_dauerbetrieb_hd` gesetzt. Ist er aus, wird die Kamera zwar sicher
+        (zweistufig) geoeffnet, die Box arbeitet danach aber klassisch weiter:
+        Umschalten pro Foto, Preview-Restore, kurzer Blitz.
 
         WARUM ZWEISTUFIG UND NICHT DIREKT IN 1080p:
         ERKENNTNISSE.md (Selbsttest, Feld-Log Box 224 vom 13.08.2026)
@@ -1209,8 +1243,20 @@ class WebcamManager(CameraManager):
         die Kamera MJPG ab, wuerde die Vorschau den ganzen Abend mit ~5
         Bildern/s laufen, ohne dass es jemand merkt. Dann lieber zurueck auf
         die kleine Vorschau: langsam und richtig schlaegt kaputt.
+
+        WARUM EIN ECHTES PROBEBILD IN HD (2.4.44):
+        `cap.get(CAP_PROP_FRAME_WIDTH)` liefert nur das Versprechen des
+        Treibers. Ob die Kamera in dieser Groesse auch wirklich liefert, zeigt
+        erst ein gelesenes Bild. Wenn das schiefgeht, soll es HIER schiefgehen
+        (beim Oeffnen, waehrend das Intro-Video laeuft) und nicht spaeter beim
+        ersten Foto, wenn ein Gast davorsteht.
         """
         t_start = time.perf_counter()
+        # Merker-Stand VOR dem HD-Versuch sichern: Lehnt die Kamera MJPG nur
+        # in 1080p ab, darf der dauerhafte Merker den Rueckfall auf 640x480
+        # nicht mit vergiften — sonst laeuft die Box den ganzen Abend in YUY2
+        # und waere schlechter dran als die uebrige Flotte (2.4.44).
+        mjpg_merker_vorher = self._mjpg_unsupported
 
         # --- Stufe 1: klein und sicher oeffnen (der heutige Normalzustand)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, _WARMUP_BREITE)
@@ -1238,24 +1284,48 @@ class WebcamManager(CameraManager):
 
         actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        # --- Stufe 3: Beweis am echten Bild (nicht nur an der Eigenschaft)
+        t0 = time.perf_counter()
+        bild_w = 0
+        bild_h = 0
+        try:
+            ret, probe = self.cap.read()
+            if ret and probe is not None:
+                bild_h, bild_w = probe.shape[:2]
+        except Exception as e:
+            logger.warning(f"Dauerbetrieb HD: Probebild in HD fehlgeschlagen: {e}")
+        probe_ms = (time.perf_counter() - t0) * 1000
+        # Das Probebild darf nicht als Vorschaubild weitergereicht werden.
+        self.last_frame = None
+        self.last_frame_time = 0
+
         gesamt_ms = (time.perf_counter() - t_start) * 1000
 
-        aufloesung_ok = actual_w >= width and actual_h >= height
+        aufloesung_ok = bild_w >= width and bild_h >= height
 
         if aufloesung_ok and mjpg_ok:
-            self._dauerbetrieb_hd = True
+            self._dauerbetrieb_hd = bool(gewuenscht)
             logger.info(
-                "Dauerbetrieb HD: warm geoeffnet "
+                "Kamera warm geoeffnet "
                 f"{_WARMUP_BREITE}x{_WARMUP_HOEHE} -> {actual_w}x{actual_h}, "
-                f"MJPG=ja, warm={warm_ms:.0f}ms, erstes_bild={read_ms:.0f}ms, "
-                f"hochsetzen={set_ms:.0f}ms, gesamt={gesamt_ms:.0f}ms"
+                f"Probebild={bild_w}x{bild_h}, MJPG=ja, warm={warm_ms:.0f}ms, "
+                f"erstes_bild={read_ms:.0f}ms, hochsetzen={set_ms:.0f}ms, "
+                f"probe={probe_ms:.0f}ms, gesamt={gesamt_ms:.0f}ms, "
+                f"Dauerbetrieb HD={'an' if self._dauerbetrieb_hd else 'aus (Schalter aus)'}"
             )
-            return actual_w, actual_h
+            return bild_w, bild_h
 
         # --- Rueckfall: die Kamera macht bei HD nicht mit
         grund = []
         if not aufloesung_ok:
-            grund.append(f"liefert nur {actual_w}x{actual_h} statt {width}x{height}")
+            if bild_w <= 0:
+                grund.append(f"liefert in {actual_w}x{actual_h} gar kein Bild")
+            else:
+                grund.append(
+                    f"liefert nur {bild_w}x{bild_h} statt {width}x{height} "
+                    f"(gemeldet: {actual_w}x{actual_h})"
+                )
         if not mjpg_ok:
             grund.append(f"MJPG abgelehnt (fourcc={self._get_current_fourcc()})")
         logger.warning(
@@ -1263,6 +1333,14 @@ class WebcamManager(CameraManager):
             f"Zurueck auf {_WARMUP_BREITE}x{_WARMUP_HOEHE} — die Box arbeitet "
             "ab jetzt exakt wie die uebrige Flotte (Umschalten pro Foto)."
         )
+        # Merker nur dann zuruecknehmen, wenn er GERADE ERST beim HD-Versuch
+        # gesetzt wurde: Die Ablehnung galt dann nur fuer 1080p. Bei 640x480
+        # kann dieselbe Kamera MJPG sehr wohl liefern — und ohne MJPG waere
+        # der "sichere" Weg (YUY2, ~5 Bilder/s) schlechter als der klassische.
+        # War der Merker schon vorher gesetzt, bleibt er stehen: Diese Kamera
+        # kann wirklich kein MJPG, und jeder neue Versuch kostet nur Zeit.
+        if self._mjpg_unsupported and not mjpg_merker_vorher:
+            self._mjpg_unsupported = False
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, _WARMUP_BREITE)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, _WARMUP_HOEHE)
         self._apply_mjpg()
@@ -1339,6 +1417,46 @@ class WebcamManager(CameraManager):
                 return frame
 
             logger.warning("Konnte kein Frame lesen")
+            return None
+
+    def _rettungs_capture(self, width: int, height: int) -> Optional[np.ndarray]:
+        """Zweiter Anlauf auf dem klassischen Weg, wenn der Dauerbetrieb abrutschte.
+
+        Laeuft bereits unter `_camera_lock` (RLock, aufgerufen aus
+        get_high_res_frame). Macht genau das, was die Flotte vor jedem Foto
+        macht: Aufloesung setzen, Puffer 2x leeren, lesen. Gibt None zurueck,
+        wenn auch das nicht klappt — dann bleibt das kleine Bild, aber im Log
+        steht unmissverstaendlich warum.
+        """
+        if not self.cap:
+            return None
+        t0 = time.perf_counter()
+        try:
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            self._apply_mjpg()
+            for _ in range(2):
+                self.cap.grab()
+            ret, frame = self.cap.read()
+            if not ret or frame is None:
+                logger.error("Rettungs-Capture: kein Bild erhalten")
+                return None
+            h, w = frame.shape[:2]
+            self._active_width = w
+            self._active_height = h
+            self.last_frame = None
+            self.last_frame_time = 0
+            dauer_ms = (time.perf_counter() - t0) * 1000
+            if w < width or h < height:
+                logger.error(
+                    f"Rettungs-Capture liefert weiterhin nur {w}x{h} "
+                    f"statt {width}x{height} ({dauer_ms:.0f}ms) — Kamera pruefen"
+                )
+                return None
+            logger.info(f"Rettungs-Capture erfolgreich: {w}x{h} ({dauer_ms:.0f}ms)")
+            return frame
+        except Exception as e:
+            logger.error(f"Rettungs-Capture fehlgeschlagen: {e}")
             return None
 
     def get_high_res_frame(
@@ -1419,7 +1537,7 @@ class WebcamManager(CameraManager):
                 # Buffer leeren mit grab() statt read() (grab bewegt nur den Pointer,
                 # dekodiert nicht - deutlich schneller als read!)
                 #
-                # ANZAHL HAENGT AM BETRIEBSZUSTAND (2.4.43):
+                # ANZAHL HAENGT AM BETRIEBSZUSTAND (2.4.43, praezisiert 2.4.44):
                 # Die zwei grab() stammen aus der Zeit NACH einer Umschaltung —
                 # dort haelt der DirectShow-Graph wirklich noch alte Bilder aus
                 # der kleinen Vorschau. Im Dauerbetrieb wird nicht umgeschaltet,
@@ -1430,7 +1548,15 @@ class WebcamManager(CameraManager):
                 # den Moment weg, in dem der Blitz kam — also genau das, was
                 # Etappe 2 reparieren soll. Ein grab bleibt bewusst stehen:
                 # DirectShow haelt BUFFERSIZE=1 nicht garantiert ein.
-                grab_anzahl = 2 if switched_resolution else 1
+                #
+                # WICHTIG — die Einsparung haengt am DAUERBETRIEB, nicht daran,
+                # ob gerade umgeschaltet wurde: Auch auf einer klassischen Box
+                # kann `switched_resolution` False sein, naemlich wenn einmal
+                # ein Preview-Restore nicht durchging. Die Kamera steht dann
+                # weiter auf 1080p — und ausgerechnet in dieser Lage, mit der
+                # hoechsten Gefahr eines alten Pufferbildes, waere nur noch 1x
+                # geleert worden. Ohne Schalter bleibt es deshalb bei 2x.
+                grab_anzahl = 1 if (self._dauerbetrieb_hd and not switched_resolution) else 2
                 t0 = time.perf_counter()
                 for _ in range(grab_anzahl):
                     self.cap.grab()
@@ -1445,11 +1571,45 @@ class WebcamManager(CameraManager):
                     captured_h, captured_w = frame.shape[:2]
                     logger.info(f"High-Res Frame erfolgreich: {captured_w}x{captured_h}")
 
+                    # SELBSTHEILUNG (2.4.44): Der gemerkte Ist-Zustand wird am
+                    # WIRKLICH gelieferten Bild nachgezogen. Der klassische Weg
+                    # hatte diese Selbstheilung eingebaut, ohne dass es jemandem
+                    # auffiel: Er setzte vor jedem Foto 1920x1080 neu. Der
+                    # Dauerbetrieb setzt nie mehr etwas — rutscht die Kamera
+                    # z.B. nach einem USB-Wackler oder einem Treiber-Reset auf
+                    # 640x480 zurueck, wuerden sonst bis Abendende still Fotos
+                    # in 640x480 gespeichert und gedruckt. Mit dieser Zeile
+                    # sieht das naechste Foto `active < ziel`, schaltet wieder
+                    # hoch und leert den Puffer wieder 2x.
+                    self._active_width = captured_w
+                    self._active_height = captured_h
+
                     if captured_w < width or captured_h < height:
                         logger.warning(
                             f"Kamera liefert weniger als angefordert: "
                             f"{captured_w}x{captured_h} statt {width}x{height}"
                         )
+                        if self._dauerbetrieb_hd:
+                            # Dauerbetrieb aufgeben: Ab jetzt wieder klassisch
+                            # (Umschalten pro Foto + Preview-Restore). Lieber
+                            # 1,8s sichtbare Wartezeit als den ganzen Abend
+                            # heimlich kleine Fotos.
+                            self._dauerbetrieb_hd = False
+                            self._preview_width = captured_w
+                            self._preview_height = captured_h
+                            logger.error(
+                                "Dauerbetrieb HD VERLASSEN: Kamera lieferte nur "
+                                f"{captured_w}x{captured_h}. Die Box arbeitet ab "
+                                "dem naechsten Foto wieder klassisch (Umschalten "
+                                "pro Foto)."
+                            )
+                            # EIN Rettungsversuch fuer genau dieses Foto — ein
+                            # zu kleines Bild wuerde sonst gespeichert UND
+                            # gedruckt. Kostet den klassischen Umweg (~1,8s)
+                            # und passiert nur in diesem Ausnahmefall.
+                            rettung = self._rettungs_capture(width, height)
+                            if rettung is not None:
+                                frame = rettung
                 else:
                     logger.error("High-Res Frame lesen fehlgeschlagen nach Umschaltung")
                     frame = None

@@ -248,6 +248,12 @@ class SessionScreen(ctk.CTkFrame):
                 f"({'Dauerbetrieb HD' if self.config.get('camera_dauerbetrieb_hd', False) else 'klassisch'})"
             )
 
+            # Betriebsart VOR dem Oeffnen anmelden (2.4.44) — siehe
+            # WebcamManager.set_dauerbetrieb_hd().
+            setzer = getattr(self.app.camera_manager, "set_dauerbetrieb_hd", None)
+            if setzer is not None:
+                setzer(self.config.get("camera_dauerbetrieb_hd", False))
+
             if not self.app.camera_manager.initialize(
                 self.config.get("camera_index", 0),
                 breite,
@@ -1160,9 +1166,23 @@ class SessionScreen(ctk.CTkFrame):
         Schalter zwar an, die Box arbeitet aber klassisch — und dann muss auch
         hier alles beim Alten bleiben.
 
-        Canon-/Nikon-Manager haben diese Methode nicht; `getattr` faengt das ab
-        und liefert das heutige Verhalten.
+        DREI BEDINGUNGEN, ALLE MUESSEN STIMMEN (2.4.44):
+        1. Der Config-Schalter steht an. Ohne ihn darf sich auf den ~280 Boxen
+           im Feld NICHTS aendern — auch nicht zufaellig, weil die Vorschau
+           gerade so gross ist wie die Fotoaufloesung. Genau das koennte bei
+           einer kuenftigen Kamera passieren, die 640x480 nicht liefert.
+        2. Die Kamera hat den Dauerbetrieb wirklich angenommen
+           (`dauerbetrieb_hd_aktiv`) und ihn seither nicht aufgegeben.
+        3. Es steht tatsaechlich kein Umschalten an.
+
+        Canon-/Nikon-Manager haben diese Methoden nicht; `getattr` faengt das
+        ab und liefert das heutige Verhalten.
         """
+        if not self.config.get("camera_dauerbetrieb_hd", False):
+            return False
+        if not getattr(self.app.camera_manager, "dauerbetrieb_hd_aktiv", False):
+            return False
+
         pruefer = getattr(self.app.camera_manager, "braucht_preview_restore", None)
         if pruefer is None:
             return False
@@ -1205,9 +1225,17 @@ class SessionScreen(ctk.CTkFrame):
         nach 90 ms aber schon weg. In der Lücke blitzt wieder das eingefrorene
         Vorschaubild auf — dasselbe „zweite Foto", das Christian gemeldet hat,
         nur 10x kürzer. Deshalb hält der Blitz hier, bis das Foto wirklich auf
-        dem Schirm steht (_on_capture_complete). Die 400 ms sind reine
+        dem Schirm steht (_on_capture_complete). Die 700 ms sind reine
         Notbremse: Scheitert der Capture, darf kein weißer Bildschirm
         stehenbleiben.
+
+        WARUM 700 UND NICHT 400 ms (2.4.44): Im Box-Log dauerte allein das
+        Auslesen 236 ms; dazu kommen das Warten auf `_cam_access_lock` (bis zu
+        ein volles 1080p-Bild), cvtColor auf 1080p und die Sofortanzeige
+        (Verkleinern eines 1920x1080-Bildes auf dem Miix). Bei 400 ms wäre die
+        Notbremse an schwachen Abenden regelmäßig ZU FRÜH gekommen — und hätte
+        genau den gemeldeten Effekt in klein wieder erzeugt. Die Notbremse darf
+        nur greifen, wenn wirklich etwas kaputt ist.
         """
         try:
             if self._shutter_flash_overlay is None:
@@ -1220,7 +1248,7 @@ class SessionScreen(ctk.CTkFrame):
 
             self._shutter_flash_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
             self._shutter_flash_overlay.tkraise()
-            self.after(400 if self._flash_haltend else 90, self._hide_shutter_flash)
+            self.after(700 if self._flash_haltend else 90, self._hide_shutter_flash)
         except Exception as e:
             logger.debug(f"Shutter-Flash konnte nicht angezeigt werden: {e}")
 

@@ -4,6 +4,49 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-08-20 (Nacht) — Etappe 2 nachgebessert nach Gegenprüfung (2.4.44)
+
+Zwei unabhängige Gegenprüfungen von 2.4.43 haben sechs Stellen gefunden. Alle
+sind behoben, nichts Neues gebaut.
+
+**Zwei davon hätten Boxen mit AUSGESCHALTETEM Schalter getroffen:**
+
+1. Die Puffer-Leerung (1x statt 2x) hing an „wurde gerade umgeschaltet?" statt am
+   Schalter. Eine ganz normale Flottenbox, bei der ein Preview-Restore einmal nicht
+   durchgeht, steht danach dauerhaft auf 1080p — und hätte ab da nur noch 1x geleert,
+   ausgerechnet in der Lage mit dem höchsten Risiko für ein altes Pufferbild. Also
+   genau das gemeldete Fehlerbild, ohne Schalter.
+2. Session und System-Test haben die Betriebsart an einem reinen Auflösungsvergleich
+   erkannt. Bei 640x480 gegen 1920x1080 harmlos — bei einer künftigen Kamera ohne
+   640x480 (C922-Ablösung!) hätte sich die ganze neue Betriebsart von selbst
+   eingeschaltet. Jetzt: Schalter AN **und** Kamera im Dauerbetrieb **und** kein
+   Umschalten nötig.
+
+**Vier für den Langlauf der Testbox:**
+
+3. **Selbstheilung war weg.** Der klassische Weg setzte vor jedem Foto 1920x1080 neu
+   und zog eine abgerutschte Kamera damit unbemerkt wieder gerade. Der Dauerbetrieb
+   setzte nichts mehr und glaubte seinem Merker — nach einem USB-Wackler wären bis
+   Abendende still Fotos in 640x480 gespeichert und gedruckt worden. Jetzt wird der
+   Ist-Zustand am wirklich gelieferten Bild nachgezogen, die Box verlässt den
+   Dauerbetrieb und macht für das betroffene Foto sofort einen zweiten Anlauf.
+4. Das Warm-Öffnen prüfte 1080p nur an der gemeldeten Eigenschaft, nie an einem
+   echten Bild. Jetzt wird ein Probebild gelesen und vermessen.
+5. Der Rückfall ließ die Box in YUY2 zurück (dauerhafter MJPG-Merker), obwohl das Log
+   „arbeitet wie die übrige Flotte" versprach — das wäre schlechter als klassisch.
+6. Blitz-Notbremse 400 → 700 ms (400 ms war knapper als die gemessene Capture-Zeit),
+   System-Test bricht bei krummer Foto-Auflösung nicht mehr ab.
+
+**Ehrlicher formuliert:** Die Vorschau wird im Dauerbetrieb nicht „nicht flüssiger",
+sondern **langsamer** — grob 7 statt 9,5 Bilder/s (Kamerabild 71,9 statt 33,6 ms,
+Einpassen ins Fach ~15 ms mehr). Steht so jetzt im Changelog und im Admin-Menü.
+
+**Speicher geprüft (Gegenprüfung):** Es sammelt sich nichts an — genau ein
+Frame-Halter (`last_frame`), ein Ein-Bild-Steckplatz im LiveView, kein Verlauf.
+Dauerhafter Mehrverbrauch rund +5 MB. Bei 4 GB unkritisch.
+
+---
+
 ## 2026-08-20 (Nacht) — Kamera darf dauerhaft in Full HD laufen (2.4.43, Etappe 2 von 2)
 
 Auftrag Christian: *„wenn eine session gemacht wird und ein foto geschossen wird

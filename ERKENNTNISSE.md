@@ -6,6 +6,23 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### Ein „Optimierung": Wer eine Arbeit einspart, kann eine unbemerkte Selbstheilung mit einsparen (2.4.44)
+
+| | |
+|---|---|
+| **Kontext** | Der klassische Foto-Weg setzte vor JEDEM Foto `set(1920x1080)` und danach die Vorschau-Auflösung neu. Das galt als reine Verschwendung (1,8 s pro Foto) — der Dauerbetrieb hat es ersatzlos gestrichen. |
+| **Erkenntnis** | Dieses ständige Neusetzen war zugleich eine **Selbstheilung**, die niemand bewusst gebaut hatte: Rutschte die Kamera durch USB-Wackler, Energiesparen oder Treiber-Reset auf 640x480 zurück, zog der nächste Auslöser sie wieder gerade. Ohne sie hätte die Box nach so einem Abrutscher bis Abendende still Fotos in 640x480 gespeichert und gedruckt — ohne Abbruch, ohne Fehlermeldung, weil `get_high_res_frame` allein dem gemerkten Wert glaubte. |
+| **Entscheidung** | Der Ist-Zustand wird nach jedem Foto am WIRKLICH gelieferten Bild (`frame.shape`) nachgezogen, nicht an einer gemerkten Zahl und nicht an `cap.get(...)`. Bei Abweichung: Dauerbetrieb verlassen + ein sofortiger zweiter Anlauf auf dem klassischen Weg. |
+| **Merke** | Vor dem Streichen einer wiederholten Arbeit fragen: **Was repariert diese Wiederholung nebenbei?** Und: Eine gemeldete Eigenschaft (`cap.get`) ist das Versprechen des Treibers, das gelieferte Bild ist die Wirklichkeit — geprüft wird immer am Bild. |
+
+### Ein Schalter muss am Schalter hängen, nicht an einem Merkmal, das gerade zufällig mitläuft (2.4.44)
+
+| | |
+|---|---|
+| **Kontext** | Etappe 2 (Dauerbetrieb HD) lag hinter einem Config-Schalter mit Grundwert AUS. Zwei gemeinsam genutzte Stellen fragten aber nicht den Schalter, sondern ein Merkmal, das im Normalfall dasselbe bedeutete: „ist die Vorschau schon so groß wie das Foto?" bzw. „wurde gerade umgeschaltet?". |
+| **Folge** | Auf einer Box mit AUS hätte sich die neue Betriebsart einschalten können, sobald die Vorschau-Auflösung ≥ Foto-Auflösung ist (Foto-Auflösung ist im Admin frei eintippbar; eine Kamera ohne 640x480 ist bei der C922-Ablösung realistisch). Und die eingesparte Puffer-Leerung griff auf jeder Flottenbox, deren Preview-Restore einmal fehlgeschlagen war. |
+| **Merke** | Bei Etappen-Rollouts auf Live-Systemen: Jede Verzweigung, die neues Verhalten auslöst, muss **den Schalter selbst** abfragen — auch wenn ein anderes Merkmal „im Feld immer dasselbe" bedeutet. Zusätzlich den ECHTEN Ist-Zustand der Hardware abfragen (Schalter an, aber Kamera hat abgelehnt = klassisch), nie nur den Wunsch aus der Config. |
+
 ### Bildkette: teure Pixel-Operationen ans ENDE, wo das Bild am kleinsten ist (2.4.41)
 
 | | |

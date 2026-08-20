@@ -2980,8 +2980,9 @@ class AdminDialog(ctk.CTkToplevel):
                 "jedes Foto umgeschaltet. Der Blitz passt dann zum Bild — heute\n"
                 "wird erst rund 1,8 Sekunden nach dem Blitz belichtet.\n"
                 "Die Vorschau zeigt dann denselben Ausschnitt wie das Foto\n"
-                "(links/rechts enger, oben/unten weiter). Nach dem Speichern\n"
-                "startet die Kamera neu."
+                "(links/rechts enger, oben/unten weiter) und läuft dabei etwas\n"
+                "ruckeliger (rund 7 statt 9 Bilder je Sekunde). Nach dem\n"
+                "Speichern startet die Kamera neu."
             ),
             font=FONTS["small"],
             text_color=COLORS["text_muted"],

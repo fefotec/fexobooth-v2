@@ -25,6 +25,7 @@
   "background_color": "#1a1a2e",
   "camera_type": "webcam",
   "camera_index": 0,
+  "camera_dauerbetrieb_hd": false,
   "camera_settings": {
     "live_view_resolution": 480,
     "live_view_fps": 20,
