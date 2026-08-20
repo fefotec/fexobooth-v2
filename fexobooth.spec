@@ -217,6 +217,8 @@ a = Analysis(
         "src.utils.company_wlan",
         "src.utils.network_diag",
         "src.utils.crashlog",
+        "src.utils.shutdown",
+        "src.ui.dialogs.kamera_messung",
         "src.tools",
         "src.tools.kamera_messung",
     ] + ctk_hiddenimports + certifi_hiddenimports + setuptools_hiddenimports,

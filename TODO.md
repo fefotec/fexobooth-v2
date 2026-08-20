@@ -4,6 +4,23 @@ Aufgabenliste mit Prioritäten.
 
 ---
 
+## Version 2.4.36 auf einer echten Box gegenpruefen 🔴
+
+- [ ] **Kamera-Messung-Knopf:** Admin-Menue → Tab Kamera → Messung starten.
+      Die Oberflaeche muss BEDIENBAR bleiben (Laufzeit zaehlt sichtbar hoch).
+- [ ] **Abbrechen** waehrend die Messung laeuft → Dialog reagiert sofort,
+      danach startet eine normale Foto-Session wieder.
+- [ ] Messung durchlaufen lassen → `kamera-messung.txt` mitschicken. Erst damit
+      ist die 1080p-/Backend-Frage entscheidbar.
+- [ ] Nach der Messung Task-Manager pruefen: kein zweites `fexobooth.exe` uebrig.
+
+- [x] ✅ **2.4.35 Beenden-Knopf (3198) — auf der Box bestaetigt** (Log 20.08.,
+      09:08:52): sauber beendet in 0,3 s inkl. Kamera-Freigabe.
+- [ ] **Nikon-Box:** Nach dem Beenden pruefen, ob `FexoNikonBridge.exe` wirklich
+      verschwindet (bisher nur auf einer Webcam-Box getestet).
+
+---
+
 ## ROUTER pruefen — Boxen bekommen keine IP-Adresse 🔴🔴
 
 > Belegt durch `netzwerk.log` von Box 019 (19.08. 12:31) und Box 038 (18.08. 15:40), beide 2.4.32:

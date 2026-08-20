@@ -125,6 +125,62 @@ def _recover_taskbar():
         pass
 
 
+def _beende_kindprozesse():
+    """Beendet Kindprozesse (FexoNikonBridge). Details: src/utils/shutdown.py."""
+    try:
+        from src.utils.shutdown import beende_kindprozesse
+        beende_kindprozesse()
+    except Exception:
+        pass
+
+
+def _kamera_fuer_messung():
+    """Welche Kamera soll gemessen werden? Liefert (Index, Geraetename|None).
+
+    WARUM NICHT EINFACH INDEX 0 (bis 2.4.34 stand hier eine harte 0):
+    Auf dem Miix 310 ist Index 0 die INTERNE Tablet-Kamera. Die ist physisch
+    abgeklebt — sie laesst sich zwar oeffnen, liefert aber nie ein Bild. Genau
+    das ist der Fall, der die Messung endlos warten liess (Feld-Befund
+    19.08.2026: "ich warte nun schon 5 min"). Die Fotobox selbst benutzt diese
+    Kamera bewusst NICHT (`find_best_camera` filtert avstream & Co. weg und
+    setzt sonst -1). Eine Messung, die eine andere Kamera misst als die App
+    benutzt, ist wertlos — deshalb dieselbe Auswahl wie in app.py.
+    """
+    # 1. Ausdrueckliche Vorgabe auf der Kommandozeile schlaegt alles.
+    if "--kamera-index" in sys.argv:
+        try:
+            return int(sys.argv[sys.argv.index("--kamera-index") + 1]), None
+        except Exception:
+            pass
+
+    # 2. Wert aus der Config — denselben nimmt auch der Admin-Dialog.
+    index = 0
+    try:
+        index = int(load_config().get("camera_index", 0))
+    except Exception:
+        index = 0
+    if index > 0:
+        return index, None
+
+    # 3. Config sagt 0 oder -1: selbst suchen, wie die App es tut.
+    #    NUR in diesem Fall, denn list_cameras() oeffnet selbst Kameras — das
+    #    kostet auf dem Miix bis zu ~16 s und traegt ein eigenes Haenger-Risiko.
+    #    Die Hardware-Sperre ist dabei Pflicht (2.4.31). Schlaegt es fehl,
+    #    bleibt es bei 0 — also nie schlechter als bisher.
+    try:
+        from src.camera.webcam import WebcamManager, camera_hardware_lock
+        with camera_hardware_lock():
+            kameras = WebcamManager.list_cameras()
+        bester = WebcamManager.find_best_camera(kameras)
+        if bester >= 0:
+            name = next((k.get("name") for k in kameras if k.get("index") == bester), None)
+            return bester, name
+    except Exception:
+        pass
+
+    return (index if index >= 0 else 0), None
+
+
 def main():
     """Haupteinstiegspunkt"""
     # WICHTIG: Taskleiste wiederherstellen (Recovery von vorherigem Crash)
@@ -134,21 +190,41 @@ def main():
     # Beantwortet die Frage, ob die Kamera dauerhaft in 1080p laufen kann —
     # das laesst sich nur auf der echten Box messen, nicht am Entwickler-PC.
     if "--kamera-test" in sys.argv:
+        # 2.4.35: faulthandler MUSS auch in diesem Zweig laufen. Die BAT
+        # verspricht dem Bediener "in absturz.log steht dann, woran es lag" —
+        # bis 2.4.34 wurde er aber erst weiter unten im Normalstart installiert,
+        # im Messmodus also nie. Ein nativer Absturz war damit unsichtbar.
+        try:
+            from src.utils.crashlog import install_faulthandler
+            install_faulthandler()
+        except Exception:
+            pass
+
+        code = 1
         try:
             from src.tools.kamera_messung import messung_ausfuehren
-            index = 0
-            if "--kamera-index" in sys.argv:
-                try:
-                    index = int(sys.argv[sys.argv.index("--kamera-index") + 1])
-                except Exception:
-                    index = 0
-            messung_ausfuehren(index)
+            index, name = _kamera_fuer_messung()
+            pfad = messung_ausfuehren(index, kamera_name=name)
+            code = 0 if pfad else 1
         except Exception as e:
-            print("Kamera-Messung fehlgeschlagen: " + str(e))
-            import traceback
-            traceback.print_exc()
-        input("\nZum Schliessen Eingabetaste druecken...")
-        return
+            # Ohne Konsole (Fenster-Build) darf hier nichts crashen — der Fehler
+            # wandert ins Absturz-Protokoll, das immer geschrieben wird.
+            try:
+                from src.utils.crashlog import write_crash_report
+                write_crash_report("Kamera-Messung")
+            except Exception:
+                pass
+            try:
+                print("Kamera-Messung fehlgeschlagen: " + str(e))
+            except Exception:
+                pass
+
+        # HART beenden mit Exit-Code (0 = Bericht geschrieben), damit die BAT
+        # nicht am Dateisystem raten muss. Hart, weil ein aufgegebener
+        # Mess-Thread noch im C-Code von OpenCV stehen kann — ein normales
+        # Prozessende wuerde daran haengenbleiben.
+        _beende_kindprozesse()
+        os._exit(code)
 
     # Developer Mode NUR via Kommandozeile (--dev oder -d)
     # Config-Wert wird IGNORIERT - nur CLI zählt!
@@ -179,6 +255,19 @@ def main():
     try:
         from src.utils.crashlog import install_faulthandler
         install_faulthandler()
+    except Exception:
+        pass
+
+    # Waisen aus einem frueheren Absturz wegraeumen (belegen sonst die Kamera).
+    # Im Hintergrund, weil taskkill mehrere Sekunden dauern kann — der Start
+    # darf darauf nicht warten.
+    try:
+        from src.utils.shutdown import raeume_verwaiste_prozesse_auf
+        threading.Thread(
+            target=raeume_verwaiste_prozesse_auf,
+            daemon=True,
+            name="waisen-aufraeumen",
+        ).start()
     except Exception:
         pass
 
@@ -224,6 +313,7 @@ def main():
         except:
             print(f"\n\nKRITISCHER FEHLER: {e}\n")
         
+        _beende_kindprozesse()
         sys.exit(1)
     
     logger.info("FEXOBOOTH BEENDET")
@@ -236,6 +326,9 @@ def main():
     # logging.shutdown() MUSS abgefangen werden: Im Fenster-Build (ohne Konsole)
     # wirft colorama beim Stream-Flush AttributeError ('NoneType' hat kein
     # 'flush') — das zeigte sonst einen PyInstaller-Fehlerdialog beim Beenden.
+    # Kindprozesse ZUERST (os._exit nimmt sie nicht mit, siehe Funktion oben)
+    _beende_kindprozesse()
+
     import logging as _logging
     try:
         _logging.shutdown()

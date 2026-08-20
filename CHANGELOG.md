@@ -6,6 +6,115 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.36] - 2026-08-20 - Kamera-Messung friert die Box nicht mehr ein
+
+> Anlass (Christian, auf der Box): „ich warte nun schon 5 min aber der test wird
+> immernoch angezeigt! laeuft das ueberhaupt?" — und danach: „ich kann auch nicht
+> schliessen, ich musste nun einen hard aus machen und die box neu starten."
+
+### Behoben
+
+- **Der Knopf „Kamera-Messung" fror die komplette Software ein.** In 2.4.35 lief
+  die Messung als Hintergrund-Thread INNERHALB der laufenden App. Das Log endet
+  exakt nach der letzten Zeile vor dem ersten Kamerazugriff der Messung:
+
+  ```
+  09:12:15.454 | Kamera freigegeben
+  09:12:15.454 | Kamera-Messung: Kamera der App freigegeben
+  << danach nichts mehr, auch kein Eintrag in absturz.log >>
+  ```
+
+  Also kein Absturz, sondern Stillstand. Zwei Ursachen, beide im Thread-Entwurf
+  unvermeidbar: (1) Ein minutenlanger OpenCV-Kamerazugriff blockiert den
+  Python-Prozess so, dass die Tk-Oberflaeche nicht mehr drankommt. (2) Die
+  Messung hielt `camera_hardware_lock()` ueber ihre gesamte Laufzeit.
+
+  **Die Messung laeuft jetzt als eigener Windows-Prozess** (`fexobooth.exe
+  --kamera-test`) — technisch derselbe Weg wie `Kamera-Messung-starten.bat`, nur
+  ohne dass die Software vorher beendet werden muss. Eigener Prozess = eigener
+  Interpreter und eigene Sperren.
+
+- **Abbrechen ist jetzt moeglich.** Ein blockierender `cv2`-Aufruf laesst sich
+  innerhalb eines Prozesses NICHT abbrechen — der Aufruf steckt im C-Code von
+  OpenCV, dorthin kommt weder Signal noch Exception. Ueber die Prozessgrenze geht
+  es: Gegenprobe mit einem Testprozess, der das Beenden-Signal absichtlich
+  ignoriert — trotzdem in 0,00 s beendet.
+
+- **Fortschritt ist sichtbar.** Der Dialog zeigt die Laufzeit im
+  Halbsekunden-Takt und meldet, sobald der Bericht auf der Platte waechst.
+  Endet der Messprozess ohne Bericht, wird das gemeldet statt verschwiegen.
+
+- **Notbremse:** Laeuft die Messung laenger als 15 Minuten, wird der Prozess
+  beendet — sonst bliebe die Kamera dauerhaft belegt und keine Session mehr
+  moeglich. Dasselbe passiert beim Schliessen des Dialogs.
+
+### Bestaetigt aus dem Feld (2.4.35)
+
+- Der **Beenden-Knopf im Service-Menue (3198)** arbeitet auf echter Hardware
+  korrekt: Taskleiste → Benachrichtigungen → Kamera-Freigabe → beendet, komplett
+  in **0,3 Sekunden**, ohne dass der Notausstieg einspringen musste. Auch die
+  neue Pruefung `_root_lebt()` griff wie vorgesehen.
+
+---
+
+## [2.4.35] - 2026-08-20 - Beenden laesst keinen Prozess mehr stehen + Kamera-Messung als Knopf
+
+> Anlass (Christian): „Der App-beenden-Button ueber 3198 beendet die App nicht
+> richtig, sie geht zwar zu aber da bleibt ein Prozess am Taskmanager aktiv."
+> Ausserdem sollte die Kamera-Messung fest in die Software statt nur als
+> BAT-Datei.
+
+### Behoben
+
+- **Beenden ueber das Service-Menue (PIN 3198) laesst keinen Prozess mehr
+  zurueck.** Es gab drei Ursachen, alle im selben Knopf:
+  1. **Kamera wurde nicht freigegeben.** Der Notausstieg Ctrl+Shift+Q rief
+     `camera_manager.release()`, der Beenden-Knopf nicht — es waren zwei
+     getrennte Beenden-Wege mit eigenem Code. Jetzt laufen beide durch
+     `PhotoboothApp.shutdown()`.
+  2. **Kindprozess ueberlebte.** `main.py` endet bewusst mit `os._exit(0)` —
+     das beendet aber NUR den Python-Prozess. Die unsichtbare
+     `FexoNikonBridge.exe` ist ein eigener Windows-Prozess und blieb als Waise
+     stehen (und hielt damit die Kamera belegt). Sie wird jetzt beim Beenden
+     mitgenommen; neu ist `shutdown_bridge()` in `src/camera/nikon.py`.
+  3. **Kein Netz, wenn die Hauptschleife haengt.** Beendet `root.destroy()` die
+     Tk-Hauptschleife nicht, wird `os._exit(0)` nie erreicht: Fenster weg,
+     Prozess laeuft unsichtbar weiter — genau das gemeldete Symptom. Ein
+     Wachhund beendet den Prozess jetzt notfalls nach 8 Sekunden hart.
+- **Der modale Grab wurde beim Beenden nie geloest** und der Admin-Dialog nie
+  geschlossen — `destroy()` lief also gegen ein noch aktives Modal. Der Knopf
+  macht das jetzt in derselben Reihenfolge wie der erprobte Notausstieg.
+- **Arbeiten auf zerstoerten Fenstern nach dem Beenden.** Hinter jedem
+  `wait_window(...)` in `src/app.py` lief Code weiter, der `current_screen`
+  anfasste — nach dem Beenden existiert das Hauptfenster aber nicht mehr. Neue
+  Pruefung `_root_lebt()` bricht dort sauber ab.
+- **Verwaiste Bridge-Prozesse aus frueheren Abstuerzen** werden jetzt beim
+  App-Start weggeraeumt (Hintergrund-Thread). Sie belegten sonst dauerhaft die
+  Kamera und der naechste Start scheiterte daran.
+
+### Neu
+
+- **Knopf „Kamera-Messung starten"** im Admin-Menue → Tab **Kamera**. Macht aus
+  `--kamera-test` einen normalen Bedienschritt: kein Beenden der Software, kein
+  USB-Stick, kein BAT-Aufruf noetig. Zeigt Fortschritt an und bietet danach
+  „Bericht oeffnen" an. Ergebnis wie gehabt in
+  `C:\FexoBooth\logs\kamera-messung.txt`.
+- Die Messung laeuft dabei zwingend unter `camera_hardware_lock()` und gibt
+  vorher die Kamera der laufenden App frei. **Ohne die Sperre waere der Absturz
+  aus 2.4.31 zurueck** (zwei Threads an derselben DirectShow-Kamera →
+  Heap-Korruption 0xc0000374). Danach wird die Kamera wieder bereitgestellt.
+
+### Technisch
+
+- Neu: `src/utils/shutdown.py` (gemeinsames Beenden, Wachhund, Waisen-Aufraeumen)
+- Neu: `src/ui/dialogs/kamera_messung.py` (Mess-Dialog)
+- `beende_kindprozesse()` benutzt bewusst **kein** `taskkill` — der Aufruf ist
+  ein eigener Prozessstart und dauerte im Test 5 s. Auf dem Beenden-Weg (auch
+  Oberflaechen-Thread) waere das eine sichtbare Blockade. `taskkill` laeuft nur
+  noch beim Start im Hintergrund, fuer Waisen fremder Laeufe.
+
+---
+
 ## [2.4.34] - 2026-08-19 - Messmodus: Kann die Kamera dauerhaft in 1080p laufen?
 
 > Anlass: Der Ausloese-Blitz kommt sofort, das Bild wird aber erst ~1,7 s spaeter

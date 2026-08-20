@@ -2906,6 +2906,63 @@ class AdminDialog(ctk.CTkToplevel):
             justify="center"
         ).pack(pady=(5, 10))
 
+        # ── Kamera-Messung ──────────────────────────────────────────────
+        # Frueher nur ueber "Kamera-Messung-starten.bat" bzw.
+        # `fexobooth.exe --kamera-test` erreichbar — das setzte voraus, dass
+        # die Fotobox-Software vorher beendet wird. Als Knopf hier ist die
+        # Messung auch auf einer Box im Feld ohne Umwege ausloesbar.
+        mess_frame = ctk.CTkFrame(scroll, fg_color=COLORS["bg_card"], corner_radius=10)
+        mess_frame.pack(fill="x", pady=(15, 5))
+
+        ctk.CTkLabel(
+            mess_frame,
+            text="Kamera-Messung",
+            font=FONTS["body"],
+            text_color=COLORS["text_primary"]
+        ).pack(anchor="w", padx=15, pady=(12, 2))
+
+        ctk.CTkLabel(
+            mess_frame,
+            text=(
+                "Misst ca. 2 Minuten, wie schnell die Kamera bei verschiedenen\n"
+                "Auflösungen arbeitet, und legt das Ergebnis als Textdatei in\n"
+                "C:\\FexoBooth\\logs ab. Währenddessen ist keine Session möglich."
+            ),
+            font=FONTS["small"],
+            text_color=COLORS["text_muted"],
+            justify="left"
+        ).pack(anchor="w", padx=15, pady=(0, 8))
+
+        ctk.CTkButton(
+            mess_frame,
+            text="📷  Kamera-Messung starten",
+            font=FONTS["body"],
+            height=44,
+            fg_color=COLORS["primary"],
+            hover_color=COLORS["primary_hover"],
+            corner_radius=SIZES["corner_radius"],
+            command=self._open_kamera_messung
+        ).pack(anchor="w", padx=15, pady=(0, 14))
+
+
+    def _open_kamera_messung(self):
+        """Oeffnet die Kamera-Messung (Knopf im Kamera-Tab).
+
+        Der Dialog gibt die Kamera der laufenden App frei, misst unter der
+        Hardware-Sperre und stellt die Kamera danach wieder bereit. Details und
+        Begruendung: src/ui/dialogs/kamera_messung.py
+        """
+        app = getattr(self.parent_window, "_photobooth_app", None)
+        kamera_index = self.config_data.get("camera_index", 0)
+        logger.info(f"Kamera-Messung wird geoeffnet (Kamera-Index {kamera_index})")
+        try:
+            from src.ui.dialogs.kamera_messung import KameraMessungDialog
+            dialog = KameraMessungDialog(self, app=app, kamera_index=kamera_index)
+            self.wait_window(dialog)
+        except Exception as e:
+            logger.exception(f"Kamera-Messung konnte nicht geoeffnet werden: {e}")
+
+
     def _get_available_cameras(self, camera_type: Optional[str] = None) -> List[str]:
         """Ermittelt verfügbare Kameras mit echten Gerätenamen.
 
@@ -3771,14 +3828,47 @@ class AdminDialog(ctk.CTkToplevel):
         super().destroy()
 
     def _quit_app(self):
-        """Beendet die gesamte Anwendung - stellt Taskleiste und Benachrichtigungen wieder her."""
-        logger.info("App wird beendet (Admin-Dialog)")
+        """Beendet die App ueber den Button im Service-Menue (PIN 3198).
+
+        BEFUND CHRISTIAN 19.08.2026: Das Fenster ging zu, aber im Task-Manager
+        blieb ein Prozess stehen. Dieser Weg hatte drei Luecken gegenueber dem
+        seit langem funktionierenden Notausstieg Ctrl+Shift+Q:
+          1. Der modale Grab des Dialogs (grab_set im __init__) wurde nie
+             geloest und der Dialog selbst nie geschlossen — destroy() lief also
+             gegen ein noch aktives Modal.
+          2. Die Kamera wurde nicht freigegeben.
+          3. Kein Notausstieg, falls die Hauptschleife doch nicht endet.
+        Jetzt laeuft der Button exakt denselben Weg wie der erprobte Notausstieg
+        (PhotoboothApp.shutdown), inklusive Wachhund.
+        """
+        logger.info("App wird beendet (Service-Menue 3198)")
+        app = getattr(self.parent_window, '_photobooth_app', None)
+
+        # Erst das Modal aufloesen — sonst blockiert der Grab das Beenden.
+        # Gleiche Reihenfolge wie in _emergency_quit_from_dialog.
         try:
-            app = getattr(self.parent_window, '_photobooth_app', None)
-            if app:
-                app._show_taskbar()
-                app._suppress_notifications(False)
+            self.grab_release()
+        except Exception:
+            pass
+        try:
+            self.destroy()
+        except Exception:
+            pass
+
+        if app is not None:
+            app.shutdown("Beenden-Button Service-Menue")
+            return
+
+        # Fallback: App-Objekt nicht auffindbar — wenigstens hart beenden,
+        # damit garantiert kein Prozess im Task-Manager zurueckbleibt.
+        logger.warning("Beenden: App-Objekt nicht gefunden — harter Ausstieg")
+        try:
             self.parent_window.destroy()
+        except Exception:
+            pass
+        try:
+            from src.utils.shutdown import harter_ausstieg
+            harter_ausstieg("Beenden-Button ohne App-Objekt")
         except Exception:
             pass
 

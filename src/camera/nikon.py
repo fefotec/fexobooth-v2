@@ -254,6 +254,37 @@ def _get_client(config: Optional[Dict[str, Any]]) -> _NikonBridgeClient:
         return _shared_client
 
 
+def shutdown_bridge() -> bool:
+    """Beendet den unsichtbaren Bridge-Prozess endgueltig (App-Ende).
+
+    WARUM ES DAS BRAUCHT (Befund Christian, 19.08.2026): Nach "App beenden" im
+    3198-Menue blieb ein Prozess im Task-Manager stehen. Ursache: Die Bridge ist
+    ein EIGENER Windows-Prozess (`FexoNikonBridge.exe`), den `main.py` mit
+    `os._exit(0)` nicht mitnimmt — das beendet nur den Python-Prozess, nicht
+    seine Kinder. `NikonCameraManager.release()` laesst die Bridge sogar
+    absichtlich weiterlaufen ("Bridge bleibt aktiv"), damit der naechste
+    Session-Start keinen Kaltstart hat. Beim ECHTEN Beenden muss sie aber weg.
+
+    Returns:
+        True wenn eine laufende Bridge gestoppt wurde
+    """
+    global _shared_client
+    with _shared_client_lock:
+        client = _shared_client
+        _shared_client = None
+    if client is None:
+        return False
+    try:
+        lief = client.is_running()
+        client.stop()
+        if lief:
+            logger.info("FexoNikonBridge beendet (App-Ende)")
+        return lief
+    except Exception as exc:
+        logger.debug(f"FexoNikonBridge konnte nicht sauber beendet werden: {exc}")
+        return False
+
+
 def bridge_exe_candidates(config: Optional[Dict[str, Any]]) -> List[Path]:
     """Alle Pfade, unter denen die FexoNikonBridge.exe gesucht wird."""
     settings = (config or {}).get("nikon_bridge", {})

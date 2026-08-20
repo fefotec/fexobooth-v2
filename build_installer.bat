@@ -165,6 +165,10 @@ if exist "setup\Absturz-Infos-sammeln.bat" (
     copy "setup\Absturz-Infos-sammeln.bat" "installer_output\" >nul
     echo [OK] Absturz-Infos-sammeln.bat neben die Setup-EXE gelegt
 )
+if exist "setup\Kamera-Messung-starten.bat" (
+    copy "setup\Kamera-Messung-starten.bat" "installer_output\" >nul
+    echo [OK] Kamera-Messung-starten.bat neben die Setup-EXE gelegt
+)
 
 REM ─────────────────────────────────────────────
 REM Schritt 7: Start-Script erstellen

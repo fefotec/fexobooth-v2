@@ -1,4 +1,4 @@
-r"""Kamera-Messung: Wie schnell ist die Box bei welcher Aufloesung? (2.4.34)
+r"""Kamera-Messung: Wie schnell ist die Box bei welcher Aufloesung? (2.4.35)
 
 WARUM ES DAS BRAUCHT:
 Beim Fotografieren wird die Kamera pro Bild kurz von der Vorschau-Aufloesung
@@ -22,18 +22,48 @@ Beantwortet vier Fragen:
      verkleinern und erst danach zu spiegeln/umzufaerben?
   4. Ist Media Foundation (MSMF) schneller als DirectShow (DSHOW)?
 
+WARUM DIE DATEI SEIT 2.4.35 SO UMSTAENDLICH AUSSIEHT (Feld-Befund 19.08.2026):
+Christian meldete "ich warte nun schon 5 min aber der test wird immernoch
+angezeigt". Der Grund war nicht die Box, sondern dieser Code: Er fragte die
+Kamera ueber 240-mal nach einem Bild — ohne eine einzige Zeitgrenze. Eine
+Kamera, die sich zwar oeffnen laesst, aber nie ein Bild liefert (auf dem
+Miix 310 ist das die abgeklebte interne Tablet-Kamera an Index 0), laesst
+`cap.read()` im C-Code von OpenCV endlos stehen. Gleichzeitig wurde der Bericht
+erst GANZ AM ENDE geschrieben — es gab also waehrend des ganzen Laufs kein
+einziges Lebenszeichen auf der Platte, und `print()` faellt im Fenster-Build
+(console=False, sys.stdout ist None) ohnehin ins Leere.
+
+Daraus folgen die drei Bauprinzipien hier:
+  * Der Bericht waechst MIT. Nach jedem Schritt landet er auf der Platte,
+    mit Statuskopf ("Schritt 4 von 11, laeuft seit 00:02:13"). Ein Abbruch
+    hinterlaesst damit alle bis dahin fertigen Messwerte statt gar nichts.
+  * Jeder Kamerazugriff laeuft in einem Wegwerf-Thread mit Zeitgrenze
+    (siehe `_mit_zeitlimit` — dort steht auch, warum "abbrechen" in
+    Wirklichkeit "aufgeben" heisst).
+  * Jeder ausgelassene Schritt hinterlaesst eine Zeile MIT Begruendung.
+    Stilles `continue` macht einen Bericht unlesbar: Man kann "gemessen und
+    leer" nicht von "stumm gescheitert" unterscheiden.
+
 Aufruf auf der Box:  fexobooth.exe --kamera-test
 Ergebnis:            C:\FexoBooth\logs\kamera-messung.txt
 """
 
+import os
+import sys
+import threading
 import time
-from typing import List, Optional
+import types
+from typing import Callable, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
 
-try:                      # MSMF meldet lautstark, wenn eine Aufloesung nicht geht
-    cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_SILENT)
+try:
+    # 2.4.35: NICHT mehr stummschalten. Genau die Meldungen, die einen Haenger
+    # erklaeren ("can't grab frame", "Stream tick detected", "ReadSample() ...")
+    # waren vorher abgeschaltet — fuer ein Diagnose-Werkzeug die falsche
+    # Richtung. Wohin sie geschrieben werden, regelt `_OpenCvMeldungen`.
+    cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_WARNING)
 except Exception:
     pass
 
@@ -42,19 +72,110 @@ AUFLOESUNGEN = [(640, 480), (1280, 720), (1920, 1080)]
 BILDER_PRO_MESSUNG = 30
 AUFWAERM_BILDER = 5
 
+# Nach so vielen Fehlversuchen IN FOLGE bricht eine Zelle ab. Der Zaehler wird
+# bei jedem angekommenen Bild zurueckgesetzt — eine Kamera mit gelegentlichen
+# Aussetzern soll weitermessen duerfen, eine stumme aber nicht 30 Runden drehen.
+MAX_FEHLER_IN_FOLGE = 5
+
+# Zeitgrenzen pro Zelle. Gemessener Gutfall auf der Box liegt bei ~8-15 s,
+# das ist also mehr als dreifache Reserve. Zu knapp waere schlimmer als zu
+# grosszuegig: Ein abgeschnittener Gutfall wuerde als "zu langsam" fehlurteilen.
+ZEITLIMIT_JE_AUFLOESUNG = {
+    (640, 480): 25.0,
+    (1280, 720): 35.0,
+    (1920, 1080): 50.0,
+}
+ZEITLIMIT_UMSCHALTEN = 30.0
+
+# Letzte Sicherung: Selbst wenn jedes Einzel-Limit greift, hat der ganze Lauf
+# eine berechenbare Obergrenze. Sonst ist die Ansage in der BAT wieder falsch.
+GESAMT_BUDGET_SEKUNDEN = 8 * 60.0
+
+# Wartezeit auf die Kamera-Hardware-Sperre. Laenger warten bringt nichts: Haelt
+# ein aufgegebener Thread sie, gibt er sie nie wieder her.
+SPERRE_WARTEN_SEKUNDEN = 5.0
+
+# Als Konstante, weil Abschnitt 3 genau diesen einen Grund ignorieren darf
+# (er rechnet nur auf einem vorhandenen Bild und braucht keine Kamera).
+GRUND_KAMERA_HAENGT = "vorheriger Schritt haengt noch und haelt die Kamera"
+
 # Groesse eines Foto-Fachs in der LiveView-Collage (aus dem Feld-Log:
 # Template 1800x1200 wird auf 1002x668 skaliert, Fach 1 ist dann ~362x240).
 FACH = (362, 240)
 
+# Merker fuer den Admin-Dialog: Wurde ein Kamera-Schritt aufgegeben, gehoert
+# die Kamera bis zum Neustart einem Thread, den niemand mehr stoppen kann.
+# Der Dialog muss das im Klartext sagen duerfen (siehe `kamera_bleibt_belegt`).
+_KAMERA_BLEIBT_BELEGT = False
+
+# Ersatzsperre, falls dieses Werkzeug ohne die App laeuft (z.B. Direktaufruf
+# aus dem Quellbaum). Im Normalfall gewinnt immer `camera_hardware_lock()`.
+_ERSATZ_SPERRE = threading.RLock()
+
+
+def kamera_bleibt_belegt() -> bool:
+    """War nach dem letzten Lauf ein Kamera-Schritt aufgegeben worden?
+
+    Dann haelt ein nicht stoppbarer Thread Kamera UND Hardware-Sperre bis zum
+    Programmende. Im BAT-Weg ist das harmlos (der Prozess endet sofort danach),
+    im Admin-Dialog nicht — dort muss "Bitte Box neu starten" auf dem Schirm
+    stehen, sonst blinkt spaeter nur die Kamera-Warnung ohne Erklaerung.
+    """
+    return _KAMERA_BLEIBT_BELEGT
+
+
+# ----------------------------------------------------------------------
+# Zielordner
+# ----------------------------------------------------------------------
+
+def _log_ordner():
+    """Bevorzugt C:\\FexoBooth\\logs, sonst C:\\ProgramData\\FexoBox."""
+    from pathlib import Path
+
+    try:
+        from src.utils.logging import LOG_PATH
+        return Path(LOG_PATH)
+    except Exception:
+        return Path(r"C:\ProgramData\FexoBox")
+
+
+# ----------------------------------------------------------------------
+# Bericht
+# ----------------------------------------------------------------------
 
 class Bericht:
-    """Sammelt Zeilen fuer Konsole UND Datei gleichzeitig."""
+    """Sammelt Zeilen fuer Konsole UND Datei — und schreibt LAUFEND mit.
+
+    Der Statuskopf steht bewusst NICHT in `self.zeilen`, sondern wird bei jedem
+    Speichern frisch berechnet und der Liste nur vorangestellt. Landete er in
+    der Liste, wuerde er sich bei jedem Schritt wiederholen und der Bericht
+    waere nach ein paar Minuten unbrauchbar.
+    """
 
     def __init__(self) -> None:
         self.zeilen: List[str] = []
+        self.start = time.time()
+        self.gesamt_schritte = 0
+        self.schritt_nr = 0
+        self.schritt_name = ""
+        self.schritt_start = 0.0
+        self.status = "LAEUFT NOCH"
+        self.kamera_belegt = False
+        self.melder: Optional[Callable[[int, int, str], None]] = None
+        # Der beim ersten Mal erfolgreiche Pfad wird gemerkt: Bei ~22 Schreib-
+        # vorgaengen sollen nicht jedes Mal beide Kandidaten durchprobiert werden.
+        self._ziel = None
+
+    # -- Ausgabe ------------------------------------------------------
 
     def __call__(self, text: str = "") -> None:
-        print(text, flush=True)
+        # Im Fenster-Build (PyInstaller ohne Konsole) ist sys.stdout None —
+        # ein normales print() wuerde dort mit AttributeError abstuerzen.
+        # Die Datei ist ohnehin das Ergebnis, die Konsole nur Zugabe.
+        try:
+            print(text, flush=True)
+        except Exception:
+            pass
         self.zeilen.append(text)
 
     def titel(self, text: str) -> None:
@@ -63,40 +184,356 @@ class Bericht:
         self("  " + text)
         self("=" * 66)
 
-    def speichern(self) -> Optional[str]:
-        from pathlib import Path
+    # -- Fortschritt --------------------------------------------------
 
-        ziele = []
+    def schritt_beginnt(self, name: str) -> None:
+        """Neuen Schritt anmelden und den Zwischenstand sofort sichern."""
+        self.schritt_nr += 1
+        self.schritt_name = name
+        self.schritt_start = time.time()
+        # ERST speichern, DANN melden: Wer auf die Meldung hin die Datei
+        # oeffnet, soll den neuen Schritt schon darin finden.
+        self.speichern()
+        self._melden()
+
+    def schritt_fertig(self) -> None:
+        """Schritt abhaken und das Ergebnis sofort sichern."""
+        self.schritt_name = ""
+        self.speichern()
+
+    def _melden(self) -> None:
+        """Fortschritt an die Oberflaeche geben (Dialog), falls jemand zuhoert.
+
+        Wird aus dem Mess-Thread aufgerufen. Der Empfaenger MUSS selbst dafuer
+        sorgen, dass er Tk nur ueber `after(0, ...)` anfasst — deshalb hier
+        alles in try/except: Ein Fehler in der Oberflaeche darf die Messung
+        niemals beenden.
+        """
+        if self.melder is None:
+            return
         try:
-            from src.utils.logging import LOG_PATH
-            ziele.append(Path(LOG_PATH) / "kamera-messung.txt")
+            self.melder(self.schritt_nr, self.gesamt_schritte, self.schritt_name)
         except Exception:
             pass
-        ziele.append(Path(r"C:\ProgramData\FexoBox") / "kamera-messung.txt")
+
+    # -- Datei --------------------------------------------------------
+
+    @staticmethod
+    def _dauer(sekunden: float) -> str:
+        sekunden = max(0, int(sekunden))
+        return "%02d:%02d:%02d" % (sekunden // 3600, (sekunden // 60) % 60, sekunden % 60)
+
+    def _kopf(self) -> List[str]:
+        """Statuskopf — bei JEDEM Speichern neu erzeugt, nie gespeichert."""
+        laeuft_seit = self._dauer(time.time() - self.start)
+        kopf = [
+            "=" * 66,
+            "  LAUFENDER BERICHT - Status oben, Messwerte darunter",
+            "=" * 66,
+            "Status           : " + self.status,
+        ]
+        if self.gesamt_schritte:
+            kopf.append("Fortschritt      : Schritt %d von %d" % (self.schritt_nr, self.gesamt_schritte))
+        kopf.append("Laeuft seit      : " + laeuft_seit)
+        if self.schritt_name:
+            begonnen = self._dauer(self.schritt_start - self.start)
+            kopf.append("Aktueller Schritt: " + self.schritt_name + " (begonnen " + begonnen + ")")
+        else:
+            kopf.append("Aktueller Schritt: -")
+        if self.status == "LAEUFT NOCH":
+            kopf.append("")
+            kopf.append("Aendert sich diese Datei 3 Minuten lang nicht mehr, haengt die")
+            kopf.append("Messung fest. Dann: Strg+Umschalt+Esc, Reiter Details,")
+            kopf.append("fexobooth.exe beenden - und die Box einmal neu starten.")
+        if self.kamera_belegt:
+            kopf.append("")
+            kopf.append("ACHTUNG: Ein Kamera-Schritt musste aufgegeben werden. Die Kamera")
+            kopf.append("bleibt bis zum Neustart der Box belegt - bitte Box neu starten.")
+        kopf.append("")
+        return kopf
+
+    def speichern(self, status: Optional[str] = None) -> Optional[str]:
+        """Bericht atomar auf die Platte schreiben. Darf NIE eine Ausnahme werfen.
+
+        Erst in eine .tmp-Datei, dann `os.replace()` auf den Endnamen: So sieht
+        Christian nie eine halb geschriebene Datei, wenn er sie mitten im Lauf
+        oeffnet. Scheitert das Speichern (z.B. weil ein Editor die Zieldatei
+        sperrt), laeuft die Messung trotzdem weiter — ein Schreibfehler darf
+        niemals wertvolle Messzeit auf einer Box im Feld vernichten.
+        """
+        if status is not None:
+            self.status = status
+
+        inhalt = "\n".join(self._kopf() + self.zeilen) + "\n"
+
+        if self._ziel is not None:
+            ziele = [self._ziel]
+        else:
+            from pathlib import Path
+            ziele = [_log_ordner() / "kamera-messung.txt",
+                     Path(r"C:\ProgramData\FexoBox") / "kamera-messung.txt"]
 
         for ziel in ziele:
             try:
                 ziel.parent.mkdir(parents=True, exist_ok=True)
-                with open(ziel, "w", encoding="utf-8") as f:
-                    f.write("\n".join(self.zeilen) + "\n")
+                vorlaeufig = ziel.with_name(ziel.name + ".tmp")
+                with open(vorlaeufig, "w", encoding="utf-8") as f:
+                    f.write(inhalt)
+                os.replace(str(vorlaeufig), str(ziel))
+                self._ziel = ziel
                 return str(ziel)
             except Exception:
                 continue
+
+        # Gemerkter Pfad hat versagt -> beim naechsten Mal wieder alle probieren
+        self._ziel = None
         return None
+
+
+# ----------------------------------------------------------------------
+# OpenCV-Meldungen mitschreiben (optional, best effort)
+# ----------------------------------------------------------------------
+
+class _OpenCvMeldungen:
+    """Leitet den C-Fehlerkanal von OpenCV in eine eigene Datei um.
+
+    OpenCV meldet Haenger nicht ueber Python, sondern direkt auf Dateideskriptor
+    2 ("videoio(MSMF): can't grab frame", "Stream tick detected"). Genau diese
+    Zeilen erklaeren einen Haenger — und wachsen sogar noch, wenn die Messung
+    selbst nicht mehr weiterkommt.
+
+    HOCHRISIKO-STELLE, deshalb sehr defensiv: Im Fenster-Build ist
+    `sys.__stderr__` None und Deskriptor 2 kann ungueltig sein; ein unbedachtes
+    `os.dup2()` darauf beendet den Prozess sofort. Es wird deshalb nur
+    umgeleitet, wenn ein echter, pruefbarer Deskriptor existiert. Jeder
+    Fehlschlag bleibt folgenlos — die Messung braucht diese Datei nicht.
+    """
+
+    MAX_BYTES = 2 * 1024 * 1024
+
+    def __init__(self) -> None:
+        self.aktiv = False
+        self.pfad: Optional[str] = None
+        self._alt_fd: Optional[int] = None
+        self._datei = None
+
+    def start(self) -> None:
+        try:
+            if sys.__stderr__ is None:
+                return
+            try:
+                fd = sys.__stderr__.fileno()
+            except Exception:
+                return
+            if fd is None or fd < 0:
+                return
+            os.fstat(2)  # wirft, wenn Deskriptor 2 gar nicht existiert
+
+            ziel = _log_ordner() / "kamera-messung-opencv.txt"
+            ziel.parent.mkdir(parents=True, exist_ok=True)
+            self._datei = open(str(ziel), "w", encoding="utf-8", errors="replace")
+            self._alt_fd = os.dup(2)
+            os.dup2(self._datei.fileno(), 2)
+            self.aktiv = True
+            self.pfad = str(ziel)
+        except Exception:
+            self.aktiv = False
+            self._aufraeumen()
+
+    def deckeln_pruefen(self) -> None:
+        """Eine sehr geschwaetzige Kamera darf die Platte nicht vollschreiben."""
+        if not self.aktiv or not self.pfad:
+            return
+        try:
+            if os.path.getsize(self.pfad) > self.MAX_BYTES:
+                self.stop()
+        except Exception:
+            pass
+
+    def stop(self) -> None:
+        try:
+            if self.aktiv and self._alt_fd is not None:
+                os.dup2(self._alt_fd, 2)
+        except Exception:
+            pass
+        self.aktiv = False
+        self._aufraeumen()
+
+    def _aufraeumen(self) -> None:
+        try:
+            if self._alt_fd is not None:
+                os.close(self._alt_fd)
+        except Exception:
+            pass
+        self._alt_fd = None
+        try:
+            if self._datei is not None:
+                self._datei.close()
+        except Exception:
+            pass
+        self._datei = None
+
+
+# ----------------------------------------------------------------------
+# Zeitgrenze und Sperre
+# ----------------------------------------------------------------------
+
+def _mit_zeitlimit(arbeit: Callable[[], object], zeitlimit: float):
+    """Fuehrt `arbeit` in einem Wegwerf-Thread aus und gibt nach `zeitlimit` auf.
+
+    EHRLICH GESAGT: Ein blockierender cv2-Aufruf laesst sich in Python NICHT
+    abbrechen. Der Aufruf steckt im C-Code von OpenCV, dorthin kommt weder ein
+    Signal noch eine Exception. Wir koennen den Thread nur AUFGEBEN. Daraus
+    folgen drei Regeln, die hier zwingend eingehalten werden:
+
+      1. Der Worker ist ein Daemon-Thread — sonst liesse sich das Programm
+         danach nicht mehr beenden.
+      2. Nach dem Zeitlimit wird sein Ergebnis nie wieder gelesen. Der
+         aufgegebene Thread darf spaeter noch hineinschreiben, das interessiert
+         dann niemanden mehr.
+      3. Der Aufrufer MUSS danach jeden weiteren Kamerazugriff sein lassen: Der
+         aufgegebene Thread besitzt die Kamera weiterhin. Ein zweiter Zugriff
+         waere genau die Heap-Korruption aus 2.4.31 (0xc0000374).
+
+    Die zusaetzlich gesetzten CAP_PROP_*_TIMEOUT_MSEC (siehe `_video_capture`)
+    beachtet nur Media Foundation, DirectShow ignoriert sie. Dieser Wachhund
+    hier bleibt deshalb die eigentliche Absicherung und darf nicht durch sie
+    ersetzt werden.
+
+    Rueckgabe: (ergebnis, fehler). `fehler` ist None bei Erfolg, "zeitlimit"
+    wenn aufgegeben wurde, sonst der Fehlertext.
+    """
+    ablage: Dict[str, object] = {}
+
+    def lauf():
+        try:
+            ablage["wert"] = arbeit()
+        except BaseException as e:  # auch der Worker darf nichts nach aussen werfen
+            ablage["fehler"] = e.__class__.__name__ + ": " + str(e)
+
+    t = threading.Thread(target=lauf, daemon=True, name="kamera-messung-schritt")
+    t.start()
+    t.join(zeitlimit)
+
+    if t.is_alive():
+        return None, "zeitlimit"
+    if "fehler" in ablage:
+        return None, str(ablage["fehler"])
+    return ablage.get("wert"), None
+
+
+def _hardware_sperre():
+    """Die modulweite Kamera-Sperre der App (2.4.31) — oder ein Ersatz."""
+    try:
+        from src.camera.webcam import camera_hardware_lock
+        return camera_hardware_lock()
+    except Exception:
+        return _ERSATZ_SPERRE
+
+
+def _mit_sperre(arbeit: Callable[[], dict]) -> dict:
+    """Nimmt die Kamera-Sperre IM AUFRUFENDEN THREAD und fuehrt `arbeit` aus.
+
+    WICHTIG, WARUM HIER UND NICHT AUSSEN: `camera_hardware_lock()` liefert
+    einen RLock, und ein RLock ist nur fuer DENSELBEN Thread wiedereintritts-
+    faehig. Wuerde der Dialog-Thread die Sperre halten und die Messung ihre
+    Arbeit in einen Worker-Thread verlagern, blockierte dieser FREMDE Thread
+    fuer immer — bei einem bildschirmfuellenden, modalen Dialog waere die Box
+    damit komplett tot. Deshalb haelt genau der Thread die Sperre, der auch
+    `cv2.VideoCapture` aufruft. (Der Dialog darf sie folglich NICHT mehr selbst
+    nehmen, siehe src/ui/dialogs/kamera_messung.py.)
+    """
+    sperre = _hardware_sperre()
+    if not sperre.acquire(timeout=SPERRE_WARTEN_SEKUNDEN):
+        return {"gesperrt": True}
+    try:
+        return arbeit()
+    finally:
+        sperre.release()
+
+
+# ----------------------------------------------------------------------
+# Kamera oeffnen und lesen
+# ----------------------------------------------------------------------
+
+def _video_capture(index: int, backend: int):
+    """VideoCapture mit Zeitgrenzen anlegen, mit Rueckfall auf die alte Form.
+
+    Die Parameter-Form gibt es erst ab OpenCV 4.5.2 und nur Media Foundation
+    beachtet sie — sie kostet nichts, ersetzt aber den Thread-Wachhund nicht.
+    """
+    open_to = getattr(cv2, "CAP_PROP_OPEN_TIMEOUT_MSEC", None)
+    read_to = getattr(cv2, "CAP_PROP_READ_TIMEOUT_MSEC", None)
+    if open_to is not None and read_to is not None:
+        try:
+            return cv2.VideoCapture(index, backend, params=[
+                int(open_to), 4000,
+                int(read_to), 3000,
+            ])
+        except Exception:
+            pass
+    try:
+        return cv2.VideoCapture(index, backend)
+    except Exception:
+        return None
+
+
+def _fourcc_text(cap) -> str:
+    """Aktiven Codec als vier Buchstaben lesen (MJPG / YUY2 / ...).
+
+    Nutzt bewusst `WebcamManager._get_current_fourcc` wieder, damit die Messung
+    exakt dasselbe liest wie die Software, deren Verhalten sie messen soll.
+    """
+    try:
+        from src.camera.webcam import WebcamManager
+        return WebcamManager._get_current_fourcc(types.SimpleNamespace(cap=cap))
+    except Exception:
+        pass
+    try:
+        wert = int(cap.get(cv2.CAP_PROP_FOURCC))
+        if wert <= 0:
+            return "unbekannt"
+        return "".join(chr((wert >> 8 * i) & 0xFF) for i in range(4)).strip() or str(wert)
+    except Exception:
+        return "unbekannt"
 
 
 def _oeffne(index: int, backend: int, breite: int, hoehe: int):
-    """Kamera oeffnen und auf eine Aufloesung stellen."""
-    cap = cv2.VideoCapture(index, backend)
-    if not cap.isOpened():
+    """Kamera oeffnen und auf eine Aufloesung stellen.
+
+    REIHENFOLGE IST HIER ENTSCHEIDEND: erst Aufloesung, DANN der Codec. Genau
+    so macht es die Fotobox selbst (src/camera/webcam.py: "Codec NACH der
+    Aufloesung anfordern — andersherum verhandelt DirectShow beim
+    Aufloesungs-Setzen wieder auf YUY2 zurueck", Messung 2.4.13). Bis 2.4.34
+    machte diese Messung es genau andersherum und mass damit vermutlich das
+    Dekodieren von YUY2 statt MJPG — also gerade NICHT die zentrale Frage.
+    """
+    cap = _video_capture(index, backend)
+    if cap is None:
         return None
-    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    try:
+        if not cap.isOpened():
+            cap.release()
+            return None
+    except Exception:
+        return None
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, breite)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, hoehe)
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     return cap
 
 
-def _messe_lesen(cap, anzahl: int = BILDER_PRO_MESSUNG):
+def _zustand(cap) -> Tuple[int, int, str]:
+    """Was ist WIRKLICH aktiv? Zurueckgelesen statt geglaubt."""
+    try:
+        breite = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        hoehe = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    except Exception:
+        breite, hoehe = 0, 0
+    return breite, hoehe, _fourcc_text(cap)
+
+
+def _messe_lesen(cap, anzahl: int = BILDER_PRO_MESSUNG) -> dict:
     """Dauer eines Bildes im DAUERBETRIEB - getrennt nach Warten und Rechnen.
 
     WICHTIG fuer die Auswertung: cap.read() macht ZWEI Dinge auf einmal und
@@ -107,27 +544,48 @@ def _messe_lesen(cap, anzahl: int = BILDER_PRO_MESSUNG):
     Nur `retrieve` sagt uns, ob der Atom 1080p ueberhaupt schafft. Ist `grab`
     der grosse Posten, liegt es an der Kamera/USB - dann bringt eine schnellere
     Bildaufbereitung gar nichts.
+
+    Die Kennzahlen sind unveraendert. Neu ist nur der Ausstieg nach
+    MAX_FEHLER_IN_FOLGE Fehlversuchen und die Rueckgabe von `versuche`: Damit
+    steht "nur 3 von 30 Bildern erhalten" im Bericht statt einer stillen Luecke,
+    und eine duenne Messung ist als solche erkennbar.
     """
     for _ in range(AUFWAERM_BILDER):
         cap.read()
 
-    warten, rechnen, gesamt = [], [], []
+    warten: List[float] = []
+    rechnen: List[float] = []
+    gesamt: List[float] = []
+    versuche = 0
+    fehler_in_folge = 0
+    letztes_bild = None
+
     for _ in range(anzahl):
+        versuche += 1
         t0 = time.perf_counter()
         ok = cap.grab()
         t1 = time.perf_counter()
         if not ok:
+            fehler_in_folge += 1
+            if fehler_in_folge >= MAX_FEHLER_IN_FOLGE:
+                break
             continue
         ok2, frame = cap.retrieve()
         t2 = time.perf_counter()
         if not ok2 or frame is None:
+            fehler_in_folge += 1
+            if fehler_in_folge >= MAX_FEHLER_IN_FOLGE:
+                break
             continue
+
+        fehler_in_folge = 0
+        letztes_bild = frame
         warten.append((t1 - t0) * 1000)
         rechnen.append((t2 - t1) * 1000)
         gesamt.append((t2 - t0) * 1000)
 
     if not gesamt:
-        return None
+        return {"n": 0, "versuche": versuche, "bild": None}
 
     def kennzahlen(werte):
         werte = sorted(werte)
@@ -138,8 +596,20 @@ def _messe_lesen(cap, anzahl: int = BILDER_PRO_MESSUNG):
         }
 
     g = kennzahlen(gesamt)
+    # EIN Bild fuer Abschnitt 3 beiseitelegen — dort wird nur Rechenzeit auf
+    # einem vorhandenen Bild gemessen, dafuer muss die Kamera nicht noch einmal
+    # geoeffnet werden (jede zusaetzliche Oeffnung ist nur eine Haenger-Chance).
+    bild = None
+    try:
+        if letztes_bild is not None:
+            bild = letztes_bild.copy()
+    except Exception:
+        bild = None
+
     return {
         "n": len(gesamt),
+        "versuche": versuche,
+        "bild": bild,
         "mittel": g["mittel"],
         "min": g["min"],
         "max": g["max"],
@@ -187,8 +657,133 @@ def _backends():
     return liste
 
 
-def messung_ausfuehren(kamera_index: int = 0) -> None:
+# ----------------------------------------------------------------------
+# Die eigentlichen Kamera-Schritte (laufen IMMER im Wegwerf-Thread)
+# ----------------------------------------------------------------------
+
+def _schritt_dauerbetrieb(kamera_index: int, backend: int, breite: int, hoehe: int) -> dict:
+    """Kompletter Zyklus einer Zelle: oeffnen, messen, freigeben.
+
+    Der Worker macht ALLES selbst und gibt nur fertige Zahlen zurueck. Der
+    Hauptablauf fasst das `cap`-Objekt nie an — sonst wuerde er nach einem
+    aufgegebenen Thread auf eine Kamera zugreifen, die diesem noch gehoert.
+    """
+
+    def arbeit() -> dict:
+        cap = _oeffne(kamera_index, backend, breite, hoehe)
+        if cap is None:
+            return {"offen": False}
+        try:
+            ist_b, ist_h, fourcc = _zustand(cap)
+            werte = _messe_lesen(cap)
+        finally:
+            try:
+                cap.release()
+            except Exception:
+                pass
+        werte.update({"offen": True, "ist_b": ist_b, "ist_h": ist_h, "fourcc": fourcc})
+        return werte
+
+    return _mit_sperre(arbeit)
+
+
+def _schritt_umschalten(kamera_index: int, backend: int) -> dict:
+    """Misst den Wechsel 640x480 -> 1920x1080 -> 640x480 (kompletter Zyklus)."""
+
+    def arbeit() -> dict:
+        cap = _oeffne(kamera_index, backend, 640, 480)
+        if cap is None:
+            return {"offen": False}
+        try:
+            gelesen = False
+            for _ in range(AUFWAERM_BILDER):
+                ok, _f = cap.read()
+                gelesen = gelesen or ok
+            if not gelesen:
+                return {"offen": True, "bilder": False}
+
+            t0 = time.perf_counter()
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+            hoch_ms = (time.perf_counter() - t0) * 1000
+
+            t0 = time.perf_counter()
+            cap.read()
+            erstes_ms = (time.perf_counter() - t0) * 1000
+
+            t0 = time.perf_counter()
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            runter_ms = (time.perf_counter() - t0) * 1000
+        finally:
+            try:
+                cap.release()
+            except Exception:
+                pass
+
+        return {
+            "offen": True,
+            "bilder": True,
+            "hoch_ms": hoch_ms,
+            "erstes_ms": erstes_ms,
+            "runter_ms": runter_ms,
+        }
+
+    return _mit_sperre(arbeit)
+
+
+# ----------------------------------------------------------------------
+# Hauptablauf
+# ----------------------------------------------------------------------
+
+def messung_ausfuehren(kamera_index: int = 0,
+                       melder: Optional[Callable[[int, int, str], None]] = None,
+                       abbruch: Optional[threading.Event] = None,
+                       kamera_name: Optional[str] = None) -> Optional[str]:
+    """Fuehrt die komplette Messung aus und gibt den Pfad des Berichts zurueck.
+
+    melder:  optional, wird nach jedem Schritt mit (nummer, gesamt, text)
+             gerufen — aus dem Mess-Thread! Der Empfaenger muss Tk selbst ueber
+             `after(0, ...)` bedienen.
+    abbruch: optional, wird ZWISCHEN zwei Schritten geprueft. Mitten in einem
+             cv2-Aufruf geht das nicht (siehe `_mit_zeitlimit`).
+    """
+    global _KAMERA_BLEIBT_BELEGT
+    _KAMERA_BLEIBT_BELEGT = False
+
     b = Bericht()
+    b.melder = melder
+
+    backends = _backends()
+    # 3 Aufloesungen je Backend (Abschnitt 1) + 1 Umschalt-Test je Backend
+    # (Abschnitt 2) + 3 Aufbereitungs-Messungen (Abschnitt 3).
+    b.gesamt_schritte = len(backends) * len(AUFLOESUNGEN) + len(backends) + len(AUFLOESUNGEN)
+
+    opencv_log = _OpenCvMeldungen()
+    opencv_log.start()
+
+    # Backends, die schon bei 640x480 nichts geliefert haben. Fuer die lohnt
+    # kein weiterer Versuch — sie wuerden nur dreimal ins Zeitlimit laufen.
+    tote_backends = set()
+    # Bilder aus Abschnitt 1 fuer Abschnitt 3 (je ~6 MB bei 1080p, werden
+    # unmittelbar nach der Auswertung wieder freigegeben).
+    bilder: Dict[Tuple[int, int], object] = {}
+    ergebnisse: Dict[Tuple[str, int, int], dict] = {}
+    aufgegeben = False
+
+    def stop_grund() -> Optional[str]:
+        """Warum darf der naechste Schritt nicht laufen? (None = er darf)"""
+        if abbruch is not None and abbruch.is_set():
+            return "Abbruch durch Bediener"
+        if time.time() - b.start > GESAMT_BUDGET_SEKUNDEN:
+            return "Gesamt-Zeitlimit erreicht"
+        if aufgegeben:
+            # Der aufgegebene Thread besitzt Kamera UND Sperre weiterhin.
+            return GRUND_KAMERA_HAENGT
+        return None
+
+    def res_text(breite: int, hoehe: int) -> str:
+        return str(breite) + "x" + str(hoehe)
 
     b.titel("FEXOBOOTH - KAMERA-MESSUNG")
     b("Zeitpunkt : " + time.strftime("%d.%m.%Y %H:%M:%S"))
@@ -198,162 +793,329 @@ def messung_ausfuehren(kamera_index: int = 0) -> None:
         b("FexoBooth : " + fassung)
     except Exception:
         pass
-    b("Kamera    : Index " + str(kamera_index))
+    b("Kamera    : Index " + str(kamera_index) + (" - " + kamera_name if kamera_name else ""))
+    if opencv_log.aktiv and opencv_log.pfad:
+        b("OpenCV-Log: " + opencv_log.pfad)
     b("")
     b("Gemessen wird, ob die Kamera dauerhaft in 1920x1080 laufen kann.")
     b("Dann entfaellt das Umschalten pro Foto - und der Blitz passt zum Bild.")
     b("Bitte waehrenddessen nichts anderes auf der Box starten.")
+    b.speichern()
 
-    ergebnisse = {}
+    try:
+        # --------------------------------------------------------------
+        b.titel("1. DAUERBETRIEB - wie viele Bilder pro Sekunde?")
+        for backend_name, backend in backends:
+            b("")
+            b(backend_name + ":")
+            b("  " + "Aufloesung".rjust(18) + " | " + "Bilder/s".rjust(9) + " | "
+              + "pro Bild".rjust(10) + " | " + "davon Warten".rjust(13) + " | "
+              + "davon Rechnen".rjust(14) + " | " + "langsamstes".rjust(11))
+            b("  " + "-" * 88)
 
-    # ------------------------------------------------------------------
-    b.titel("1. DAUERBETRIEB - wie viele Bilder pro Sekunde?")
-    for backend_name, backend in _backends():
-        b("")
-        b(backend_name + ":")
-        b("  " + "Aufloesung".rjust(12) + " | " + "Bilder/s".rjust(9) + " | "
-          + "pro Bild".rjust(10) + " | " + "davon Warten".rjust(13) + " | "
-          + "davon Rechnen".rjust(14) + " | " + "langsamstes".rjust(11))
-        b("  " + "-" * 82)
+            for breite, hoehe in AUFLOESUNGEN:
+                soll = res_text(breite, hoehe)
+                b.schritt_beginnt(backend_name + " " + soll)
 
-        for breite, hoehe in AUFLOESUNGEN:
-            cap = _oeffne(kamera_index, backend, breite, hoehe)
-            if cap is None:
-                b("  " + (str(breite) + "x" + str(hoehe)).rjust(12) + " | Kamera liess sich nicht oeffnen")
+                grund = stop_grund()
+                if grund:
+                    b("  " + soll.rjust(18) + " | uebersprungen (" + grund + ")")
+                    b.schritt_fertig()
+                    continue
+
+                if backend_name in tote_backends:
+                    b("  " + soll.rjust(18) + " | uebersprungen - Backend lieferte bei 640x480"
+                      + " keine Bilder (bei Bedarf einzeln nachmessen)")
+                    b.schritt_fertig()
+                    continue
+
+                limit = ZEITLIMIT_JE_AUFLOESUNG.get((breite, hoehe), 50.0)
+                t_start = time.time()
+                wert, fehler = _mit_zeitlimit(
+                    lambda bb=backend, w=breite, h=hoehe: _schritt_dauerbetrieb(kamera_index, bb, w, h),
+                    limit,
+                )
+                dauer = time.time() - t_start
+
+                if fehler == "zeitlimit":
+                    # Ab hier ist die Kamera fuer diesen Prozess verloren.
+                    aufgegeben = True
+                    b.kamera_belegt = True
+                    _KAMERA_BLEIBT_BELEGT = True
+                    b("  " + soll.rjust(18) + " | abgebrochen nach " + ("%.0f s" % dauer)
+                      + " - Kamera antwortete nicht")
+                    if (breite, hoehe) == AUFLOESUNGEN[0]:
+                        tote_backends.add(backend_name)
+                    b.schritt_fertig()
+                    continue
+
+                if fehler:
+                    b("  " + soll.rjust(18) + " | Fehler: " + fehler[:60])
+                    b.schritt_fertig()
+                    continue
+
+                if wert is None or wert.get("gesperrt"):
+                    b("  " + soll.rjust(18)
+                      + " | Kamera von anderem Programmteil belegt, uebersprungen")
+                    b.schritt_fertig()
+                    continue
+
+                if not wert.get("offen"):
+                    b("  " + soll.rjust(18) + " | Kamera liess sich nicht oeffnen")
+                    if (breite, hoehe) == AUFLOESUNGEN[0]:
+                        tote_backends.add(backend_name)
+                    b.schritt_fertig()
+                    continue
+
+                ist_b = wert.get("ist_b", 0)
+                ist_h = wert.get("ist_h", 0)
+                fourcc = wert.get("fourcc", "unbekannt")
+
+                if wert.get("n", 0) <= 0:
+                    b("  " + soll.rjust(18) + " | keine Bilder erhalten (0 von "
+                      + str(wert.get("versuche", 0)) + " Versuchen, " + fourcc + ")")
+                    if (breite, hoehe) == AUFLOESUNGEN[0]:
+                        tote_backends.add(backend_name)
+                    b.schritt_fertig()
+                    continue
+
+                ergebnisse[(backend_name, breite, hoehe)] = wert
+                # Ein Bild fuer Abschnitt 3 aufheben (nur das erste je
+                # ANGEFORDERTER Aufloesung — Abschnitt 3 sucht unter genau
+                # diesem Schluessel und weist die echte Groesse dann selbst aus).
+                if wert.get("bild") is not None and bilder.get((breite, hoehe)) is None:
+                    bilder[(breite, hoehe)] = wert["bild"]
+                wert["bild"] = None
+
+                hinweise = ""
+                if (ist_b, ist_h) != (breite, hoehe):
+                    hinweise += "   <-- angefordert war " + soll
+                if fourcc != "MJPG":
+                    hinweise += "   <-- nicht MJPG!"
+                if wert["n"] < wert.get("versuche", wert["n"]):
+                    hinweise += "   <-- nur " + str(wert["n"]) + " von " \
+                        + str(wert["versuche"]) + " Bildern erhalten"
+
+                b("  " + (res_text(ist_b, ist_h) + " " + fourcc).rjust(18) + " | "
+                  + ("%.1f" % wert["fps"]).rjust(9) + " | "
+                  + ("%.1f ms" % wert["mittel"]).rjust(10) + " | "
+                  + ("%.1f ms" % wert["warten"]).rjust(13) + " | "
+                  + ("%.1f ms" % wert["rechnen"]).rjust(14) + " | "
+                  + ("%.1f ms" % wert["max"]).rjust(11) + hinweise)
+                b.schritt_fertig()
+                opencv_log.deckeln_pruefen()
+                time.sleep(0.3)
+
+        # --------------------------------------------------------------
+        b.titel("2. UMSCHALTEN DER AUFLOESUNG (der eigentliche Uebeltaeter)")
+        b("So laeuft es heute bei JEDEM Foto:")
+        b("Vorschau 640x480 -> Foto 1920x1080 -> zurueck auf 640x480.")
+
+        for backend_name, backend in backends:
+            b.schritt_beginnt("Umschalt-Test " + backend_name)
+            b("")
+            b(backend_name + ":")
+
+            grund = stop_grund()
+            if grund:
+                b("   uebersprungen (" + grund + ")")
+                b.schritt_fertig()
                 continue
 
-            ist_b = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            ist_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            werte = _messe_lesen(cap)
-            cap.release()
+            if backend_name in tote_backends:
+                b("   uebersprungen - Backend lieferte bei 640x480 keine Bilder")
+                b.schritt_fertig()
+                continue
 
-            if werte:
-                ergebnisse[(backend_name, breite, hoehe)] = werte
-                hinweis = "" if (ist_b, ist_h) == (breite, hoehe) else "   <-- lieferte " + str(ist_b) + "x" + str(ist_h)
-                b("  " + (str(ist_b) + "x" + str(ist_h)).rjust(12) + " | "
-                  + ("%.1f" % werte["fps"]).rjust(9) + " | "
-                  + ("%.1f ms" % werte["mittel"]).rjust(10) + " | "
-                  + ("%.1f ms" % werte["warten"]).rjust(13) + " | "
-                  + ("%.1f ms" % werte["rechnen"]).rjust(14) + " | "
-                  + ("%.1f ms" % werte["max"]).rjust(11) + hinweis)
-            else:
-                b("  " + (str(breite) + "x" + str(hoehe)).rjust(12) + " | keine Bilder erhalten")
+            t_start = time.time()
+            wert, fehler = _mit_zeitlimit(
+                lambda bb=backend: _schritt_umschalten(kamera_index, bb),
+                ZEITLIMIT_UMSCHALTEN,
+            )
+            dauer = time.time() - t_start
+
+            if fehler == "zeitlimit":
+                aufgegeben = True
+                b.kamera_belegt = True
+                _KAMERA_BLEIBT_BELEGT = True
+                b("   abgebrochen nach " + ("%.0f s" % dauer) + " - Kamera antwortete nicht")
+                b.schritt_fertig()
+                continue
+            if fehler:
+                b("   Fehler: " + fehler[:80])
+                b.schritt_fertig()
+                continue
+            if wert is None or wert.get("gesperrt"):
+                b("   Kamera von anderem Programmteil belegt, uebersprungen")
+                b.schritt_fertig()
+                continue
+            if not wert.get("offen"):
+                b("   Kamera liess sich nicht oeffnen (belegt? anderes Programm laeuft?)")
+                b.schritt_fertig()
+                continue
+            if not wert.get("bilder"):
+                b("   Kamera geoeffnet, liefert aber keine Bilder - Messung ungueltig")
+                b.schritt_fertig()
+                continue
+
+            b("   hochschalten 640x480 -> 1920x1080 : " + ("%.0f ms" % wert["hoch_ms"]).rjust(9))
+            b("   erstes Bild danach                : " + ("%.0f ms" % wert["erstes_ms"]).rjust(9))
+            b("   zurueck auf 640x480               : " + ("%.0f ms" % wert["runter_ms"]).rjust(9))
+            b("   -> Luecke zwischen Blitz und Bild : "
+              + ("%.0f ms" % (wert["hoch_ms"] + wert["erstes_ms"])).rjust(9))
+            b.schritt_fertig()
+            opencv_log.deckeln_pruefen()
             time.sleep(0.3)
 
-    # ------------------------------------------------------------------
-    b.titel("2. UMSCHALTEN DER AUFLOESUNG (der eigentliche Uebeltaeter)")
-    b("So laeuft es heute bei JEDEM Foto:")
-    b("Vorschau 640x480 -> Foto 1920x1080 -> zurueck auf 640x480.")
+        # --------------------------------------------------------------
+        b.titel("3. BILDAUFBEREITUNG - lohnt 'erst verkleinern'?")
+        b("Heute wird das VOLLE Bild gespiegelt und umgefaerbt und erst danach")
+        b("verkleinert. Umgekehrt waere deutlich weniger Arbeit.")
+        b("")
+        b("Gerechnet wird auf den Bildern aus Abschnitt 1 - dafuer muss die")
+        b("Kamera nicht noch einmal geoeffnet werden (das hat auf Box 224 am")
+        b("13.08. schon einmal eine Box eingefroren).")
+        b("")
+        b("  " + "Aufloesung".rjust(12) + " | " + "heute".rjust(10) + " | "
+          + "erst verkleinern".rjust(18) + " | " + "Faktor".rjust(7))
+        b("  " + "-" * 56)
 
-    for backend_name, backend in _backends():
-        cap = _oeffne(kamera_index, backend, 640, 480)
-        if cap is None:
+        for breite, hoehe in AUFLOESUNGEN:
+            soll = res_text(breite, hoehe)
+            b.schritt_beginnt("Bildaufbereitung " + soll)
+
+            grund = stop_grund()
+            # Abschnitt 3 fasst die Kamera NICHT an - ein aufgegebener
+            # Kamera-Thread ist hier also kein Grund zum Ueberspringen.
+            if grund == GRUND_KAMERA_HAENGT:
+                grund = None
+            if grund:
+                b("  " + soll.rjust(12) + " | uebersprungen (" + grund + ")")
+                b.schritt_fertig()
+                continue
+
+            frame = bilder.get((breite, hoehe))
+            if frame is None:
+                b("  " + soll.rjust(12) + " | kein Bild aus Abschnitt 1 vorhanden - uebersprungen")
+                b.schritt_fertig()
+                continue
+
+            # Echte Bildgroesse ausweisen: Die Kamera kann etwas anderes
+            # geliefert haben, als angefordert war.
+            try:
+                ist = res_text(int(frame.shape[1]), int(frame.shape[0]))
+            except Exception:
+                ist = soll
+
+            fehlertext = None
+            heute_ms = neu_ms = 0.0
+            try:
+                heute_ms, neu_ms = _messe_aufbereitung(frame)
+            except Exception as e:
+                fehlertext = str(e)[:50]
+            # Speicher sofort zurueckgeben: 1080p-BGR sind rund 6 MB je Bild,
+            # und die Box hat nur 4 GB.
+            bilder[(breite, hoehe)] = None
+            frame = None
+
+            if fehlertext:
+                b("  " + ist.rjust(12) + " | Fehler beim Rechnen: " + fehlertext)
+                b.schritt_fertig()
+                continue
+
+            faktor = (heute_ms / neu_ms) if neu_ms > 0 else 0.0
+            b("  " + ist.rjust(12) + " | "
+              + ("%.2f ms" % heute_ms).rjust(10) + " | "
+              + ("%.2f ms" % neu_ms).rjust(18) + " | "
+              + ("%.1fx" % faktor).rjust(7))
+            b.schritt_fertig()
+
+        bilder.clear()
+
+        # --------------------------------------------------------------
+        b.titel("4. URTEIL")
+        bestes_1080 = None
+        for schluessel, werte in ergebnisse.items():
+            backend_name, breite, hoehe = schluessel
+            if (breite, hoehe) == (1920, 1080):
+                if bestes_1080 is None or werte["fps"] > bestes_1080[1]["fps"]:
+                    bestes_1080 = (backend_name, werte)
+
+        if bestes_1080 is None:
+            b("1920x1080 lieferte KEINE Bilder. Dauerbetrieb in 1080p ist auf dieser")
+            b("Box damit keine Option. Bitte den Bericht mitschicken.")
             b("")
-            b(backend_name + ": Kamera liess sich nicht oeffnen (belegt? anderes Programm laeuft?)")
-            continue
-        gelesen = False
-        for _ in range(AUFWAERM_BILDER):
-            ok, _f = cap.read()
-            gelesen = gelesen or ok
-        if not gelesen:
+            b("Wenn oben ueberall 'keine Bilder erhalten' oder 'abgebrochen nach'")
+            b("steht, wurde vermutlich die FALSCHE Kamera gemessen (auf dem Miix 310")
+            b("ist Index 0 die abgeklebte interne Kamera). Dann einmal mit")
+            b("  fexobooth.exe --kamera-test --kamera-index 1")
+            b("wiederholen.")
+        else:
+            name, werte = bestes_1080
+            b("Bester 1080p-Dauerbetrieb: " + ("%.1f" % werte["fps"]) + " Bilder/s ueber " + name)
+            b("(" + ("%.0f" % werte["mittel"]) + " ms pro Bild, langsamstes "
+              + ("%.0f" % werte["max"]) + " ms, Format " + str(werte.get("fourcc", "?")) + ")")
+            b("   davon Warten auf die Kamera : " + ("%.0f" % werte["warten"]) + " ms")
+            b("   davon Rechnen (Dekodieren)  : " + ("%.0f" % werte["rechnen"]) + " ms")
+            if werte["rechnen"] > werte["warten"]:
+                b("   -> Die CPU bremst. Schnelleres Dekodieren wuerde helfen.")
+            else:
+                b("   -> Die KAMERA bremst (Bildrate/USB), nicht die CPU. Eine")
+                b("      schnellere Bildaufbereitung wuerde daran nichts aendern.")
+            if werte.get("fourcc") != "MJPG":
+                b("   ACHTUNG: Gemessen wurde " + str(werte.get("fourcc"))
+                  + ", nicht MJPG - die Werte sind mit MJPG-Laeufen nicht vergleichbar.")
             b("")
-            b(backend_name + ": Kamera geoeffnet, liefert aber keine Bilder - Messung ungueltig")
-            cap.release()
-            continue
-
-        t0 = time.perf_counter()
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-        hoch_ms = (time.perf_counter() - t0) * 1000
-
-        t0 = time.perf_counter()
-        cap.read()
-        erstes_ms = (time.perf_counter() - t0) * 1000
-
-        t0 = time.perf_counter()
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        runter_ms = (time.perf_counter() - t0) * 1000
-        cap.release()
+            if werte["fps"] >= 12:
+                b("=> GUT. Die Kamera kann dauerhaft in 1080p laufen. Das Umschalten")
+                b("   kann entfallen - der Blitz wuerde dann zum Bild passen.")
+            elif werte["fps"] >= 7:
+                b("=> GRENZWERTIG. Etwa so fluessig wie die Vorschau heute (~8,5 Bilder/s).")
+                b("   Machbar, aber nur zusammen mit dem Umbau aus Punkt 3.")
+            else:
+                b("=> ZU LANGSAM fuer dauerhaften 1080p-Betrieb. Bessere Wege:")
+                b("   1280x720 als Mittelweg, oder beim Umschalten bleiben und")
+                b("   stattdessen den Blitz auf den echten Ausloesemoment legen.")
 
         b("")
-        b(backend_name + ":")
-        b("   hochschalten 640x480 -> 1920x1080 : " + ("%.0f ms" % hoch_ms).rjust(9))
-        b("   erstes Bild danach                : " + ("%.0f ms" % erstes_ms).rjust(9))
-        b("   zurueck auf 640x480               : " + ("%.0f ms" % runter_ms).rjust(9))
-        b("   -> Luecke zwischen Blitz und Bild : " + ("%.0f ms" % (hoch_ms + erstes_ms)).rjust(9))
-        time.sleep(0.3)
+        b("Bitte die Datei kamera-messung.txt aus C:\\FexoBooth\\logs mitschicken.")
 
-    # ------------------------------------------------------------------
-    b.titel("3. BILDAUFBEREITUNG - lohnt 'erst verkleinern'?")
-    b("Heute wird das VOLLE Bild gespiegelt und umgefaerbt und erst danach")
-    b("verkleinert. Umgekehrt waere deutlich weniger Arbeit.")
-    b("")
-    b("  " + "Aufloesung".rjust(12) + " | " + "heute".rjust(10) + " | "
-      + "erst verkleinern".rjust(18) + " | " + "Faktor".rjust(7))
-    b("  " + "-" * 56)
-
-    for breite, hoehe in AUFLOESUNGEN:
-        cap = _oeffne(kamera_index, cv2.CAP_DSHOW, breite, hoehe)
-        if cap is None:
-            continue
-        for _ in range(AUFWAERM_BILDER):
-            cap.read()
-        ok, frame = cap.read()
-        cap.release()
-        if not ok or frame is None:
-            continue
-
-        heute_ms, neu_ms = _messe_aufbereitung(frame)
-        faktor = (heute_ms / neu_ms) if neu_ms > 0 else 0.0
-        b("  " + (str(frame.shape[1]) + "x" + str(frame.shape[0])).rjust(12) + " | "
-          + ("%.2f ms" % heute_ms).rjust(10) + " | "
-          + ("%.2f ms" % neu_ms).rjust(18) + " | "
-          + ("%.1fx" % faktor).rjust(7))
-        time.sleep(0.3)
-
-    # ------------------------------------------------------------------
-    b.titel("4. URTEIL")
-    bestes_1080 = None
-    for schluessel, werte in ergebnisse.items():
-        backend_name, breite, hoehe = schluessel
-        if (breite, hoehe) == (1920, 1080):
-            if bestes_1080 is None or werte["fps"] > bestes_1080[1]["fps"]:
-                bestes_1080 = (backend_name, werte)
-
-    if bestes_1080 is None:
-        b("1920x1080 lieferte KEINE Bilder. Dauerbetrieb in 1080p ist auf dieser")
-        b("Box damit keine Option. Bitte den Bericht mitschicken.")
-    else:
-        name, werte = bestes_1080
-        b("Bester 1080p-Dauerbetrieb: " + ("%.1f" % werte["fps"]) + " Bilder/s ueber " + name)
-        b("(" + ("%.0f" % werte["mittel"]) + " ms pro Bild, langsamstes "
-          + ("%.0f" % werte["max"]) + " ms)")
-        b("   davon Warten auf die Kamera : " + ("%.0f" % werte["warten"]) + " ms")
-        b("   davon Rechnen (Dekodieren)  : " + ("%.0f" % werte["rechnen"]) + " ms")
-        if werte["rechnen"] > werte["warten"]:
-            b("   -> Die CPU bremst. Schnelleres Dekodieren wuerde helfen.")
+    except BaseException:
+        # ABSICHTLICH BaseException: Auch Strg+C (KeyboardInterrupt) und
+        # SystemExit sollen noch einen Bericht hinterlassen — bis hierher
+        # gemessene Werte sind wertvoll und waeren sonst weg. Der Fehler wird
+        # danach unveraendert weitergereicht (`raise`), nichts wird verschluckt.
+        try:
+            b("")
+            b("!! Die Messung wurde unerwartet beendet. Der Bericht enthaelt nur")
+            b("!! die bis dahin fertigen Werte.")
+        except Exception:
+            pass
+        raise
+    finally:
+        # Hier darf NUR noch das Berichtsobjekt angefasst werden — ein
+        # aufgegebener Worker-Thread koennte noch an einem `cap` haengen.
+        opencv_log.stop()
+        if abbruch is not None and abbruch.is_set():
+            schluss = "ABGEBROCHEN"
+        elif b.kamera_belegt:
+            schluss = "FERTIG (mit aufgegebenen Schritten)"
         else:
-            b("   -> Die KAMERA bremst (Bildrate/USB), nicht die CPU. Eine")
-            b("      schnellere Bildaufbereitung wuerde daran nichts aendern.")
-        b("")
-        if werte["fps"] >= 12:
-            b("=> GUT. Die Kamera kann dauerhaft in 1080p laufen. Das Umschalten")
-            b("   kann entfallen - der Blitz wuerde dann zum Bild passen.")
-        elif werte["fps"] >= 7:
-            b("=> GRENZWERTIG. Etwa so fluessig wie die Vorschau heute (~8,5 Bilder/s).")
-            b("   Machbar, aber nur zusammen mit dem Umbau aus Punkt 3.")
-        else:
-            b("=> ZU LANGSAM fuer dauerhaften 1080p-Betrieb. Bessere Wege:")
-            b("   1280x720 als Mittelweg, oder beim Umschalten bleiben und")
-            b("   stattdessen den Blitz auf den echten Ausloesemoment legen.")
+            schluss = "FERTIG"
+        b.schritt_name = ""
+        try:
+            b("")
+            b("== ENDE DES BERICHTS ==")
+        except Exception:
+            pass
+        pfad = b.speichern(status=schluss)
+        try:
+            print("")
+            if pfad:
+                print("Bericht gespeichert: " + pfad)
+            else:
+                print("WARNUNG: Bericht konnte nicht gespeichert werden.")
+        except Exception:
+            pass
 
-    b("")
-    b("Bitte die Datei kamera-messung.txt aus C:\\FexoBooth\\logs mitschicken.")
-
-    pfad = b.speichern()
-    print("")
-    if pfad:
-        print("Bericht gespeichert: " + pfad)
-    else:
-        print("WARNUNG: Bericht konnte nicht gespeichert werden - Ausgabe oben gilt trotzdem.")
+    return pfad

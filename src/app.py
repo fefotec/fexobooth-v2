@@ -2750,11 +2750,20 @@ class PhotoboothApp:
         dialog = AdminDialog(self.root, self.config, kiosk_mode=is_kiosk)
         self.root.wait_window(dialog)
 
+        # Wurde die App aus dem Dialog heraus beendet? Dann ist das Hauptfenster
+        # weg und ab hier darf nichts mehr angefasst werden.
+        if not self._root_lebt():
+            logger.info("Admin-Dialog: App wurde beendet — kein Nacharbeiten mehr")
+            return
+
         # Service-Menü öffnen wenn über Service-PIN angefordert
         if getattr(dialog, '_open_service', False):
             from src.ui.screens.service import ServiceDialog
             service = ServiceDialog(self.root, self)
             self.root.wait_window(service)
+            if not self._root_lebt():
+                logger.info("Service-Menü: App wurde beendet — kein Nacharbeiten mehr")
+                return
         elif dialog.result:
             self.config = dialog.result
             apply_locale_to_config(self.config)
@@ -3006,6 +3015,11 @@ class PhotoboothApp:
             initial_customer_screen="print_adjustment"
         )
         self.root.wait_window(dialog)
+
+        # Auch hier: Wurde die App aus dem Dialog heraus beendet?
+        if not self._root_lebt():
+            logger.info("Druckkorrektur-Dialog: App wurde beendet")
+            return
 
         if dialog.result:
             self.config = dialog.result
@@ -3401,20 +3415,77 @@ class PhotoboothApp:
         finally:
             self._mainloop_started = False
     
-    def _emergency_quit(self):
-        """Notfall-Beenden über Ctrl+Shift+Q - funktioniert IMMER, auch im Kiosk-Modus."""
-        logger.warning("NOTFALL-BEENDEN: Ctrl+Shift+Q gedrückt")
-        self._show_taskbar()
-        self._suppress_notifications(False)
+    def _root_lebt(self) -> bool:
+        """Existiert das Hauptfenster noch?
+
+        Wird nach jedem `wait_window(...)` geprueft: Wenn die App aus einem
+        Dialog heraus beendet wurde (Beenden-Button im Service-Menue oder
+        Ctrl+Shift+Q), ist das Hauptfenster danach zerstoert. Der Code hinter
+        dem Warten wuerde dann auf toten Widgets weiterarbeiten und eine
+        TclError werfen — mitten im Beenden.
+        """
         try:
-            self.camera_manager.release()
+            return bool(self.root.winfo_exists())
+        except Exception:
+            return False
+
+    def shutdown(self, grund: str = "unbekannt"):
+        """Einziger geordneter Weg, die App zu beenden.
+
+        BEFUND CHRISTIAN 19.08.2026: Der Beenden-Button im Service-Menue (3198)
+        schloss zwar das Fenster, liess aber einen Prozess im Task-Manager
+        stehen. Ursache: Es gab ZWEI verschiedene Beenden-Wege mit eigenem Code —
+        der erprobte Notausstieg (Ctrl+Shift+Q) gab die Kamera frei, der
+        Button-Weg nicht. Ausserdem hatte keiner der beiden ein Netz, falls
+        `root.destroy()` die Hauptschleife nicht beendet: Dann wird das
+        abschliessende `os._exit(0)` in main.py nie erreicht und der Prozess
+        laeuft unsichtbar weiter.
+
+        Deshalb laufen jetzt BEIDE Wege hier durch, und der Notausstieg wird
+        vorher scharf gemacht. Jeder Aufraeum-Schritt ist einzeln abgesichert —
+        beim Beenden darf ein Fehler in Schritt 2 nicht Schritt 3 verhindern.
+
+        Args:
+            grund: Klartext fuer das Log (wer hat das Beenden ausgeloest)
+        """
+        logger.warning(f"App wird beendet (Grund: {grund})")
+
+        # Netz zuerst spannen: Ab hier verschwindet der Prozess garantiert,
+        # egal was in den folgenden Schritten oder in Tk noch schiefgeht.
+        try:
+            from src.utils.shutdown import notausstieg_scharf_machen
+            notausstieg_scharf_machen(sekunden=8.0, grund=grund)
         except Exception:
             pass
-        self.root.destroy()
+
+        for schritt, aktion in (
+            ("Taskleiste einblenden", self._show_taskbar),
+            ("Benachrichtigungen freigeben", lambda: self._suppress_notifications(False)),
+            ("Kamera freigeben", self.camera_manager.release),
+        ):
+            try:
+                aktion()
+            except Exception as e:
+                logger.warning(f"Beenden — '{schritt}' fehlgeschlagen: {e}")
+
+        # Kindprozesse (FexoNikonBridge) beenden, solange die Verbindung noch
+        # steht — os._exit(0) in main.py nimmt sie sonst NICHT mit.
+        try:
+            from src.utils.shutdown import beende_kindprozesse
+            beende_kindprozesse()
+        except Exception as e:
+            logger.warning(f"Beenden — Kindprozesse: {e}")
+
+        try:
+            self.root.destroy()
+        except Exception as e:
+            # Hauptschleife laesst sich nicht beenden -> Wachhund erledigt es
+            logger.warning(f"Beenden — root.destroy() fehlgeschlagen: {e}")
+
+    def _emergency_quit(self):
+        """Notfall-Beenden über Ctrl+Shift+Q - funktioniert IMMER, auch im Kiosk-Modus."""
+        self.shutdown("Notausstieg Ctrl+Shift+Q")
 
     def quit(self):
-        """Beendet die Anwendung - stellt Taskleiste und Benachrichtigungen wieder her."""
-        self._show_taskbar()
-        self._suppress_notifications(False)
-        self.camera_manager.release()
-        self.root.quit()
+        """Beendet die Anwendung (Altbestand — geht ueber den gemeinsamen Weg)."""
+        self.shutdown("quit()")

@@ -78,6 +78,11 @@ Source: "update_from_github.bat"; DestDir: "{app}"; Flags: ignoreversion
 ; und legt sie als Textdatei in C:\FexoBooth\logs ab.
 Source: "setup\Absturz-Infos-sammeln.bat"; DestDir: "{app}"; Flags: ignoreversion
 
+; Kamera-Messung (2.4.34): Doppelklick auf der Box, misst ~2 Minuten und
+; beantwortet, ob die Kamera dauerhaft in 1080p laufen kann. Beendet vorher
+; die Fotobox-Software, weil die Kamera sonst belegt ist.
+Source: "setup\Kamera-Messung-starten.bat"; DestDir: "{app}"; Flags: ignoreversion
+
 ; Setup-Skripte
 Source: "setup\*"; DestDir: "{app}\setup"; Flags: ignoreversion recursesubdirs createallsubdirs
 

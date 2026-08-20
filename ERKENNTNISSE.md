@@ -402,6 +402,69 @@ Betrifft: `_display_preview()`, `_build_flash_cache()`, `_show_main_preview()`, 
 
 ## Lessons Learned
 
+### Lange Kamera-Arbeit gehoert in einen eigenen PROZESS, nicht in einen Thread (20.08.2026)
+
+| | |
+|---|---|
+| **Problem** | Der neue Knopf "Kamera-Messung" startete die Messung als Hintergrund-Thread in der laufenden App. Auf der Box fror daraufhin die KOMPLETTE Software ein, liess sich nicht mehr schliessen und musste hart ausgeschaltet werden. |
+| **Beweis** | `fexobooth_20260820_090921.log` endet exakt nach der letzten Zeile vor dem ersten Kamerazugriff der Messung (`09:12:15.454 Kamera der App freigegeben`) — danach keine Zeile mehr, auch nicht vom UI-Hitch-Wachhund, und kein Eintrag in `absturz.log`. Also kein Absturz, sondern Stillstand. |
+| **Ursache** | Zwei Effekte, die beide im Thread-Entwurf unvermeidbar sind: (1) Ein minutenlanger OpenCV-Kamerazugriff blockiert den Python-Prozess so, dass die Tk-Oberflaeche nicht mehr drankommt. (2) Die Messung hielt `camera_hardware_lock()` ueber ihre ganze Laufzeit — jeder andere Kamerazugriff der App haette minutenlang gewartet. |
+| **Loesung** | Der Dialog startet die Messung als eigenen Windows-Prozess (`fexobooth.exe --kamera-test`) und pollt ihn per `after()`. Eigener Prozess = eigener Interpreter und eigene Sperren. |
+| **Merke** | Als Einzelprogramm (`--kamera-test`) war derselbe Code unauffaellig — es gab ja keine Oberflaeche, die haette einfrieren koennen. **Code aus einem CLI-Werkzeug in eine laufende GUI zu uebernehmen ist kein Umzug, sondern eine neue Betriebsart.** Alles, was Sekunden bis Minuten am Stueck arbeitet und dabei Hardware anfasst, kommt in einen eigenen Prozess. |
+
+### Abbrechen geht nur ueber die Prozessgrenze (20.08.2026)
+
+| | |
+|---|---|
+| **Problem** | Christian musste die Box hart ausschalten, weil sich nichts mehr beenden liess. |
+| **Ursache** | Ein blockierender `cv2`-Aufruf steckt im C-Code von OpenCV. Dorthin kommt weder ein Signal noch eine Exception — ein Thread laesst sich in Python **nicht** abbrechen, nur aufgeben. Aufgeben hilft aber nicht, wenn er die Kamera weiter besitzt. |
+| **Loesung** | Als eigener Prozess ist `terminate()` (Windows: `TerminateProcess`) moeglich — das kann der Zielprozess nicht ignorieren. Gegenprobe mit einem Testprozess, der `SIGTERM` absichtlich ignoriert: trotzdem in 0,00 s beendet. |
+| **Merke** | Wenn eine Aufgabe abbrechbar sein MUSS, entscheidet das die Architektur, nicht die Fehlerbehandlung. Thread = nicht abbrechbar. Prozess = abbrechbar. Diese Frage vor dem Bauen stellen. |
+
+### Eine Messung ohne Zeitgrenze ist keine Messung (20.08.2026)
+
+| | |
+|---|---|
+| **Problem** | Angekuendigt waren "ca. 2 Minuten", nach 5+ Minuten lief noch nichts fertig. |
+| **Befund** | Ein gesunder Lauf kostet rechnerisch ~100 s (11 Kamera-Oeffnungen, 242 Leseversuche, 3,3 s feste Pausen). Aber: **kein einziger dieser ueber 240 Aufrufe hatte eine Zeitgrenze.** Antwortet die Kamera nicht, wartet die Messung endlos, statt den Schritt als fehlgeschlagen zu vermerken und weiterzumachen. Hauptverdacht: Media Foundation, das auf dem Entwickler-PC bei allen drei Aufloesungen "keine Bilder erhalten" lieferte — 110 Fehlversuche ohne Abbruch. |
+| **Merke** | Bei Messwerkzeugen an echter Hardware gehoert zu jedem Schritt ein Zeitlimit UND ein fortlaufend geschriebenes Zwischenergebnis. Ein Bericht, der erst am Ende entsteht, macht jeden Abbruch zum Totalverlust — und ohne Lebenszeichen ist ein langsamer Lauf von einem haengenden nicht unterscheidbar. |
+
+### `os._exit(0)` beendet KEINE Kindprozesse (20.08.2026)
+
+| | |
+|---|---|
+| **Problem** | Nach „App beenden" im 3198-Menue blieb ein Prozess im Task-Manager stehen. |
+| **Ursache** | `main.py` endet bewusst mit `os._exit(0)` (non-daemon Threads hielten die EXE sonst am Leben). Das beendet aber **nur den Python-Prozess**. Die unsichtbare `FexoNikonBridge.exe` ist ein eigenstaendiger Windows-Prozess und ueberlebt als Waise — und belegt weiter die Kamera, sodass der naechste Start daran scheitern kann. |
+| **Loesung** | Kindprozesse explizit vor dem Ausstieg beenden (`shutdown_bridge()`), Waisen frueherer Abstuerze beim **Start** per Name wegraeumen. |
+| **Merke** | Wer `os._exit()` benutzt, uebernimmt die Verantwortung fuer alle `subprocess.Popen`-Kinder selbst. Es gibt kein automatisches Aufraeumen — auch `atexit`-Handler laufen bei `os._exit()` **nicht**. |
+
+### Zwei Wege zum selben Ziel driften auseinander (20.08.2026)
+
+| | |
+|---|---|
+| **Problem** | Der Notausstieg Ctrl+Shift+Q gab die Kamera frei, der Beenden-Knopf im Service-Menue nicht — obwohl beide „die App beenden" sollten. |
+| **Ursache** | Es waren zwei getrennte Methoden mit eigenem, aehnlichem Code. Als der Notausstieg um `camera_manager.release()` erweitert wurde, blieb der Knopf-Weg zurueck. Nach demselben Muster fehlten dort auch `grab_release()` und das Schliessen des Dialogs. |
+| **Loesung** | Ein einziger Weg `PhotoboothApp.shutdown(grund)`; alle drei Aufrufer laufen hindurch. Der Grund kommt als Text ins Log, damit man im Feld-Log sieht, wer beendet hat. |
+| **Merke** | Bei mehreren Wegen zum selben Systemzustand (beenden, zuruecksetzen, neu verbinden) **eine** gemeinsame Funktion bauen. Sonst wird jeder Fix nur an einem Weg angebracht und faellt Monate spaeter am anderen auf. |
+
+### Beim Beenden darf nichts blockieren — `taskkill` braucht Sekunden (20.08.2026)
+
+| | |
+|---|---|
+| **Problem** | Der erste Entwurf raeumte Kindprozesse mit `taskkill /IM ... /F` auf dem Beenden-Weg auf. Messung: **5,0 s** — auch wenn der Prozess gar nicht laeuft. Das lief auf dem Oberflaechen-Thread, die App waere beim Beenden sichtbar eingefroren. |
+| **Ursache** | `taskkill` ist ein eigener Prozessstart. Ein `subprocess.run(..., timeout=5)` verdeckt das: Es wirft `TimeoutExpired`, die Ausnahme wird geschluckt — der Aufruf sieht „erfolgreich abgesichert" aus, kostet aber trotzdem die vollen 5 Sekunden. |
+| **Loesung** | Auf dem Beenden-Weg nur der direkte Kill des eigenen Kind-Handles (`process.kill()`, sofort). `taskkill` laeuft nur noch beim **Start** in einem Daemon-Thread, fuer Waisen fremder Laeufe. |
+| **Merke** | Auf Abbruch-/Beenden-Pfaden keine externen Kommandos starten. Ein `timeout=` macht einen blockierenden Aufruf nicht schnell, sondern begrenzt nur, wie lange er blockiert. Zeit messen statt annehmen. |
+
+### Ein RLock laesst sich nicht aus dem eigenen Thread pruefen (20.08.2026)
+
+| | |
+|---|---|
+| **Problem** | Der Test „laeuft die Kamera-Messung wirklich unter `camera_hardware_lock()`?" meldete **falsch** „nein". |
+| **Ursache** | `camera_hardware_lock()` ist ein `threading.RLock` — **reentrant**. `acquire(blocking=False)` aus dem Thread, der die Sperre bereits haelt, ist per Definition erfolgreich. Der Test schloss daraus faelschlich, die Sperre sei frei. |
+| **Loesung** | Aus einem **zweiten** Thread pruefen. Dort schlaegt `acquire(blocking=False)` fehl, solange die Sperre gehalten wird. |
+| **Merke** | Aussagen ueber `RLock`-Besitz sind immer thread-relativ. Wer „ist gesperrt?" testen will, braucht dafuer einen fremden Thread — sonst testet man nur die Reentranz. |
+
 ### Der LiveView-Engpass ist die ANZEIGE, nicht die Kamera (19.08.2026)
 
 - **Befund:** Der Gast sieht nicht die 8,5 Bilder/s aus dem Log, sondern nur **~4,7**.
