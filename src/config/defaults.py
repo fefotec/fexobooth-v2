@@ -47,6 +47,28 @@ DEFAULT_CONFIG = {
     # wird dieser Index abgeschaltet, statt blind benutzt zu werden.
     "camera_index_manuell": False,
     "rotate_180": False,
+    # DAUERBETRIEB HD (Etappe 2, 2.4.43) — Grundwert bewusst False.
+    #
+    # False (= heutiges Verhalten der ganzen Flotte): Die Kamera laeuft in der
+    # kleinen Vorschau-Aufloesung und wird fuer JEDES Foto kurz auf 1920x1080
+    # umgeschaltet. Messung Box 2.4.41: set=1572ms, read=236ms, danach
+    # Preview-Restore set=1251ms. Der Blitz kommt sofort, belichtet wird aber
+    # erst ~1,8s spaeter — wer sich dazwischen bewegt, ist nicht mehr drauf.
+    #
+    # True (nur auf einer Testbox umlegen): Die Kamera wird EINMAL in
+    # Fotoaufloesung geoeffnet und bleibt dort. Das Umschalten pro Foto
+    # entfaellt komplett, Blitz und Belichtung fallen zusammen. Moeglich wurde
+    # das erst durch Etappe 1 (Vorschau-Aufbereitung 0,14ms statt 4,19ms bei
+    # 1080p) und die Kamera-Messung auf der echten Box:
+    #     640x480 MJPG : 29,8 Bilder/s (33,6 ms/Bild, davon 0 ms Warten)
+    #     1920x1080MJPG: 13,9 Bilder/s (71,9 ms/Bild, davon 0 ms Warten)
+    # "0 ms Warten" heisst: Die Kamera ist nie der Flaschenhals, die 71,9 ms
+    # sind reine CPU-Zeit fuers Entpacken des MJPG-Bildes.
+    #
+    # Faellt irgendetwas aus (Kamera liefert kein 1080p, MJPG abgelehnt), geht
+    # webcam.initialize() von selbst auf die kleine Vorschau zurueck und die
+    # Box arbeitet exakt wie heute weiter — siehe dortiger Kommentarblock.
+    "camera_dauerbetrieb_hd": False,
     "liveview_template_overlay": True,  # Template-Overlay im LiveView anzeigen
     "camera_settings": {
         "single_photo_width": 1920,

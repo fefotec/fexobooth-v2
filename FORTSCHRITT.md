@@ -4,6 +4,51 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-08-20 (Nacht) — Kamera darf dauerhaft in Full HD laufen (2.4.43, Etappe 2 von 2)
+
+Auftrag Christian: *„wenn eine session gemacht wird und ein foto geschossen wird
+(blitz kommt) dann wird ganz kurz ein foto in der collage gezeigt aber das ist dann
+nicht das foto was auch anschliessend im vollbild gezeigt wird... als wenn 2 fotos
+geschossen werden!"*
+
+**Die Ursache, aus dem Box-Log:** Die Kamera wird für JEDES Foto von 640x480 auf
+1920x1080 umgeschaltet und danach zurück. `set=1572ms` hoch, `read=236ms`,
+`set=1251ms` zurück. Sichtbare Wartezeit bis zur Fotoanzeige: **1842 ms.** Der Blitz
+markiert also nicht die Aufnahme, sondern nur das Ende des Countdowns — belichtet wird
+1,7 Sekunden später. Der Gast sieht erst das eingefrorene Vorschaubild aus der Pose
+VOR dem Blitz und danach ein Foto aus einem ganz anderen Moment. Christians Diagnose
+„als wenn 2 fotos geschossen werden" war exakt richtig.
+
+**Was gebaut ist:** Ein Schalter, **Grundwert AUS**. Ist er an, wird die Kamera
+einmal in Fotoauflösung geöffnet und bleibt dort; `get_high_res_frame` erkennt von
+allein „Zielauflösung ist bereits aktiv" und schaltet nicht mehr um.
+
+- Schalter: `camera_dauerbetrieb_hd` → Admin-Menü (3198) → Tab **Kamera** →
+  „Kamera dauerhaft in Full HD (nur Testbox)". Liegt in `machine_settings.json`
+  (ProgramData), überlebt also OTA-Updates.
+- **Warm-Öffnen** statt kalt in 1080p: erst 640x480, ein Bild lesen, dann hochsetzen.
+  Grund: Der Kalt-1080p-Open hat am 13.08. Box 224 eingefroren.
+- **Rückfall**, wenn die Kamera kein 1080p liefert oder MJPG ablehnt: zurück auf
+  640x480 + Warnung im Log, Box arbeitet wie die restliche Flotte.
+- Blitz hält bis zum Foto (Notbremse 400 ms), Puffer-Leerung 1x statt 2x,
+  Preview-Restore entfällt, System-Test folgt der echten Betriebsart mit eigener
+  fps-Schwelle (9,0 bei HD).
+
+**Grundlage:** Kamera-Messung auf der echten Box — 1920x1080 MJPG = 13,9 Bilder/s,
+71,9 ms pro Bild, **davon 0 ms Warten auf die Kamera**. Der Dauerbetrieb wurde erst
+durch Etappe 1 tragfähig (Aufbereitung 0,14 ms statt 4,19 ms bei 1080p).
+
+**Ehrlich zur Erwartung:** Die Vorschau wird dadurch **nicht flüssiger**. Der Deckel
+ist die Anzeigezeit im UI-Thread (`delay = max(..., display_ms*3)`), nicht die Kamera.
+Gewinn sind der passende Blitz und — sichtbar — der passende Bildausschnitt: Die
+Vorschau ist im Dauerbetrieb 16:9 wie das Foto, also links/rechts enger und
+oben/unten weiter als heute.
+
+**Auf den ~280 Boxen im Feld ändert sich ohne Umlegen des Schalters nichts.**
+Der klassische Weg in `initialize()` ist Zeile für Zeile unverändert.
+
+---
+
 ## 2026-08-20 (spät) — Vorschau umgedreht: erst verkleinern, dann spiegeln (2.4.41, Etappe 1 von 2)
 
 Auftrag Christian: *„Nur die Vorschau-Aufbereitung umdrehen. Der Foto-Ablauf bleibt in

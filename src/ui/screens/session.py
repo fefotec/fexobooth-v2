@@ -17,6 +17,7 @@ import os
 import random
 import threading
 
+from src.config.config import vorschau_aufloesung
 from src.ui.theme import COLORS, FONTS, SIZES
 from src.utils.logging import get_logger
 from src.i18n import t
@@ -48,6 +49,8 @@ class SessionScreen(ctk.CTkFrame):
         self._waiting_for_restore_countdown = False
         self._capture_visible_started_at = 0.0
         self._shutter_flash_overlay = None
+        # Blitz haelt, bis das Foto auf dem Schirm ist (nur HD-Dauerbetrieb, 2.4.43)
+        self._flash_haltend = False
 
         # Performance-Einstellungen
         self._low_perf = self.config.get("low_performance_mode", {})
@@ -236,13 +239,19 @@ class SessionScreen(ctk.CTkFrame):
         if self.app.camera_manager.is_initialized:
             logger.info("Kamera bereits initialisiert - überspringe Neuinitialisierung")
         else:
-            cam_settings = self.config.get("camera_settings", {})
-            live_res = cam_settings.get("live_view_resolution", 480)  # Default 480 für Performance
+            # Aufloesung zentral aus der Config (2.4.43) — dieselbe Quelle wie
+            # app._pre_init_camera und der System-Test. Klassisch z.B. 640x480,
+            # im HD-Dauerbetrieb 1920x1080.
+            breite, hoehe = vorschau_aufloesung(self.config)
+            logger.info(
+                f"Kamera wird geöffnet: {breite}x{hoehe} "
+                f"({'Dauerbetrieb HD' if self.config.get('camera_dauerbetrieb_hd', False) else 'klassisch'})"
+            )
 
             if not self.app.camera_manager.initialize(
                 self.config.get("camera_index", 0),
-                live_res,
-                int(live_res * 0.75)
+                breite,
+                hoehe
             ):
                 logger.error("Kamera konnte nicht initialisiert werden")
                 self._show_error(t(self.config, "session.camera_error"))
@@ -573,8 +582,12 @@ class SessionScreen(ctk.CTkFrame):
         live_view_resolution = 320. Vorgabe in src/config/defaults.py ist 640,
         config.example.json hat 480. Auf einer Box mit 320 oder 480 wird man
         von Etappe 1 NICHTS merken; spürbar wird sie erst ab 640 aufwärts.
-        Bewusst NICHT dazugebaut: an live_view_resolution wird hier nichts
-        gedreht, das ist Christians Entscheidung (und Thema von Etappe 2).
+        NACHTRAG ETAPPE 2 (2.4.43): Genau deshalb gibt es jetzt den Schalter
+        `camera_dauerbetrieb_hd`. Steht er an, kommt die Vorschau aus dem
+        1080p-Strom — dort greift Etappe 1 mit voller Wirkung (5,42 -> 2,82 ms
+        im Collagen-Weg), und der Vorschrumpf unten wird erstmals wirklich
+        gebraucht. An `live_view_resolution` selbst wird weiterhin nichts
+        gedreht; der Schalter zieht stattdessen die Foto-Auflösung heran.
 
         WICHTIG ZUM VORSCHRUMPF (_preshrink_frame): der greift NUR ab
         1080p-Quelle. Für ein 362x240-Fach ist die Cover-Fit-Größe 426x240,
@@ -641,19 +654,28 @@ class SessionScreen(ctk.CTkFrame):
                 img = None
             overlay_ms = (time.perf_counter() - t0) * 1000
 
-        # --- 3) Vollbild-Weg (kein Overlay, oder Overlay-Fehler): hier wird das
-        # Bild auf FAST BILDSCHIRMGRÖSSE gebracht, also meist vergrößert. Dort
-        # ist die alte Reihenfolge die billige: erst auf dem kleinen Kameraframe
-        # spiegeln, dann hochziehen. Deshalb bleibt dieser Zweig unverändert.
+        # --- 3) Vollbild-Weg (kein Overlay, oder Overlay-Fehler).
         # Er rechnet bewusst wieder mit orig_frame — ein vorgeschrumpftes Bild
         # würde hier aufgeblasen und sähe matschig aus.
-        if img is None:
-            rgb = self._mirror_and_rgb(orig_frame)
+        #
+        # REIHENFOLGE HÄNGT AN DER RICHTUNG (2.4.43):
+        # Bisher wurde immer erst gespiegelt/umgefärbt und dann skaliert. Das
+        # ist richtig, solange das Bild VERGRÖSSERT wird (640x480 -> 1006x755):
+        # dann läuft die teure Arbeit über die kleinere Seite. Im HD-Dauerbetrieb
+        # dreht sich das Vorzeichen um — 1920x1080 wird auf 1280x720
+        # VERKLEINERT, und dann wären es 2.073.600 statt 921.600 Punkte,
+        # auf dem Miix rund 40 ms pro Frame für nichts.
+        # Deshalb: verkleinern wir, kommt der Resize zuerst; vergrößern wir,
+        # bleibt alles exakt wie bisher. Das ist erlaubt, weil cv2.resize mit
+        # flip vertauscht (Begründung siehe _fit_frame_to_box_np / ERKENNTNISSE
+        # 2.4.41) und hier NICHTS beschnitten wird — der Vollbild-Weg passt nur
+        # seitenverhältnistreu ein.
+        vollbild = img is None
 
-        if img is not None:
-            src_w, src_h = img.size
+        if vollbild:
+            src_w, src_h = orig_w, orig_h  # Spiegeln ändert die Maße nicht
         else:
-            src_h, src_w = rgb.shape[:2]
+            src_w, src_h = img.size
 
         # Anzeigegröße: Seitenverhältnis in LOGISCHEN Pixeln einpassen
         # (winfo liefert Tk-Pixel; bei 125% DPI wäre das Bild sonst zu groß)
@@ -661,9 +683,18 @@ class SessionScreen(ctk.CTkFrame):
             src_w, src_h, target_w, target_h, scaling
         )
 
-        if img is None:
-            # Vollbild-LiveView: direkt per OpenCV auf Zielgröße (schneller als PIL)
-            rgb = cv2.resize(rgb, (phys_w, phys_h), interpolation=cv2.INTER_LINEAR)
+        if vollbild:
+            if phys_w < orig_w:
+                # Quelle größer als die Anzeige (Dauerbetrieb HD):
+                # erst klein rechnen, dann spiegeln/umfärben
+                verkleinert = cv2.resize(
+                    orig_frame, (phys_w, phys_h), interpolation=cv2.INTER_LINEAR
+                )
+                rgb = self._mirror_and_rgb(verkleinert)
+            else:
+                # Heutiger Normalfall: Bild wird vergrößert — alte Reihenfolge
+                rgb = self._mirror_and_rgb(orig_frame)
+                rgb = cv2.resize(rgb, (phys_w, phys_h), interpolation=cv2.INTER_LINEAR)
             img = Image.fromarray(rgb)
         elif img.size != (phys_w, phys_h):
             img = img.resize((phys_w, phys_h), Image.Resampling.BILINEAR)
@@ -1121,11 +1152,38 @@ class SessionScreen(ctk.CTkFrame):
         logger.info(f"Foto {self.app.current_photo_index + 1} aufnehmen")
         self._capture_photo()
 
+    def _dauerbetrieb_aktiv(self) -> bool:
+        """Laeuft die Kamera GERADE dauerhaft in Fotoaufloesung? (2.4.43)
+
+        Fragt bewusst den Kamera-Manager nach dem ECHTEN Zustand und nicht die
+        Config nach dem Wunsch: Hat die Kamera 1080p verweigert, ist der
+        Schalter zwar an, die Box arbeitet aber klassisch — und dann muss auch
+        hier alles beim Alten bleiben.
+
+        Canon-/Nikon-Manager haben diese Methode nicht; `getattr` faengt das ab
+        und liefert das heutige Verhalten.
+        """
+        pruefer = getattr(self.app.camera_manager, "braucht_preview_restore", None)
+        if pruefer is None:
+            return False
+        cam_settings = self.config.get("camera_settings", {})
+        try:
+            return not pruefer(
+                cam_settings.get("single_photo_width", 1920),
+                cam_settings.get("single_photo_height", 1080)
+            )
+        except Exception:
+            return False
+
     def _capture_photo(self):
         """Erfasst das Foto (non-blocking via Background-Thread)"""
         # Kamera-Zugriff für LiveView pausieren
         self._capture_in_progress = True
         self._capture_visible_started_at = time.perf_counter()
+
+        # Betriebsart EINMAL pro Foto festhalten (der Blitz-Ausblendzeitpunkt
+        # und die Logzeile am Ende müssen dieselbe Antwort benutzen).
+        self._flash_haltend = self._dauerbetrieb_aktiv()
 
         # Kurzer echter Auslöse-Blitz: reines Tk-Overlay, keine Bildberechnung im LiveView.
         self._show_shutter_flash()
@@ -1135,7 +1193,22 @@ class SessionScreen(ctk.CTkFrame):
         thread.start()
 
     def _show_shutter_flash(self):
-        """Zeigt beim eigentlichen Capture einen sehr leichten White-Flash."""
+        """Zeigt beim eigentlichen Capture einen sehr leichten White-Flash.
+
+        AUSBLENDEN — zwei Fälle (2.4.43):
+
+        KLASSISCH (ganze Flotte, unverändert): fest nach 90 ms. Das Foto
+        erscheint dort erst ~1,8 s später; würde der Blitz so lange stehen,
+        stünde die Box in einem weißen Bild.
+
+        DAUERBETRIEB HD: Das Foto ist nach ~150-300 ms da, der Blitz wäre
+        nach 90 ms aber schon weg. In der Lücke blitzt wieder das eingefrorene
+        Vorschaubild auf — dasselbe „zweite Foto", das Christian gemeldet hat,
+        nur 10x kürzer. Deshalb hält der Blitz hier, bis das Foto wirklich auf
+        dem Schirm steht (_on_capture_complete). Die 400 ms sind reine
+        Notbremse: Scheitert der Capture, darf kein weißer Bildschirm
+        stehenbleiben.
+        """
         try:
             if self._shutter_flash_overlay is None:
                 self._shutter_flash_overlay = tk.Frame(
@@ -1147,7 +1220,7 @@ class SessionScreen(ctk.CTkFrame):
 
             self._shutter_flash_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
             self._shutter_flash_overlay.tkraise()
-            self.after(90, self._hide_shutter_flash)
+            self.after(400 if self._flash_haltend else 90, self._hide_shutter_flash)
         except Exception as e:
             logger.debug(f"Shutter-Flash konnte nicht angezeigt werden: {e}")
 
@@ -1249,13 +1322,32 @@ class SessionScreen(ctk.CTkFrame):
         self._photo_display_key = None
         if self._capture_visible_started_at > 0:
             visible_ms = (time.perf_counter() - self._capture_visible_started_at) * 1000
-            logger.info(f"Sichtbare Capture-Wartezeit bis Fotoanzeige: {visible_ms:.0f}ms")
+            # DAS ist die Zahl, an der Etappe 2 gemessen wird: vom Blitz bis
+            # zum Foto. Vorher auf der Box: 1842 ms. Im Dauerbetrieb sollen es
+            # ~150-300 ms sein. Betriebsart steht bewusst mit in der Zeile,
+            # sonst ist im Log nicht zu unterscheiden, ob der Schalter griff.
+            logger.info(
+                f"Sichtbare Capture-Wartezeit bis Fotoanzeige: {visible_ms:.0f}ms "
+                f"({'Dauerbetrieb HD' if self._flash_haltend else 'klassisch'})"
+            )
             self._capture_visible_started_at = 0.0
 
         if photo is not None:
             self.app.photos_taken.append(photo)
             self.app.statistics.record_photo()
             self.after(10, lambda: self._save_photo_async(photo, self.app.current_photo_index + 1))
+
+            # Dauerbetrieb: Foto SOFORT auf den Schirm bringen und erst dann den
+            # Blitz wegnehmen. Sonst käme das Foto erst mit dem nächsten Tick von
+            # _update_live_view (bis ~250 ms später) und dazwischen wäre wieder
+            # das eingefrorene Vorschaubild zu sehen. Klassisch bleibt alles wie
+            # bisher: der Blitz ist längst per Timer weg.
+            if self._flash_haltend:
+                try:
+                    self._display_photo_cached(photo)
+                except Exception as e:
+                    logger.warning(f"Sofort-Anzeige des Fotos fehlgeschlagen: {e}")
+                self._hide_shutter_flash()
 
             display_time = self.config.get("single_display_time", 2)
             self.app.current_photo_index += 1
@@ -1279,6 +1371,9 @@ class SessionScreen(ctk.CTkFrame):
             self._restore_preview_after_capture()
         else:
             logger.error("Foto-Aufnahme fehlgeschlagen")
+            # Blitz sofort weg — auf den 400-ms-Notfalltimer warten lassen wir
+            # den Gast nicht, es kommt ja kein Foto mehr.
+            self._hide_shutter_flash()
             self._restore_preview_after_capture()
             self._next_photo_or_finish()
 
@@ -1287,6 +1382,16 @@ class SessionScreen(ctk.CTkFrame):
         if not hasattr(self.app.camera_manager, 'restore_preview_resolution'):
             return
         if self._camera_restore_in_progress:
+            return
+
+        # Dauerbetrieb HD: Es wurde nie umgeschaltet, also gibt es nichts
+        # zurueckzuschalten. Der Aufruf waere zwar ein No-Op, wuerde aber
+        # _camera_restore_in_progress setzen und damit den LiveView-Worker
+        # pausieren (session.py: der Worker wartet genau auf dieses Flag) und
+        # zusaetzlich _start_countdown ausbremsen — und das ausgerechnet
+        # waehrend der Gast sein Foto anschaut.
+        if self._dauerbetrieb_aktiv():
+            logger.info("Preview-Restore: übersprungen (Dauerbetrieb HD, es wurde nicht umgeschaltet)")
             return
 
         self._camera_restore_in_progress = True

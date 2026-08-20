@@ -39,6 +39,7 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 | **Kontext** | Der Event-Selbsttest öffnete die Webcam kalt in voller Foto-Auflösung (1920×1080) und maß die Init-Zeit. Auf älteren C920 dauert dieser Kalt-1080p-Open ~7,6 s (Fehlalarm „Kamera langsam") und kann die Box sogar einfrieren (Feld-Log Box 224, 13.08. — Log endet exakt bei „Kamera geöffnet"). Die Kamera war dabei kerngesund (16 fps, Foto in 0,1 s). Der Normalbetrieb öffnet aber NIE kalt in 1080p: Vorschau 640×480, pro Foto kurz `get_high_res_frame` auf 1080p und zurück (~1,5 s, robust). |
 | **Entscheidung** | Selbsttest exakt auf den Betriebsweg umgestellt: Kamera in Vorschau-Auflösung öffnen (wie `app.py`-Vor-Init), Testfoto über `get_high_res_frame`, danach `restore_preview_resolution()`. DSLR-Pfad unverändert (LiveView-Frame, kein echtes Auslösen). |
 | **Merke** | Ein Diagnose-/Selbsttest, der einen ANDEREN Code-/Hardware-Pfad nimmt als der echte Betrieb, erzeugt Fehlalarme ODER trifft Fehler, die im Betrieb gar nicht vorkommen (hier sogar ein Einfrieren, das der Betrieb nie hätte). Tests müssen denselben Weg gehen wie die Sache, die sie prüfen. Kamera-„langsam/hängt" beim Umstecken lösbar = USB-Zustand, nicht Kameradefekt. |
+| **NACHTRAG 2.4.43** | Der Kalt-1080p-Open ist damit **entschärft, nicht mehr verboten**: `WebcamManager.initialize()` öffnet bei angeforderter HD-Auflösung jetzt zweistufig (640x480 → ein `read()`, damit der DirectShow-Graph läuft → hochsetzen). Das ist Schritt für Schritt der Weg, den `get_high_res_frame` im Feld seit Monaten fehlerfrei fährt. Der Selbsttest öffnet deshalb wieder in der Auflösung, die die Box **wirklich** benutzt — im HD-Dauerbetrieb also 1080p, mit eigener fps-Schwelle (9,0 statt 12,0, weil 1080p gemessene 13,9 statt 29,8 Bilder/s liefert). Die Lehre von oben bleibt exakt gültig, nur die richtige Antwort hat sich gedreht: Nicht „Test auf Vorschau festnageln", sondern „Test folgt dem Betriebszustand". |
 
 ### Build-Version: Lokale Quelle ist `src/__init__.py`, GitHub-Release ist nur Veröffentlichung
 
@@ -540,20 +541,58 @@ Betrifft: `_display_preview()`, `_build_flash_cache()`, `_show_main_preview()`, 
   koennen voellig Verschiedenes bedeuten — Produktionsrate vs. Anzeigerate. Wir
   haben zwei Runden lang die falsche Zahl optimiert.
 
-### Vorschau ist 4:3, das Foto ist 16:9 — der Gast richtet sich nach dem falschen Bild
+### GELOEST (2.4.43): Vorschau ist 4:3, das Foto ist 16:9 — der Gast richtet sich nach dem falschen Bild
 
-- `live_view_resolution` ist **eine einzige Zahl**; die Hoehe wird an drei Stellen
-  fest als `int(live_res * 0.75)` gerechnet (`app.py:3093`, `session.py:245`,
-  `system_test.py:481`). Die Vorschau ist damit IMMER 4:3 (z.B. 640x480), das Foto
+**Der Befund (bis 2.4.42):**
+- `live_view_resolution` ist **eine einzige Zahl**; die Hoehe wurde an drei Stellen
+  fest als `int(live_res * 0.75)` gerechnet (`app.py`, `session.py`,
+  `system_test.py`). Die Vorschau war damit IMMER 4:3 (z.B. 640x480), das Foto
   aber 16:9 (1920x1080).
 - Zwei Folgen:
-  1. **1080p ist heute gar nicht einstellbar** — `live_view_resolution: 1920` ergibt
-     1920x1440, nicht 1920x1080. Jeder Versuch mit 1080p-Vorschau braucht vorher
-     diese Codeaenderung.
-  2. Der **Bildausschnitt** der Vorschau entspricht nicht dem des Fotos. Wer sich
-     nach der Vorschau ausrichtet, sieht im Foto etwas anderes.
-- `defaults.py:49` sagt 640, alle drei Aufrufstellen fallen aber auf **480** zurueck —
-  Boxen ohne diesen Konfigschluessel laufen also mit 480x360.
+  1. **1080p war gar nicht einstellbar** — `live_view_resolution: 1920` ergibt
+     1920x1440, nicht 1920x1080.
+  2. Der **Bildausschnitt** der Vorschau entsprach nicht dem des Fotos. Wer sich
+     nach der Vorschau ausrichtete, sah im Foto etwas anderes.
+- `defaults.py` sagt 640, alle drei Aufrufstellen fielen aber auf **480** zurueck —
+  Boxen ohne diesen Konfigschluessel laufen mit 480x360.
+
+**Die Loesung (2.4.43, Etappe 2):** Die Frage „in welcher Aufloesung oeffnen wir?"
+beantwortet jetzt genau EINE Funktion: `vorschau_aufloesung(config)` in
+`src/config/config.py`. Klassisch liefert sie unveraendert `(live_res, live_res*0,75)`;
+mit dem Schalter `camera_dauerbetrieb_hd` liefert sie die **Foto-Aufloesung selbst**
+(hart gedeckelt auf 1920x1080, weil die Foto-Aufloesung im Admin-Menue frei
+eintippbar ist). Damit deckt sich der Vorschau-Ausschnitt exakt mit dem Foto.
+
+**Durchgerechnet fuer das echte Template (1800x1200, Faecher 3:2):**
+
+| | Beschnitt Vorschau | Beschnitt gedrucktes Foto |
+|---|---|---|
+| klassisch (4:3-Vorschau) | 10,7 % der **Hoehe** | 15,6 % der **Breite** |
+| Dauerbetrieb (16:9-Vorschau) | 15,6 % der **Breite** | 15,6 % der **Breite** |
+
+**Merke:** Wenn dieselbe Rechnung an drei Stellen steht, ist sie nicht „dupliziert",
+sondern eine **offene Frage ohne zustaendige Stelle**. Es faellt erst auf, wenn man
+die Antwort aendern will — dann laeuft dieselbe Box je nach Weg (mit Intro-Video,
+ohne, im Selbsttest) in unterschiedlichen Zustaenden und der Fehler ist nicht mehr
+reproduzierbar.
+
+### `initialize()` ignoriert width/height, wenn die Kamera schon offen ist (2.4.43)
+
+- `WebcamManager.initialize()` steigt in der zweiten Zeile aus:
+  `if self._is_initialized and self.camera_index == camera_index: return True`.
+  **Die angeforderte Aufloesung wird dabei nicht einmal angeschaut.**
+- Das ist die Stolperfalle fuer jeden Schalter, der die Oeffnungs-Aufloesung
+  aendert: Ein zweiter `initialize()`-Aufruf mit neuen Massen tut **nichts**. Der
+  Schalter waere scheinbar wirkungslos — und man sucht einen Fehler, den es nicht
+  gibt.
+- Deshalb ruft `_sync_dauerbetrieb_hd()` in `app.py` bei einer Aenderung des
+  Schalters `release()` auf. Bewusst nur freigeben, **nicht** neu oeffnen: Das
+  Oeffnen laeuft auf dem Tk-Thread und wuerde die Oberflaeche direkt nach dem
+  Schliessen des Admin-Menues sekundenlang einfrieren. Das naechste
+  `_pre_init_camera` (waehrend des Intro-Videos) holt es nach.
+- **Merke:** Eine `initialize()`-Funktion mit Frueh-Ausstieg ist ein stiller
+  Vertrag: „Parameter gelten nur beim ERSTEN Aufruf." Wer spaeter einen Parameter
+  zur Laufzeit umstellbar macht, muss den Ausstieg mitlesen.
 
 ### Kamera-Backend: DirectShow war nie gemessen worden (Verdacht, 2026-08-19)
 
@@ -587,6 +626,13 @@ Betrifft: `_display_preview()`, `_build_flash_cache()`, `_show_main_preview()`, 
   fuer die Logitech-Kameras der Flotte NICHT bewiesen.
 - **Noch offen:** Alles oben ist am Entwickler-PC gemessen, nicht auf einer Box mit
   Atom-CPU und C922. Dafuer gibt es seit 2.4.34 `fexobooth.exe --kamera-test`.
+- **NACHTRAG 2.4.43:** Die Messung auf der echten Box liegt inzwischen vor und
+  entlastet DirectShow deutlich: **13,9 Bilder/s bei 1080p MJPG, davon 0 ms
+  Wartezeit** (die 71,9 ms pro Bild sind reines MJPG-Entpacken auf dem Atom) —
+  nicht die 5,0 Bilder/s vom Entwickler-PC. Der Dauerbetrieb (Etappe 2) ist damit
+  **ohne** Backend-Wechsel tragfaehig und aendert `backends` bewusst NICHT.
+  Sollte der Dauerbetrieb auf der Testbox an der Vorschau-Geschwindigkeit
+  scheitern, ist MSMF die naechste Frage — nicht das Zurueckdrehen von Etappe 2.
 
 ### GELOEST: Firmen-WLAN + Router — warum sich Boxen nicht im Dashboard meldeten (19.08.2026)
 

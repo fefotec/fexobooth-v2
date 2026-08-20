@@ -36,6 +36,21 @@ logger = get_logger(__name__)
 # Aufrufe im selben Thread nicht blockieren.
 _CAMERA_HW_LOCK = threading.RLock()
 
+# ─────────────────────────────────────────────
+# Dauerbetrieb HD (Etappe 2, 2.4.43)
+# ─────────────────────────────────────────────
+# Ab dieser angeforderten Breite wird die Kamera NICHT mehr direkt in der
+# Zielaufloesung geoeffnet, sondern erst klein (_WARMUP_*) und dann
+# hochgesetzt. 1280 als Schwelle, weil alles darunter der heutige
+# Normalbetrieb der Flotte ist (320/480/640) und dort nichts angefasst
+# werden darf. Ausfuehrliche Begruendung: _oeffne_warm_in_hd().
+_HD_OEFFNEN_AB_BREITE = 1280
+
+# Aufwaerm-Aufloesung: bewusst 640x480 — genau der Zustand, aus dem heraus
+# `get_high_res_frame` im Feld seit Monaten fehlerfrei auf 1080p schaltet.
+_WARMUP_BREITE = 640
+_WARMUP_HOEHE = 480
+
 
 def camera_hardware_lock() -> threading.RLock:
     """Sperre fuer JEDEN direkten Kamerazugriff — auch ausserhalb dieser Datei.
@@ -1084,6 +1099,11 @@ class WebcamManager(CameraManager):
         self._active_width: int = 0
         self._active_height: int = 0
         self._mjpg_unsupported: bool = False  # Latch: Kamera lehnt MJPG ab
+        # Laeuft die Kamera dauerhaft in Fotoaufloesung? (Etappe 2, 2.4.43)
+        # Wird NUR in initialize() gesetzt und beschreibt den TATSAECHLICHEN
+        # Zustand — nicht den Wunsch aus der Config. Scheitert das Oeffnen in
+        # HD, steht hier False und die Box arbeitet wie die restliche Flotte.
+        self._dauerbetrieb_hd: bool = False
         # Bewusst die MODULWEITE Sperre (nicht pro Objekt): Die statische
         # Kamera-Suche laeuft sonst parallel dazu und korrumpiert den Heap.
         self._camera_lock = _CAMERA_HW_LOCK
@@ -1128,29 +1148,128 @@ class WebcamManager(CameraManager):
                 logger.error(f"Konnte Kamera {camera_index} nicht öffnen")
                 return False
 
-            # Einstellungen setzen — Codec NACH der Auflösung anfordern
-            # (Messung 2.4.13: andersherum verhandelt DirectShow beim
-            # Auflösungs-Setzen wieder auf YUY2 zurück)
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-            self.cap.set(cv2.CAP_PROP_FPS, 30)
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimiert Latenz
-            self._apply_mjpg()
+            self._dauerbetrieb_hd = False
 
-            # Tatsächliche Auflösung loggen und als Preview-Auflösung merken
-            actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            if width >= _HD_OEFFNEN_AB_BREITE:
+                # DAUERBETRIEB HD (2.4.43): NICHT kalt in 1080p oeffnen —
+                # Begruendung im Kommentarblock von _oeffne_warm_in_hd().
+                actual_w, actual_h = self._oeffne_warm_in_hd(width, height)
+            else:
+                # KLASSISCHER WEG — bewusst Zeile fuer Zeile unveraendert.
+                # Auf ~280 Boxen im Feld darf sich hier nichts bewegen.
+                # Einstellungen setzen — Codec NACH der Auflösung anfordern
+                # (Messung 2.4.13: andersherum verhandelt DirectShow beim
+                # Auflösungs-Setzen wieder auf YUY2 zurück)
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+                self.cap.set(cv2.CAP_PROP_FPS, 30)
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimiert Latenz
+                self._apply_mjpg()
+
+                # Tatsächliche Auflösung übernehmen
+                actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+            # Tatsächliche Auflösung loggen und als Preview-Auflösung merken.
+            # WICHTIG: Hier steht immer die WIRKLICH ausgehandelte Groesse —
+            # auch nach einem Ruecksprung aus dem HD-Versuch. Alles andere
+            # (Preview-Restore, "Zielaufloesung bereits aktiv") haengt daran.
             self._preview_width = actual_w
             self._preview_height = actual_h
             self._active_width = actual_w
             self._active_height = actual_h
             logger.info(
                 f"Kamera initialisiert: {actual_w}x{actual_h}, "
-                f"fourcc={self._get_current_fourcc()}"
+                f"fourcc={self._get_current_fourcc()}, "
+                f"angefordert={width}x{height}, "
+                f"Betriebsart={'Dauerbetrieb HD' if self._dauerbetrieb_hd else 'klassisch (Umschalten pro Foto)'}"
             )
 
             self._is_initialized = True
             return True
+
+    def _oeffne_warm_in_hd(self, width: int, height: int) -> Tuple[int, int]:
+        """Bringt die BEREITS geoeffnete Kamera in zwei Stufen auf HD.
+
+        Rueckgabe: die tatsaechlich aktive (Breite, Hoehe).
+
+        WARUM ZWEISTUFIG UND NICHT DIREKT IN 1080p:
+        ERKENNTNISSE.md (Selbsttest, Feld-Log Box 224 vom 13.08.2026)
+        dokumentiert genau diesen Fall — ein KALTES Oeffnen in 1920x1080
+        dauert auf aelteren C920 ~7,6s und kann die Box einfrieren; das Log
+        endet dort exakt bei "Kamera geöffnet". Der Weg hier ist stattdessen
+        Schritt fuer Schritt derselbe, den `get_high_res_frame` heute
+        tausendfach pro Woche im Feld fehlerfrei faehrt:
+            klein oeffnen -> ein Bild lesen (Graph laeuft) -> hochsetzen.
+        Der Unterschied zu heute: Das passiert EINMAL beim Session-Start
+        (waehrend das Intro-Video laeuft), nicht mehr vor jedem Foto.
+
+        WARUM MJPG PFLICHT IST:
+        YUY2 ist unkomprimiert und passt bei 1080p nicht durch USB2. Lehnt
+        die Kamera MJPG ab, wuerde die Vorschau den ganzen Abend mit ~5
+        Bildern/s laufen, ohne dass es jemand merkt. Dann lieber zurueck auf
+        die kleine Vorschau: langsam und richtig schlaegt kaputt.
+        """
+        t_start = time.perf_counter()
+
+        # --- Stufe 1: klein und sicher oeffnen (der heutige Normalzustand)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, _WARMUP_BREITE)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, _WARMUP_HOEHE)
+        self.cap.set(cv2.CAP_PROP_FPS, 30)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimiert Latenz
+        self._apply_mjpg()
+        warm_ms = (time.perf_counter() - t_start) * 1000
+
+        # Ein einzelnes Bild lesen: Erst dadurch laeuft der DirectShow-Graph
+        # wirklich. Genau dieser Zustand fehlt beim Kalt-Open in 1080p.
+        t0 = time.perf_counter()
+        try:
+            self.cap.read()
+        except Exception as e:
+            logger.warning(f"Dauerbetrieb HD: Aufwaerm-Bild fehlgeschlagen: {e}")
+        read_ms = (time.perf_counter() - t0) * 1000
+
+        # --- Stufe 2: auf die Fotoaufloesung hochsetzen
+        t0 = time.perf_counter()
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        mjpg_ok = self._apply_mjpg()
+        set_ms = (time.perf_counter() - t0) * 1000
+
+        actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        gesamt_ms = (time.perf_counter() - t_start) * 1000
+
+        aufloesung_ok = actual_w >= width and actual_h >= height
+
+        if aufloesung_ok and mjpg_ok:
+            self._dauerbetrieb_hd = True
+            logger.info(
+                "Dauerbetrieb HD: warm geoeffnet "
+                f"{_WARMUP_BREITE}x{_WARMUP_HOEHE} -> {actual_w}x{actual_h}, "
+                f"MJPG=ja, warm={warm_ms:.0f}ms, erstes_bild={read_ms:.0f}ms, "
+                f"hochsetzen={set_ms:.0f}ms, gesamt={gesamt_ms:.0f}ms"
+            )
+            return actual_w, actual_h
+
+        # --- Rueckfall: die Kamera macht bei HD nicht mit
+        grund = []
+        if not aufloesung_ok:
+            grund.append(f"liefert nur {actual_w}x{actual_h} statt {width}x{height}")
+        if not mjpg_ok:
+            grund.append(f"MJPG abgelehnt (fourcc={self._get_current_fourcc()})")
+        logger.warning(
+            "Dauerbetrieb HD NICHT moeglich: " + " und ".join(grund) + ". "
+            f"Zurueck auf {_WARMUP_BREITE}x{_WARMUP_HOEHE} — die Box arbeitet "
+            "ab jetzt exakt wie die uebrige Flotte (Umschalten pro Foto)."
+        )
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, _WARMUP_BREITE)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, _WARMUP_HOEHE)
+        self._apply_mjpg()
+        actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self._dauerbetrieb_hd = False
+        return actual_w, actual_h
 
     def _apply_mjpg(self) -> bool:
         """Aktiviert den MJPG-Codec — mit VERIFIKATION und Merker bei Ablehnung.
@@ -1257,6 +1376,7 @@ class WebcamManager(CameraManager):
             read_ms = 0.0
             restore_ms = 0.0
             switched_resolution = False
+            grab_anzahl = 0  # muss VOR dem try stehen: die Logzeile im finally liest ihn
             frame = None
 
             preview_w, preview_h = self._get_preview_resolution()
@@ -1298,8 +1418,21 @@ class WebcamManager(CameraManager):
 
                 # Buffer leeren mit grab() statt read() (grab bewegt nur den Pointer,
                 # dekodiert nicht - deutlich schneller als read!)
+                #
+                # ANZAHL HAENGT AM BETRIEBSZUSTAND (2.4.43):
+                # Die zwei grab() stammen aus der Zeit NACH einer Umschaltung —
+                # dort haelt der DirectShow-Graph wirklich noch alte Bilder aus
+                # der kleinen Vorschau. Im Dauerbetrieb wird nicht umgeschaltet,
+                # der LiveView-Worker hat die Kette bis wenige Millisekunden
+                # vorher leergelesen und CAP_PROP_BUFFERSIZE steht auf 1.
+                # Jedes ueberfluessige grab kostet bei 1080p bis zu ein volles
+                # Bildintervall (Messung Box: 71,9 ms) und wirft ausgerechnet
+                # den Moment weg, in dem der Blitz kam — also genau das, was
+                # Etappe 2 reparieren soll. Ein grab bleibt bewusst stehen:
+                # DirectShow haelt BUFFERSIZE=1 nicht garantiert ein.
+                grab_anzahl = 2 if switched_resolution else 1
                 t0 = time.perf_counter()
-                for _ in range(2):
+                for _ in range(grab_anzahl):
                     self.cap.grab()
                 grab_ms = (time.perf_counter() - t0) * 1000
 
@@ -1339,8 +1472,9 @@ class WebcamManager(CameraManager):
                 logger.info(
                     "High-Res Capture Timing: "
                     f"set={set_ms:.0f}ms, verify={verify_ms:.0f}ms, "
-                    f"grab={grab_ms:.0f}ms, read={read_ms:.0f}ms, "
-                    f"restore={restore_ms:.0f}ms, total={total_ms:.0f}ms"
+                    f"grab={grab_ms:.0f}ms ({grab_anzahl}x), read={read_ms:.0f}ms, "
+                    f"restore={restore_ms:.0f}ms, total={total_ms:.0f}ms, "
+                    f"Betriebsart={'Dauerbetrieb HD (kein Umschalten)' if self._dauerbetrieb_hd else 'klassisch'}"
                 )
 
             return frame
@@ -1410,11 +1544,47 @@ class WebcamManager(CameraManager):
             self.last_frame = None
             self._active_width = 0
             self._active_height = 0
+            # Zustand des Dauerbetriebs mit zuruecksetzen: Nach dem Freigeben
+            # gilt wieder der sichere Grundzustand "klassisch". Sonst wuerde
+            # braucht_preview_restore() bei geschlossener Kamera noch die alte
+            # HD-Groesse melden und den Preview-Restore faelschlich sperren.
+            self._preview_width = 0
+            self._preview_height = 0
+            self._dauerbetrieb_hd = False
             logger.info("Kamera freigegeben")
 
     @property
     def is_initialized(self) -> bool:
         return self._is_initialized
+
+    @property
+    def dauerbetrieb_hd_aktiv(self) -> bool:
+        """True, wenn die Kamera WIRKLICH dauerhaft in Fotoaufloesung laeuft.
+
+        Bewusst der gemessene Ist-Zustand, nicht der Config-Wunsch: Nach einem
+        Rueckfall (Kamera liefert kein 1080p oder lehnt MJPG ab) steht hier
+        False, obwohl der Schalter im Admin-Menue an ist.
+        """
+        return self._dauerbetrieb_hd
+
+    def braucht_preview_restore(self, width: int, height: int) -> bool:
+        """Muss nach einem Foto ueberhaupt auf Vorschau zurueckgeschaltet werden?
+
+        Im Dauerbetrieb ist `restore_preview_resolution()` zwar ohnehin ein
+        No-Op (Frueh-Ausstieg, weil Ziel- und Ist-Aufloesung gleich sind) —
+        aber der AUFRUF drumherum kostet: session.py setzt dafuer
+        `_camera_restore_in_progress = True`, startet einen Thread und der
+        LiveView-Worker pausiert, bis der UI-Callback zurueckkommt. Genau in
+        dem Moment schaut der Gast sein Foto an und der naechste Countdown
+        steht an. Diese Abfrage spart das ersatzlos ein.
+
+        Sie schaut auf `_preview_*` (nicht auf `_active_*`), weil nur dort die
+        Aufloesung steht, in der wirklich GEOEFFNET wurde — inklusive einer
+        automatischen Rueckstufung aus dem Warm-Oeffnen-Pfad.
+        """
+        if self._preview_width <= 0 or self._preview_height <= 0:
+            return True
+        return not (self._preview_width >= width and self._preview_height >= height)
 
     def _get_preview_resolution(self) -> Tuple[int, int]:
         """Liefert die gemerkte Preview-Auflösung mit Kamera-Fallback."""

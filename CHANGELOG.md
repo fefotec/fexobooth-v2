@@ -6,6 +6,109 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.43] - 2026-08-20 - Etappe 2 von 2: Kamera dauerhaft in Full HD (umschaltbar)
+
+> Anlass (Christian): „wenn eine session gemacht wird und ein foto geschossen
+> wird (blitz kommt) dann wird ganz kurz ein foto in der collage gezeigt aber
+> das ist dann nicht das foto was auch anschliessend im vollbild gezeigt
+> wird... als wenn 2 fotos geschossen werden!"
+
+### Das Problem
+
+Die Kamera laeuft in der Vorschau auf 640x480 und wird fuer JEDES Foto auf
+1920x1080 umgeschaltet und danach zurueck. Aus dem Box-Log:
+
+```
+High-Res Capture Timing: set=1572ms, verify=0ms, grab=0ms, read=236ms,
+                         restore=0ms, total=1810ms
+Sichtbare Capture-Wartezeit bis Fotoanzeige: 1842ms
+Preview-Restore Timing: 1920x1080 -> 640x480, set=1251ms
+```
+
+Der Blitz kommt sofort, belichtet wird rund 1,8 Sekunden spaeter. Wer sich
+dazwischen bewegt, ist auf dem Foto nicht mehr in der Pose — es sieht aus, als
+haette die Box zwei verschiedene Fotos gemacht.
+
+### Neu
+
+- **Schalter „Kamera dauerhaft in Full HD (nur Testbox)"** im Admin-Menue
+  (PIN 3198) → Tab **Kamera**, direkt unter „Template im LiveView anzeigen".
+  Konfigschluessel: `camera_dauerbetrieb_hd`, **Grundwert AUS**.
+
+  Ist er AN, wird die Kamera EINMAL in Fotoaufloesung geoeffnet und bleibt
+  dort. Das Umschalten pro Foto entfaellt komplett — `get_high_res_frame`
+  erkennt von allein „Zielaufloesung ist bereits aktiv". Erwartete sichtbare
+  Wartezeit: **~150-300 ms statt 1842 ms.**
+
+  Grundlage ist die Kamera-Messung auf der echten Box (Software beendet):
+
+  | Aufloesung | Bilder/s | pro Bild | davon Warten | davon Rechnen |
+  |---|---|---|---|---|
+  | 640x480 MJPG | 29,8 | 33,6 ms | 0,0 ms | 33,5 ms |
+  | 1280x720 MJPG | 30,5 | 32,8 ms | 0,0 ms | 32,7 ms |
+  | 1920x1080 MJPG | 13,9 | 71,9 ms | 0,0 ms | 71,8 ms |
+
+  „0 ms Warten" heisst: Die Kamera ist nie der Flaschenhals. Tragfaehig wurde
+  der Dauerbetrieb erst durch Etappe 1 (2.4.41): Die Vorschau-Aufbereitung
+  kostet bei 1080p jetzt 0,14 ms statt 4,19 ms.
+
+- **Warm-Oeffnen statt Kalt-1080p.** Die Kamera wird zuerst klein geoeffnet
+  (640x480), EIN Bild gelesen — damit der DirectShow-Graph laeuft — und erst
+  dann hochgesetzt. Genau die Sequenz, die `get_high_res_frame` heute
+  tausendfach pro Woche im Feld fehlerfrei faehrt. Grund: Ein KALTES Oeffnen
+  in 1920x1080 hat am 13.08. Box 224 eingefroren (Log endet exakt bei
+  „Kamera geöffnet").
+
+- **Sauberer Rueckfall.** Liefert die Kamera kein 1080p oder lehnt sie MJPG ab
+  (YUY2 passt bei 1080p nicht durch USB2 → ~5 Bilder/s), geht die Box von
+  selbst auf 640x480 zurueck, schreibt eine deutliche Warnung ins Log und
+  arbeitet exakt wie die uebrige Flotte weiter. Lieber langsam und richtig
+  als kaputt.
+
+- **Der Blitz haelt jetzt, bis das Foto da ist** (nur im Dauerbetrieb). Sonst
+  waere zwischen Blitz-Ende (90 ms) und Fotoanzeige (~150-300 ms) wieder kurz
+  das eingefrorene Vorschaubild zu sehen — dasselbe „zweite Foto", nur
+  10x kuerzer. Notbremse nach 400 ms, damit bei einem gescheiterten Capture
+  nie ein weisser Bildschirm stehenbleibt.
+
+### Geaendert
+
+- Die Vorschau-Aufloesung wird nur noch an EINER Stelle bestimmt
+  (`vorschau_aufloesung()` in `src/config/config.py`). Vorher stand die
+  Rechnung `int(live_res * 0.75)` dreimal getrennt im Code — dieselbe Box
+  haette je nach Weg (mit Intro-Video, ohne, im Selbsttest) in
+  unterschiedlichen Aufloesungen laufen koennen.
+- Der Puffer wird vor dem Foto nur noch 1x statt 2x geleert, wenn nicht
+  umgeschaltet wurde. Jedes ueberfluessige `grab()` kostet bei 1080p bis zu
+  ein volles Bildintervall (71,9 ms) und wirft genau den Moment weg, in dem
+  der Blitz kam.
+- Der Preview-Restore nach dem Foto entfaellt im Dauerbetrieb ersatzlos
+  (er pausierte den LiveView und bremste den naechsten Countdown aus).
+- Der System-Test oeffnet die Kamera in der Betriebsart, die die Box wirklich
+  hat, und bewertet die Bilder/s im HD-Betrieb gegen eine eigene Schwelle
+  (9,0 statt 12,0) — sonst haette er auf der Testbox falschen Alarm gegeben.
+- Vollbild-Vorschau (ohne Template-Overlay): Wird das Bild VERKLEINERT, kommt
+  der Resize jetzt vor dem Spiegeln/Umfaerben. Bei 1080p spart das rund die
+  Haelfte der Punkte pro Bild.
+
+### Wichtig zu wissen
+
+- **Auf den ~280 Boxen im Feld aendert sich ohne Umlegen des Schalters
+  NICHTS.** Der klassische Weg in `initialize()` ist Zeile fuer Zeile
+  unveraendert geblieben.
+- **Das gespeicherte Foto aendert sich nicht** — 1920x1080, JPEG 95,
+  ungespiegelt. Collage/Druck bleiben 1800x1200.
+- **Die Vorschau wird NICHT fluessiger.** Der Deckel dafuer ist die
+  Anzeigezeit im UI-Thread (`delay = max(..., display_ms * 3)`), nicht die
+  Kamera. Gewinn dieser Etappe sind der passende Blitz und der passende
+  Bildausschnitt.
+- **Der Bildausschnitt der Vorschau aendert sich sichtbar** und das ist so
+  gewollt: heute 4:3 (oben/unten beschnitten), im Dauerbetrieb 16:9 — also
+  exakt derselbe Ausschnitt wie das spaetere Foto. Der Gast sieht endlich,
+  was gedruckt wird.
+
+---
+
 ## [2.4.42] - 2026-08-20 - Stress-Test laesst die Videos nicht mehr aus
 
 > Anlass (Christian): „mir faellt gerade erst auf, dass im Stresstest im

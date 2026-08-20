@@ -15,7 +15,12 @@ import random
 import atexit
 
 from src import __version__
-from src.config.config import load_config, reset_event_defaults, save_config
+from src.config.config import (
+    load_config,
+    reset_event_defaults,
+    save_config,
+    vorschau_aufloesung,
+)
 from src.camera import get_camera_manager, CANON_AVAILABLE, NIKON_AVAILABLE
 from src.storage.local import get_shared_usb_manager
 from src.storage.local import LocalStorage
@@ -135,6 +140,10 @@ class PhotoboothApp:
         # Manager initialisieren
         camera_type = config.get("camera_type", "webcam")
         self._camera_type = camera_type
+        # Zuletzt angewandter Stand des HD-Dauerbetrieb-Schalters (2.4.43).
+        # Wird gebraucht, um nach dem Admin-Speichern zu erkennen, dass die
+        # Kamera in einer ANDEREN Aufloesung neu geoeffnet werden muss.
+        self._camera_dauerbetrieb_hd = bool(config.get("camera_dauerbetrieb_hd", False))
         self.camera_manager = get_camera_manager(camera_type, config=self.config)
         logger.info(
             f"Kamera-Typ: {camera_type} "
@@ -530,6 +539,7 @@ class PhotoboothApp:
         if getattr(self, "_camera_type", None) == camera_type:
             if hasattr(self.camera_manager, "update_config"):
                 self.camera_manager.update_config(self.config)
+            self._sync_dauerbetrieb_hd()
             return
 
         logger.info(f"Kamera-Typ geändert: {self._camera_type} -> {camera_type}")
@@ -540,11 +550,48 @@ class PhotoboothApp:
             logger.warning(f"Alte Kamera konnte nicht freigegeben werden: {e}")
 
         self._camera_type = camera_type
+        self._camera_dauerbetrieb_hd = bool(self.config.get("camera_dauerbetrieb_hd", False))
         self.camera_manager = get_camera_manager(camera_type, config=self.config)
 
         # Bei Wechsel auf Nikon die FexoNikonBridge im Hintergrund vorstarten.
         if camera_type == "nikon":
             self._warmup_nikon_async()
+
+    def _sync_dauerbetrieb_hd(self):
+        """Gibt die Kamera frei, wenn der HD-Dauerbetrieb umgelegt wurde (2.4.43).
+
+        WARUM FREIGEBEN UND NICHT EINFACH NEU INITIALISIEREN:
+        `WebcamManager.initialize()` steigt sofort aus, wenn die Kamera bereits
+        offen ist und der Index gleich blieb — width/height werden dabei
+        komplett IGNORIERT. Ohne `release()` bliebe die Kamera also stur in der
+        alten Aufloesung, der Schalter waere scheinbar wirkungslos, und wir
+        wuerden einen Fehler suchen, der keiner ist.
+
+        BEWUSST NUR FREIGEBEN, NICHT NEU OEFFNEN: Das Oeffnen laeuft auf dem
+        Tk-Thread und wuerde die Oberflaeche direkt nach dem Schliessen des
+        Admin-Menues fuer ein bis zwei Sekunden einfrieren. Das naechste
+        `_pre_init_camera` (waehrend des Intro-Videos) bzw. `session.on_show`
+        holt das Oeffnen nach — dort stoert es niemanden.
+        """
+        gewuenscht = bool(self.config.get("camera_dauerbetrieb_hd", False))
+        zuletzt = getattr(self, "_camera_dauerbetrieb_hd", None)
+
+        if zuletzt is None:
+            self._camera_dauerbetrieb_hd = gewuenscht
+            return
+        if zuletzt == gewuenscht:
+            return
+
+        self._camera_dauerbetrieb_hd = gewuenscht
+        logger.info(
+            f"Kamera-Dauerbetrieb HD geändert: {zuletzt} -> {gewuenscht} "
+            f"— Kamera wird freigegeben und beim nächsten Start neu geöffnet"
+        )
+        try:
+            if self.camera_manager and self.camera_manager.is_initialized:
+                self.camera_manager.release()
+        except Exception as e:
+            logger.warning(f"Kamera konnte für den Betriebsart-Wechsel nicht freigegeben werden: {e}")
 
     def _show_startup_loading_screen(self):
         """Zeigt sehr früh einen einfachen Ladescreen im Kiosk-Fenster."""
@@ -3349,13 +3396,20 @@ class PhotoboothApp:
         if self.camera_manager.is_initialized:
             return  # Bereits initialisiert (z.B. durch schnelle Wiedergabe)
 
-        logger.info("🎥 Kamera-Vorinitialisierung während Video...")
-        cam_settings = self.config.get("camera_settings", {})
-        live_res = cam_settings.get("live_view_resolution", 480)
+        # Aufloesung zentral bestimmen (2.4.43). Vorher stand die Rechnung
+        # `int(live_res * 0.75)` hier, in session.on_show und im System-Test
+        # dreimal getrennt — eine Box haette je nach Weg in unterschiedlichen
+        # Aufloesungen laufen koennen.
+        breite, hoehe = vorschau_aufloesung(self.config)
+        betriebsart = ("Dauerbetrieb HD" if self.config.get("camera_dauerbetrieb_hd", False)
+                       else "klassisch")
+        logger.info(
+            f"🎥 Kamera-Vorinitialisierung während Video: {breite}x{hoehe} ({betriebsart})"
+        )
         if self.camera_manager.initialize(
             self.config.get("camera_index", 0),
-            live_res,
-            int(live_res * 0.75)
+            breite,
+            hoehe
         ):
             logger.info("🎥 Kamera vorinitialisiert - Session-Start wird schneller!")
         else:

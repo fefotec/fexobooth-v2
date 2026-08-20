@@ -4,6 +4,31 @@ Aufgabenliste mit Prioritäten.
 
 ---
 
+## 2.4.43 Dauerbetrieb HD auf EINER Testbox prüfen 🔴
+
+> Etappe 2 von 2. Der Schalter ist überall aus — er muss auf genau einer Box
+> von Hand angeschaltet werden: **3198 → Tab Kamera → „Kamera dauerhaft in
+> Full HD (nur Testbox)" → Speichern.**
+
+- [ ] **Erst mit Schalter AUS eine Session machen.** Alles muss sein wie immer.
+      Das ist die Gegenprobe, dass die Flotte nichts abbekommen hat.
+- [ ] Schalter AN, speichern, Session starten: Nach dem Blitz muss das Foto
+      **fast sofort** da sein (heute rund 2 Sekunden Pause) — und es muss die
+      Pose zeigen, die beim Blitz zu sehen war.
+- [ ] **Bildausschnitt:** Die Vorschau ist jetzt links/rechts enger und
+      oben/unten weiter. **Das ist so gewollt** — sie zeigt genau das, was
+      später gedruckt wird.
+- [ ] **In einem dunklen Raum fotografieren**, Schalter an und aus im
+      Vergleich. Die Aufnahme fällt jetzt in den Blitz hinein; falls die Fotos
+      dunkler oder heller werden als vorher, unbedingt melden.
+- [ ] Ein Foto **drucken** und mit dem Vorschaubild vergleichen — Ausschnitt
+      und Qualität müssen unverändert gut sein.
+- [ ] **Dev-Mode-Log an Claude.** Darin stehen drei Zeilen, die alles klären:
+      „Dauerbetrieb HD: warm geöffnet …", „High-Res Capture Timing: …
+      Betriebsart=…" und „Sichtbare Capture-Wartezeit bis Fotoanzeige: …".
+
+---
+
 ## Werkstatt-Knopf „Netzwerk-Werksreset" endlich einmal testen 🟡
 
 > Steht seit 2.4.27 unabgehakt. Der Knopf ist die einzige per Fingertipp

@@ -97,6 +97,12 @@ _MACHINE_SETTINGS_KEYS = (
     # still wieder zu.
     ("camera_index_manuell",),
     ("rotate_180",),
+    # Dauerbetrieb HD (2.4.43) MUSS hier stehen: config.json liegt im
+    # Installationsordner und kann bei einem OTA-Update verloren gehen. Der
+    # Schalter wird auf EINER Testbox von Hand umgelegt — waere er nach dem
+    # naechsten Update still wieder aus, waere die ganze Messreihe wertlos
+    # und Christian wuerde einen Fehler suchen, den es nicht gibt.
+    ("camera_dauerbetrieb_hd",),
     ("liveview_template_overlay",),
     ("camera_settings", "single_photo_width"),
     ("camera_settings", "single_photo_height"),
@@ -361,6 +367,48 @@ def save_config(config: Dict[str, Any]) -> bool:
     except Exception as e:
         print(f"Fehler beim Speichern der Config: {e}")
         return False
+
+
+def vorschau_aufloesung(config: Dict[str, Any]) -> tuple:
+    """Liefert (Breite, Hoehe), mit der die Kamera GEOEFFNET werden soll.
+
+    Das ist ab 2.4.43 die EINZIGE Stelle, an der diese Frage beantwortet wird.
+    Vorher stand die Rechnung `int(live_res * 0.75)` an drei Stellen identisch
+    im Code (app.py `_pre_init_camera`, session.py `on_show`, system_test.py
+    `_step_init_camera`). Eine Box haette sonst je nach Weg — mit Intro-Video,
+    ohne Intro-Video, im Selbsttest — in unterschiedlichen Aufloesungen laufen
+    koennen; ein Fehler waere damit nicht reproduzierbar gewesen.
+
+    KLASSISCH (Grundwert, ganze Flotte):
+        live_view_resolution=640  ->  640x480 (4:3, wie bisher)
+
+    DAUERBETRIEB HD (`camera_dauerbetrieb_hd: true`, nur Testbox):
+        -> die Foto-Aufloesung selbst (1920x1080). Dadurch erkennt
+        `get_high_res_frame` von allein "Zielaufloesung ist bereits aktiv"
+        und schaltet pro Foto nicht mehr um.
+
+    DECKEL AUF 1920x1080 — bewusst hart: Die Foto-Aufloesung ist im
+    Admin-Menue frei eintippbar. Ohne Deckel wuerde ein Tippfehler wie
+    2560x1440 die Vorschau dauerhaft in eine Aufloesung zwingen, die die
+    C922 gar nicht liefern kann.
+    """
+    cam_settings = config.get("camera_settings", {}) or {}
+
+    if config.get("camera_dauerbetrieb_hd", False):
+        try:
+            breite = int(cam_settings.get("single_photo_width", 1920))
+            hoehe = int(cam_settings.get("single_photo_height", 1080))
+        except (TypeError, ValueError):
+            breite, hoehe = 1920, 1080
+        breite = max(640, min(breite, 1920))
+        hoehe = max(480, min(hoehe, 1080))
+        return breite, hoehe
+
+    try:
+        live_res = int(cam_settings.get("live_view_resolution", 480))
+    except (TypeError, ValueError):
+        live_res = 480
+    return live_res, int(live_res * 0.75)
 
 
 def get_config() -> Dict[str, Any]:

@@ -21,6 +21,7 @@ import numpy as np
 from PIL import Image
 import customtkinter as ctk
 
+from src.config.config import vorschau_aufloesung
 from src.ui.theme import COLORS, FONTS, SIZES
 from src.utils.logging import get_logger
 
@@ -43,6 +44,12 @@ GLOBAL_TIMEOUT = 120
 # Überschreitung ist KEIN Testabbruch, sondern eine sichtbare Warnung.
 THRESHOLD_CAM_INIT_S = 5.0          # Kamera öffnen inkl. Codec-Verhandlung (gesund ~2s)
 THRESHOLD_LIVEVIEW_FPS_WEBCAM = 12.0  # 1080p-MJPG liefert ~30 fps; YUY2-Fallback bricht auf ~5 ein
+# Eigene Schwelle für den HD-Dauerbetrieb (2.4.43): Dort liest der Test
+# 1920x1080 statt 640x480. Kamera-Messung auf der echten Box: 13,9 Bilder/s
+# bei 1080p (gegen 29,8 bei 640x480), davon 0 ms Wartezeit auf die Kamera —
+# die Zeit ist reines MJPG-Entpacken auf dem Atom. 9,0 lässt Luft für
+# Messrauschen, entlarvt aber weiterhin den YUY2-Fallback (~5).
+THRESHOLD_LIVEVIEW_FPS_WEBCAM_HD = 9.0
 THRESHOLD_LIVEVIEW_FPS_DSLR = 5.0   # DSLR-LiveView (Bridge/EDSDK) ist prinzipbedingt langsamer
 THRESHOLD_RENDER_S = 4.5            # Template-Rendern (Miix gesund ~2,3s)
 THRESHOLD_PRINT_SUBMIT_S = 10.0     # Übergabe an den Windows-Spooler (nicht die Druckdauer!)
@@ -469,16 +476,29 @@ class SystemTestDialog(ctk.CTkToplevel):
         und teils sogar hängend (Box friert beim Kalt-Öffnen in 1080p ein,
         Feld-Log 2026-08-13). Das eigentliche Foto nutzt weiter den High-Res-
         Pfad (get_high_res_frame) — genau wie eine echte Session.
+
+        NACHTRAG 2.4.43 (Dauerbetrieb HD): Ist der Schalter
+        `camera_dauerbetrieb_hd` an, öffnet der Test in 1920x1080 — denn dann
+        IST das der echte Betriebszustand, und ein Test, der einen anderen
+        Zustand prüft als der Betrieb hat, ist wertlos (genau die Lehre aus
+        2.4.26). Der Einfrier-Gefahr von damals begegnet `initialize()` jetzt
+        mit dem zweistufigen Warm-Öffnen: erst klein, ein Bild lesen, dann
+        hochsetzen — nie mehr kalt in 1080p.
         """
         if self._cancelled.is_set():
             raise Exception("Abgebrochen")
 
         cam_index = self.app.config.get("camera_index", 0)
-        cam_settings = self.app.config.get("camera_settings", {})
-        live_res = cam_settings.get("live_view_resolution", 480)  # wie Session/Pre-Init
+        # Dieselbe Quelle wie Session und Vor-Init (2.4.43)
+        breite, hoehe = vorschau_aufloesung(self.app.config)
+        hd_dauerbetrieb = self.app.config.get("camera_dauerbetrieb_hd", False)
+        logger.info(
+            f"System-Test: Kamera öffnen mit {breite}x{hoehe} "
+            f"({'Dauerbetrieb HD' if hd_dauerbetrieb else 'klassisch'})"
+        )
 
         t0 = time.perf_counter()
-        success = self.app.camera_manager.initialize(cam_index, live_res, int(live_res * 0.75))
+        success = self.app.camera_manager.initialize(cam_index, breite, hoehe)
         init_s = time.perf_counter() - t0
         if not success:
             raise Exception("Kamera nicht erreichbar")
@@ -506,7 +526,17 @@ class SystemTestDialog(ctk.CTkToplevel):
             self._metrics["kamera_fps"] = round(fps, 1)
 
             is_webcam = self.app.config.get("camera_type", "webcam") == "webcam"
-            threshold = THRESHOLD_LIVEVIEW_FPS_WEBCAM if is_webcam else THRESHOLD_LIVEVIEW_FPS_DSLR
+            if is_webcam:
+                # Eigene Schwelle für den HD-Dauerbetrieb: 1080p liefert
+                # naturgemäß weniger Bilder/s als 640x480 (Messung auf der
+                # Box: 13,9 statt 29,8). Mit der alten 12er-Schwelle wäre der
+                # Selbsttest auf der Testbox ein Zitterfall gewesen — er hätte
+                # bei jeder kleinen Störung „Kamera langsam" gemeldet, obwohl
+                # die Kamera genau das tut, was gemessen wurde.
+                threshold = (THRESHOLD_LIVEVIEW_FPS_WEBCAM_HD if hd_dauerbetrieb
+                             else THRESHOLD_LIVEVIEW_FPS_WEBCAM)
+            else:
+                threshold = THRESHOLD_LIVEVIEW_FPS_DSLR
             if fps < threshold:
                 self._warn(
                     f"Kamera liefert nur {fps:.1f} Bilder/s (erwartet: über {threshold:.0f}; "
@@ -607,8 +637,17 @@ class SystemTestDialog(ctk.CTkToplevel):
         # Webcam nach dem High-Res-Capture zurück auf Vorschau-Auflösung,
         # damit die Kamera nicht auf 1080p stehen bleibt (sonst wäre die
         # erste echte Vorschau nach dem Test unnötig langsam).
+        # Im HD-Dauerbetrieb (2.4.43) wurde nie umgeschaltet — dann ist das
+        # Zurückschalten nicht nur überflüssig, es wäre falsch.
         mgr = self.app.camera_manager
-        if hasattr(mgr, "restore_preview_resolution"):
+        cam_settings = self.app.config.get("camera_settings", {})
+        braucht_restore = getattr(mgr, "braucht_preview_restore", None)
+        if braucht_restore is not None and not braucht_restore(
+            cam_settings.get("single_photo_width", 1920),
+            cam_settings.get("single_photo_height", 1080)
+        ):
+            logger.info("System-Test: Vorschau-Restore übersprungen (Dauerbetrieb HD)")
+        elif hasattr(mgr, "restore_preview_resolution"):
             try:
                 mgr.restore_preview_resolution()
             except Exception as e:

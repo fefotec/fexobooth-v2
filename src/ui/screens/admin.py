@@ -2969,7 +2969,25 @@ class AdminDialog(ctk.CTkToplevel):
 
         # Template-Overlay im LiveView
         self._add_checkbox(scroll, "Template im LiveView anzeigen", "liveview_template_overlay")
-        
+
+        # Dauerbetrieb HD (2.4.43) — Etappe 2, bewusst nur für eine Testbox
+        self._add_checkbox(scroll, "Kamera dauerhaft in Full HD (nur Testbox)",
+                           "camera_dauerbetrieb_hd")
+        ctk.CTkLabel(
+            scroll,
+            text=(
+                "Die Kamera bleibt immer auf 1920x1080 und wird nicht mehr für\n"
+                "jedes Foto umgeschaltet. Der Blitz passt dann zum Bild — heute\n"
+                "wird erst rund 1,8 Sekunden nach dem Blitz belichtet.\n"
+                "Die Vorschau zeigt dann denselben Ausschnitt wie das Foto\n"
+                "(links/rechts enger, oben/unten weiter). Nach dem Speichern\n"
+                "startet die Kamera neu."
+            ),
+            font=FONTS["small"],
+            text_color=COLORS["text_muted"],
+            justify="left"
+        ).pack(anchor="w", pady=(0, 8))
+
         # Auflösung
         cam_settings = self.config_data.get("camera_settings", {})
         
@@ -3009,7 +3027,9 @@ class AdminDialog(ctk.CTkToplevel):
         # Info-Hinweis zur Auflösung
         ctk.CTkLabel(
             res_frame,
-            text="Live-Preview: 640x480 (Performance)\nFotos: Obige Einstellung (Full HD)",
+            text=("Fotos: Obige Einstellung (Full HD)\n"
+                  "Live-Preview normal: 640x480 (Performance)\n"
+                  "Mit 'Kamera dauerhaft in Full HD': Preview = Foto-Auflösung"),
             font=FONTS["small"],
             text_color=COLORS["text_muted"],
             justify="center"
@@ -4029,7 +4049,13 @@ class AdminDialog(ctk.CTkToplevel):
         
         # Checkboxen - alle auslesen und speichern
         checkbox_keys = ["allow_single_mode", "performance_mode", "start_fullscreen", "hide_finish_button",
-                         "print_enabled", "template1_enabled", "template2_enabled", "rotate_180", "liveview_template_overlay", "gallery_enabled"]
+                         "print_enabled", "template1_enabled", "template2_enabled", "rotate_180",
+                         "liveview_template_overlay",
+                         # 2.4.43: MUSS hier stehen, sonst wird die Checkbox zwar
+                         # angezeigt, beim Speichern aber nie ausgelesen — die
+                         # stille Falle dieser Mechanik.
+                         "camera_dauerbetrieb_hd",
+                         "gallery_enabled"]
         logger.info("Checkbox-Werte:")
         for key in checkbox_keys:
             var = getattr(self, f"check_{key}", None)
