@@ -65,9 +65,26 @@ Canons Referenz:
 2. Kamera-UI sperren.
 3. `EdsSetCapacity` mit `reset=1` einmal initial setzen.
 4. Die UI in einem `finally`-Block garantiert wieder entsperren.
-5. `SaveTo` zuruecklesen und nur bei bestaetigtem `Host` fortfahren.
-6. Wenn `AvailableShots` lesbar, begrenzt auf einen plausiblen Wert groesser
-   null warten. Eine nicht unterstuetzte Property wird nur protokolliert.
+5. `SaveTo` alle 50 Millisekunden fuer hoechstens eine Sekunde zuruecklesen
+   und nur bei bestaetigtem `Host` fortfahren.
+6. Wenn `AvailableShots` den Wert null liefert, ebenfalls alle 50
+   Millisekunden fuer hoechstens eine Sekunde auf einen positiven Wert warten.
+
+`SaveTo` liegt bewusst vor dem Lock-Block: Schlaegt dieser Setter fehl, wurde
+noch kein Lock erworben und es ist kein Unlock noetig. Sobald `UILock`
+erfolgreich war, liegt `EdsSetCapacity` in einem `try` und `UIUnlock` im
+zugehoerigen `finally`. Readback und Ready-Pruefung folgen erst nach dem
+Unlock.
+
+Fuer `AvailableShots` gilt ein eindeutiger Vertrag:
+
+- `1` bis `0x7fffffff`: Host-Speicher ist bereit.
+- `0`: bis zur Ein-Sekunden-Grenze weiter pruefen; bleibt der Wert null,
+  scheitert die Initialisierung und der Shutter bleibt gesperrt.
+- Nicht lesbar, nicht unterstuetzt oder Canons Unbekanntwert `0xffffffff`:
+  deutlich protokollieren, aber nicht blockieren. In diesem Fall bilden der
+  erfolgreiche Capacity-Aufruf und der bestaetigte `SaveTo=Host` den
+  Readiness-Nachweis.
 
 Schlaegt ein Pflichtschritt fehl, gilt die Kamera nicht als initialisiert und
 es wird kein Shutter gesendet. Recovery und Neu-Enumeration durchlaufen
@@ -111,16 +128,19 @@ Capacity-Neuinitialisierung.
 
 Die fehlerhaften Klartextzuordnungen fuer Canon-AE-Modus und Weissabgleich
 werden anhand des mitgelieferten Canon-Headers und der Canon-Samples
-korrigiert. Das Dev-Log liest vor dem Shutter zusaetzlich mindestens:
+korrigiert. Bei der Initialisierung wird die Belichtungskorrektur einmal auch
+im normalen Log gelesen; ein Wert ungleich null erzeugt eine gut sichtbare
+Warnung, wird aber nicht automatisch zurueckgesetzt.
+
+Alle zusaetzlichen EDSDK-Abfragen pro Foto sowie EXIF- und
+Helligkeitsdiagnosen laufen ausschliesslich im Dev-Modus. Das Dev-Log liest
+vor dem Shutter mindestens:
 
 - Belichtungskorrektur,
 - Messmethode,
 - AE-Modus,
 - ISO, Tv und Av,
 - EVF-Belichtungssimulation, sofern die Kamera sie bereitstellt.
-
-Eine Belichtungskorrektur ungleich null erzeugt eine gut sichtbare Warnung,
-wird aber nicht automatisch zurueckgesetzt.
 
 Unmittelbar nach dem Dekodieren des echten JPEGs werden dessen EXIF-Werte
 protokolliert: Belichtungszeit, Blende, ISO, Belichtungskorrektur,
