@@ -1,7 +1,7 @@
 # DSLR-Baustelle — Stand und Übergabe
 
 > **Zweck dieser Datei:** Vollständige Übergabe an die nächste Sitzung.
-> Stand: **24.08.2026, Version 2.4.58**. Testgerät: **Box 245**, Canon EOS 2000D,
+> Stand: **25.08.2026, Version 2.4.60**. Testgerät: **Box 245**, Canon EOS 2000D,
 > Surface-Tablet.
 >
 > **Wer hier neu einsteigt, liest zuerst „Die wichtigste Regel" und
@@ -36,7 +36,7 @@ Zweite Regel, ebenso wichtig:
 
 ## Wo wir stehen
 
-### Was nachweislich funktioniert
+### Was die bisherigen Hardware-Logs nachweisen
 
 | | Nachweis |
 |---|---|
@@ -44,17 +44,56 @@ Zweite Regel, ebenso wichtig:
 | Kamera löst aus | Christian hört den Spiegel; Bildzähler auf der Karte steigt |
 | Rückkanal feuert grundsätzlich | Box-Log: `>>> OBJECT EVENT: DirItemRequestTransfer_Alt` |
 | Kamera meldet Dateiname + Größe | Box-Log: `IMG_0001.JPG (820393 bytes)` |
+| 2.4.59-Host-Transfer funktioniert | Sieben echte JPEGs mit 6000 x 4000 Pixeln in Folge |
+| Owner/Event/Download sind hardwaretauglich | Keine Owner-Timeouts, Thread-Verstösse oder Downloadfehler im erfolgreichen Lauf |
+| Ein Kaltstart-Restfehler besteht | Erster Versuch: `TAKE_PICTURE_CARD_NG (0x8d07)`, danach funktionierte es |
 | Log-Versand ins Dashboard | Läuft, siehe „Werkzeuge" |
 
-### Was noch nicht funktioniert
+### Aktueller Reparaturstand
 
-**Zuletzt gemeldet (2.4.57):** kein Live-View, Endlosschleife beim ersten Foto.
+**2.4.59 hat den Canon-Grundweg auf Hardware bestaetigt:** Der erste Capture
+nach dem Kaltstart schlug noch mit `CARD_NG` fehl und wurde als
+1056-x-704-Live-View-Notbild geliefert. Danach kamen sieben echte JPEGs mit
+6000 x 4000 Pixeln sauber zum Tablet. Damit sind diese Teile belegt:
 
-Ursache gefunden und in **2.4.58** behoben: eine übersehene Aufrufstelle
-(`EdsGetLength` mit 32- statt 64-Bit-Variable), die **jedes** Vorschaubild
-scheitern ließ — 166 Fehler pro Sitzung.
+- genau ein STA-Owner `edsdk-kamera` für alle EDSDK-Aufrufe,
+- installierter PyInstaller-Build findet `EDSDK.dll` und `EdsImage.dll` zuerst
+  unter `sys._MEIPASS` (`_internal`) und hält den DLL-Suchpfad offen,
+- Object- und State-Handler vor `OpenSession`, mit offiziellen Eventwerten,
+- nativer Callback reiht nur einen priorisierten Auftrag ein; Download erst
+  nach seiner Rückkehr,
+- `SaveTo=Host` ist immer der Produktionsweg, keine SD-Karte erforderlich,
+- kein Event-Polling mehr aus Tk-/Capture-/LiveView-Threads,
+- kein zweites DSLR-Foto mehr über den generischen Webcam-Fallback,
+- Capture-Queue ist pro Aufnahme scharfgeschaltet; verspätete Events der
+  vorigen Aufnahme werden abgelehnt statt dem nächsten Foto zugeschlagen,
+- exakt ein Capture-Befehl; AF- und Shutter-OFF-Fehler bleiben im Log sichtbar,
+- `Cancel + Release` bei Downloadfehlern,
+- Karten-Baseline vor statt nach dem Auslösen,
+- korrekte JPEG-Qualitäts- und Event-Konstanten aus `EDSDKTypes.h`,
+- korreliertes Dev-Logging für Owner, Capture, Event und Download.
 
-> **2.4.58 ist noch nicht auf der Box getestet.** Das ist der nächste Schritt.
+**2.4.60 beseitigt jetzt gezielt die verbliebenen Canon-Maengel:**
+
+- Host-Speicher nach `OpenSession` atomar scharfstellen: `SaveTo=Host`,
+  `UILock`, Capacity genau einmal, garantiertes `UIUnlock` und begrenztes
+  Readback von `SaveTo`/`AvailableShots`,
+- kein Capacity-Reset mehr unmittelbar vor jedem Foto,
+- ohne bestaetigtes Host-Ready-Flag kein Shutter; bei `CARD_NG` kein
+  automatischer zweiter Versuch,
+- kein schwarzer Balken `Foto wird aufgenommen ...` mehr bei Canon; Nikon
+  behaelt ihn,
+- Canon-JPEG direkt im PIL-Pfad statt PIL-NumPy-OpenCV-PIL-Rundreise,
+- korrigierte Canon-Namen fuer AE/Weissabgleich und bessere
+  Belichtungs-/EXIF-/Helligkeitsdiagnose im Dev-Modus.
+
+Die auffaellige Belichtung im 2.4.59-Test war eine verstellte
+Belichtungskorrektur an der Kamera und ist dort behoben. FexoBooth setzt keine
+Belichtungswerte automatisch.
+
+> **2.4.60 ist der freigegebene Nachbesserungsstand; der Hardware-Retest ist
+> noch offen.** Zuerst muss direkt das erste Foto nach einem Kamera-Kaltstart
+> funktionieren. Der anschliessende Flottennachweis erfolgt ohne SD-Karte.
 
 ---
 
@@ -73,8 +112,11 @@ verdeckte damit, dass es mehrere Fehler waren.
 | 2.4.46 | **EDSDK-Fehlertabelle war falsch** — `0x81` hieß nicht INVALID_PARAMETER sondern DEVICE_BUSY, `0xc1` = COMM_DISCONNECTED | behoben |
 | 2.4.48 | **`EdsDirectoryItemInfo.size` als 32 statt 64 Bit** → alle Felder um 4 Byte verschoben → Speicherkarte wurde nie erkannt | behoben |
 | 2.4.55 | **`EdsCreateMemoryStream`, `EdsDownload`, `EdsGetLength` als 32 statt 64 Bit** → Download scheiterte mit INTERNAL_ERROR | behoben |
-| 2.4.57 | **EDSDK wurde aus zwei verschiedenen Programmfäden gestartet** → `EdsSetObjectEventHandler` hing → Kamera blockiert | behoben |
-| 2.4.58 | **Aufrufstelle von `EdsGetLength` im Live-View übersehen** → kein Vorschaubild | behoben, **ungetestet** |
+| 2.4.57 | **EDSDK wurde aus mehreren Programmfäden benutzt** → erster Owner-Versuch deckte nur Initialisierung/Liste/OpenSession ab | Teilfix, nicht behoben |
+| 2.4.58 | **Aufrufstelle von `EdsGetLength` im Live-View übersehen** → kein Vorschaubild | behoben, mit 2.4.59 hardwarebestaetigt |
+| 2.4.59 | Webcam-Optimierung `841de6c` verschob Canon-Capture/Handler auf Fremdthreads; falsche Event-/JPEG-Konstanten; Download reentrant im Callback | behoben, sieben echte Hardware-JPEGs |
+| 2.4.59 | **Build legte Canon-DLLs nur unter `_internal` ab, Loader suchte dort nicht** → installierte EXE konnte Canon verlieren, obwohl der Quellbaum funktionierte | behoben, eigener Build-Pfad-Test |
+| 2.4.60 | Erster Kaltstart-Shutter kam trotz gesetztem Host-Ziel zu frueh (`CARD_NG`); schwarzer Canon-Wartebalken und unnoetige Farb-Rundreise | im Code behoben, **Hardware-Retest offen** |
 
 ### Der rote Faden
 
@@ -90,17 +132,25 @@ Familie in Sekunden, ohne Kamera.
 
 ## Werkzeuge
 
-### 1. Typenprüfung — vor jedem DSLR-Build ausführen
+### 1. Komplette DSLR-Tests — vor jedem Build ausführen
 
 ```
-python tests/test_edsdk_typen.py
+python tests/alle_tests.py
 ```
 
-Prüft ohne Kamera:
-1. Stimmen alle Signaturen mit dem Canon-Header überein?
-2. Passen alle **Aufrufstellen** zu diesen Signaturen?
+Prüft ohne Kamera unter anderem:
 
-Gegenprobe ist gemacht: Baut man den Fehler von 2.4.57 künstlich wieder ein,
+1. Signaturen und Konstanten gegen die Canon-Header,
+2. alle EDSDK-Aufrufe auf demselben Owner-Thread,
+3. Callback-Queue statt reentrantem Download,
+4. `Cancel + Release` bei Downloadfehlern,
+5. Host-Transfer ohne Karte und genau eine Auslösung,
+6. keine rohe DLL-Nutzung außerhalb des Wrappers,
+7. Dev-Mode-Diagnosemarker und Canon-spezifischen UI-Guard,
+8. PyInstaller-`_internal`, Parallelstart, Timeout-Races und atomaren Cleanup,
+9. komplette Fake-Kette `0x208 → Download → Queue → 6000×4000-JPEG`.
+
+Gegenprobe ist gemacht: Baut man den Typfehler von 2.4.58 künstlich wieder ein,
 meldet der Test ihn mit Zeilennummer und gibt Rückgabewert 1.
 
 > Der Canon-Header liegt im Repo unter
@@ -109,8 +159,8 @@ meldet der Test ihn mit Zeilennummer und gibt Rückgabewert 1.
 
 ### 2. Messmodus statt Raten
 
-```
-fexobooth.exe --dslr-test
+```text
+fexobooth.exe --dev --dslr-test
 ```
 
 Probiert in **einem Durchlauf** fünf Auslöse-Varianten durch und misst, welche
@@ -128,8 +178,8 @@ Beobachtet Karte **und** Direktweg gleichzeitig. Liefert keine Variante ein
 Foto, spricht das für die Kamera selbst (Wahlrad, Objektiv, Akku) — auch das
 sagt der Bericht mit konkreten Prüfpunkten.
 
-**Dieser Messlauf wurde noch nie gefahren.** Er wäre der schnellste Weg aus
-weiteren Rateschleifen.
+**Dieser Messlauf wurde noch nie auf Hardware gefahren.** Seit 2.4.59 erzeugt
+er mit `--dev` ein normales Dashboard-Log und nutzt ebenfalls nur den Owner.
 
 ### 3. Log-Versand ins Dashboard (läuft)
 
@@ -145,10 +195,10 @@ weiteren Rateschleifen.
 **Logs direkt vom Server lesen** (schneller als über die Weboberfläche):
 
 ```bash
-ssh -i ~/.ssh/id_ed25519_claude c710394claude-code@admin.fexobox.de \
+ssh -i ~/.ssh/adminfexobox_claude c710394claude-code@admin.fexobox.de \
   "ls -lt --time-style=+%H:%M /web/admin-fexobox-de-app/storage/app/booth-logs/245/ | head"
 
-ssh -i ~/.ssh/id_ed25519_claude c710394claude-code@admin.fexobox.de \
+ssh -i ~/.ssh/adminfexobox_claude c710394claude-code@admin.fexobox.de \
   "zcat /web/admin-fexobox-de-app/storage/app/booth-logs/245/<datei>.gz" > lokal.log
 ```
 
@@ -161,11 +211,13 @@ ssh -i ~/.ssh/id_ed25519_claude c710394claude-code@admin.fexobox.de \
 
 ### 4. Logik-Tests ohne Hardware
 
-Im Scratchpad der letzten Sitzung (`test_canon.py`, `test_freeze.py`,
-`test_host.py`, `t56.py`, `t57.py`) — decken ab: Doppelbild-Sperre,
-Endlosschleifen-Bremse, Einfrier-Schutz, kompletter Direktweg, Hänger-Sperre,
-Kamera-Faden. **Sollten ins Repo unter `tests/` wandern**, damit sie nicht
-verloren gehen.
+Die DSLR-Suite liegt dauerhaft unter `tests/`. 2.4.60 besteht **18/18 Tests
+unter Windows**. Die Regressionen pruefen Host-Reihenfolge und
+Unlock-Fehlerpfade, genau einen Capacity-Reset pro Session, den Shutter-Guard,
+die kameratypgenaue Warteanzeige, den Canon-PIL-Pfad sowie
+Belichtungszuordnungen und Diagnoselogging. `py_compile` ist gruen und
+`webcam.py` hat keinen semantischen Diff. Das ersetzt den Hardware-Retest
+nicht.
 
 ---
 
@@ -173,10 +225,22 @@ verloren gehen.
 
 | Logzeile | Bedeutung |
 |---|---|
-| `Speicherung: über den Kamera-Zwischenspeicher` | Kartenweg — auf der Flotte falsch, nur Testbox |
-| `Speicherung: direkt auf die PC-Festplatte` | Direktweg — so soll es sein |
-| `Rückkanal-Registrierung hängt seit 4s` | `EdsSetObjectEventHandler` blockiert die Kamera |
-| `>>> OBJECT EVENT` fehlt komplett | Rückkanal tot — ohne Karte kommt kein Foto |
+| `EDSDK.dll gefunden: ...\_internal\EDSDK.dll` | installierter Build nutzt die mitgelieferte Canon-DLL |
+| `CANON-HANDLER READY object/state` | beide offiziellen Handler wurden im Owner registriert |
+| `Speicherung: direkter Host-Transfer ohne Speicherkarte` | Produktionsweg ist korrekt |
+| `CANON-HOST READY ... save_to=Host` | Host-Ziel, Capacity und Readback waren vor dem ersten Shutter bereit |
+| `CANON-HOST NOT-READY` / `SHUTTER-BLOCKED` | Readiness-Vertrag nicht erfuellt; die App loest bewusst nicht aus |
+| `CANON-CAPTURE ARMED capture=...` | Queue wurde unmittelbar vor genau diesem Auslöser gebunden |
+| `CANON-CAPTURE SHUTTER press=OK ... release=OK` | genau ein Capture angenommen und Auslöser sauber losgelassen |
+| `CANON-OWNER TIMEOUT` | genannter nativer Auftrag blockiert; nicht erneut probieren |
+| `CANON-EVENT QUEUED ... 0x00000208` | Canon hat ein Transferbild bereitgestellt |
+| `CANON-TRANSFER START/COMPLETE` | Dateiname/Format, angekündigte/empfangene Bytezahl und Dauer |
+| `CANON-STATE EVENT ... CaptureError/InternalError` | asynchroner Canon-Fehler mit Capture-ID und Zeit seit Shutter |
+| `STALE-EVENT-REJECTED` | verspäteter Transfer wurde bewusst gecancelt, nicht als neues Foto benutzt |
+| `CANON-CAPTURE TIMEOUT ... owner=...` | Event/Download fehlte; Owner-Zustand steht in derselben Zeile |
+| `CANON-THREAD-VERSTOSS` | harte Architekturverletzung; darf nie erscheinen |
+| `CANON-BELICHTUNG WARNUNG` | Belichtungskorrektur an der Kamera steht nicht auf null; App aendert sie nicht |
+| `CANON-DIAG EXPOSURE-JPEG` | Dev-only: EXIF und Helligkeitsverteilung des echten JPEGs |
 | `EDSDK Fehler 0x81 (DEVICE_BUSY)` | Kamera belegt, meist Folge eines hängenden Aufrufs |
 | `EDSDK Fehler 0xc1 (COMM_DISCONNECTED)` | USB-Verbindung abgerissen |
 | `EDSDK 0xa102 (OBJECT_NOTREADY)` | **harmlos** — Live-View braucht Anlaufzeit |
@@ -188,19 +252,25 @@ verloren gehen.
 
 ## Offene Punkte
 
-### 1. Läuft 2.4.58 auf der Box? (offen, höchste Priorität)
+### 1. Funktioniert direkt das erste 2.4.60-Foto? (offen, höchste Priorität)
 
-Der Live-View-Fehler ist behoben, aber ungetestet.
+Der Canon-Grundweg ist seit 2.4.59 hardwarebestaetigt. Offen ist nur die neue
+Kaltstart-Readiness aus 2.4.60.
 
 **Prüfen:**
-- Live-View sichtbar? (war zuletzt komplett weg)
-- Im Log: `=== ECHTES DSLR-FOTO: 6000x4000 ===` statt `NOTLÖSUNG`?
+- Kamera frisch verbinden bzw. kalt starten und direkt das erste Foto nehmen
+- Im Log: `CANON-HOST READY` vor `CANON-CAPTURE SHUTTER`
+- Kein `TAKE_PICTURE_CARD_NG`, kein schwarzer Wartebalken
+- Im Log: `=== ECHTES DSLR-FOTO: capture=... 6000x4000` statt `NOTLÖSUNG`?
 - Am Zeilenende: steigt `echt` in der Bilanz?
 
 ### 2. Funktioniert der Direktweg ohne Karte? (offen, entscheidend für die Flotte)
 
-Alle bisherigen Tests liefen auf der Box **mit** Karte. Die Flotte hat keine.
-Zwingend nötig: ein Testlauf **ohne Karte in der Kamera**.
+Der 2.4.59-Erfolg wurde mit eingesetzter Karte erzielt, aber laut Log ueber
+`SaveTo=Host`. Fuer den ersten direkten A/B-Vergleich darf die Karte in 2.4.60
+noch eingesetzt bleiben. Sobald Kaltstart und komplette Session sauber sind,
+muss mindestens ein Nachweis **ohne Karte** folgen; das ist der echte
+Flottenweg.
 
 ### 3. Standbild zeigt anderen Bildausschnitt als das finale Foto (offen)
 
@@ -210,19 +280,22 @@ Zwei Anteile:
 - **Unterschiedlicher Bildausschnitt** zwischen Vorschau und Aufnahme —
   eigenes Thema, noch nicht angefasst
 
-Der Wartehinweis („Foto wird aufgenommen…") erscheint seit 2.4.55 erst nach
-900 ms — bei schnellem Foto sieht man ihn nie. Christian hatte zu Recht gesagt,
-dass ein Dialog bei jedem Foto keine Lösung ist.
+Der Wartehinweis („Foto wird aufgenommen…") wurde seit 2.4.55 nach 900 ms
+eingeblendet. 2.4.60 plant ihn fuer Canon nicht mehr; bis das JPEG da ist,
+bleibt das letzte Live-View-Bild stehen. Nikon behaelt den Hinweis.
 
-### 4. Überbelichtete Fotos (offen)
+### 4. Überbelichtete Fotos (Ursache geklaert)
 
-Bisher betraf das nur Notbilder aus dem Live-View. Ob es bei echten Fotos
-bleibt, zeigt sich erst, wenn welche ankommen.
+Die Belichtungskorrektur war an der Kamera komplett verstellt und ist dort
+wieder korrigiert. Die App hatte ISO, Zeit, Blende und Korrektur nicht gesetzt.
+2.4.60 warnt beim Verbinden vor einer Korrektur ungleich null; im Dev-Log stehen
+zusätzlich EXIF und eine Helligkeitsprobe des echten JPEGs.
 
 ### 5. Belichtungszeit im Auge behalten
 
 Ohne Blitz wählt die Automatik bei dunkler Location lange Zeiten → verwackelte
-Fotos. Das Log schreibt Zeit, Blende, ISO und Weißabgleich vor jedem Foto mit.
+Fotos. Im Dev-Modus schreibt das Log Zeit, Blende, ISO, Weissabgleich,
+Belichtungskorrektur und die EXIF-Werte des echten JPEGs mit.
 **Erst messen, dann diskutieren** — und Christians Randbedingungen beachten
 (kein Blitz, AF an, Kunde stellt nichts ein).
 
@@ -230,98 +303,88 @@ Fotos. Das Log schreibt Zeit, Blende, ISO und Weißabgleich vor jedem Foto mit.
 
 ## Fallstricke für die nächste Sitzung
 
-**1. Nicht mehrere Vermutungen pro Build bündeln.**
-Das war der teuerste Fehler dieser Sitzung. Jede Runde kostet Christian Build,
-Aufbau und Testlauf. Wenn zwei Runden am selben Symptom scheitern, ist nicht die
-dritte Vermutung das Problem — die **Methode** ist es. Dann lohnt ein Werkzeug,
-das den Suchraum in einem Lauf abdeckt (`--dslr-test`).
+**1. Nach zwei Fehlversuchen nicht dieselbe Architektur weiterflicken.**
+2.4.46 bis 2.4.58 reparierten echte Einzelursachen, ließen die verteilte
+EDSDK-Nutzung aber bestehen. 2.4.59 behebt deshalb den zusammenhängenden
+Owner-/Callback-Vertrag und versieht ihn mit messbaren Logmarkern.
 
-**2. „Lief früher mal so" beweist nicht, dass die Zeile richtig war.**
-In 2.4.49 wurde ein schützender Nebenfaden entfernt, weil eine ältere Fassung
-den direkten Aufruf hatte. Ergebnis: Die Box fror beim Session-Start ein. In
-jener Fassung wurde der Pfad praktisch nie durchlaufen. **Vor dem Zurückbauen
-prüfen, ob der fragliche Pfad damals überhaupt lief.**
+**2. Alte Versionen sind Verhaltens-Baselines, keine Kopiervorlagen.**
+`ffbbf36` ist der beste historische Hinweis auf Host-Transfer ohne Karte.
+Seine 32-/64-Bit-Typen und Konstanten waren aber teilweise falsch. Nicht
+komplett zurückrollen; nur das belegte Verhalten vergleichen.
 
-**3. Jeder Aufruf an die Kamera braucht ein hartes Zeitlimit.**
-Eine Box darf langsam sein, aber nie stehen.
+**3. Jeder Auftrag an die Kamera braucht ein hartes Zeitlimit.**
+Ein bereits im nativen DLL-Aufruf blockierter Thread kann in Python nicht
+sicher abgebrochen werden. Dann wird der Owner als ungesund markiert und nimmt
+keine weiteren Aufträge an; das Log enthält Auftrag und Owner-Stack.
 
 **4. Ein hängender Aufruf darf sich nie wiederholen.**
-`EdsSetObjectEventHandler` blockiert bei jedem Versuch die Kamera zusätzlich —
-vier Versuche machten die Box unbenutzbar. Seit 2.4.56 gilt: einmal hängen
-genügt, danach wird er nicht mehr angefasst.
+Kein zweiter Owner und kein Wegwerf-Handlerthread. `CANON-OWNER TIMEOUT` ist
+ein Abbruchsignal für diesen Prozess, keine Einladung zum Retry.
 
-**5. Der Rückkanal-Aufruf darf NICHT im Kamera-Faden laufen.**
-Sonst blockiert ein Hänger auch Live-View, Aufnahme und Freigeben. Er läuft
-bewusst daneben; der Kamera-Faden arbeitet dauerhaft Nachrichten ab, damit der
-Aufruf trotzdem fertig werden kann.
+**5. Auch der Rückkanal muss im Kamera-Owner registriert werden.**
+Die frühere Aussage „Handler bewusst daneben" ist widerlegt. Canons Sample
+registriert Object und State auf demselben STA vor `OpenSession`. Der native
+Callback selbst bleibt kurz und stellt den Download nur priorisiert in die
+Owner-Queue.
 
 **6. Erfolgsmeldungen nie behaupten.**
 Im Code stand jahrelang „Handler funktioniert trotzdem" — das war eine
 ungeprüfte Annahme und hat die Fehlersuche über Monate blockiert. Wenn eine
 Funktion nicht sicher weiß, ob sie erfolgreich war, muss sie das sagen dürfen
-(`True` / `None` / `False`).
+Ein Handler gilt nur bei Rückgabe `EDS_ERR_OK` als registriert; ein Foto nur
+nach empfangenem, dekodiertem JPEG in echter DSLR-Auflösung.
 
 **7. Die Webcam-Flotte nicht anfassen.**
 `webcam.py` blieb in dieser ganzen Sitzung unberührt. Alle Eingriffe in
-`app.py` und `session.py` liegen hinter einer Abfrage auf
-`camera_type == "canon"` bzw. `_ist_dslr()`.
+`app.py` und `session.py` liegen hinter einer expliziten Abfrage des
+Kameratyps. Canon unterdrueckt den Balken, Nikon behaelt ihn und der
+Webcam-Capture folgt weiterhin seinem bisherigen Pfad.
 
 ---
 
-## Geänderte Dateien (noch nicht committet!)
+## Relevante Dateien in 2.4.60
 
 ```
-src/__init__.py              Version 2.4.58
-src/camera/edsdk.py          Fehlertabelle, 64-Bit-Typen, Kamera-Faden,
-                             Auslösen nach Canon-Referenz, Hänger-Sperre
-src/camera/canon.py          Doppelbild-Sperre, Endlosschleifen-Bremse,
-                             Wiederherstellung, Speicherplatz-Meldung, Diagnose
-src/app.py                   Canon-Ereignis-Takt (nur bei camera_type=canon)
-src/ui/screens/session.py    Wartehinweis bei DSLR (ab 900 ms)
-src/ui/screens/admin.py      Knopf „Logs ans Dashboard senden"
-src/main.py                  Modus --dslr-test
-src/utils/log_upload.py      NEU — Log-Versand
-src/tools/dslr_test.py       NEU — Messmodus
-tests/test_edsdk_typen.py    NEU — Typenprüfung
+src/__init__.py              Version 2.4.60
+src/camera/edsdk.py          vollständiger Owner, Handler/Callback-Queue,
+                             Host-Readiness, Konstanten, Dev-Diagnose
+src/camera/canon.py          Host-Flow, State-Handler, Capture-Korrelation,
+                             Host-Ready-Guard, EXIF-/Helligkeitsdiagnose
+src/app.py                   Handle-Release über den Owner
+src/ui/screens/session.py    kein Canon-Wartebalken, direkter PIL-Bildpfad,
+                             kein zweiter Canon-Capture im Webcam-Fallback
+src/main.py                  Dev-Logging auch bei --dslr-test
+src/tools/dslr_test.py       keine rohen DLL-Aufrufe mehr
+tests/                       18/18 DSLR-Regressionen ohne Kamera (Windows)
 CHANGELOG.md, ERKENNTNISSE.md, FORTSCHRITT.md, TODO.md
-```
-
-**Im Dashboard (adminFexobox) — bereits deployt und live:**
-
-```
-app/Http/Controllers/Api/BoothLogController.php    NEU
-app/Http/Controllers/BoothLogViewController.php    NEU
-app/Models/BoothLog.php                            NEU
-database/migrations/..._create_booth_logs_table.php NEU
-resources/views/booth-logs/                        NEU
-routes/api.php, routes/web.php, layouts/app.blade.php
 ```
 
 ---
 
 ## Empfehlung für den Einstieg
 
-1. **`python tests/test_edsdk_typen.py`** — muss sauber durchlaufen
-2. **2.4.58 bauen und auf Box 245 testen** — kommt der Live-View zurück?
-3. Falls Fotos ankommen: **Karte aus der Kamera nehmen** und erneut testen.
-   Das ist der Zustand der echten Flotte.
-4. Falls weiterhin keine Fotos: **`--dslr-test` fahren**, bevor irgendetwas
-   geändert wird. Der Messlauf beantwortet in einer Minute, was vier
-   Testrunden nicht geschafft haben.
-5. Falls die Box gar nicht mehr brauchbar ist: **auf einen älteren Stand
-   zurück** (2.4.45 war der letzte vor dieser Baustelle) und von dort in
-   einzeln prüfbaren Schritten vorgehen.
+1. **`python tests/alle_tests.py`** — muss komplett sauber durchlaufen.
+2. **2.4.60 bauen und mit `--dev` auf Box 245 starten; dslrBooth schließen.**
+3. Kamera kalt starten und direkt genau ein Foto aufnehmen. Die Karte darf
+   fuer den ersten Vergleich eingesetzt bleiben; `SaveTo=Host` muss im Log
+   bestaetigt sein.
+4. Log ins Dashboard senden. Entscheidend ist die Kette
+   `HANDLER READY → HOST READY → CAPTURE → EVENT 0x208 → TRANSFER COMPLETE →
+   ECHTES DSLR-FOTO`.
+5. Eine komplette Session fahren; danach denselben Nachweis mindestens einmal
+   ohne SD-Karte erbringen.
+6. Bei `CARD_NG`, `CANON-OWNER TIMEOUT` oder fehlender Kette nichts auf
+   Verdacht ändern; zuerst dieses eine Log auswerten. Optional danach
+   `--dev --dslr-test`.
 
 ---
 
 ## Ehrliche Einordnung
 
-In dieser Sitzung wurden acht echte Ursachen gefunden und behoben. Trotzdem
-liefert die Box bis heute keine Fotos, und zwischendurch war sie zweimal
-schlechter dran als vorher (Einfrieren in 2.4.49, blockierte Kamera ab 2.4.53).
-
-Beide Rückschritte entstanden gleich: Änderungen, die nicht ohne Hardware
-prüfbar waren, gingen ungetestet auf die Box. Die Gegenmaßnahme ist die
-Typenprüfung und der Messmodus — beides prüft ohne Kamera bzw. ersetzt das
-Raten durch Messen. **Diese Werkzeuge zuerst nutzen, bevor weiter am Code
-geändert wird.**
+2.4.59 hat nach dem ersten Kaltstartfehler sieben echte 6000-x-4000-JPEGs
+geliefert. Der Canon-Grundweg ist damit nicht mehr nur eine Theorie. 2.4.60
+schliesst gezielt das Readiness-Race, entfernt den schwarzen Canon-Balken und
+die unnoetige Bildkonvertierung und erweitert die Diagnose. Der ehrliche
+Status lautet: **Grundweg hardwarebestaetigt; 2.4.60-Kaltstart und Betrieb ohne
+SD-Karte noch abzunehmen.**

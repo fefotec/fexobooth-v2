@@ -4,6 +4,87 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-08-25 — Canon V2.4.60: erstes Foto abgesichert, Anzeige beschleunigt
+
+**Ausgangspunkt:** Der 2.4.59-Hardwaretest auf Box 245 war der Durchbruch:
+Nach einem fehlgeschlagenen ersten Versuch kamen sieben echte Canon-JPEGs mit
+6000 x 4000 Pixeln vollstaendig per Host-Transfer an. Owner, Event-Queue,
+Download und Dekodierung sind damit auf echter Hardware bestaetigt. Nur der
+erste Kaltstart-Capture wurde mit `TAKE_PICTURE_CARD_NG (0x8d07)` abgelehnt.
+
+**Nachbesserung 2.4.60 (nur Canon):** Die Host-Bereitschaft wird nach
+`OpenSession` atomar im EDSDK-Owner hergestellt: `SaveTo=Host`, `UILock`, ein
+einmaliges `EdsSetCapacity(reset=1)`, garantiertes `UIUnlock` und begrenztes
+Readback von `SaveTo`/`AvailableShots`. Erst danach wird das Host-Ready-Flag
+gesetzt. Der bisherige Capacity-Reset unmittelbar vor jedem Foto ist entfernt;
+ohne bestaetigte Bereitschaft gibt es keinen Shutter und bei `CARD_NG` keinen
+automatischen Zweitversuch.
+
+Der schwarze Hinweis `Foto wird aufgenommen ...` wird fuer Canon nicht mehr
+geplant. Nikon behaelt ihn. Das Canon-JPEG bleibt fuer die Anzeige direkt im
+PIL-Pfad; nur eine benoetigte 180-Grad-Drehung oder ein unerwarteter Farbmodus
+erzeugt noch Arbeit. Erwartete Ersparnis gegenueber dem 2.4.59-Log: rund
+300 ms Bildkonvertierung plus 40 bis 60 ms Capacity-Aufruf pro Foto.
+
+AE-/Weissabgleich-Zuordnungen sind gegen Canon korrigiert. Die
+Belichtungskorrektur wird beim Verbinden protokolliert und bei einem Wert
+ungleich null gewarnt, aber nie automatisch geaendert. Im Dev-Modus kommen
+pro JPEG EXIF- und Helligkeitsdaten hinzu. Die im ersten Test beobachtete
+Ueberbelichtung war eine verstellte Kamerakorrektur und ist an der Kamera
+behoben.
+
+**Abgrenzung:** Webcam-Capture und `webcam.py` bleiben semantisch unveraendert.
+
+**Validierung:** `python tests/alle_tests.py` unter Windows **18/18 gruen**;
+`py_compile` gruen; `webcam.py` ohne semantischen Diff.
+
+**Offen:** 2.4.60 bauen und auf Box 245 mit `--dev` erneut pruefen. Zuerst das
+allererste Foto direkt nach Kamera-Kaltstart, danach eine komplette Session;
+spaeter folgt der Flottennachweis ohne SD-Karte.
+
+---
+
+## 2026-08-25 — Canon V2.4.59: installierten Build und Host-Capture repariert
+
+**Vollstaendige Uebergabe: [DSLR-STAND.md](DSLR-STAND.md)**
+
+Die Analyse ging diesmal von Historie, Hersteller-Header, Paketinhalt und den
+vorhandenen Box-Logs aus. Der wahrscheinlichste Bruch nach der Neuinstallation
+liegt bereits vor dem ersten Kameraaufruf: Der PyInstaller-One-Folder-Build
+packt `EDSDK.dll` und `EdsImage.dll` unter `_internal`, der Loader suchte dort
+nicht. Er nutzt jetzt zuerst `sys._MEIPASS` und hält das DLL-Suchpfad-Handle
+dauerhaft offen.
+
+Der Canon-Weg wurde außerdem vollständig auf genau einen COM-STA-Owner
+gebracht. Alle EDSDK-Aufrufe einschließlich Live-View, Handler, Event-Pump,
+Shutter, Download und Cleanup laufen dort. Native Callbacks bleiben kurz und
+stellen Folgearbeit nur in eine priorisierte Queue. Handler-Lebensdauer,
+Parallelstart, native Timeouts und Queue-Abbruch sind fail-closed abgesichert.
+
+Der Produktionscapture läuft immer direkt zum Host, ohne Speicherkarte. Eine
+Capture-ID bindet Queue und Event unmittelbar vor dem Shutter an genau eine
+Aufnahme; verspätete Events werden gecancelt. Es gibt exakt einen
+Capture-Befehl, Shutter-OFF wird geprüft, und der generische Webcam-Fallback
+kann Canon nicht ein zweites Mal auslösen.
+
+Dev-Logs enthalten nun Owner-/Thread-ID, Auftrag-ID, Queue-/Call-Dauer,
+Capture-ID, Shutter, Object-/State-Event, Transfer-Dateiname/-Format/-Bytes,
+Auflösung und bei einem Timeout den Owner-Stack. `--dev --dslr-test` aktiviert
+das normale Dashboard-Logging ebenfalls.
+
+**Validierung:** `py_compile` grün; `python tests/alle_tests.py` unter Windows
+**15/15 grün**. Darin enthalten ist eine integrierte Fake-Kette
+`0x208 → Host-Download → Queue → 6000×4000-JPEG` sowie ein eigener Test für
+den installierten `_internal`-DLL-Pfad. Zwei unabhängige Diff-/Testreviews
+fanden danach keinen Build-Blocker. `webcam.py` hat keinen semantischen Diff.
+
+**Hardware-Nachtrag:** Box 245 lieferte mit 2.4.59 nach einem `CARD_NG` beim
+allerersten Versuch sieben echte 6000-x-4000-JPEGs ueber `SaveTo=Host`. Damit
+ist die Grundreparatur bestaetigt; Kaltstart-Readiness und der abschliessende
+Flottentest ohne Speicherkarte gehen in 2.4.60 weiter.
+
+---
+
 ## 2026-08-24 (Abschluss der Sitzung) — Uebergabe DSLR (2.4.51 bis 2.4.58)
 
 **Vollstaendige Uebergabe: [DSLR-STAND.md](DSLR-STAND.md)**
@@ -17,7 +98,7 @@ Die Box liefert trotzdem noch keine Fotos — 2.4.58 ist ungetestet.
 |---|---|
 | 2.4.51 | Messmodus `--dslr-test` (statt einer Vermutung pro Build) |
 | 2.4.52 | Auslösen und Live-View zurueck auf Canons Referenzweg (~4 s gespart) |
-| 2.4.53 | Speicherplatz-Meldung fehlte vor jeder Aufnahme |
+| 2.4.53 | Host-Capacity wurde damals vor jedes Foto verschoben; diese Annahme wurde mit Hardwaredaten in 2.4.60 korrigiert |
 | 2.4.54 | Einfrieren beim Session-Start (Rueckschritt aus 2.4.49 behoben) |
 | 2.4.55 | Download scheiterte: drei Funktionen mit 32- statt 64-Bit-Parametern |
 | 2.4.56 | Haengender Aufruf blockierte die Kamera bei jedem Versuch erneut |

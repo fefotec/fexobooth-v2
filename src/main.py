@@ -199,6 +199,10 @@ def main():
     # WICHTIG: Taskleiste wiederherstellen (Recovery von vorherigem Crash)
     _recover_taskbar()
 
+    # Ausschliesslich die CLI schaltet den Dev-Modus ein. Vor Sondermodi
+    # bestimmen, damit auch `--dev --dslr-test` ein Dashboard-Log erzeugt.
+    developer_mode = "--dev" in sys.argv or "-d" in sys.argv
+
     # DSLR-Ausloesetest (2.4.51): eigener Modus, startet KEINE Oberflaeche.
     #
     # Probiert in einem Durchlauf alle sinnvollen Ausloese-Varianten durch und
@@ -206,6 +210,7 @@ def main():
     # Testrunden hinweg jeweils EINE Vermutung geaendert und neu gebaut wurde —
     # ohne Ergebnis. Ein Messlauf ersetzt das Raten.
     if "--dslr-test" in sys.argv:
+        setup_logging(developer_mode=developer_mode)
         try:
             from src.utils.crashlog import install_faulthandler
             install_faulthandler()
@@ -278,10 +283,6 @@ def main():
         # Prozessende wuerde daran haengenbleiben.
         _beende_kindprozesse()
         os._exit(code)
-
-    # Developer Mode NUR via Kommandozeile (--dev oder -d)
-    # Config-Wert wird IGNORIERT - nur CLI zählt!
-    developer_mode = "--dev" in sys.argv or "-d" in sys.argv
 
     # Konsolenfenster verstecken (nur Produktion - im Dev Mode bleibt es sichtbar)
     if not developer_mode:

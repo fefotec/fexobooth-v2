@@ -1,52 +1,147 @@
-"""Prueft den Kamera-Faden: SDK und Sitzung im selben Faden, Rueckkanal daneben."""
-import sys, threading
-sys.path.insert(0, r"C:\Git-Projects\fexobooth-v2")
-from src.camera import edsdk
+"""Beweist: ausnahmslos alle getesteten EDSDK-Aufrufe laufen im Owner."""
 
-FADEN = []
+import ctypes
+import importlib.util
+import sys
+import threading
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+if not hasattr(ctypes, "WINFUNCTYPE"):
+    ctypes.WINFUNCTYPE = ctypes.CFUNCTYPE
+
+spec = importlib.util.spec_from_file_location(
+    "fexobooth_test_edsdk", ROOT / "src" / "camera" / "edsdk.py"
+)
+edsdk = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(edsdk)
+
+
+AUFRUFE = []
+HANDLER_EVENTS = {}
+
+
 class DLL:
+    def _log(self, name):
+        AUFRUFE.append(
+            (name, threading.current_thread().name, threading.get_ident())
+        )
+
     def EdsInitializeSDK(self):
-        FADEN.append(("SDK-Start", threading.current_thread().name)); return 0
+        self._log("EdsInitializeSDK")
+        return 0
+
     def EdsOpenSession(self, ref):
-        FADEN.append(("Sitzung", threading.current_thread().name)); return 0
-    def EdsSetObjectEventHandler(self, ref, ev, cb, ctx):
-        FADEN.append(("Rueckkanal", threading.current_thread().name)); return 0
-    def EdsTerminateSDK(self): return 0
+        self._log("EdsOpenSession")
+        return 0
+
+    def EdsCloseSession(self, ref):
+        self._log("EdsCloseSession")
+        return 0
+
+    def EdsSetObjectEventHandler(self, ref, event, callback, context):
+        self._log("EdsSetObjectEventHandler")
+        HANDLER_EVENTS["object"] = event
+        return 0
+
+    def EdsSetCameraStateEventHandler(self, ref, event, callback, context):
+        self._log("EdsSetCameraStateEventHandler")
+        HANDLER_EVENTS["state"] = event
+        return 0
+
+    def EdsSetPropertyData(self, *args):
+        self._log("EdsSetPropertyData")
+        return 0
+
+    def EdsSendStatusCommand(self, ref, command, parameter):
+        self._log("EdsSendStatusCommand")
+        return 0
+
+    def EdsSetCapacity(self, *args):
+        self._log("EdsSetCapacity")
+        return 0
+
+    def EdsGetPropertyData(self, ref, prop, index, size, out_value):
+        self._log("EdsGetPropertyData")
+        if int(prop) == edsdk.kEdsPropID_SaveTo:
+            out_value._obj.value = edsdk.kEdsSaveTo_Host
+        elif int(prop) == edsdk.kEdsPropID_AvailableShots:
+            out_value._obj.value = 100
+        else:
+            raise AssertionError(f"Unerwartete Property: {int(prop):#x}")
+        return 0
+
+    def EdsGetEvent(self):
+        self._log("EdsGetEvent")
+        return 0
+
+    def EdsRelease(self, ref):
+        self._log("EdsRelease")
+        return 0
+
+    def EdsTerminateSDK(self):
+        self._log("EdsTerminateSDK")
+        return 0
+
 
 edsdk.EDSDK_DLL = DLL()
 edsdk.load_edsdk = lambda: True
 edsdk._setup_functions = lambda: None
 edsdk._sdk_initialized = False
-edsdk._handler_haengt_dauerhaft = False
 
-print("Szenario: Aufrufe kommen aus VERSCHIEDENEN Faden (wie in der App)\n")
+assert edsdk.initialize()
+ref = ctypes.c_void_p(123)
 
-edsdk.initialize()                                    # Haupt-Faden
 
-def aus_nebenfaden():                                 # wie der System-Test
-    edsdk.im_kamera_faden(edsdk.EDSDK_DLL.EdsOpenSession, object())
-t = threading.Thread(target=aus_nebenfaden, name="system-test"); t.start(); t.join()
+def caller(name, fn):
+    result = fn()
+    assert result is not None, f"{name} lieferte unerwartet None"
 
-def noch_woanders():
-    edsdk.set_object_event_handler(object(), lambda e, o: 0)
-t2 = threading.Thread(target=noch_woanders, name="irgendwo"); t2.start(); t2.join(timeout=8)
 
-print("Wo wurde die Kamera-Bibliothek tatsaechlich angesprochen?")
-for was, faden in FADEN:
-    print(f"  {was:<12} -> Faden '{faden}'")
-print()
+threads = [
+    threading.Thread(
+        target=caller,
+        args=("session", lambda: edsdk.open_session(ref)),
+        name="system-test",
+    ),
+    threading.Thread(
+        target=caller,
+        args=("object", lambda: edsdk.set_object_event_handler(ref, lambda e, o: True)),
+        name="handler-anmelder",
+    ),
+    threading.Thread(
+        target=caller,
+        args=("state", lambda: edsdk.set_state_event_handler(ref, lambda e, d: None)),
+        name="status-anmelder",
+    ),
+    threading.Thread(
+        target=caller,
+        args=("save", lambda: edsdk.set_save_to_host(ref)),
+        name="capture-worker",
+    ),
+]
 
-z = dict(FADEN)
-assert z["SDK-Start"] == "edsdk-kamera", "SDK nicht im Kamera-Faden!"
-assert z["Sitzung"] == "edsdk-kamera", f"Sitzung im falschen Faden: {z['Sitzung']}"
-print("BESTANDEN 1: SDK-Start und Sitzung im SELBEN Faden ('edsdk-kamera') —")
-print("             egal von wo der Aufruf kam. Genau das war die Ursache.")
+for thread in threads:
+    thread.start()
+for thread in threads:
+    thread.join(timeout=10)
+    assert not thread.is_alive(), f"Aufrufer haengt: {thread.name}"
 
-assert z["Rueckkanal"] == "edsdk-rueckkanal", \
-    "Rueckkanal im Kamera-Faden — ein Haenger wuerde alles blockieren!"
-print("BESTANDEN 2: Der Rueckkanal laeuft daneben und kann den Kamera-Faden")
-print("             nicht mitreissen, falls er haengt.")
+edsdk.dispose_camera(ref, session_open=True)
 
-lebt = edsdk.im_kamera_faden(lambda: threading.current_thread().name, timeout=3.0)
-assert lebt == "edsdk-kamera", f"Kamera-Faden antwortet nicht ({lebt})"
-print("BESTANDEN 3: Der Kamera-Faden nimmt danach weiter Auftraege an.")
+assert AUFRUFE, "Fake-DLL wurde nie aufgerufen"
+falsche = [
+    (name, thread, ident)
+    for name, thread, ident in AUFRUFE
+    if ident != edsdk._sdk_faden.ident
+]
+assert not falsche, f"EDSDK ausserhalb des Owners: {falsche}"
+assert threading.get_ident() != edsdk._sdk_faden.ident
+assert HANDLER_EVENTS["object"] == 0x00000200, HANDLER_EVENTS
+assert HANDLER_EVENTS["state"] == 0x00000300, HANDLER_EVENTS
+assert not any(thread == "edsdk-rueckkanal" for _, thread, _ in AUFRUFE)
+
+print("BESTANDEN: Alle EDSDK-Aufrufe liefen ausschliesslich auf 'edsdk-kamera'.")
+print("BESTANDEN: Object=0x200 und State=0x300 wurden registriert.")

@@ -1,6 +1,6 @@
 # Canon-Capture: Kaltstart, Warteanzeige, Laufzeit und Belichtungsdiagnose
 
-**Status:** Von Christian am 25.08.2026 freigegeben
+**Status:** Implementiert und lokal validiert; Hardware-Retest offen
 
 **Zielversion:** 2.4.60
 
@@ -162,7 +162,7 @@ lassen.
 
 ## Tests
 
-Die automatisierten Tests werden um folgende Nachweise erweitert:
+Die automatisierten Tests decken folgende Nachweise ab:
 
 1. Exakte Host-Initialisierungsreihenfolge und ein `UIUnlock` in allen
    Fehlerpfaden.
@@ -178,6 +178,9 @@ Die automatisierten Tests werden um folgende Nachweise erweitert:
    EXIF-Diagnose sind auswertbar und fehlertolerant.
 8. Die komplette bestehende DSLR-Suite, `py_compile` und der semantische
    Webcam-Diff bleiben gruen.
+
+**Lokaler Abschluss:** 18/18 Tests unter Windows bestanden, `py_compile`
+gruen, `webcam.py` ohne semantischen Diff.
 
 ## Hardware-Abnahme
 

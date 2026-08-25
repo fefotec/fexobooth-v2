@@ -6,14 +6,18 @@ Basiert auf EDSDK v13.20.10
 
 import ctypes
 from ctypes import c_uint, c_int, c_void_p, c_char_p, POINTER, byref, Structure, c_ubyte
+from functools import wraps
+import itertools
 import os
 import queue
 import sys
 import threading
+import time
+import traceback
 from typing import Optional, List, Tuple
 from pathlib import Path
 
-from src.utils.logging import get_logger
+from src.utils.logging import get_logger, is_developer_mode
 
 logger = get_logger(__name__)
 
@@ -22,11 +26,24 @@ logger = get_logger(__name__)
 # ============================================================================
 
 EDSDK_DLL = None
+_dll_directory_handles = []
 
 def _find_edsdk_dll() -> Optional[str]:
     """Sucht die EDSDK.dll"""
-    # Mögliche Pfade
-    search_paths = [
+    # PyInstaller legt Binaries im One-Folder-Build seit Version 6 standard-
+    # maessig in `_internal` ab und setzt `sys._MEIPASS` genau auf diesen
+    # Ordner. Das muss VOR Repo-/Altpfaden geprueft werden, sonst funktioniert
+    # Canon aus dem Quellbaum, aber nicht in der frisch installierten EXE.
+    search_paths = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        search_paths.append(Path(meipass))
+
+    if getattr(sys, "frozen", False):
+        exe_ordner = Path(sys.executable).resolve().parent
+        search_paths.extend([exe_ordner / "_internal", exe_ordner])
+
+    search_paths.extend([
         # Im Repo
         Path(__file__).parent.parent.parent / "EDSDK" / "EDSDKv132010W" / "EDSDKv132010W" / "Windows" / "EDSDK_64" / "Dll",
         # Im fexobooth Ordner auf Windows
@@ -34,13 +51,18 @@ def _find_edsdk_dll() -> Optional[str]:
         Path("C:/fexobooth/fexobooth-v2/EDSDK/EDSDKv132010W/EDSDKv132010W/Windows/EDSDK_64/Dll"),
         # Neben der exe
         Path("."),
-    ]
+    ])
     
     for path in search_paths:
         dll_path = path / "EDSDK.dll"
-        if dll_path.exists():
+        image_dll = path / "EdsImage.dll"
+        if dll_path.exists() and image_dll.exists():
             logger.info(f"EDSDK.dll gefunden: {dll_path}")
             return str(dll_path.parent)
+        if dll_path.exists():
+            logger.error(
+                f"EDSDK.dll gefunden, aber EdsImage.dll fehlt daneben: {path}"
+            )
     
     return None
 
@@ -63,7 +85,10 @@ def load_edsdk() -> bool:
     
     try:
         # DLL-Verzeichnis zum Suchpfad hinzufügen
-        os.add_dll_directory(dll_dir)
+        # Das von add_dll_directory gelieferte Handle muss am Leben bleiben.
+        # Wird es sofort freigegeben, entfernt CPython den Suchpfad wieder und
+        # EDSDK.dll kann ihre Nachbar-DLL EdsImage.dll nicht mehr finden.
+        _dll_directory_handles.append(os.add_dll_directory(dll_dir))
         
         # DLL laden
         dll_path = os.path.join(dll_dir, "EDSDK.dll")
@@ -96,6 +121,8 @@ EDS_ERR_SESSION_NOT_OPEN = 0x00002003
 EDS_ERR_SESSION_ALREADY_OPEN = 0x0000201e
 EDS_ERR_TAKE_PICTURE_AF_NG = 0x00008D01
 EDS_ERR_TAKE_PICTURE_CARD_NG = 0x00008D07
+EDS_ERR_OBJECT_NOTREADY = 0x0000A102
+EDS_ERR_MEMORYSTATUS_NOTREADY = 0x0000A106
 
 # Error-Code Namen für besseres Logging
 #
@@ -261,7 +288,6 @@ VERBINDUNG_TOT = {
 # gehören (sonst stehen pro Abend zehntausend rote Zeilen drin).
 HARMLOS = {
     0x0000a102,  # OBJECT_NOTREADY - Live-View braucht nach dem Start ~1-2s
-    0x0000a101,  # DEVICE_BUSY (EVF) - nächster Frame klappt wieder
 }
 
 
@@ -275,11 +301,6 @@ def ist_verbindung_tot(err: int) -> bool:
 # Ohne das kam nur ein nacktes False zurück und der Grund ging verloren.
 letzter_fehler: int = 0
 
-# 2.4.56: Ist EdsSetObjectEventHandler auf diesem Rechner schon einmal haengen
-# geblieben? Dann nie wieder aufrufen — siehe Begruendung dort.
-_handler_haengt_dauerhaft: bool = False
-
-
 def check_error(err: int, context: str = "") -> bool:
     """Prüft EDSDK Fehlercode
 
@@ -290,13 +311,15 @@ def check_error(err: int, context: str = "") -> bool:
     global letzter_fehler
 
     if err == EDS_ERR_OK:
+        letzter_fehler = EDS_ERR_OK
         return True
 
     letzter_fehler = err
     err_name = ERROR_NAMES.get(err, "UNBEKANNT")
 
     if err in HARMLOS:
-        logger.debug(f"EDSDK {hex(err)} ({err_name}) bei {context} - normal, kein Fehler")
+        # Live-View OBJECT_NOTREADY wird im Owner alle fuenf Sekunden
+        # zusammengefasst. Ein Eintrag pro Frame verdeckt die Capture-Spur.
         return False
 
     if ist_verbindung_tot(err):
@@ -325,11 +348,14 @@ kEdsPropID_ImageQuality = 0x00000100
 # 2.4.46 — für die Kamera-Diagnose im Dev-Mode (Werte aus EDSDKTypes.h)
 kEdsPropID_AEMode = 0x00000400          # Programmwahlrad (P/Av/Tv/M/Vollautomatik)
 kEdsPropID_AFMode = 0x00000404          # Fokus-Art (One-Shot / Servo / manuell)
+kEdsPropID_MeteringMode = 0x00000403     # Belichtungsmessung
+kEdsPropID_ExposureCompensation = 0x00000407  # Belichtungskorrektur
 kEdsPropID_AvailableShots = 0x0000040a  # freie Aufnahmen
 kEdsPropID_WhiteBalance = 0x00000106    # Weissabgleich (AWB schwankt pro Foto!)
 kEdsPropID_ISOSpeed = 0x00000402        # ISO
 kEdsPropID_Av = 0x00000405              # Blende
 kEdsPropID_Tv = 0x00000406              # Belichtungszeit (Verwacklungsgefahr!)
+kEdsPropID_Evf_ViewType = 0x01000513    # Live-View-Belichtungssimulation
 
 # Belichtungszeit-Codes -> Klartext. Nur die fuer die Box interessanten Werte.
 # Alles ab 1/60 abwaerts ist in einer Fotobox kritisch: Gaeste bewegen sich,
@@ -344,7 +370,8 @@ TV_NAMEN = {
 }
 
 AV_NAMEN = {
-    0x08: "f/1.0", 0x0b: "f/1.2", 0x10: "f/1.4", 0x15: "f/1.8", 0x18: "f/2.0",
+    0x08: "f/1.0", 0x0b: "f/1.1", 0x0c: "f/1.2", 0x0d: "f/1.2",
+    0x10: "f/1.4", 0x15: "f/1.8", 0x18: "f/2.0",
     0x1d: "f/2.5", 0x20: "f/2.8", 0x25: "f/3.5", 0x28: "f/4.0", 0x2d: "f/5.0",
     0x30: "f/5.6", 0x35: "f/7.1", 0x38: "f/8.0", 0x3d: "f/10", 0x40: "f/11",
     0x45: "f/14", 0x48: "f/16", 0x4d: "f/20", 0x50: "f/22",
@@ -357,18 +384,71 @@ ISO_NAMEN = {
     0x70: "3200", 0x78: "6400", 0x80: "12800",
 }
 
+AE_MODE_NAMEN = {
+    0x00: "P (Programmautomatik)", 0x01: "Tv", 0x02: "Av", 0x03: "M (manuell)",
+    0x04: "Bulb", 0x05: "A-DEP", 0x06: "DEP", 0x07: "C1/Custom",
+    0x08: "AE-Lock", 0x09: "Vollautomatik (grünes Feld)",
+    0x0A: "Nachtportrait", 0x0B: "Sport", 0x0C: "Portrait",
+    0x0D: "Landschaft", 0x0E: "Makro", 0x0F: "Blitz aus",
+    0x10: "C2", 0x11: "C3", 0x13: "Kreativautomatik", 0x14: "Video",
+    0x15: "Foto im Video", 0x16: "Intelligente Automatik", 0x17: "Nachtszene",
+    0x18: "HDR-Gegenlicht", 0x19: "SCN", 0x1A: "Kinder", 0x1B: "Speisen",
+    0x1C: "Kerzenlicht", 0x1D: "Kreativfilter", 0x1E: "Körniges S/W",
+    0x1F: "Weichzeichner", 0x20: "Spielzeugkamera", 0x21: "Fisheye",
+    0x22: "Aquarell", 0x23: "Miniatur", 0x24: "HDR Standard",
+    0x25: "HDR kräftig", 0x26: "HDR markant", 0x27: "HDR Relief",
+    0x28: "Video Fantasy", 0x29: "Video Alt", 0x2A: "Video Erinnerung",
+    0x2B: "Video Direkt-S/W", 0x2C: "Video Miniatur", 0x2D: "Mitziehen",
+    0x2E: "Gruppenfoto", 0x32: "Selbstportrait", 0x33: "Hybrid Auto",
+    0x34: "Glatte Haut", 0x35: "Panorama", 0x36: "Leise", 0x37: "Fv",
+    0x38: "Ölgemälde", 0x39: "Feuerwerk", 0x3A: "Sternenportrait",
+    0x3B: "Sternennacht", 0x3C: "Sternspuren", 0x3D: "Stern-Zeitraffer",
+    0x3E: "Hintergrundunschärfe", 0x3F: "Video-Blog",
+    0xFFFFFFFF: "unbekannt",
+}
+
 WB_NAMEN = {
-    0: "Auto (AWB) — schwankt pro Foto!", 1: "Tageslicht", 2: "Schatten",
-    3: "Wolkig", 4: "Kunstlicht", 5: "Leuchtstoff", 6: "Blitz",
-    8: "Manuell (fest)", 9: "Farbtemperatur (fest)",
+    0: "Auto (AWB, Umgebungspriorität)", 1: "Tageslicht", 2: "Wolkig",
+    3: "Kunstlicht", 4: "Leuchtstoff", 5: "Blitz", 6: "Manuell 1",
+    8: "Schatten", 9: "Farbtemperatur", 10: "PC-Set 1", 11: "PC-Set 2",
+    12: "PC-Set 3", 15: "Manuell 2", 16: "Manuell 3", 17: "Unterwasser",
+    18: "Manuell 4",
+    19: "Manuell 5", 20: "PC-Set 4", 21: "PC-Set 5",
+    23: "Auto (AWB, Weißpriorität)", 24: "Farbtemperatur 2",
+    25: "Farbtemperatur 3", 26: "Farbtemperatur 4",
+    0xFFFFFFFE: "eingefügt", 0xFFFFFFFF: "unbekannt/Click",
+}
+
+METERING_MODE_NAMEN = {
+    1: "Spot", 3: "Mehrfeld", 4: "Selektiv", 5: "Mittenbetont",
+    0xFFFFFFFF: "unbekannt",
+}
+
+EXPOSURE_COMP_NAMEN = {
+    0x28: "+5 EV", 0x25: "+4 2/3 EV", 0x24: "+4 1/2 EV", 0x23: "+4 1/3 EV",
+    0x20: "+4 EV", 0x1D: "+3 2/3 EV", 0x1C: "+3 1/2 EV", 0x1B: "+3 1/3 EV",
+    0x18: "+3 EV", 0x15: "+2 2/3 EV", 0x14: "+2 1/2 EV", 0x13: "+2 1/3 EV",
+    0x10: "+2 EV", 0x0D: "+1 2/3 EV", 0x0C: "+1 1/2 EV", 0x0B: "+1 1/3 EV",
+    0x08: "+1 EV", 0x05: "+2/3 EV", 0x04: "+1/2 EV", 0x03: "+1/3 EV",
+    0x00: "0 EV", 0xFD: "-1/3 EV", 0xFC: "-1/2 EV", 0xFB: "-2/3 EV",
+    0xF8: "-1 EV", 0xF5: "-1 1/3 EV", 0xF4: "-1 1/2 EV", 0xF3: "-1 2/3 EV",
+    0xF0: "-2 EV", 0xED: "-2 1/3 EV", 0xEC: "-2 1/2 EV", 0xEB: "-2 2/3 EV",
+    0xE8: "-3 EV", 0xE5: "-3 1/3 EV", 0xE4: "-3 1/2 EV", 0xE3: "-3 2/3 EV",
+    0xE0: "-4 EV", 0xDD: "-4 1/3 EV", 0xDC: "-4 1/2 EV", 0xDB: "-4 2/3 EV",
+    0xD8: "-5 EV", 0xFFFFFFFF: "unbekannt",
+}
+
+EVF_VIEW_TYPE_NAMEN = {
+    0: "nur Abblendtaste", 1: "aktiv", 3: "deaktiviert",
+    4: "Belichtung und Schärfentiefe", 0xFFFFFFFF: "unbekannt",
 }
 
 # Image Quality Werte (für JPG)
 # Format: 0x00LLSSpp (LL=LargeSize, SS=SecondarySize, pp=Primary/Secondary type)
-EdsImageQuality_LJF = 0x0013000f   # Large Fine JPG (beste JPG Qualität)
-EdsImageQuality_LJN = 0x0012000f   # Large Normal JPG
-EdsImageQuality_MJF = 0x0113000f   # Medium Fine JPG
-EdsImageQuality_SJF = 0x0213000f   # Small Fine JPG
+EdsImageQuality_LJF = 0x0013ff0f   # Large Fine JPG (beste JPG Qualität)
+EdsImageQuality_LJN = 0x0012ff0f   # Large Normal JPG
+EdsImageQuality_MJF = 0x0113ff0f   # Medium Fine JPG
+EdsImageQuality_SJF = 0x0213ff0f   # Small Fine JPG
 
 # EVF Output Device
 kEdsEvfOutputDevice_TFT = 1
@@ -400,12 +480,19 @@ kEdsCameraStatusCommand_EnterDirectTransfer = 0x00000002
 kEdsCameraStatusCommand_ExitDirectTransfer = 0x00000003
 
 # Object Events
-kEdsObjectEvent_DirItemRequestTransfer = 0x00000108
-kEdsObjectEvent_DirItemCreated = 0x00000100
+kEdsObjectEvent_All = 0x00000200
+kEdsObjectEvent_DirItemCreated = 0x00000204
+kEdsObjectEvent_DirItemRequestTransfer = 0x00000208
+kEdsObjectEvent_DirItemRequestTransferDT = 0x00000209
 
-# State Events  
-kEdsStateEvent_Shutdown = 0x00000001
-kEdsStateEvent_WillSoonShutDown = 0x00000005
+# State Events
+kEdsStateEvent_All = 0x00000300
+kEdsStateEvent_Shutdown = 0x00000301
+kEdsStateEvent_JobStatusChanged = 0x00000302
+kEdsStateEvent_WillSoonShutDown = 0x00000303
+kEdsStateEvent_ShutDownTimerUpdate = 0x00000304
+kEdsStateEvent_CaptureError = 0x00000305
+kEdsStateEvent_InternalError = 0x00000306
 
 
 # ============================================================================
@@ -477,6 +564,10 @@ class EdsDirectoryItemInfo(Structure):
 # aktiviert Windows SEH Exception Handling für den Callback.
 EdsObjectEventHandler = ctypes.WINFUNCTYPE(c_uint, c_uint, c_void_p, c_void_p)
 
+# typedef EdsError (EDSCALLBACK *EdsStateEventHandler)(
+#     EdsStateEvent inEvent, EdsUInt32 inEventData, EdsVoid *inContext)
+EdsStateEventHandler = ctypes.WINFUNCTYPE(c_uint, c_uint, c_uint, c_void_p)
+
 
 # ============================================================================
 # API Functions
@@ -522,10 +613,18 @@ def _setup_functions():
     # EdsRelease
     EDSDK_DLL.EdsRelease.restype = c_uint
     EDSDK_DLL.EdsRelease.argtypes = [c_void_p]
+
+    # EdsRetain
+    EDSDK_DLL.EdsRetain.restype = c_uint
+    EDSDK_DLL.EdsRetain.argtypes = [c_void_p]
     
     # EdsSendCommand
     EDSDK_DLL.EdsSendCommand.restype = c_uint
     EDSDK_DLL.EdsSendCommand.argtypes = [c_void_p, c_uint, c_int]
+
+    # EdsSendStatusCommand (UI-Lock fuer atomare Host-Speicher-Konfiguration)
+    EDSDK_DLL.EdsSendStatusCommand.restype = c_uint
+    EDSDK_DLL.EdsSendStatusCommand.argtypes = [c_void_p, c_uint, c_int]
     
     # EdsSetPropertyData
     EDSDK_DLL.EdsSetPropertyData.restype = c_uint
@@ -582,6 +681,12 @@ def _setup_functions():
     # EdsSetObjectEventHandler - für Bild-Download Events
     EDSDK_DLL.EdsSetObjectEventHandler.restype = c_uint
     EDSDK_DLL.EdsSetObjectEventHandler.argtypes = [c_void_p, c_uint, EdsObjectEventHandler, c_void_p]
+
+    # EdsSetCameraStateEventHandler - für Shutdown/Verbindungsstatus
+    EDSDK_DLL.EdsSetCameraStateEventHandler.restype = c_uint
+    EDSDK_DLL.EdsSetCameraStateEventHandler.argtypes = [
+        c_void_p, c_uint, EdsStateEventHandler, c_void_p
+    ]
     
     # EdsGetDirectoryItemInfo - Info über aufgenommenes Bild
     EDSDK_DLL.EdsGetDirectoryItemInfo.restype = c_uint
@@ -594,6 +699,10 @@ def _setup_functions():
     # EdsDownloadComplete - Download abschließen
     EDSDK_DLL.EdsDownloadComplete.restype = c_uint
     EDSDK_DLL.EdsDownloadComplete.argtypes = [c_void_p]
+
+    # EdsDownloadCancel - fehlgeschlagenen Transfer sauber abbrechen
+    EDSDK_DLL.EdsDownloadCancel.restype = c_uint
+    EDSDK_DLL.EdsDownloadCancel.argtypes = [c_void_p]
     
     # EdsCreateFileStream - File Stream für Download
     EDSDK_DLL.EdsCreateFileStream.restype = c_uint
@@ -637,118 +746,414 @@ _sdk_initialized = False
 # Der Faden ist ein daemon: Er haelt die App beim Beenden nicht auf.
 
 _sdk_auftraege: "queue.Queue" = None
-_sdk_faden = None
-_sdk_bereit = None
+_sdk_prioritaets_auftraege: "queue.Queue" = None
+_sdk_faden: Optional[threading.Thread] = None
+_sdk_bereit: Optional[threading.Event] = None
+_sdk_start_sperre = threading.Lock()
+_sdk_op_nummern = itertools.count(1)
+_sdk_aktiver_auftrag = None
+_sdk_native_phase = None
+_sdk_letzter_fortschritt = 0.0
+_sdk_ungesund = False
+
+_HEISSE_AUFTRAEGE = {
+    "get_live_view_image",
+    "get_event",
+    "pump_windows_messages",
+}
+
+
+def _diag_aktiv() -> bool:
+    """Dev-Modus dynamisch pruefen (beim Modulimport ist er noch nicht gesetzt)."""
+    try:
+        return is_developer_mode()
+    except Exception:
+        return False
+
+
+def _thread_text(thread: Optional[threading.Thread] = None) -> str:
+    thread = thread or threading.current_thread()
+    return f"{thread.name}/{thread.ident}"
+
+
+def _ergebnis_text(wert) -> str:
+    """Sicherer Kurztext ohne Pointer, Bilddaten oder andere Nutzdaten."""
+    if wert is None:
+        return "None"
+    if isinstance(wert, bool):
+        return str(wert)
+    if isinstance(wert, bytes):
+        return f"bytes:{len(wert)}"
+    if isinstance(wert, (list, tuple, dict)):
+        return f"{type(wert).__name__}:{len(wert)}"
+    if isinstance(wert, (int, float, str)):
+        return type(wert).__name__
+    return type(wert).__name__
+
+
+def _owner_pruefen(context: str) -> bool:
+    """Meldet jeden internen DLL-Einstieg außerhalb des Owner-Threads."""
+    korrekt = threading.current_thread() is _sdk_faden
+    if not korrekt:
+        logger.error(
+            "CANON-THREAD-VERSTOSS "
+            f"op={context} ist={_thread_text()} "
+            f"owner={_thread_text(_sdk_faden) if _sdk_faden else 'nicht-gestartet'}"
+        )
+    return korrekt
+
+
+def _auftrag_anlegen(fn, args, kwargs, *, synchron: bool) -> dict:
+    return {
+        "id": next(_sdk_op_nummern),
+        "fn": fn,
+        "args": args,
+        "kwargs": kwargs,
+        "name": getattr(fn, "__name__", type(fn).__name__),
+        "anforderer": _thread_text(),
+        "eingestellt": time.monotonic(),
+        "gestartet": None,
+        "abgebrochen": False,
+        "status": "queued",
+        "sperre": threading.Lock(),
+        "ergebnis": {},
+        "fertig": threading.Event() if synchron else None,
+    }
+
+
+def _auftrag_einstellen(fn, *args, synchron: bool = False, **kwargs) -> dict:
+    """Stellt auch aus einem nativen Callback nur asynchron in die Owner-Queue."""
+    _sdk_faden_starten()
+    auftrag = _auftrag_anlegen(fn, args, kwargs, synchron=synchron)
+    ziel_queue = _sdk_auftraege if synchron else _sdk_prioritaets_auftraege
+    ziel_queue.put(auftrag)
+    if _diag_aktiv() and auftrag["name"] not in _HEISSE_AUFTRAEGE:
+        logger.debug(
+            "CANON-OWNER QUEUED "
+            f"op_id={auftrag['id']} op={auftrag['name']} "
+            f"from={auftrag['anforderer']} queue={_queue_tiefe()}"
+        )
+    return auftrag
+
+
+def kamera_faden_asynchron(fn, *args, **kwargs) -> int:
+    """Priorisierter Folgeauftrag; wichtig fuer kurze native Callbacks."""
+    return _auftrag_einstellen(fn, *args, synchron=False, **kwargs)["id"]
+
+
+def _queue_tiefe() -> int:
+    normal = _sdk_auftraege.qsize() if _sdk_auftraege is not None else 0
+    prio = (
+        _sdk_prioritaets_auftraege.qsize()
+        if _sdk_prioritaets_auftraege is not None else 0
+    )
+    return normal + prio
+
+
+def _owner_stack() -> str:
+    """Python-Stack des Owner-Threads fuer einen Dev-Mode-Timeout."""
+    if not _sdk_faden or _sdk_faden.ident is None:
+        return "Owner-Thread ohne Stack"
+    frame = sys._current_frames().get(_sdk_faden.ident)
+    if frame is None:
+        return "Owner-Stack nicht verfuegbar"
+    return "".join(traceback.format_stack(frame)).rstrip()
 
 
 def _sdk_faden_schleife():
-    """Startet die Bibliothek und arbeitet danach dauerhaft Nachrichten ab."""
-    global _sdk_initialized
+    """Besitzt SDK, Session, Referenzen, Handler und alle EDSDK-Aufrufe."""
+    global _sdk_initialized, _sdk_aktiver_auftrag, _sdk_native_phase
+    global _sdk_letzter_fortschritt
 
-    # Eigenes COM-Apartment (STA) fuer diesen Faden anmelden. Ohne das steckt
-    # ein Python-Faden in keinem definierten Apartment, und COM entscheidet
-    # selbst — meist zu unseren Ungunsten.
+    com_hr = None
     if sys.platform == "win32":
         try:
             # COINIT_APARTMENTTHREADED = 0x2
-            ctypes.windll.ole32.CoInitializeEx(None, 0x2)
+            com_hr = ctypes.windll.ole32.CoInitializeEx(None, 0x2)
         except Exception as e:
-            logger.debug(f"CoInitializeEx: {e}")
+            logger.error(f"CANON-OWNER CoInitializeEx fehlgeschlagen: {e}")
+
+    if _diag_aktiv():
+        logger.debug(
+            "CANON-OWNER START "
+            f"thread={_thread_text()} com_hr={com_hr} "
+            f"python_bits={ctypes.sizeof(c_void_p) * 8}"
+        )
 
     try:
         if not load_edsdk():
-            _sdk_bereit.set()
             return
         _setup_functions()
-
+        _owner_pruefen("EdsInitializeSDK")
         err = EDSDK_DLL.EdsInitializeSDK()
         if check_error(err, "EdsInitializeSDK"):
             _sdk_initialized = True
-            logger.info("EDSDK gestartet (eigener Kamera-Faden)")
+            _sdk_letzter_fortschritt = time.monotonic()
+            logger.info("EDSDK gestartet; Owner-Thread besitzt jetzt alle Canon-Aufrufe")
     except Exception as e:
-        logger.error(f"EDSDK-Start im Kamera-Faden fehlgeschlagen: {e}")
+        logger.error(f"EDSDK-Start im Owner-Thread fehlgeschlagen: {e}")
     finally:
         _sdk_bereit.set()
 
-    # Dauerbetrieb: Auftraege abarbeiten UND Nachrichten pumpen. Das Pumpen ist
-    # der eigentliche Zweck — nur dadurch koennen Aufrufe aus anderen Faden
-    # ueberhaupt fertig werden, statt haengenzubleiben.
+    if not _sdk_initialized:
+        return
+
     from ctypes import wintypes
     user32 = ctypes.windll.user32 if sys.platform == "win32" else None
     msg = wintypes.MSG() if sys.platform == "win32" else None
+    letzter_event_poll = 0.0
+    lv_diag = {"seit": time.monotonic(), "anzahl": 0, "ok": 0, "ms": 0.0, "max_ms": 0.0}
 
     while True:
         try:
-            auftrag = _sdk_auftraege.get(timeout=0.02)
-        except Exception:
-            auftrag = None
+            auftrag = _sdk_prioritaets_auftraege.get_nowait()
+        except queue.Empty:
+            try:
+                auftrag = _sdk_auftraege.get(timeout=0.02)
+            except queue.Empty:
+                auftrag = None
 
         if auftrag is not None:
-            fn, args, kwargs, ergebnis, fertig = auftrag
+            fertig = auftrag["fertig"]
+            # Der Uebergang queued -> running/cancelled ist atomar. Sonst kann
+            # ein Timeout genau zwischen der Abbruchpruefung und `gestartet`
+            # landen und ein spaeterer Retry denselben Ausloeser verdoppeln.
+            with auftrag["sperre"]:
+                if auftrag["status"] == "cancelled":
+                    abgebrochen = True
+                else:
+                    auftrag["status"] = "running"
+                    auftrag["gestartet"] = time.monotonic()
+                    abgebrochen = False
+
+            if abgebrochen:
+                auftrag["ergebnis"]["abgebrochen"] = True
+                if fertig:
+                    fertig.set()
+            else:
+                _sdk_aktiver_auftrag = auftrag
+                warte_ms = (auftrag["gestartet"] - auftrag["eingestellt"]) * 1000
+                heiss = auftrag["name"] in _HEISSE_AUFTRAEGE
+                if _diag_aktiv() and not heiss:
+                    logger.debug(
+                        "CANON-OWNER START-OP "
+                        f"op_id={auftrag['id']} op={auftrag['name']} "
+                        f"from={auftrag['anforderer']} wait_ms={warte_ms:.1f} "
+                        f"queue={_queue_tiefe()}"
+                    )
+
+                start = time.monotonic()
+                try:
+                    _owner_pruefen(auftrag["name"])
+                    auftrag["ergebnis"]["wert"] = auftrag["fn"](
+                        *auftrag["args"], **auftrag["kwargs"]
+                    )
+                except Exception as e:
+                    auftrag["ergebnis"]["fehler"] = e
+                    logger.exception(
+                        f"CANON-OWNER EXCEPTION op_id={auftrag['id']} op={auftrag['name']}"
+                    )
+                finally:
+                    dauer_ms = (time.monotonic() - start) * 1000
+                    _sdk_letzter_fortschritt = time.monotonic()
+
+                    if auftrag["name"] == "get_live_view_image":
+                        lv_diag["anzahl"] += 1
+                        lv_diag["ms"] += dauer_ms
+                        lv_diag["max_ms"] = max(lv_diag["max_ms"], dauer_ms)
+                        if auftrag["ergebnis"].get("wert"):
+                            lv_diag["ok"] += 1
+                    elif _diag_aktiv():
+                        status = (
+                            "exception" if "fehler" in auftrag["ergebnis"]
+                            else _ergebnis_text(auftrag["ergebnis"].get("wert"))
+                        )
+                        logger.debug(
+                            "CANON-OWNER END-OP "
+                            f"op_id={auftrag['id']} op={auftrag['name']} "
+                            f"call_ms={dauer_ms:.1f} result={status} "
+                            f"queue={_queue_tiefe()}"
+                        )
+
+                    with auftrag["sperre"]:
+                        auftrag["status"] = "finished"
+                    _sdk_aktiver_auftrag = None
+                    if fertig:
+                        fertig.set()
+
+        jetzt = time.monotonic()
+
+        # Dieser Owner ist eine eigene, fensterlose STA. Deshalb hier zentral
+        # EdsGetEvent pollen; UI- und Capture-Thread tun das nicht mehr.
+        if _sdk_initialized and EDSDK_DLL is not None and jetzt - letzter_event_poll >= 0.05:
+            letzter_event_poll = jetzt
             try:
-                ergebnis["wert"] = fn(*args, **kwargs)
+                _owner_pruefen("EdsGetEvent/owner-loop")
+                _sdk_native_phase = {
+                    "name": "EdsGetEvent/owner-loop",
+                    "gestartet": time.monotonic(),
+                }
+                err = EDSDK_DLL.EdsGetEvent()
+                if err != EDS_ERR_OK and err not in HARMLOS:
+                    check_error(err, "EdsGetEvent/owner-loop")
             except Exception as e:
-                ergebnis["fehler"] = e
+                logger.debug(f"EdsGetEvent im Owner-Loop: {e}")
             finally:
-                fertig.set()
+                _sdk_native_phase = None
+                _sdk_letzter_fortschritt = time.monotonic()
 
         if user32 is not None:
             try:
                 while user32.PeekMessageW(byref(msg), None, 0, 0, 1):  # PM_REMOVE
                     user32.TranslateMessage(byref(msg))
                     user32.DispatchMessageW(byref(msg))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Windows-Message-Pump im Owner: {e}")
+
+        if _diag_aktiv() and jetzt - lv_diag["seit"] >= 5.0:
+            if lv_diag["anzahl"]:
+                logger.debug(
+                    "CANON-LIVEVIEW SUMMARY "
+                    f"frames={lv_diag['anzahl']} ok={lv_diag['ok']} "
+                    f"failed={lv_diag['anzahl'] - lv_diag['ok']} "
+                    f"avg_ms={lv_diag['ms'] / lv_diag['anzahl']:.1f} "
+                    f"max_ms={lv_diag['max_ms']:.1f} queue={_queue_tiefe()}"
+                )
+            lv_diag = {"seit": jetzt, "anzahl": 0, "ok": 0, "ms": 0.0, "max_ms": 0.0}
 
 
 def _sdk_faden_starten() -> None:
-    """Legt den Kamera-Faden an (einmalig) und wartet, bis er bereit ist."""
-    global _sdk_auftraege, _sdk_faden, _sdk_bereit
+    """Legt den einzigen Canon-Owner-Thread an und wartet auf SDK-Bereitschaft."""
+    global _sdk_auftraege, _sdk_prioritaets_auftraege
+    global _sdk_faden, _sdk_bereit, _sdk_ungesund
 
-    if _sdk_faden is not None and _sdk_faden.is_alive():
-        return
+    with _sdk_start_sperre:
+        if _sdk_faden is None or not _sdk_faden.is_alive():
+            _sdk_auftraege = queue.Queue()
+            _sdk_prioritaets_auftraege = queue.Queue()
+            _sdk_bereit = threading.Event()
+            _sdk_ungesund = False
+            _sdk_faden = threading.Thread(
+                target=_sdk_faden_schleife, daemon=True, name="edsdk-kamera"
+            )
+            _sdk_faden.start()
 
-    import queue as _queue
-    import threading as _threading
+        # Auch der zweite parallele Aufrufer muss auf denselben Start warten.
+        # Nur `Thread.is_alive()` bedeutet noch nicht, dass COM und EDSDK schon
+        # initialisiert sind.
+        bereit = _sdk_bereit
 
-    _sdk_auftraege = _queue.Queue()
-    _sdk_bereit = _threading.Event()
-    _sdk_faden = _threading.Thread(
-        target=_sdk_faden_schleife, daemon=True, name="edsdk-kamera"
-    )
-    _sdk_faden.start()
-    _sdk_bereit.wait(timeout=10.0)
+    if bereit is None or not bereit.wait(timeout=10.0):
+        logger.error("CANON-OWNER wurde innerhalb von 10s nicht startbereit")
 
 
 def im_kamera_faden(fn, *args, timeout: float = 20.0, **kwargs):
-    """Fuehrt fn im Kamera-Faden aus und wartet auf das Ergebnis.
-
-    Damit laufen alle empfindlichen Aufrufe garantiert im selben Faden, in dem
-    die Bibliothek gestartet wurde — unabhaengig davon, wer sie anstoesst.
-    """
-    import threading as _threading
+    """Fuehrt einen synchronen Auftrag garantiert im Canon-Owner-Thread aus."""
+    global _sdk_ungesund
 
     _sdk_faden_starten()
 
-    # Sind wir schon im Kamera-Faden? Dann direkt ausfuehren, sonst warten wir
-    # auf uns selbst.
-    if _threading.current_thread() is _sdk_faden:
+    if threading.current_thread() is _sdk_faden:
+        _owner_pruefen(getattr(fn, "__name__", type(fn).__name__))
         return fn(*args, **kwargs)
 
-    ergebnis = {}
-    fertig = _threading.Event()
-    _sdk_auftraege.put((fn, args, kwargs, ergebnis, fertig))
-
-    if not fertig.wait(timeout):
+    if _sdk_ungesund:
         logger.error(
-            f"Kamera-Faden antwortet seit {timeout:.0f}s nicht "
-            f"({getattr(fn, '__name__', fn)})"
+            "CANON-OWNER nimmt keinen weiteren Auftrag an, weil ein vorheriger "
+            "nativer Aufruf nicht zurueckgekehrt ist"
         )
         return None
 
-    if "fehler" in ergebnis:
-        raise ergebnis["fehler"]
-    return ergebnis.get("wert")
+    auftrag = _auftrag_einstellen(fn, *args, synchron=True, **kwargs)
+    fertig = auftrag["fertig"]
+    if not fertig.wait(timeout):
+        with auftrag["sperre"]:
+            aktiv = auftrag["status"] == "running"
+            if auftrag["status"] == "queued":
+                # Noch nicht begonnen: Der Owner darf diesen veralteten Auftrag
+                # spaeter nicht doch ausfuehren und damit einen Retry verdoppeln.
+                auftrag["status"] = "cancelled"
+                auftrag["abgebrochen"] = True
+
+        # Auch wenn genau dieser Auftrag noch nicht begonnen hat, kann der
+        # Owner in einem vorher priorisierten Callback-Download oder direkt in
+        # EdsGetEvent feststecken. Nach einem synchronen Timeout wird deshalb
+        # ausnahmslos gesperrt: Ein laufender ctypes-Aufruf kann in Python nicht
+        # sicher beendet werden und weitere Auftraege duerfen sich nicht
+        # dahinter stapeln.
+        _sdk_ungesund = True
+
+        owner_op = _sdk_aktiver_auftrag
+        owner_name = (
+            owner_op["name"] if owner_op
+            else (_sdk_native_phase or {}).get("name", "kein Python-Auftrag")
+        )
+        owner_id = owner_op["id"] if owner_op else "-"
+        logger.error(
+            "CANON-OWNER TIMEOUT "
+            f"op_id={auftrag['id']} op={auftrag['name']} timeout_s={timeout:.1f} "
+            f"started={aktiv} owner_alive={bool(_sdk_faden and _sdk_faden.is_alive())} "
+            f"owner_op_id={owner_id} owner_op={owner_name} "
+            f"queue={_queue_tiefe()}"
+        )
+        if _diag_aktiv():
+            logger.error("CANON-OWNER STACK\n" + _owner_stack())
+        return None
+
+    if auftrag["ergebnis"].get("abgebrochen"):
+        return None
+    if "fehler" in auftrag["ergebnis"]:
+        raise auftrag["ergebnis"]["fehler"]
+    return auftrag["ergebnis"].get("wert")
+
+
+def kamera_faden_aufruf(*, timeout: float = 20.0):
+    """Decorator: Jede oeffentliche EDSDK-Operation passiert im Owner."""
+    def dekorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            return im_kamera_faden(fn, *args, timeout=timeout, **kwargs)
+
+        wrapper._edsdk_owner_dispatch = True
+        return wrapper
+    return dekorator
+
+
+def owner_snapshot(*, fail_if_busy: bool = False) -> str:
+    """Kompakter, pointerfreier Zustand fuer Capture-Timeout-Logs."""
+    global _sdk_ungesund
+
+    aktiv = _sdk_aktiver_auftrag
+    if aktiv and aktiv.get("gestartet"):
+        aktiv_seit_ms = (time.monotonic() - aktiv["gestartet"]) * 1000
+        aktiv_text = f"{aktiv['id']}:{aktiv['name']}:{aktiv_seit_ms:.0f}ms"
+    elif _sdk_native_phase and _sdk_native_phase.get("gestartet"):
+        aktiv_seit_ms = (
+            time.monotonic() - _sdk_native_phase["gestartet"]
+        ) * 1000
+        aktiv_text = (
+            f"native:{_sdk_native_phase['name']}:{aktiv_seit_ms:.0f}ms"
+        )
+    else:
+        aktiv_text = "idle"
+
+    if fail_if_busy and aktiv_text != "idle":
+        war_gesund = not _sdk_ungesund
+        _sdk_ungesund = True
+        if war_gesund:
+            logger.error(
+                "CANON-OWNER STALLED-AT-CAPTURE-TIMEOUT "
+                f"active={aktiv_text} queue={_queue_tiefe()}"
+            )
+            if _diag_aktiv():
+                logger.error("CANON-OWNER STACK\n" + _owner_stack())
+    return (
+        f"alive={bool(_sdk_faden and _sdk_faden.is_alive())},"
+        f"healthy={not _sdk_ungesund},"
+        f"active={aktiv_text},"
+        f"queue={_queue_tiefe()},"
+        f"initialized={_sdk_initialized}"
+    )
 
 
 def initialize() -> bool:
@@ -765,17 +1170,23 @@ def initialize() -> bool:
 
 
 def terminate():
-    """Beendet das EDSDK"""
+    """Beendet das EDSDK im Owner, startet es beim App-Ende aber nicht neu."""
+    if not _sdk_initialized or EDSDK_DLL is None or _sdk_faden is None:
+        return
+    return im_kamera_faden(_terminate_im_owner, timeout=10.0)
+
+
+def _terminate_im_owner():
     global _sdk_initialized
-    
     if not _sdk_initialized or EDSDK_DLL is None:
         return
-    
+    _owner_pruefen("EdsTerminateSDK")
     EDSDK_DLL.EdsTerminateSDK()
     _sdk_initialized = False
     logger.info("EDSDK beendet")
 
 
+@kamera_faden_aufruf(timeout=15.0)
 def get_camera_list() -> List[dict]:
     """Gibt Liste der angeschlossenen Kameras zurück"""
     if not initialize():
@@ -819,12 +1230,13 @@ def get_camera_list() -> List[dict]:
     return cameras
 
 
+@kamera_faden_aufruf(timeout=15.0)
 def open_session(camera_ref: c_void_p) -> bool:
     """Öffnet eine Session mit der Kamera
     
-    Behandelt DEVICE_BUSY (0xc0) durch:
-    1. Versuch die Session erst zu schließen
-    2. Kurz warten und erneut versuchen
+    Bei DEVICE_BUSY wird genau einmal sauber geschlossen und erneut geoeffnet.
+    Ein SDK-Neustart mit derselben alten Referenz ist ungueltig und findet hier
+    bewusst nicht mehr statt.
     """
     if EDSDK_DLL is None:
         return False
@@ -851,28 +1263,15 @@ def open_session(camera_ref: c_void_p) -> bool:
         err = EDSDK_DLL.EdsOpenSession(camera_ref)
         
         if err in (EDS_ERR_DEVICE_BUSY, EDS_ERR_SESSION_ALREADY_OPEN):
-            logger.warning("Session immer noch blockiert, versuche SDK-Neustart...")
-            
-            # SDK komplett neu initialisieren
-            global _sdk_initialized
-            try:
-                EDSDK_DLL.EdsTerminateSDK()
-            except:
-                pass
-            _sdk_initialized = False
-            
-            time.sleep(1.0)
-            
-            if not initialize():
-                logger.error("SDK-Neustart fehlgeschlagen")
-                return False
-            
-            # Letzter Versuch
-            err = EDSDK_DLL.EdsOpenSession(camera_ref)
+            logger.error(
+                "Session bleibt blockiert. Kein SDK-Neustart mit der alten "
+                "Kamera-Referenz; der Manager muss vollstaendig neu enumerieren."
+            )
     
     return check_error(err, "EdsOpenSession")
 
 
+@kamera_faden_aufruf(timeout=10.0)
 def close_session(camera_ref: c_void_p):
     """Schließt die Session"""
     if EDSDK_DLL is None:
@@ -881,7 +1280,79 @@ def close_session(camera_ref: c_void_p):
     EDSDK_DLL.EdsCloseSession(camera_ref)
 
 
-def take_picture(camera_ref: c_void_p, live_view_aktiv: bool = False) -> bool:
+@kamera_faden_aufruf(timeout=10.0)
+def release(ref: c_void_p) -> bool:
+    """Gibt eine Canon-Referenz ausschliesslich im Owner-Thread frei."""
+    if EDSDK_DLL is None or not ref:
+        return False
+    # EdsRelease liefert den verbleibenden Referenzzaehler, keinen Fehlercode.
+    EDSDK_DLL.EdsRelease(ref)
+    return True
+
+
+@kamera_faden_aufruf(timeout=15.0)
+def dispose_camera(camera_ref: c_void_p, session_open: bool) -> bool:
+    """Schliesst/freigibt eine Kamera atomar und loest erst dann Callbacks.
+
+    Die ctypes-Callbackobjekte muessen bis NACH `EdsRelease` am Leben bleiben.
+    Getrennte Auftraege fuer Close/Clear/Release liessen den Owner dazwischen
+    Events pumpen und konnten dadurch einen nativen Callback auf bereits von
+    Python freigegebenen Code ausloesen.
+    """
+    if not camera_ref:
+        return False
+
+    key = _ref_key(camera_ref)
+    freigegeben = False
+    try:
+        if EDSDK_DLL is None:
+            return False
+
+        if session_open:
+            err = EDSDK_DLL.EdsCloseSession(camera_ref)
+            if err != EDS_ERR_OK:
+                check_error(err, "EdsCloseSession/Dispose")
+
+        # EdsRelease gibt einen Referenzzaehler zurueck, keinen EdsError.
+        EDSDK_DLL.EdsRelease(camera_ref)
+        freigegeben = True
+        return True
+    finally:
+        # Niemals vorher entfernen: Bis EdsRelease zurueckkehrt, darf die DLL
+        # die registrierten Funktionszeiger noch verwenden.
+        if freigegeben or EDSDK_DLL is None:
+            _object_event_handlers.pop(key, None)
+            _state_event_handlers.pop(key, None)
+
+
+@kamera_faden_aufruf(timeout=10.0)
+def send_command(camera_ref: c_void_p, command: int, parameter: int) -> int:
+    """Owner-sicherer Rohbefehl fuer das DSLR-Diagnosewerkzeug."""
+    if EDSDK_DLL is None:
+        return EDS_ERR_DEVICE_NOT_FOUND
+    err = EDSDK_DLL.EdsSendCommand(camera_ref, command, parameter)
+    check_error(err, f"EdsSendCommand({hex(command)}, {hex(parameter)})")
+    return err
+
+
+@kamera_faden_aufruf(timeout=10.0)
+def cancel_download(dir_item: c_void_p) -> bool:
+    """Beendet einen fehlgeschlagenen Host-Transfer und gibt die Kamera frei."""
+    if EDSDK_DLL is None or not dir_item:
+        return False
+    err = EDSDK_DLL.EdsDownloadCancel(dir_item)
+    if err == EDS_ERR_OK:
+        logger.info("CANON-TRANSFER CANCEL erfolgreich")
+        return True
+    return check_error(err, "EdsDownloadCancel")
+
+
+@kamera_faden_aufruf(timeout=10.0)
+def take_picture(
+    camera_ref: c_void_p,
+    live_view_aktiv: bool = False,
+    before_shutter=None,
+) -> bool:
     """Loest die Kamera aus — genau so, wie Canons eigenes Beispiel es tut.
 
     2.4.52 — ZURUECK AUF DEN REFERENZWEG.
@@ -918,10 +1389,25 @@ def take_picture(camera_ref: c_void_p, live_view_aktiv: bool = False) -> bool:
     Returns:
         True wenn die Kamera den Ausloesebefehl angenommen hat
     """
+    global letzter_fehler
+
     if EDSDK_DLL is None:
+        letzter_fehler = EDS_ERR_DEVICE_NOT_FOUND
         return False
 
     PRESS = kEdsCameraCommand_PressShutterButton
+
+    # Der Hook laeuft im selben Owner-Auftrag unmittelbar vor dem nativen
+    # Capture-Befehl. Der Manager nutzt ihn, um seine Queue erst NACH allen
+    # vorher priorisierten Transfer-Events fuer genau diesen Capture zu
+    # scharfschalten.
+    if before_shutter is not None:
+        try:
+            before_shutter()
+        except Exception as e:
+            letzter_fehler = 0x00000008  # UNEXPECTED_EXCEPTION
+            logger.exception(f"Capture konnte nicht scharfgeschaltet werden: {e}")
+            return False
 
     err = EDSDK_DLL.EdsSendCommand(
         camera_ref, PRESS, kEdsCameraCommand_ShutterButton_Completely
@@ -929,50 +1415,62 @@ def take_picture(camera_ref: c_void_p, live_view_aktiv: bool = False) -> bool:
 
     # Ausloeser IMMER wieder freigeben — bleibt er gedrueckt, ignoriert die
     # Kamera den naechsten Befehl.
+    release_err = None
     try:
-        EDSDK_DLL.EdsSendCommand(
+        release_err = EDSDK_DLL.EdsSendCommand(
             camera_ref, PRESS, kEdsCameraCommand_ShutterButton_OFF
         )
     except Exception as e:
-        logger.debug(f"Ausloeser freigeben fehlgeschlagen: {e}")
+        logger.exception(f"Ausloeser freigeben warf eine Exception: {e}")
 
-    if err == EDS_ERR_OK:
-        return True
-
-    name = ERROR_NAMES.get(err, "UNBEKANNT")
-
-    if err == EDS_ERR_TAKE_PICTURE_AF_NG:
-        # Autofokus hat nichts gefunden. Zweiter Versuch ohne AF-Zwang, damit
-        # ueberhaupt ein Bild entsteht.
-        logger.warning(
-            "Autofokus fand keinen Halt — zweiter Versuch ohne Fokus-Zwang"
-        )
-        err2 = EDSDK_DLL.EdsSendCommand(
-            camera_ref, PRESS, kEdsCameraCommand_ShutterButton_Completely_NonAF
-        )
-        try:
-            EDSDK_DLL.EdsSendCommand(
-                camera_ref, PRESS, kEdsCameraCommand_ShutterButton_OFF
-            )
-        except Exception:
-            pass
-        if err2 == EDS_ERR_OK:
-            return True
-        name = ERROR_NAMES.get(err2, "UNBEKANNT")
-
-    logger.error(
-        f"Ausloesen abgelehnt: {name} ({hex(err)}), "
-        f"Live-View war {'an' if live_view_aktiv else 'aus'}"
+    logger.info(
+        "CANON-CAPTURE SHUTTER "
+        f"press={ERROR_NAMES.get(err, 'UNBEKANNT')}({hex(err)}) "
+        f"release={ERROR_NAMES.get(release_err, 'EXCEPTION') if release_err is not None else 'EXCEPTION'}"
+        f"({hex(release_err) if release_err is not None else '-'}) "
+        f"live_view={'an' if live_view_aktiv else 'aus'}"
     )
-    return False
 
-
-def set_save_to_host(camera_ref: c_void_p) -> bool:
-    """Konfiguriert Speicherung zum PC (für Event-basiertes Capture)"""
-    if EDSDK_DLL is None:
+    # Kein stiller zweiter Ausloeseversuch bei AF_NG: Ein Aufruf dieser
+    # Funktion bedeutet exakt einen Capture-Befehl. Sonst koennte ein spaet
+    # eintreffendes erstes Bild zusammen mit dem Retry zwei Fotos erzeugen.
+    if err != EDS_ERR_OK:
+        if release_err not in (None, EDS_ERR_OK):
+            check_error(release_err, "PressShutterButton OFF nach Capture-Fehler")
+        check_error(err, "PressShutterButton Completely")
+        if err == EDS_ERR_TAKE_PICTURE_AF_NG:
+            logger.error(
+                "Autofokus fand keinen Halt; kein automatischer Zweitausloeser"
+            )
         return False
 
-    # Save to Host
+    if release_err is None:
+        letzter_fehler = 0x00000008  # UNEXPECTED_EXCEPTION
+        return False
+    if not check_error(release_err, "PressShutterButton OFF"):
+        return False
+
+    letzter_fehler = EDS_ERR_OK
+    return True
+
+
+@kamera_faden_aufruf(timeout=10.0)
+def set_save_to_host(camera_ref: c_void_p) -> bool:
+    """Konfiguriert und bestaetigt den Host-Speicher einmal pro Session.
+
+    Canon erwartet nach ``SaveTo=Host`` eine Capacity-Meldung. Beides wird
+    hier in einem einzigen Owner-Auftrag eingerichtet. Erst nach bestaetigtem
+    SaveTo-Readback und plausiblen freien Aufnahmen darf ausgelöst werden.
+    """
+    global letzter_fehler
+
+    if EDSDK_DLL is None:
+        letzter_fehler = EDS_ERR_DEVICE_NOT_FOUND
+        return False
+
+    start = time.monotonic()
+    logger.info("CANON-HOST CONFIG START save_to=Host capacity_reset=1")
+
     save_to = c_uint(kEdsSaveTo_Host)
     err = EDSDK_DLL.EdsSetPropertyData(
         camera_ref,
@@ -984,47 +1482,105 @@ def set_save_to_host(camera_ref: c_void_p) -> bool:
 
     if not check_error(err, "SetSaveTo"):
         return False
+    logger.info("CANON-HOST SAVE-TO SET value=Host")
 
-    # Capacity setzen (damit Kamera weiß dass PC genug Platz hat)
+    lock_err = EDSDK_DLL.EdsSendStatusCommand(
+        camera_ref, kEdsCameraStatusCommand_UILock, 0
+    )
+    if not check_error(lock_err, "UILock vor SetCapacity"):
+        return False
+    logger.info("CANON-HOST UILOCK ok=True")
+
     capacity = EdsCapacity()
     capacity.numberOfFreeClusters = 0x7FFFFFFF
     capacity.bytesPerSector = 0x1000
     capacity.reset = 1
 
-    err = EDSDK_DLL.EdsSetCapacity(camera_ref, capacity)
-    return check_error(err, "SetCapacity")
+    capacity_ok = False
+    try:
+        capacity_err = EDSDK_DLL.EdsSetCapacity(camera_ref, capacity)
+        capacity_ok = check_error(
+            capacity_err, "SetCapacity beim Session-Aufbau"
+        )
+    finally:
+        unlock_err = EDSDK_DLL.EdsSendStatusCommand(
+            camera_ref, kEdsCameraStatusCommand_UIUnLock, 0
+        )
 
+    if unlock_err != EDS_ERR_OK:
+        check_error(unlock_err, "UIUnLock nach SetCapacity")
+        return False
+    if not capacity_ok:
+        return False
+    logger.info("CANON-HOST CAPACITY ok=True reset=1")
+    logger.info("CANON-HOST UIUNLOCK ok=True")
 
-def melde_freien_speicher(camera_ref: c_void_p) -> bool:
-    """Sagt der Kamera, dass am Rechner Platz fuer das naechste Foto ist.
+    def _lese_uint_roh(prop_id: int) -> Tuple[Optional[int], int]:
+        wert = c_uint()
+        lese_err = EDSDK_DLL.EdsGetPropertyData(
+            camera_ref, prop_id, 0, ctypes.sizeof(wert), byref(wert)
+        )
+        return (wert.value if lese_err == EDS_ERR_OK else None), lese_err
 
-    2.4.53 — Warum das VOR JEDER Aufnahme noetig ist:
+    # Manche Bodies aktualisieren diese Werte erst einige Millisekunden nach
+    # SetCapacity. Das kurze Polling verhindert CARD_NG beim Kaltstart.
+    save_to_deadline = time.monotonic() + 1.0
+    gelesenes_save_to = None
+    while True:
+        gelesenes_save_to, read_err = _lese_uint_roh(kEdsPropID_SaveTo)
+        if read_err != EDS_ERR_OK:
+            check_error(read_err, "GetSaveTo nach Host-Konfiguration")
+            return False
+        if gelesenes_save_to == kEdsSaveTo_Host:
+            break
+        if time.monotonic() >= save_to_deadline:
+            logger.error(
+                "CANON-HOST NOT-READY reason=save_to "
+                f"expected={kEdsSaveTo_Host} actual={gelesenes_save_to}"
+            )
+            letzter_fehler = EDS_ERR_OBJECT_NOTREADY
+            return False
+        time.sleep(0.05)
 
-    Im Direktbetrieb (Kamera liefert ans Notebook statt auf die Karte) glaubt
-    die Kamera nur dann, dass sie ausloesen darf, wenn ihr jemand freien
-    Speicher gemeldet hat. Diese Meldung ist fluechtig: Nach einer Aufnahme,
-    nach einem Verbindungswackler oder nach dem Aufwachen aus dem Ruhezustand
-    steht sie wieder auf null — und dann bewegt die Kamera zwar den Spiegel,
-    legt das Bild aber nirgends ab.
-
-    Genau dieses Bild zeigte das Box-Log vom 24.08.2026: Ausloesen hoerbar,
-    danach kam nichts an.
-
-    Der Aufruf kostet Millisekunden. Ihn vor jeder Aufnahme zu wiederholen ist
-    billiger, als einmal pro Abend ein Foto zu verlieren.
-    """
-    if EDSDK_DLL is None:
+    available_shots = None
+    shots_deadline = time.monotonic() + 1.0
+    while True:
+        available_shots, shots_err = _lese_uint_roh(kEdsPropID_AvailableShots)
+        if shots_err != EDS_ERR_OK:
+            logger.warning(
+                "CANON-HOST AvailableShots nicht auslesbar; "
+                "SaveTo=Host und SetCapacity sind bestaetigt "
+                f"error={ERROR_NAMES.get(shots_err, hex(shots_err))}"
+            )
+            available_shots = None
+            break
+        if available_shots == 0xFFFFFFFF:
+            logger.warning(
+                "CANON-HOST AvailableShots unbekannt (0xffffffff); "
+                "SaveTo=Host und SetCapacity sind bestaetigt"
+            )
+            break
+        if 1 <= available_shots <= 0x7FFFFFFF:
+            break
+        if available_shots == 0 and time.monotonic() < shots_deadline:
+            time.sleep(0.05)
+            continue
+        logger.error(
+            "CANON-HOST NOT-READY reason=available_shots "
+            f"value={available_shots}"
+        )
+        letzter_fehler = EDS_ERR_MEMORYSTATUS_NOTREADY
         return False
 
-    capacity = EdsCapacity()
-    capacity.numberOfFreeClusters = 0x7FFFFFFF
-    capacity.bytesPerSector = 0x1000
-    capacity.reset = 1
+    letzter_fehler = EDS_ERR_OK
+    logger.info(
+        "CANON-HOST READY "
+        f"save_to=Host available_shots={available_shots} "
+        f"duration_ms={(time.monotonic() - start) * 1000:.1f}"
+    )
+    return True
 
-    err = EDSDK_DLL.EdsSetCapacity(camera_ref, capacity)
-    return check_error(err, "SetCapacity")
-
-
+@kamera_faden_aufruf(timeout=10.0)
 def set_save_to_camera(camera_ref: c_void_p) -> bool:
     """Konfiguriert Speicherung auf SD-Karte (für Directory-Polling Capture)
 
@@ -1050,6 +1606,7 @@ def set_save_to_camera(camera_ref: c_void_p) -> bool:
     return False
 
 
+@kamera_faden_aufruf(timeout=10.0)
 def set_image_quality_jpg(camera_ref: c_void_p) -> bool:
     """Setzt die Bildqualität auf JPG Large Fine (beste JPG Qualität, kein RAW)
 
@@ -1076,6 +1633,7 @@ def set_image_quality_jpg(camera_ref: c_void_p) -> bool:
         return False
 
 
+@kamera_faden_aufruf(timeout=10.0)
 def get_property_uint(camera_ref: c_void_p, prop_id: int) -> Optional[int]:
     """Liest eine Zahl-Eigenschaft der Kamera aus (Akku, Wahlrad, Fokus-Art ...).
 
@@ -1104,6 +1662,30 @@ def get_property_uint(camera_ref: c_void_p, prop_id: int) -> Optional[int]:
         return None
 
 
+@kamera_faden_aufruf(timeout=10.0)
+def get_property_snapshot(camera_ref: c_void_p, prop_ids) -> dict:
+    """Liest mehrere Diagnosewerte atomar in einem Owner-Auftrag.
+
+    Nicht unterstützte Eigenschaften werden als ``None`` zurückgegeben. Das
+    ist reine Dev-Diagnose und darf einen Capture nie verhindern.
+    """
+    ergebnis = {}
+    if EDSDK_DLL is None:
+        return {prop_id: None for prop_id in prop_ids}
+
+    for prop_id in prop_ids:
+        try:
+            wert = c_uint()
+            err = EDSDK_DLL.EdsGetPropertyData(
+                camera_ref, prop_id, 0, ctypes.sizeof(wert), byref(wert)
+            )
+            ergebnis[prop_id] = wert.value if err == EDS_ERR_OK else None
+        except Exception:
+            ergebnis[prop_id] = None
+    return ergebnis
+
+
+@kamera_faden_aufruf(timeout=10.0)
 def get_image_quality(camera_ref: c_void_p) -> Optional[int]:
     """Liest die aktuelle Bildqualität-Einstellung
 
@@ -1127,6 +1709,7 @@ def get_image_quality(camera_ref: c_void_p) -> Optional[int]:
     return None
 
 
+@kamera_faden_aufruf(timeout=10.0)
 def get_save_to(camera_ref: c_void_p) -> Optional[int]:
     """Liest die aktuelle SaveTo-Einstellung
 
@@ -1150,6 +1733,7 @@ def get_save_to(camera_ref: c_void_p) -> Optional[int]:
     return None
 
 
+@kamera_faden_aufruf(timeout=15.0)
 def log_camera_settings(camera_ref: c_void_p):
     """Loggt die aktuellen Kamera-Einstellungen (für Debugging)"""
     logger.info("=== Aktuelle Kamera-Einstellungen ===")
@@ -1162,10 +1746,10 @@ def log_camera_settings(camera_ref: c_void_p):
     # Image Quality
     quality = get_image_quality(camera_ref)
     quality_names = {
-        0x0013000f: "JPG Large Fine",
-        0x0012000f: "JPG Large Normal",
-        0x0113000f: "JPG Medium Fine",
-        0x0213000f: "JPG Small Fine",
+        EdsImageQuality_LJF: "JPG Large Fine",
+        EdsImageQuality_LJN: "JPG Large Normal",
+        EdsImageQuality_MJF: "JPG Medium Fine",
+        EdsImageQuality_SJF: "JPG Small Fine",
     }
     quality_name = quality_names.get(quality, f"Unknown(0x{quality:08x})" if quality else "None")
     logger.info(f"  ImageQuality: {quality_name}")
@@ -1191,13 +1775,7 @@ def log_camera_settings(camera_ref: c_void_p):
         4: "voll genug",
         0x7fffffff: "Netzteil/USB-Strom",
     })
-    _zeige(kEdsPropID_AEMode, "Programmwahlrad", {
-        0: "P (Programmautomatik)", 1: "Tv", 2: "Av", 3: "M (manuell)",
-        4: "Bulb", 5: "A-DEP", 6: "DEP", 8: "Vollautomatik (grünes Feld)",
-        9: "Blitz aus", 11: "Portrait", 12: "Landschaft", 13: "Makro",
-        14: "Sport", 15: "Nachtportrait", 19: "Kreativautomatik",
-        20: "Video", 0x17: "Szeneautomatik",
-    })
+    _zeige(kEdsPropID_AEMode, "Programmwahlrad", AE_MODE_NAMEN)
     _zeige(kEdsPropID_AFMode, "Fokus-Art", {
         0: "One-Shot AF", 1: "AI Servo AF", 2: "AI Focus AF",
         3: "MANUELL (MF) — gut für die Box",
@@ -1205,9 +1783,29 @@ def log_camera_settings(camera_ref: c_void_p):
     })
     _zeige(kEdsPropID_AvailableShots, "Freie Aufnahmen")
 
+    belichtungskorrektur = get_property_uint(
+        camera_ref, kEdsPropID_ExposureCompensation
+    )
+    if belichtungskorrektur is None:
+        logger.info("  Belichtungskorrektur: nicht auslesbar")
+    else:
+        belichtung_text = EXPOSURE_COMP_NAMEN.get(
+            belichtungskorrektur,
+            EXPOSURE_COMP_NAMEN.get(
+                belichtungskorrektur & 0xFF, f"0x{belichtungskorrektur:08x}"
+            ),
+        )
+        logger.info(f"  Belichtungskorrektur: {belichtung_text}")
+        if belichtungskorrektur not in (0, 0xFFFFFFFF):
+            logger.warning(
+                "CANON-BELICHTUNG WARNUNG: Belichtungskorrektur steht auf "
+                f"{belichtung_text}; die Software verändert diesen Kamerawert nicht"
+            )
+
     logger.info("=" * 40)
 
 
+@kamera_faden_aufruf(timeout=10.0)
 def start_live_view(camera_ref: c_void_p) -> bool:
     """Startet Live View"""
     if EDSDK_DLL is None:
@@ -1226,6 +1824,7 @@ def start_live_view(camera_ref: c_void_p) -> bool:
     return check_error(err, "StartLiveView")
 
 
+@kamera_faden_aufruf(timeout=10.0)
 def stop_live_view(camera_ref: c_void_p):
     """Stoppt Live View"""
     if EDSDK_DLL is None:
@@ -1241,61 +1840,58 @@ def stop_live_view(camera_ref: c_void_p):
     )
 
 
+@kamera_faden_aufruf(timeout=10.0)
 def get_live_view_image(camera_ref: c_void_p) -> Optional[bytes]:
     """Holt ein Live View Frame als JPEG bytes"""
+    global letzter_fehler
+
     if EDSDK_DLL is None:
         return None
-    
+
+    stream = c_void_p()
+    evf_image = c_void_p()
     try:
-        # Memory Stream erstellen
-        stream = c_void_p()
         err = EDSDK_DLL.EdsCreateMemoryStream(0, byref(stream))
         if not check_error(err, "CreateMemoryStream"):
             return None
-        
-        # EVF Image Ref erstellen
-        evf_image = c_void_p()
+
         err = EDSDK_DLL.EdsCreateEvfImageRef(stream, byref(evf_image))
         if not check_error(err, "CreateEvfImageRef"):
-            EDSDK_DLL.EdsRelease(stream)
             return None
-        
-        # Live View Image holen
+
         err = EDSDK_DLL.EdsDownloadEvfImage(camera_ref, evf_image)
         if not check_error(err, "DownloadEvfImage"):
-            EDSDK_DLL.EdsRelease(evf_image)
-            EDSDK_DLL.EdsRelease(stream)
             return None
-        
-        # Daten aus Stream holen.
-        #
-        # 2.4.58: c_uint64, NICHT c_uint. In 2.4.55 wurde die Signatur von
-        # EdsGetLength korrekt auf 64 Bit umgestellt — aber DIESE Aufrufstelle
-        # blieb auf c_uint stehen. Ergebnis auf der Box: 166 Mal
-        # "expected LP_c_ulonglong instead of pointer to c_ulong", kein
-        # einziges Vorschaubild, schwarzer Schirm.
-        #
-        # Lehre: Wer eine Signatur aendert, muss JEDE Aufrufstelle mitziehen —
-        # ctypes prueft das erst zur Laufzeit, der Fehler faellt beim Start
-        # nicht auf.
+
         length = ctypes.c_uint64()
-        EDSDK_DLL.EdsGetLength(stream, byref(length))
+        err = EDSDK_DLL.EdsGetLength(stream, byref(length))
+        if not check_error(err, "GetLength(EVF)"):
+            return None
+        if length.value <= 0 or length.value > 100 * 1024 * 1024:
+            logger.error(f"Unplausible Live-View-Streamlaenge: {length.value}")
+            return None
 
         pointer = c_void_p()
-        EDSDK_DLL.EdsGetPointer(stream, byref(pointer))
-        
-        # Bytes kopieren
-        data = ctypes.string_at(pointer, length.value)
-        
-        # Aufräumen
-        EDSDK_DLL.EdsRelease(evf_image)
-        EDSDK_DLL.EdsRelease(stream)
-        
-        return data
-        
+        err = EDSDK_DLL.EdsGetPointer(stream, byref(pointer))
+        if not check_error(err, "GetPointer(EVF)"):
+            return None
+
+        return ctypes.string_at(pointer, length.value)
+
     except Exception as e:
         logger.error(f"Fehler beim Holen des Live View: {e}")
         return None
+    finally:
+        if evf_image:
+            try:
+                release(evf_image)
+            except Exception:
+                pass
+        if stream:
+            try:
+                release(stream)
+            except Exception:
+                pass
 
 
 # ============================================================================
@@ -1314,10 +1910,74 @@ kEdsFileCreateDisposition_OpenExisting = 2
 kEdsFileCreateDisposition_OpenAlways = 3
 kEdsFileCreateDisposition_TruncateExisting = 4
 
-# Globaler Storage für Event-Handler (muss am Leben bleiben!)
+# Globaler Storage fuer native Callback-Objekte (muessen am Leben bleiben).
 _object_event_handlers = {}
+_state_event_handlers = {}
+
+OBJECT_EVENT_NAMEN = {
+    kEdsObjectEvent_DirItemCreated: "DirItemCreated",
+    kEdsObjectEvent_DirItemRequestTransfer: "DirItemRequestTransfer",
+    kEdsObjectEvent_DirItemRequestTransferDT: "DirItemRequestTransferDT",
+}
+
+STATE_EVENT_NAMEN = {
+    kEdsStateEvent_Shutdown: "Shutdown",
+    kEdsStateEvent_JobStatusChanged: "JobStatusChanged",
+    kEdsStateEvent_WillSoonShutDown: "WillSoonShutDown",
+    kEdsStateEvent_ShutDownTimerUpdate: "ShutDownTimerUpdate",
+    kEdsStateEvent_CaptureError: "CaptureError",
+    kEdsStateEvent_InternalError: "InternalError",
+}
 
 
+def _ref_key(ref) -> int:
+    if isinstance(ref, c_void_p):
+        return int(ref.value or 0)
+    return int(ref or 0)
+
+
+def _als_void_p(ref) -> c_void_p:
+    return ref if isinstance(ref, c_void_p) else c_void_p(ref)
+
+
+def _object_event_ausliefern(callback, event: int, obj_ref: c_void_p) -> None:
+    """Laeuft nach Rueckkehr des nativen Callbacks als normaler Owner-Auftrag."""
+    transfer = event in (
+        kEdsObjectEvent_DirItemRequestTransfer,
+        kEdsObjectEvent_DirItemRequestTransferDT,
+    )
+    behandelt = False
+    try:
+        behandelt = callback(event, obj_ref) is True
+    except Exception:
+        logger.exception(
+            f"CANON-EVENT Verarbeitung fehlgeschlagen event=0x{event:08x}"
+        )
+    finally:
+        if transfer and not behandelt:
+            # Der Callback hat den Transfer nicht bis Complete/Cancel gebracht.
+            # Ohne Cancel bleibt der Kamerapuffer belegt.
+            try:
+                cancel_download(obj_ref)
+            except Exception as e:
+                logger.error(f"CANON-TRANSFER Cancel nach Callback-Fehler: {e}")
+        if obj_ref:
+            try:
+                release(obj_ref)
+            except Exception as e:
+                logger.error(f"CANON-EVENT Release fehlgeschlagen: {e}")
+
+
+def _state_event_ausliefern(callback, event: int, event_data: int) -> None:
+    try:
+        callback(event, event_data)
+    except Exception:
+        logger.exception(
+            f"CANON-STATE Verarbeitung fehlgeschlagen event=0x{event:08x}"
+        )
+
+
+@kamera_faden_aufruf(timeout=5.0)
 def get_event() -> bool:
     """Pollt EDSDK Events (MUSS regelmäßig aufgerufen werden auf Windows!)
 
@@ -1341,6 +2001,7 @@ def get_event() -> bool:
         return False
 
 
+@kamera_faden_aufruf(timeout=5.0)
 def pump_windows_messages(max_nachrichten: int = 50) -> int:
     """Arbeitet wartende Windows-Nachrichten des aufrufenden Fadens ab.
 
@@ -1377,175 +2038,112 @@ def pump_windows_messages(max_nachrichten: int = 50) -> int:
         return 0
 
 
+@kamera_faden_aufruf(timeout=5.0)
 def set_object_event_handler(camera_ref: c_void_p, callback, context=None) -> bool:
-    """Richtet den Rueckkanal ein, ueber den die Kamera fertige Fotos meldet.
+    """Registriert den Object-Handler auf demselben STA wie SDK und Session.
 
-    2.4.54 — DIESE FUNKTION HAT DIE BOX EINGEFROREN. Hier steht, warum, damit
-    es niemand wieder "vereinfacht".
-
-    Der DLL-Aufruf `EdsSetObjectEventHandler` kehrt auf diesen Boxen nicht von
-    allein zurueck: Er wartet darauf, dass der Programmfaden Windows-Nachrichten
-    abarbeitet. Ruft man ihn direkt im Haupt-Faden auf, blockiert er genau den
-    Faden, der diese Nachrichten abarbeiten muesste — die Anwendung steht.
-
-    Das ist am 24.08.2026 passiert: Die Box fror beim Start jeder Session ein.
-    Im Log stand die Wachhund-Meldung "EdsSetObjectEventHandler haengt seit 3 s".
-
-    In 2.4.49 wurde der Nebenfaden entfernt, weil eine aeltere Fassung den
-    direkten Aufruf hatte und als "lief frueher" galt. Das war ein Fehlschluss:
-    In jener Fassung wurde der Direktbetrieb praktisch nie benutzt, der Aufruf
-    kam also kaum vor.
-
-    RICHTIG IST BEIDES ZUSAMMEN:
-      - Der DLL-Aufruf laeuft in einem Nebenfaden (blockiert dort niemanden).
-      - Der Haupt-Faden arbeitet waehrenddessen Nachrichten ab, damit der
-        Aufruf ueberhaupt fertig werden kann.
-      - Nach einer festen Frist geht es weiter — komme was wolle. Die Box darf
-        unter keinen Umstaenden stehenbleiben, nur weil eine Kamera zickt.
-
-    Und anders als frueher wird nicht behauptet, der Rueckkanal stehe, wenn das
-    gar nicht feststeht. Genau diese Falschmeldung hat die Fehlersuche ueber
-    Monate blockiert.
-
-    Args:
-        camera_ref: Kamera-Referenz
-        callback: Python-Funktion mit Signatur (event_type, object_ref) -> int
-        context: Optionaler Kontext (wird nicht verwendet)
-
-    Returns:
-        True  — der Rueckkanal steht nachweislich
-        None  — unklar (Aufruf haengt noch); der Direktweg ist trotzdem einen
-                Versuch wert, denn oft ist der Handler bereits eingetragen
-        False — die Kamera hat abgelehnt; hier hilft nur noch die Karte
+    Der native Callback selbst stellt nur einen Folgeauftrag ein und kehrt
+    sofort zur DLL zurueck. Download/Cancel/Release passieren erst danach.
     """
+    global letzter_fehler
+
     if EDSDK_DLL is None:
+        letzter_fehler = EDS_ERR_DEVICE_NOT_FOUND
         return False
 
-    import threading
-    import time
-    from ctypes import wintypes
-
-    # ------------------------------------------------------------------
-    # 2.4.56 — EINMAL HAENGEN GENUEGT.
-    #
-    # Bleibt dieser Aufruf haengen, haelt der wartende Aufruf die Kamera
-    # besetzt: Direkt danach meldet sie DEVICE_BUSY, es kommt kein Live-View
-    # und kein Foto mehr. Jeder weitere Versuch legt einen weiteren haengenden
-    # Aufruf obendrauf — die Box wird also mit jedem Versuch SCHLECHTER.
-    #
-    # Box-Log vom 24.08.2026 (Christian: "wird ja immer schlechter!"):
-    #     11:10:30  Registrierung nach 4s nicht abgeschlossen
-    #     11:10:30  EDSDK Fehler 0x81 (DEVICE_BUSY)
-    #     11:12:47  Registrierung nach 4s nicht abgeschlossen
-    #     11:13:07  Registrierung nach 4s nicht abgeschlossen
-    #     11:13:27  Registrierung nach 4s nicht abgeschlossen
-    #
-    # Deshalb: Hat der Aufruf auf diesem Rechner einmal gehangen, wird er nicht
-    # noch einmal angefasst. Lieber ohne Rueckkanal weiterarbeiten (dann greift
-    # der Weg ueber den Kamera-Zwischenspeicher) als die Kamera endgueltig
-    # lahmzulegen.
-    # ------------------------------------------------------------------
-    global _handler_haengt_dauerhaft
-    if _handler_haengt_dauerhaft:
-        logger.warning(
-            "Rückkanal wird nicht erneut angefordert — der Aufruf blieb schon "
-            "einmal hängen und würde die Kamera blockieren."
-        )
-        return False
-
-    # Wrapper für den Python-Callback
     def c_callback(event, obj_ref, ctx):
         try:
-            return callback(event, obj_ref)
-        except Exception as e:
-            logger.error(f"Fehler im Object Event Handler: {e}")
-            return EDS_ERR_OK
-
-    # Callback-Objekt festhalten, sonst raeumt Python es weg und die Kamera
-    # ruft ins Leere (Absturz).
-    c_callback_obj = EdsObjectEventHandler(c_callback)
-    _object_event_handlers[id(camera_ref)] = c_callback_obj
-
-    ergebnis = {"err": None}
-
-    def _registrieren():
-        try:
-            ergebnis["err"] = EDSDK_DLL.EdsSetObjectEventHandler(
-                camera_ref,
-                0xFFFFFFFF,  # kEdsObjectEvent_All
-                c_callback_obj,
-                None,
+            ref = _als_void_p(obj_ref) if obj_ref else c_void_p()
+            op_id = kamera_faden_asynchron(
+                _object_event_ausliefern, callback, int(event), ref
+            )
+            logger.info(
+                "CANON-EVENT QUEUED "
+                f"event=0x{int(event):08x} "
+                f"name={OBJECT_EVENT_NAMEN.get(int(event), 'unbekannt')} "
+                f"has_ref={bool(obj_ref)} op_id={op_id} callback_thread={_thread_text()}"
             )
         except Exception as e:
-            logger.error(f"Rueckkanal-Registrierung Ausnahme: {e}")
-            ergebnis["err"] = -1
+            logger.error(f"CANON-EVENT Callback konnte nicht eingereiht werden: {e}")
+        return EDS_ERR_OK
 
-    # 2.4.57 — WICHTIG: Dieser eine Aufruf laeuft BEWUSST NICHT im Kamera-Faden.
-    #
-    # Er kann haengen. Wuerde er im Kamera-Faden laufen, waere dieser dauerhaft
-    # blockiert — und damit auch jeder spaetere Aufruf: Live-View, Aufnahme,
-    # Freigeben. Aus einem Problem wuerde eine tote Box.
-    #
-    # Stattdessen: eigener Wegwerf-Faden. Fertig werden kann der Aufruf
-    # trotzdem, weil der Kamera-Faden dauerhaft Windows-Nachrichten abarbeitet
-    # — genau das hat vorher gefehlt. Frueher pumpte nur kurz jemand waehrend
-    # der Registrierung; danach war Ruhe und der Aufruf blieb fuer immer haengen.
-    _sdk_faden_starten()
+    c_callback_obj = EdsObjectEventHandler(c_callback)
+    key = _ref_key(camera_ref)
+    _object_event_handlers[key] = c_callback_obj
 
-    faden = threading.Thread(target=_registrieren, daemon=True,
-                             name="edsdk-rueckkanal")
-    faden.start()
-
-    MAX_WARTEN = 4.0
-    faden.join(MAX_WARTEN)
-
-    if not faden.is_alive():
-        err = ergebnis["err"]
-        if err == EDS_ERR_OK:
-            logger.info("Rückkanal der Kamera steht — Fotos können abgeholt werden")
-            return True
-        name = ERROR_NAMES.get(err, "UNBEKANNT") if err is not None else "?"
-        logger.error(f"Rückkanal-Registrierung abgelehnt: {name}")
-        return False
-
-    # Aufruf haengt noch. Der Nebenfaden laeuft als daemon weiter und stoert
-    # niemanden; die Box macht weiter. Ob der Rueckkanal trotzdem funktioniert,
-    # zeigt der Ereigniszaehler im Betrieb — behauptet wird es hier NICHT.
-    _handler_haengt_dauerhaft = True
-    logger.error(
-        f"Rückkanal-Registrierung hängt seit {MAX_WARTEN:.0f}s. Sie wird auf "
-        f"diesem Rechner NICHT mehr versucht — jeder weitere Versuch würde die "
-        f"Kamera zusätzlich blockieren. Die Box arbeitet ohne Rückkanal weiter; "
-        f"eine Speicherkarte in der Kamera ist dann der zuverlässige Weg."
+    logger.info(
+        "CANON-HANDLER REGISTER object "
+        f"event_all=0x{kEdsObjectEvent_All:08x} thread={_thread_text()}"
     )
-    return None
+    err = EDSDK_DLL.EdsSetObjectEventHandler(
+        camera_ref, kEdsObjectEvent_All, c_callback_obj, None
+    )
+    if not check_error(err, "EdsSetObjectEventHandler"):
+        _object_event_handlers.pop(key, None)
+        return False
+    logger.info("CANON-HANDLER READY object")
+    return True
 
 
-def download_image(dir_item: c_void_p, save_path: str) -> bool:
-    """Lädt ein Bild von der Kamera herunter
-    
-    Args:
-        dir_item: Referenz auf das Directory Item (aus dem Event)
-        save_path: Pfad wo das Bild gespeichert werden soll
-    
-    Returns:
-        True wenn erfolgreich
-    """
+@kamera_faden_aufruf(timeout=5.0)
+def set_state_event_handler(camera_ref: c_void_p, callback, context=None) -> bool:
+    """Registriert Shutdown-/Statusereignisse auf dem Canon-Owner-Thread."""
     if EDSDK_DLL is None:
         return False
-    
+
+    def c_callback(event, event_data, ctx):
+        try:
+            op_id = kamera_faden_asynchron(
+                _state_event_ausliefern,
+                callback,
+                int(event),
+                int(event_data),
+            )
+            logger.info(
+                "CANON-STATE QUEUED "
+                f"event=0x{int(event):08x} "
+                f"name={STATE_EVENT_NAMEN.get(int(event), 'unbekannt')} "
+                f"data={int(event_data)} op_id={op_id} callback_thread={_thread_text()}"
+            )
+        except Exception as e:
+            logger.error(f"CANON-STATE Callback konnte nicht eingereiht werden: {e}")
+        return EDS_ERR_OK
+
+    c_callback_obj = EdsStateEventHandler(c_callback)
+    key = _ref_key(camera_ref)
+    _state_event_handlers[key] = c_callback_obj
+
+    logger.info(
+        "CANON-HANDLER REGISTER state "
+        f"event_all=0x{kEdsStateEvent_All:08x} thread={_thread_text()}"
+    )
+    err = EDSDK_DLL.EdsSetCameraStateEventHandler(
+        camera_ref, kEdsStateEvent_All, c_callback_obj, None
+    )
+    if not check_error(err, "EdsSetCameraStateEventHandler"):
+        _state_event_handlers.pop(key, None)
+        return False
+    logger.info("CANON-HANDLER READY state")
+    return True
+
+
+@kamera_faden_aufruf(timeout=20.0)
+def download_image(dir_item: c_void_p, save_path: str) -> bool:
+    """Laedt ein Transferbild in eine Datei; immer Complete oder Cancel."""
+    if EDSDK_DLL is None:
+        return False
+
+    stream = c_void_p()
+    transfer_abgeschlossen = False
     try:
-        # Datei-Info holen
         dir_info = EdsDirectoryItemInfo()
         err = EDSDK_DLL.EdsGetDirectoryItemInfo(dir_item, byref(dir_info))
         if not check_error(err, "GetDirectoryItemInfo"):
             return False
-        
+
         file_size = dir_info.size
-        logger.info(f"Lade Bild herunter: {dir_info.szFileName.decode('utf-8', errors='ignore')} ({file_size} bytes)")
-        
-        # File Stream erstellen
-        stream = c_void_p()
+        logger.info(f"CANON-TRANSFER DATEI START announced_bytes={file_size}")
+
         err = EDSDK_DLL.EdsCreateFileStream(
             save_path.encode('utf-8'),
             kEdsFileCreateDisposition_CreateAlways,
@@ -1555,117 +2153,126 @@ def download_image(dir_item: c_void_p, save_path: str) -> bool:
         if not check_error(err, "CreateFileStream"):
             return False
         
-        # Bild herunterladen
         err = EDSDK_DLL.EdsDownload(dir_item, file_size, stream)
         if not check_error(err, "Download"):
-            EDSDK_DLL.EdsRelease(stream)
             return False
-        
-        # Download abschließen
+
         err = EDSDK_DLL.EdsDownloadComplete(dir_item)
         if not check_error(err, "DownloadComplete"):
-            EDSDK_DLL.EdsRelease(stream)
             return False
-        
-        # Aufräumen
-        EDSDK_DLL.EdsRelease(stream)
-        
-        logger.info(f"Bild erfolgreich heruntergeladen: {save_path}")
+        transfer_abgeschlossen = True
+
+        logger.info(f"CANON-TRANSFER DATEI COMPLETE bytes={file_size}")
         return True
-        
+
     except Exception as e:
         logger.error(f"Fehler beim Herunterladen des Bildes: {e}")
         return False
+    finally:
+        if not transfer_abgeschlossen:
+            try:
+                cancel_download(dir_item)
+            except Exception:
+                pass
+        if stream:
+            try:
+                release(stream)
+            except Exception:
+                pass
 
 
+@kamera_faden_aufruf(timeout=20.0)
 def download_image_to_memory(dir_item: c_void_p) -> Optional[bytes]:
-    """Lädt ein Bild von der Kamera in den Speicher
-    
-    Args:
-        dir_item: Referenz auf das Directory Item (aus dem Event)
-    
-    Returns:
-        Bild als bytes oder None bei Fehler
-    """
+    """Laedt ein Host-Transferbild; beendet jeden Weg mit Complete oder Cancel."""
     if EDSDK_DLL is None:
         return None
-    
+
+    stream = c_void_p()
+    transfer_abgeschlossen = False
+    start = time.monotonic()
+
     try:
-        # Datei-Info holen
         dir_info = EdsDirectoryItemInfo()
         err = EDSDK_DLL.EdsGetDirectoryItemInfo(dir_item, byref(dir_info))
         if not check_error(err, "GetDirectoryItemInfo"):
             return None
-        
-        file_size = dir_info.size
-        dateiname = dir_info.szFileName.decode('utf-8', errors='ignore')
-        logger.info(f"Lade Bild in den Speicher: {dateiname} ({file_size/1024/1024:.1f} MB)")
 
-        # 2.4.55: Groesse plausibilisieren, bevor damit Speicher angefordert
-        # wird. Ist das Layout der Struktur einmal falsch (das war es bis
-        # 2.4.48), kommen hier absurde Werte an — und EdsCreateMemoryStream
-        # scheitert mit einer Meldung, die nach einem Download-Problem aussieht,
-        # obwohl der Fehler viel frueher liegt.
+        file_size = dir_info.size
+        dateiname = bytes(dir_info.szFileName).split(b"\0", 1)[0].decode(
+            "utf-8", errors="replace"
+        )
+        logger.info(
+            "CANON-TRANSFER START "
+            f"file={dateiname or '-'} format=0x{int(dir_info.format):08x} "
+            f"announced_bytes={file_size} thread={_thread_text()}"
+        )
+
         if file_size <= 0 or file_size > 500 * 1024 * 1024:
             logger.error(
-                f"Unplausible Dateigröße vom Gerät: {file_size} Bytes. "
-                f"Das deutet auf ein falsch gelesenes Datenfeld hin, nicht auf "
-                f"ein defektes Foto."
+                f"CANON-TRANSFER unplausible Groesse: {file_size} Bytes"
             )
             return None
 
-        # Memory Stream erstellen
-        stream = c_void_p()
         err = EDSDK_DLL.EdsCreateMemoryStream(file_size, byref(stream))
         if not check_error(err, "CreateMemoryStream"):
             return None
-        
-        # Bild herunterladen
+
         err = EDSDK_DLL.EdsDownload(dir_item, file_size, stream)
         if not check_error(err, "Download"):
-            EDSDK_DLL.EdsRelease(stream)
             return None
-        
-        # Download abschließen
+
         err = EDSDK_DLL.EdsDownloadComplete(dir_item)
         if not check_error(err, "DownloadComplete"):
-            EDSDK_DLL.EdsRelease(stream)
             return None
-        
-        # Daten aus Stream holen
+        transfer_abgeschlossen = True
+
         pointer = c_void_p()
-        EDSDK_DLL.EdsGetPointer(stream, byref(pointer))
-        
-        # 2.4.55: c_uint64, NICHT c_uint. EdsGetLength schreibt laut Header
-        # 64 Bit (EdsUInt64*). In eine 32-Bit-Variable geschrieben, ueberschreibt
-        # der Aufruf benachbarten Speicher und liefert obendrein einen falschen
-        # Wert — beides unauffaellig, bis es knallt.
-        length = ctypes.c_uint64()
-        EDSDK_DLL.EdsGetLength(stream, byref(length))
-
-        if length.value <= 0:
-            logger.error("Das Gerät hat einen leeren Datenstrom geliefert")
-            EDSDK_DLL.EdsRelease(stream)
+        err = EDSDK_DLL.EdsGetPointer(stream, byref(pointer))
+        if not check_error(err, "GetPointer"):
             return None
 
-        # Bytes kopieren
+        length = ctypes.c_uint64()
+        err = EDSDK_DLL.EdsGetLength(stream, byref(length))
+        if not check_error(err, "GetLength"):
+            return None
+
+        if length.value <= 0 or length.value > file_size:
+            logger.error(
+                "CANON-TRANSFER unplausibler Stream "
+                f"announced_bytes={file_size} received_bytes={length.value}"
+            )
+            return None
+
         data = ctypes.string_at(pointer, length.value)
-        
-        # Aufräumen
-        EDSDK_DLL.EdsRelease(stream)
-        
-        logger.info(f"Foto vollständig geladen: {len(data)/1024/1024:.1f} MB")
+        logger.info(
+            "CANON-TRANSFER COMPLETE "
+            f"file={dateiname or '-'} format=0x{int(dir_info.format):08x} "
+            f"announced_bytes={file_size} received_bytes={len(data)} "
+            f"duration_ms={(time.monotonic() - start) * 1000:.1f}"
+        )
         return data
-        
+
     except Exception as e:
-        logger.error(f"Fehler beim Herunterladen des Bildes in Speicher: {e}")
+        logger.exception(f"CANON-TRANSFER Exception: {e}")
         return None
+    finally:
+        if not transfer_abgeschlossen:
+            try:
+                cancel_download(dir_item)
+            except Exception as e:
+                logger.error(f"CANON-TRANSFER Cancel fehlgeschlagen: {e}")
+        if stream:
+            try:
+                release(stream)
+            except Exception as e:
+                logger.error(f"CANON-TRANSFER Stream-Release fehlgeschlagen: {e}")
 
 
 # ============================================================================
 # Directory Enumeration API (für Polling-basiertes Capture)
 # ============================================================================
 
+@kamera_faden_aufruf(timeout=10.0)
 def get_first_volume(camera_ref: c_void_p) -> Optional[c_void_p]:
     """Holt das erste Volume (Speicher) der Kamera
 
@@ -1692,6 +2299,7 @@ def get_first_volume(camera_ref: c_void_p) -> Optional[c_void_p]:
     return volume
 
 
+@kamera_faden_aufruf(timeout=10.0)
 def get_dcim_folder(volume_ref: c_void_p) -> Optional[c_void_p]:
     """Findet den DCIM-Ordner auf dem Volume
 
@@ -1726,6 +2334,7 @@ def get_dcim_folder(volume_ref: c_void_p) -> Optional[c_void_p]:
     return None
 
 
+@kamera_faden_aufruf(timeout=10.0)
 def get_latest_folder(parent_ref: c_void_p) -> Optional[c_void_p]:
     """Findet den zuletzt erstellten Unterordner (z.B. 100CANON)
 
@@ -1769,6 +2378,7 @@ def get_latest_folder(parent_ref: c_void_p) -> Optional[c_void_p]:
     return latest_folder
 
 
+@kamera_faden_aufruf(timeout=10.0)
 def get_latest_image_in_folder(folder_ref: c_void_p) -> Optional[c_void_p]:
     """Findet das neueste Bild in einem Ordner
 
@@ -1804,6 +2414,7 @@ def get_latest_image_in_folder(folder_ref: c_void_p) -> Optional[c_void_p]:
     return None
 
 
+@kamera_faden_aufruf(timeout=10.0)
 def count_images_in_folder(folder_ref: c_void_p) -> int:
     """Zählt die Bilder in einem Ordner
 
@@ -1820,6 +2431,7 @@ def count_images_in_folder(folder_ref: c_void_p) -> int:
     return 0
 
 
+@kamera_faden_aufruf(timeout=20.0)
 def download_latest_image(camera_ref: c_void_p) -> Optional[bytes]:
     """Lädt das neueste Bild von der Kamera
 
@@ -1877,6 +2489,7 @@ def download_latest_image(camera_ref: c_void_p) -> Optional[bytes]:
             EDSDK_DLL.EdsRelease(volume)
 
 
+@kamera_faden_aufruf(timeout=10.0)
 def _zaehle_bilder_frisch(camera_ref: c_void_p) -> Tuple[int, Optional[c_void_p]]:
     """Zaehlt die Bilder auf der Karte — mit FRISCH geholten Verzeichnis-Objekten.
 
@@ -1935,7 +2548,20 @@ def _zaehle_bilder_frisch(camera_ref: c_void_p) -> Tuple[int, Optional[c_void_p]
                     pass
 
 
-def wait_for_new_image(camera_ref: c_void_p, timeout: float = 10.0, poll_interval: float = 0.3) -> Optional[bytes]:
+def get_card_image_count(camera_ref: c_void_p) -> int:
+    """Liest eine frische Karten-Baseline und gibt alle Hilfsreferenzen frei."""
+    anzahl, folder = _zaehle_bilder_frisch(camera_ref)
+    if folder:
+        release(folder)
+    return anzahl
+
+
+def wait_for_new_image(
+    camera_ref: c_void_p,
+    timeout: float = 10.0,
+    poll_interval: float = 0.3,
+    baseline: Optional[int] = None,
+) -> Optional[bytes]:
     """Wartet nach dem Ausloesen auf das neue Bild und laedt es von der Karte.
 
     2.4.49 — komplett ueberarbeitet. Vorher wurde das Verzeichnis EINMAL
@@ -1959,11 +2585,16 @@ def wait_for_new_image(camera_ref: c_void_p, timeout: float = 10.0, poll_interva
     if EDSDK_DLL is None:
         return None
 
-    # Ausgangsstand. Ein leerer Ordner (frische Karte) ist ausdruecklich in
-    # Ordnung — dann ist die Ausgangszahl eben 0.
-    start_anzahl, folder = _zaehle_bilder_frisch(camera_ref)
-    if folder:
-        EDSDK_DLL.EdsRelease(folder)
+    # Produktionscode liefert die Baseline VOR dem Ausloesen. Der optionale
+    # Rueckfall erhaelt alte Diagnose-Aufrufer, darf aber nicht als korrekter
+    # Capture-Ablauf missverstanden werden.
+    if baseline is None:
+        logger.warning(
+            "Karten-Baseline wurde erst beim Warten angefordert; "
+            "Produktionscode muss sie vor dem Ausloesen erfassen"
+        )
+        baseline = get_card_image_count(camera_ref)
+    start_anzahl = baseline
 
     logger.info(f"Bilder auf der Karte vor der Aufnahme: {start_anzahl}")
 
@@ -1971,7 +2602,6 @@ def wait_for_new_image(camera_ref: c_void_p, timeout: float = 10.0, poll_interva
     letzte_meldung = 0.0
 
     while time.time() - start_time < timeout:
-        get_event()
         time.sleep(poll_interval)
 
         anzahl, folder = _zaehle_bilder_frisch(camera_ref)
@@ -1999,7 +2629,7 @@ def wait_for_new_image(camera_ref: c_void_p, timeout: float = 10.0, poll_interva
                 try:
                     return download_image_to_memory(image)
                 finally:
-                    EDSDK_DLL.EdsRelease(image)
+                    release(image)
 
             # Alle 3 s ein Lebenszeichen, damit im Log steht, dass wirklich
             # nachgesehen wird (und nicht nur stumpf gewartet).
@@ -2010,7 +2640,7 @@ def wait_for_new_image(camera_ref: c_void_p, timeout: float = 10.0, poll_interva
         finally:
             if folder:
                 try:
-                    EDSDK_DLL.EdsRelease(folder)
+                    release(folder)
                 except Exception:
                     pass
 

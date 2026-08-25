@@ -8,14 +8,15 @@ import cv2
 import numpy as np
 import time
 import io
+import itertools
 import threading
 from queue import Queue, Empty
 from typing import Optional, List, Dict, Any
-from PIL import Image
+from PIL import Image, ExifTags
 from ctypes import c_void_p
 
 from .base import CameraManager
-from src.utils.logging import get_logger
+from src.utils.logging import get_logger, is_developer_mode
 
 logger = get_logger(__name__)
 
@@ -28,6 +29,9 @@ except Exception as e:
     logger.warning(f"EDSDK nicht verfügbar: {e}")
 
 
+_CANON_SESSION_IDS = itertools.count(1)
+
+
 class CanonCameraManager(CameraManager):
     """Verwaltet Canon DSLR Kameras via EDSDK
     
@@ -38,8 +42,14 @@ class CanonCameraManager(CameraManager):
     """
     
     def __init__(self):
+        self._session_id = next(_CANON_SESSION_IDS)
+        self._capture_ids = itertools.count(1)
+        self._aktueller_capture_id: Optional[str] = None
+        self._capture_gestartet: float = 0.0
+        self._letztes_event: float = 0.0
         self._is_initialized = False
         self._initializing = False  # True während initialize() läuft (Deadlock-Schutz)
+        self._session_open = False
         self._camera_ref: Optional[c_void_p] = None
         self._camera_info: Optional[Dict] = None
         self._live_view_active = False
@@ -52,10 +62,14 @@ class CanonCameraManager(CameraManager):
         # Capture State & Mode
         self._photo_queue: Queue = Queue()
         self._capture_in_progress: bool = False
+        self._capture_accepting: bool = False
         self._captured_image: Optional[Image.Image] = None
         self._use_host_download: bool = False  # True = kein SD, Bild via Event-Handler empfangen
+        self._host_storage_ready: bool = False  # von Kamera bestaetigter Host-Speicher
         self._event_handler_registered: bool = False  # True = Object-Event-Handler registriert
-        self._camera_shutdown: bool = False  # True wenn 0x301 Shutdown-Event empfangen
+        # True = Session muss vor dem nächsten Capture vollständig neu aufbauen
+        # (Shutdown, CARD_NG oder gedrosselter Sofort-Reconnect).
+        self._camera_shutdown: bool = False
 
         # ------------------------------------------------------------------
         # 2.4.46 — Schutz gegen die zwei Box-Fehlerbilder vom 21.08.2026
@@ -97,6 +111,25 @@ class CanonCameraManager(CameraManager):
         #     einspringen muss? Verhindert, dass bei jedem Foto erneut
         #     umgestellt wird.
         self._karte_als_notnagel_geprueft: bool = False
+
+        self._diag(
+            "MANAGER-CREATED",
+            initialized=False,
+            host=False,
+            handler=False,
+        )
+
+    def _diag(self, event: str, **werte) -> None:
+        """Korrelierte DSLR-Diagnose nur im dynamisch aktiven Dev-Modus."""
+        if not is_developer_mode():
+            return
+        details = " ".join(f"{key}={value}" for key, value in werte.items())
+        logger.debug(
+            "CANON-DIAG "
+            f"event={event} session={self._session_id} "
+            f"thread={threading.current_thread().name}/{threading.current_thread().ident} "
+            f"{details}".rstrip()
+        )
     
     @staticmethod
     def is_available() -> bool:
@@ -112,6 +145,35 @@ class CanonCameraManager(CameraManager):
         return edsdk.get_camera_list()
     
     def initialize(self, camera_index: int = 0, width: int = 0, height: int = 0) -> bool:
+        """Abgesicherter Einstieg; ein Fehler darf den Init-Status nie verklemmen."""
+        self._initializing = True
+        self._host_storage_ready = False
+        try:
+            return self._initialize_canon(camera_index, width, height)
+        except Exception as e:
+            logger.exception(f"Canon-Initialisierung unerwartet abgebrochen: {e}")
+            if self._camera_ref:
+                try:
+                    edsdk.dispose_camera(
+                        self._camera_ref, session_open=self._session_open
+                    )
+                except Exception as cleanup_error:
+                    logger.error(
+                        "Canon-Handle nach Init-Exception nicht freigegeben: "
+                        f"{cleanup_error}"
+                    )
+            self._camera_ref = None
+            self._camera_info = None
+            self._session_open = False
+            self._is_initialized = False
+            self._use_host_download = False
+            self._host_storage_ready = False
+            self._event_handler_registered = False
+            return False
+        finally:
+            self._initializing = False
+
+    def _initialize_canon(self, camera_index: int, width: int, height: int) -> bool:
         """Initialisiert die Kamera
         
         Args:
@@ -128,6 +190,7 @@ class CanonCameraManager(CameraManager):
         if self._is_initialized:
             logger.info("Bereits initialisiert, führe Cleanup durch...")
             self.release()
+            self._initializing = True
         
         if not EDSDK_AVAILABLE:
             logger.error("EDSDK nicht verfügbar")
@@ -141,12 +204,9 @@ class CanonCameraManager(CameraManager):
             self._initializing = False
             return False
         
-        # Kamera-Liste holen — im Kamera-Faden (2.4.57).
-        # Die Kamera-Referenz, die hier entsteht, gehoert dem Faden, der sie
-        # erzeugt hat. Wird sie anderswo erzeugt als die Sitzung geoeffnet
-        # wird, haengen spaetere Aufrufe.
+        # Der Wrapper routet jetzt ausnahmslos selbst auf den Owner-Thread.
         logger.debug("Kamera-Liste abrufen...")
-        cameras = edsdk.im_kamera_faden(edsdk.get_camera_list)
+        cameras = edsdk.get_camera_list() or []
         logger.info(f"Gefundene Kameras: {len(cameras)}")
         
         if not cameras:
@@ -159,94 +219,76 @@ class CanonCameraManager(CameraManager):
         
         if camera_index >= len(cameras):
             logger.error(f"Kamera-Index {camera_index} ungültig (nur {len(cameras)} Kameras)")
+            for cam in cameras:
+                edsdk.release(cam.get("ref"))
             self._initializing = False
             return False
         
         # Kamera auswählen
         self._camera_info = cameras[camera_index]
         self._camera_ref = self._camera_info["ref"]
+        self._session_open = False
+
+        # Nicht ausgewaehlte Handles stammen ebenfalls vom EDSDK und muessen
+        # im Owner freigegeben werden.
+        for i, cam in enumerate(cameras):
+            if i != camera_index:
+                edsdk.release(cam.get("ref"))
         
         logger.info(f"Verbinde mit: {self._camera_info['name']}")
-        
-        # Session öffnen (mit Retry-Logik in edsdk.open_session)
-        logger.debug("Öffne Kamera-Session...")
-        if not edsdk.im_kamera_faden(edsdk.open_session, self._camera_ref):
-            logger.error("Session konnte nicht geöffnet werden")
+
+        # Canon registriert Object-/State-Handler im offiziellen Sample vor
+        # OpenSession. Entscheidend ist: derselbe Owner-Thread fuer alles.
+        logger.info("Registriere Canon Object- und State-Handler im Owner")
+        object_ok = edsdk.set_object_event_handler(
+            self._camera_ref, self._on_object_event
+        )
+        state_ok = edsdk.set_state_event_handler(
+            self._camera_ref, self._on_state_event
+        )
+        if object_ok is not True or state_ok is not True:
+            logger.error(
+                "Canon-Handler nicht vollstaendig registriert: "
+                f"object={object_ok!r}, state={state_ok!r}"
+            )
+            edsdk.dispose_camera(self._camera_ref, session_open=False)
             self._camera_ref = None
             self._camera_info = None
             self._initializing = False
             return False
+
+        self._event_handler_registered = True
+
+        # Session oeffnen (mit genau einem kontrollierten Busy-Retry).
+        logger.debug("Öffne Kamera-Session...")
+        if not edsdk.open_session(self._camera_ref):
+            logger.error("Session konnte nicht geöffnet werden")
+            edsdk.dispose_camera(self._camera_ref, session_open=False)
+            self._camera_ref = None
+            self._camera_info = None
+            self._event_handler_registered = False
+            self._initializing = False
+            return False
         
         logger.info("Session erfolgreich geöffnet")
-        
-        # ------------------------------------------------------------------
-        # Speicherung: Kamera-Zwischenspeicher hat Vorrang (2.4.56)
-        # ------------------------------------------------------------------
-        #
-        # WICHTIG ZUR EINORDNUNG: Die Fotos landen in BEIDEN Faellen auf der
-        # PC-Festplatte (C:exobooth\BILDER). Der Unterschied ist nur der
-        # Transportweg aus der Kamera heraus:
-        #
-        #   Weg A (Karte):  Kamera legt das Bild auf ihre Karte, die Box holt
-        #                   es sofort ab und speichert es auf dem PC.
-        #   Weg B (direkt): Die Kamera schickt das Bild ohne Zwischenschritt.
-        #
-        # Weg B ist eleganter — aber er braucht einen "Rueckkanal", und dessen
-        # Einrichtung (`EdsSetObjectEventHandler`) HAENGT auf dieser Hardware
-        # dauerhaft. Box-Log vom 24.08.2026:
-        #
-        #     11:10:30  Rueckkanal-Registrierung nach 4s nicht abgeschlossen
-        #     11:10:30  EDSDK Fehler 0x81 (DEVICE_BUSY)      <- Kamera blockiert
-        #     11:12:47  Rueckkanal-Registrierung nach 4s ... <- naechster Versuch
-        #     11:13:07  Rueckkanal-Registrierung nach 4s ...
-        #
-        # Jeder Versuch hinterlaesst einen haengenden Aufruf, der die Kamera
-        # besetzt haelt. Danach kam weder Live-View noch ein Foto — und mit
-        # jedem weiteren Versuch wurde es schlechter.
-        #
-        # Deshalb: Steckt eine Karte, wird sie als Zwischenspeicher genutzt und
-        # der Rueckkanal gar nicht erst angefasst. Das Ergebnis fuer den Kunden
-        # ist dasselbe, nur ohne die Blockade.
-        self._use_host_download = False
-        logger.debug("Konfiguriere Speicherung...")
+        self._session_open = True
 
-        karte_da = False
-        if edsdk.set_save_to_camera(self._camera_ref):
-            volume = edsdk.get_first_volume(self._camera_ref)
-            if volume:
-                karte_da = True
-                edsdk.EDSDK_DLL.EdsRelease(volume)
-
-        if karte_da:
-            logger.info(
-                "Speicherung: über den Kamera-Zwischenspeicher — die Box holt "
-                "jedes Foto sofort ab und legt es auf der PC-Festplatte ab"
-            )
-        else:
-            # Ohne Karte bleibt nur der Direktweg. Der braucht den Rueckkanal,
-            # und der kann haengen — deshalb nur hier, wo es keine Alternative
-            # gibt, und mit klarer Ansage im Log.
-            self._use_host_download = True
-            logger.warning(
-                "Keine Speicherkarte in der Kamera — nur der Direktweg bleibt. "
-                "Dessen Einrichtung kann auf dieser Hardware hängen; eine Karte "
-                "in der Kamera ist der zuverlässigere Weg (die Fotos landen "
-                "trotzdem auf der PC-Festplatte)."
-            )
-
-            if edsdk.set_save_to_host(self._camera_ref):
-                logger.info("Kamera liefert Fotos direkt an den Rechner")
-
-            rueckkanal = edsdk.set_object_event_handler(
-                self._camera_ref, self._on_object_event
-            )
-            self._event_handler_registered = rueckkanal is not False
-            if rueckkanal is True:
-                logger.info("Rückkanal steht")
-            elif rueckkanal is None:
-                logger.warning("Rückkanal nicht bestätigt — Fotos kommen evtl. nicht an")
-            else:
-                logger.error("Rückkanal abgelehnt — so kann kein Foto ankommen")
+        # Die Live-Flotte arbeitet ohne Speicherkarte. Host-Transfer ist kein
+        # Fallback, sondern der verbindliche Produktionsweg.
+        self._use_host_download = True
+        if not edsdk.set_save_to_host(self._camera_ref):
+            logger.error("Host-Speicher konnte nicht vollständig bereitgemeldet werden")
+            edsdk.dispose_camera(self._camera_ref, session_open=True)
+            self._camera_ref = None
+            self._camera_info = None
+            self._session_open = False
+            self._use_host_download = False
+            self._host_storage_ready = False
+            self._event_handler_registered = False
+            self._initializing = False
+            return False
+        self._host_storage_ready = True
+        logger.info("Speicherung: direkter Host-Transfer ohne Speicherkarte")
 
         # Bildqualität auf JPG Large Fine setzen (kein RAW!) - nicht kritisch wenn fehlschlägt
         try:
@@ -258,6 +300,14 @@ class CanonCameraManager(CameraManager):
         self._is_initialized = True
         self._initializing = False
         logger.info(f"✅ Canon Kamera initialisiert: {self._camera_info['name']}")
+        self._diag(
+            "INITIALIZED",
+            initialized=True,
+            host=self._use_host_download,
+            host_ready=self._host_storage_ready,
+            object_handler=self._event_handler_registered,
+            state_handler=True,
+        )
 
         # Kamera-Einstellungen loggen (für Debugging)
         edsdk.log_camera_settings(self._camera_ref)
@@ -266,23 +316,32 @@ class CanonCameraManager(CameraManager):
     
     def release(self):
         """Gibt Kamera-Ressourcen frei"""
+        self._diag(
+            "RELEASE-START",
+            initialized=self._is_initialized,
+            live_view=self._live_view_active,
+        )
         if self._live_view_active:
             self.stop_live_view()
 
-        if self._camera_ref and self._is_initialized:
-            edsdk.close_session(self._camera_ref)
-            edsdk.EDSDK_DLL.EdsRelease(self._camera_ref)
+        if self._camera_ref:
+            edsdk.dispose_camera(
+                self._camera_ref, session_open=self._session_open
+            )
 
         self._camera_ref = None
         self._camera_info = None
         self._is_initialized = False
         self._initializing = False
+        self._session_open = False
         self._use_host_download = False
+        self._host_storage_ready = False
         self._event_handler_registered = False
         self._camera_shutdown = False
         self._last_frame = None
 
         logger.info("Canon Kamera freigegeben")
+        self._diag("RELEASE-END", initialized=False, live_view=False)
     
     def start_live_view(self) -> bool:
         """Startet Live View mit Retry-Logik
@@ -436,17 +495,44 @@ class CanonCameraManager(CameraManager):
         try:
             jpeg_data = edsdk.get_live_view_image(self._camera_ref)
         except Exception as e:
-            # Nicht bei jedem Frame loggen - nur gelegentlich
+            logger.debug(f"get_live_view_image Exception: {e}")
+            jpeg_data = None
+
+        if jpeg_data is None:
+            # EDSDK-Fehler werden im Wrapper in `letzter_fehler` abgelegt und
+            # kommen als regulaeres None zurueck. Deshalb muss auch dieser
+            # Normalpfad gezaehlt werden, nicht nur eine Python-Exception.
             if not hasattr(self, '_evf_error_count'):
                 self._evf_error_count = 0
             self._evf_error_count += 1
+            fehler = getattr(edsdk, "letzter_fehler", 0)
+            name = edsdk.ERROR_NAMES.get(fehler, "UNBEKANNT")
             if self._evf_error_count <= 3 or self._evf_error_count % 100 == 0:
-                logger.debug(f"get_live_view_image Fehler #{self._evf_error_count}: {e}")
-            jpeg_data = None
-        
-        if jpeg_data is None:
+                logger.debug(
+                    f"get_live_view_image Fehler #{self._evf_error_count}: "
+                    f"{name} ({hex(fehler)})"
+                )
+            self._diag(
+                "LIVEVIEW-NONE",
+                count=self._evf_error_count,
+                error=name,
+                code=hex(fehler),
+                owner=edsdk.owner_snapshot() if is_developer_mode() else "-",
+            )
+
+            if edsdk.ist_verbindung_tot(fehler):
+                logger.error(
+                    "Live-View-Verbindung verloren: "
+                    f"{name} ({hex(fehler)}) — vollstaendige Neu-Enumeration"
+                )
+                self._live_view_active = False
+                self._verbindung_neu_aufbauen(
+                    f"Live-View-Download scheiterte mit {name}"
+                )
+                return _notnagel("Kameraverbindung verloren")
+
             # Bei vielen Fehlern: Live-View neu starten
-            if hasattr(self, '_evf_error_count') and self._evf_error_count > 0 and self._evf_error_count % 30 == 0:
+            if self._evf_error_count % 30 == 0:
                 logger.warning(f"Viele Live-View Fehler ({self._evf_error_count}), versuche Neustart...")
                 self._live_view_active = False
                 self.start_live_view()
@@ -531,49 +617,37 @@ class CanonCameraManager(CameraManager):
             self._reconnect_laeuft = False
 
     def pump_events(self) -> None:
-        """Holt wartende Kamera-Ereignisse ab. MUSS regelmäßig laufen!
+        """Kompatibilitaets-Hook fuer app.py; der Owner pumpt selbst.
 
-        2.4.46 — DAS ist der Grund, warum keine Fotos ankamen.
-
-        Das EDSDK stellt Ereignisse ("Bild fertig, hol es ab") über die Windows-
-        Nachrichtenschlange zu, und zwar an den Programmteil, der die Kamera
-        geöffnet hat — bei uns der Haupt-Programmfaden mit der Bedienoberfläche.
-        Abgeholt werden sie nur, wenn `EdsGetEvent()` **aus genau diesem Faden**
-        aufgerufen wird.
-
-        Bisher passierte das nur in der Warteschleife der Foto-Aufnahme — und
-        die läuft seit dem Umbau auf Hintergrund-Aufnahme in einem NEBEN-Faden.
-        Die Ereignisse blieben deshalb ungelesen im Haupt-Faden liegen. Beweis
-        aus den Box-Logs vom 21.08.2026: über 200 Auslösungen, aber KEIN
-        einziges `>>> OBJECT EVENT` — der Rückkanal hat kein einziges Mal
-        gefeuert.
-
-        Wird von app.py im Takt der Bedienoberfläche aufgerufen (nur bei Canon).
+        Absichtlich kein EDSDK-Aufruf aus dem Tk-Thread. Der zentrale
+        `edsdk-kamera`-Thread verarbeitet Windows-Nachrichten und EdsGetEvent.
         """
         if not self._is_initialized or not EDSDK_AVAILABLE:
             return
         if self._reconnect_laeuft:
             return
-
-        try:
-            edsdk.get_event()
-            self._pump_laeufe += 1
-        except Exception as e:
-            logger.debug(f"pump_events Fehler: {e}")
+        self._pump_laeufe += 1
 
     def _log_kamera_zustand_kurz(self) -> None:
-        """Einzeiler mit dem Kamera-Zustand direkt vor dem Auslösen.
-
-        2.4.46 — Bewusst EINE Zeile (nicht der große Block aus
-        log_camera_settings), damit das Log bei 100 Fotos pro Abend lesbar
-        bleibt. Enthält genau die Werte, die ein Nicht-Auslösen erklären:
-        Akku leer, Wahlrad auf Video, Autofokus findet nichts.
-        """
-        if not self._camera_ref:
+        """Dev-Snapshot der relevanten Kamera-Werte direkt vor dem Auslösen."""
+        if not is_developer_mode() or not self._camera_ref:
             return
 
         try:
-            hole = lambda pid: edsdk.get_property_uint(self._camera_ref, pid)
+            prop_ids = (
+                edsdk.kEdsPropID_BatteryLevel,
+                edsdk.kEdsPropID_AEMode,
+                edsdk.kEdsPropID_AFMode,
+                edsdk.kEdsPropID_Tv,
+                edsdk.kEdsPropID_Av,
+                edsdk.kEdsPropID_ISOSpeed,
+                edsdk.kEdsPropID_WhiteBalance,
+                edsdk.kEdsPropID_ExposureCompensation,
+                edsdk.kEdsPropID_MeteringMode,
+                edsdk.kEdsPropID_Evf_ViewType,
+            )
+            snapshot = edsdk.get_property_snapshot(self._camera_ref, prop_ids)
+            hole = snapshot.get
             akku = hole(edsdk.kEdsPropID_BatteryLevel)
             aemode = hole(edsdk.kEdsPropID_AEMode)
             afmode = hole(edsdk.kEdsPropID_AFMode)
@@ -581,6 +655,9 @@ class CanonCameraManager(CameraManager):
             av = hole(edsdk.kEdsPropID_Av)
             iso = hole(edsdk.kEdsPropID_ISOSpeed)
             wb = hole(edsdk.kEdsPropID_WhiteBalance)
+            exposure_comp = hole(edsdk.kEdsPropID_ExposureCompensation)
+            metering = hole(edsdk.kEdsPropID_MeteringMode)
+            evf_view_type = hole(edsdk.kEdsPropID_Evf_ViewType)
 
             akku_text = {
                 0: "LEER", 1: "sehr schwach", 2: "schwach",
@@ -589,20 +666,44 @@ class CanonCameraManager(CameraManager):
             af_text = {
                 0: "One-Shot AF", 1: "AI Servo", 2: "AI Focus", 3: "manuell (MF)",
             }.get(afmode, str(afmode))
-            ae_text = {
-                0: "P", 1: "Tv", 2: "Av", 3: "M", 8: "Vollautomatik",
-                9: "Auto ohne Blitz", 0x17: "Szeneautomatik",
-            }.get(aemode, f"0x{aemode:x}" if aemode is not None else "?")
+            ae_text = edsdk.AE_MODE_NAMEN.get(
+                aemode, f"0x{aemode:x}" if aemode is not None else "?"
+            )
             tv_text = ("legt die Kamera beim Auslösen fest" if tv == 0
                        else edsdk.TV_NAMEN.get(tv, f"0x{tv:x}" if tv is not None else "?"))
             av_text = ("legt die Kamera beim Auslösen fest" if av == 0
                        else edsdk.AV_NAMEN.get(av, f"0x{av:x}" if av is not None else "?"))
             iso_text = edsdk.ISO_NAMEN.get(iso, f"0x{iso:x}" if iso is not None else "?")
             wb_text = edsdk.WB_NAMEN.get(wb, str(wb))
+            exposure_comp_text = edsdk.EXPOSURE_COMP_NAMEN.get(
+                exposure_comp,
+                edsdk.EXPOSURE_COMP_NAMEN.get(
+                    exposure_comp & 0xFF, f"0x{exposure_comp:08x}"
+                ) if exposure_comp is not None else "?",
+            )
+            metering_text = edsdk.METERING_MODE_NAMEN.get(
+                metering, f"0x{metering:x}" if metering is not None else "?"
+            )
+            evf_text = edsdk.EVF_VIEW_TYPE_NAMEN.get(
+                evf_view_type,
+                f"0x{evf_view_type:x}" if evf_view_type is not None else "?",
+            )
 
             logger.info(
                 f"[3/5] Kamera-Zustand: Modus={ae_text}, Zeit={tv_text}, Blende={av_text}, "
                 f"ISO={iso_text}, Weißabgleich={wb_text}, Fokus={af_text}, Akku={akku_text}"
+            )
+            self._diag(
+                "EXPOSURE-PROPS",
+                capture=self._aktueller_capture_id or "-",
+                ae=ae_text.replace(" ", "_"),
+                tv=tv_text.replace(" ", "_"),
+                av=av_text.replace(" ", "_"),
+                iso=iso_text,
+                exposure_comp=exposure_comp_text.replace(" ", "_"),
+                metering=metering_text.replace(" ", "_"),
+                wb=wb_text.replace(" ", "_"),
+                evf_view_type=evf_text.replace(" ", "_"),
             )
 
             if akku in (0, 1):
@@ -628,13 +729,13 @@ class CanonCameraManager(CameraManager):
                 # unterschiedlich weit weg und bewegen sich. Ein fester Fokus
                 # wäre hier keine Lösung, sondern ein neues Problem.
                 logger.debug(f"[3/5] Autofokus aktiv ({af_text}) — für die Mietbox richtig so.")
-            if wb == 0:
+            if wb in (0, 23):
                 logger.info(
                     "[3/5] Hinweis: Weißabgleich steht auf Automatik. Der rechnet pro Foto neu — "
                     "in derselben Collage können die Bilder unterschiedlich farbig werden."
                 )
-            if aemode in (8, 9, 0x17):
-                # "Auto ohne Blitz" (9) ist die BEWUSSTE Wahl für die Mietflotte:
+            if aemode in (9, 15, 22, 23, 24, 25):
+                # Ein Automatikmodus ist die BEWUSSTE Wahl für die Mietflotte:
                 # ohne Blitz muss die Kamera bei dunkler werdender Location selbst
                 # nachregeln, und der Kunde darf nichts einstellen müssen.
                 # Hier steht deshalb nur, was das für die Bildwirkung bedeutet —
@@ -647,6 +748,123 @@ class CanonCameraManager(CameraManager):
                 )
         except Exception as e:
             logger.debug(f"Kamera-Zustand nicht auslesbar: {e}")
+
+    def _log_foto_belichtung(self, image: Image.Image) -> None:
+        """Loggt EXIF und eine kleine Helligkeitsprobe ausschließlich im Dev-Mode."""
+        if not is_developer_mode():
+            return
+
+        try:
+            exif = image.getexif()
+            exif_ifd = {}
+            try:
+                exif_ifd = exif.get_ifd(ExifTags.IFD.Exif)
+            except Exception:
+                # Manche JPEGs legen die Werte direkt in IFD0 ab oder haben
+                # gar keinen EXIF-Unterbaum. Beides ist fuer den Capture okay.
+                pass
+
+            def exif_wert(tag: int):
+                wert = exif_ifd.get(tag)
+                return exif.get(tag) if wert is None else wert
+
+            def zahl(wert):
+                if wert is None:
+                    return "-"
+                if isinstance(wert, (list, tuple)):
+                    wert = wert[0] if wert else None
+                try:
+                    return f"{float(wert):.6g}"
+                except (TypeError, ValueError, ZeroDivisionError):
+                    return str(wert).replace(" ", "_")
+
+            exposure_programme = {
+                0: "undefiniert", 1: "manuell", 2: "Programmautomatik",
+                3: "Zeitautomatik", 4: "Blendenautomatik", 5: "kreativ",
+                6: "Action", 7: "Portrait", 8: "Landschaft",
+            }
+            exif_metering = {
+                0: "unbekannt", 1: "Mittelwert", 2: "mittenbetont",
+                3: "Spot", 4: "Multi-Spot", 5: "Mehrfeld", 6: "selektiv",
+                255: "sonstige",
+            }
+            exif_wb = {0: "auto", 1: "manuell"}
+
+            exposure_time = exif_wert(0x829A)
+            f_number = exif_wert(0x829D)
+            iso = exif_wert(0x8827)
+            if iso is None:
+                iso = exif_wert(0x8833)
+            exposure_bias = exif_wert(0x9204)
+            exposure_program = exif_wert(0x8822)
+            metering = exif_wert(0x9207)
+            flash = exif_wert(0x9209)
+            white_balance = exif_wert(0xA403)
+
+            max_kante = max(image.size)
+            faktor = min(1.0, 256.0 / max_kante) if max_kante else 1.0
+            ziel = (
+                max(1, round(image.size[0] * faktor)),
+                max(1, round(image.size[1] * faktor)),
+            )
+            thumb = image.resize(ziel, Image.Resampling.BOX).convert("RGB")
+            luma_hist = thumb.convert("L").histogram()
+            pixel = sum(luma_hist)
+
+            def perzentil(prozent: int):
+                ziel_anzahl = max(1, (pixel * prozent + 99) // 100)
+                kumuliert = 0
+                for helligkeit, anzahl in enumerate(luma_hist):
+                    kumuliert += anzahl
+                    if kumuliert >= ziel_anzahl:
+                        return helligkeit
+                return 255
+
+            luma_mean = (
+                sum(wert * anzahl for wert, anzahl in enumerate(luma_hist)) / pixel
+                if pixel else 0.0
+            )
+            rgb_hist = thumb.histogram()
+            nearwhite = sum(luma_hist[250:]) * 100.0 / pixel if pixel else 0.0
+            shadows = sum(luma_hist[:16]) * 100.0 / pixel if pixel else 0.0
+            kanal_clipping = [
+                sum(rgb_hist[offset + 250:offset + 256]) * 100.0 / pixel
+                if pixel else 0.0
+                for offset in (0, 256, 512)
+            ]
+
+            self._diag(
+                "EXPOSURE-JPEG",
+                capture=self._aktueller_capture_id or "-",
+                exif_tv_s=zahl(exposure_time),
+                exif_f=zahl(f_number),
+                exif_iso=zahl(iso),
+                exif_bias_ev=zahl(exposure_bias),
+                exif_program=exposure_programme.get(
+                    exposure_program, str(exposure_program)
+                ).replace(" ", "_"),
+                exif_metering=exif_metering.get(
+                    metering, str(metering)
+                ).replace(" ", "_"),
+                exif_flash=(f"0x{flash:x}" if isinstance(flash, int) else str(flash)),
+                exif_wb=exif_wb.get(white_balance, str(white_balance)),
+                luma_mean=f"{luma_mean:.1f}",
+                p50=perzentil(50),
+                p95=perzentil(95),
+                p99=perzentil(99),
+                nearwhite_pct=f"{nearwhite:.2f}",
+                shadow_pct=f"{shadows:.2f}",
+                r250_pct=f"{kanal_clipping[0]:.2f}",
+                g250_pct=f"{kanal_clipping[1]:.2f}",
+                b250_pct=f"{kanal_clipping[2]:.2f}",
+                thumb=f"{ziel[0]}x{ziel[1]}",
+            )
+        except Exception as e:
+            self._diag(
+                "EXPOSURE-JPEG-ERROR",
+                capture=self._aktueller_capture_id or "-",
+                error=type(e).__name__,
+            )
 
     @staticmethod
     def _bild_fingerabdruck(frame: np.ndarray) -> str:
@@ -663,131 +881,138 @@ class CanonCameraManager(CameraManager):
             return "?"
 
 
-    def _on_object_event(self, event_type: int, obj_ref: c_void_p) -> int:
-        """Callback für EDSDK Object Events (Host-Download Modus)
+    def _capture_scharfschalten(self) -> None:
+        """Bindet die Host-Queue unmittelbar vor dem Shutter an diesen Capture."""
+        verworfen = 0
+        while True:
+            try:
+                self._photo_queue.get_nowait()
+                verworfen += 1
+            except Empty:
+                break
+        self._capture_gestartet = time.monotonic()
+        self._capture_accepting = True
+        logger.info(
+            "CANON-CAPTURE ARMED "
+            f"capture={self._aktueller_capture_id or '-'} "
+            f"discarded_queue_items={verworfen}"
+        )
 
-        Wird aufgerufen wenn die Kamera ein Bild bereit hat zum Download.
-        Das Bild wird in den Speicher geladen und in die Photo-Queue gelegt.
+    def _on_object_event(self, event_type: int, obj_ref: c_void_p) -> bool:
+        """Verarbeitet einen bereits aus dem nativen Callback ausgekoppelten Event.
 
-        Canon EOS 2000D sendet 0x00000208 statt 0x00000108 (DirItemRequestTransfer)
-        bei Host-Download. Daher werden mehrere Event-Typen als Download-Trigger behandelt.
+        Diese Methode laeuft als normaler Auftrag im Canon-Owner. Der native
+        Callback ist zu diesem Zeitpunkt bereits zur EDSDK.dll zurueckgekehrt.
         """
-        event_names = {
-            0x00000100: "DirItemCreated",
-            0x00000101: "DirItemRemoved",
-            0x00000102: "DirItemInfoChanged",
-            0x00000108: "DirItemRequestTransfer",
-            0x00000208: "DirItemRequestTransfer_Alt",
-            0x00000301: "StateEvent_Shutdown",
-            0x00000302: "StateEvent_JobStatusChanged",
-        }
-        event_name = event_names.get(event_type, f"0x{event_type:08x}")
-
-        # 2.4.46: Jedes Ereignis zählen. In den Box-Logs vom 21.08.2026 stand
-        # dieser Zähler faktisch auf 0 — kein einziges Ereignis kam an. Genau
-        # daran erkennt man beim nächsten Test sofort, ob der Rückkanal lebt.
         self._events_gesehen += 1
+        self._letztes_event = time.monotonic()
+        event_name = edsdk.OBJECT_EVENT_NAMEN.get(
+            event_type, f"0x{event_type:08x}"
+        )
+        seit_capture_ms = (
+            (self._letztes_event - self._capture_gestartet) * 1000
+            if self._capture_gestartet else -1
+        )
 
-        # Nur relevante Events loggen (nicht die vielen DirItemRemoved/InfoChanged)
-        if event_type not in (0x00000101, 0x00000102):
-            logger.info(
-                f">>> OBJECT EVENT: {event_name} (0x{event_type:08x}) "
-                f"[Ereignis Nr. {self._events_gesehen}]"
-            )
+        logger.info(
+            "CANON-CAPTURE EVENT "
+            f"capture={self._aktueller_capture_id or '-'} "
+            f"event=0x{event_type:08x} name={event_name} "
+            f"since_shutter_ms={seit_capture_ms:.1f} count={self._events_gesehen}"
+        )
 
-        # Download-Trigger: 0x00000108 (Standard) ODER 0x00000208 (Canon EOS 2000D)
-        if event_type in (0x00000108, 0x00000208):
-            logger.info(f">>> Transfer-Event erkannt: {event_name} - starte Download...")
+        if event_type in (
+            edsdk.kEdsObjectEvent_DirItemRequestTransfer,
+            edsdk.kEdsObjectEvent_DirItemRequestTransferDT,
+        ):
+            capture_id = self._aktueller_capture_id
+            if not self._capture_accepting or not capture_id:
+                logger.warning(
+                    "CANON-CAPTURE STALE-EVENT-REJECTED "
+                    f"event=0x{event_type:08x} capture={capture_id or '-'}"
+                )
+                # False veranlasst den Low-Level-Dispatcher zu Cancel+Release.
+                return False
+
+            download_start = time.monotonic()
             try:
                 image_data = edsdk.download_image_to_memory(obj_ref)
                 if image_data:
-                    self._photo_queue.put(image_data)
-                    logger.info(f">>> Bild empfangen: {len(image_data)} bytes ({len(image_data)/1024/1024:.1f} MB)")
+                    self._photo_queue.put((capture_id, image_data))
+                    logger.info(
+                        "CANON-CAPTURE DOWNLOAD-QUEUED "
+                        f"capture={capture_id} "
+                        f"bytes={len(image_data)} "
+                        f"download_ms={(time.monotonic() - download_start) * 1000:.1f}"
+                    )
                 else:
-                    logger.error(">>> Download fehlgeschlagen (keine Daten)")
+                    logger.error(
+                        "CANON-CAPTURE DOWNLOAD-FAILED "
+                        f"capture={self._aktueller_capture_id or '-'}"
+                    )
             except Exception as e:
-                logger.error(f">>> Download Exception: {e}")
+                logger.exception(f"CANON-CAPTURE Download-Exception: {e}")
 
-            # Objekt freigeben
-            try:
-                if edsdk.EDSDK_DLL:
-                    edsdk.EDSDK_DLL.EdsRelease(obj_ref)
-            except Exception:
-                pass
+            # Auch ein fehlgeschlagener Download wurde im Wrapper per Cancel
+            # abgeschlossen. True bedeutet hier: Transfer wurde behandelt.
+            return True
 
-        # DirItemCreated: Ebenfalls Download versuchen (Fallback für andere Kamera-Modelle)
-        elif event_type == 0x00000100:
-            logger.info(f">>> DirItemCreated - versuche Download...")
-            try:
-                image_data = edsdk.download_image_to_memory(obj_ref)
-                if image_data:
-                    self._photo_queue.put(image_data)
-                    logger.info(f">>> Bild via DirItemCreated: {len(image_data)} bytes ({len(image_data)/1024/1024:.1f} MB)")
-            except Exception as e:
-                # DirItemCreated ist nicht immer ein Bild - Fehler ignorieren
-                logger.debug(f">>> DirItemCreated Download nicht möglich: {e}")
+        return False
 
-            try:
-                if edsdk.EDSDK_DLL:
-                    edsdk.EDSDK_DLL.EdsRelease(obj_ref)
-            except Exception:
-                pass
-
-        # Kamera-Shutdown erkennen (0x301): Kamera braucht Re-Initialisierung
-        elif event_type == 0x00000301:
-            logger.error(">>> KAMERA SHUTDOWN erkannt (0x301)! Markiere für Re-Initialisierung.")
+    def _on_state_event(self, event_type: int, event_data: int) -> None:
+        """Separater Canon-State-Handler; 0x301 gehoert nicht zu Object-Events."""
+        event_name = edsdk.STATE_EVENT_NAMEN.get(
+            event_type, f"0x{event_type:08x}"
+        )
+        seit_capture_ms = (
+            (time.monotonic() - self._capture_gestartet) * 1000
+            if self._capture_gestartet else -1
+        )
+        daten_name = edsdk.ERROR_NAMES.get(event_data, "-")
+        logger.info(
+            "CANON-STATE EVENT "
+            f"capture={self._aktueller_capture_id or '-'} "
+            f"event=0x{event_type:08x} name={event_name} "
+            f"data=0x{event_data:08x} data_name={daten_name} "
+            f"since_shutter_ms={seit_capture_ms:.1f}"
+        )
+        if event_type == edsdk.kEdsStateEvent_Shutdown:
+            logger.error("CANON-STATE Kamera-Shutdown erkannt")
+            self._camera_shutdown = True
+            self._host_storage_ready = False
+        elif (
+            event_type == edsdk.kEdsStateEvent_CaptureError
+            and event_data == edsdk.EDS_ERR_TAKE_PICTURE_CARD_NG
+        ):
+            logger.error(
+                "CANON-STATE CARD_NG erkannt: Host-Bereitschaft wird verworfen"
+            )
+            self._host_storage_ready = False
             self._camera_shutdown = True
 
-        return 0  # EDS_ERR_OK
-
     def _recover_from_shutdown(self) -> bool:
-        """Versucht die Kamera nach einem 0x301 Shutdown wiederherzustellen.
-
-        Schließt die aktuelle Session und öffnet sie neu.
-        Returns True wenn Recovery erfolgreich.
-        """
-        logger.warning("=== KAMERA RECOVERY nach Shutdown ===")
+        """Verwirft alte Referenzen und enumeriert die Kamera vollstaendig neu."""
+        logger.warning("=== KAMERA RECOVERY: vollstaendige Neu-Enumeration ===")
         self._camera_shutdown = False
-
-        if not self._camera_ref:
-            logger.error("Recovery: Kein Kamera-Ref vorhanden")
-            return False
-
-        # Session schließen und neu öffnen
+        camera_index = 0
+        if self._camera_info:
+            camera_index = int(self._camera_info.get("index", 0))
         try:
-            edsdk.close_session(self._camera_ref)
-            time.sleep(0.5)
+            self.release()
         except Exception as e:
-            logger.warning(f"Recovery: close_session Fehler (ignoriert): {e}")
-
-        if not edsdk.open_session(self._camera_ref):
-            logger.error("Recovery: open_session fehlgeschlagen!")
-            self._is_initialized = False
+            logger.warning(f"Recovery: release fehlgeschlagen: {e}")
             return False
-
-        logger.info("Recovery: Session neu geöffnet")
-
-        # Host-Download neu konfigurieren
-        if self._use_host_download:
-            edsdk.set_save_to_host(self._camera_ref)
-            if edsdk.set_object_event_handler(self._camera_ref, self._on_object_event):
-                self._event_handler_registered = True
-                logger.info("Recovery: Event-Handler neu registriert")
-            else:
-                logger.error("Recovery: Event-Handler Registrierung fehlgeschlagen!")
-                self._event_handler_registered = False
-        else:
-            edsdk.set_save_to_camera(self._camera_ref)
-
-        logger.info("=== KAMERA RECOVERY erfolgreich ===")
-        return True
+        time.sleep(0.5)
+        erfolg = self.initialize(camera_index=camera_index)
+        logger.warning(
+            f"=== KAMERA RECOVERY {'erfolgreich' if erfolg else 'FEHLGESCHLAGEN'} ==="
+        )
+        return erfolg
 
     def capture_photo(self, timeout: float = 10.0) -> Optional[Image.Image]:
-        """Nimmt ein Foto in voller DSLR-Auflösung auf
+        """Nimmt genau ein Foto in voller DSLR-Aufloesung auf.
 
-        Zwei Modi je nach SD-Karten-Verfügbarkeit:
-        - MIT SD-Karte: Directory-Polling (Bild auf SD -> Download)
-        - OHNE SD-Karte: Host-Download (Bild direkt via USB zum Tablet)
+        Produktionsweg ist der direkte Host-Transfer ohne Speicherkarte.
 
         Args:
             timeout: Maximale Wartezeit in Sekunden
@@ -804,12 +1029,45 @@ class CanonCameraManager(CameraManager):
             logger.error("capture_photo: Kamera nicht initialisiert!")
             return None
 
-        # Recovery nach Kamera-Shutdown (0x301)
+        # Recovery nach Shutdown oder verworfenem Host-/Verbindungszustand.
         if self._camera_shutdown:
             logger.warning("capture_photo: Kamera war im Shutdown - versuche Recovery...")
             if not self._recover_from_shutdown():
                 logger.error("capture_photo: Recovery fehlgeschlagen!")
                 return None
+
+        if self._use_host_download and not (
+            self._session_open
+            and self._event_handler_registered
+            and self._host_storage_ready
+        ):
+            logger.error(
+                "CANON-HOST SHUTTER-BLOCKED: Host-Speicher ist nicht vollständig bereit "
+                f"session={self._session_open} handler={self._event_handler_registered} "
+                f"host_ready={self._host_storage_ready}"
+            )
+            self._diag(
+                "SHUTTER-BLOCKED",
+                reason="host_not_ready",
+                session_open=self._session_open,
+                handler=self._event_handler_registered,
+                host_ready=self._host_storage_ready,
+            )
+            return None
+
+        capture_start = time.monotonic()
+        self._aktueller_capture_id = (
+            f"{self._session_id}.{next(self._capture_ids)}"
+        )
+        self._capture_gestartet = 0.0
+        self._capture_accepting = False
+        self._diag(
+            "CAPTURE-START",
+            capture=self._aktueller_capture_id,
+            host=self._use_host_download,
+            live_view=self._live_view_active,
+            events=self._events_gesehen,
+        )
 
         live_view_was_active = self._live_view_active
 
@@ -849,6 +1107,16 @@ class CanonCameraManager(CameraManager):
             else:
                 logger.info("[2/5] Directory-Polling Modus (SD-Karte)")
 
+            # Beim Diagnose-/Notweg ueber Karte muss die Ausgangszahl VOR dem
+            # Ausloesen stehen. Nach dem Trigger ist das neue Bild oft schon
+            # in der vermeintlichen Baseline enthalten.
+            karten_baseline = None
+            if not self._use_host_download:
+                karten_baseline = edsdk.get_card_image_count(self._camera_ref)
+                logger.info(
+                    f"[2/5] Karten-Baseline vor Ausloesung: {karten_baseline}"
+                )
+
             # SCHRITT 3: Foto auslösen
             # 2.4.46: Kurz-Diagnose direkt vor dem Auslösen. Wenn wieder kein
             # Bild kommt, steht damit im Log, in welchem Zustand die Kamera war
@@ -856,21 +1124,15 @@ class CanonCameraManager(CameraManager):
             # verhindern, ohne dass die Software etwas falsch macht.
             self._log_kamera_zustand_kurz()
 
-            # 2.4.53: Vor JEDER Aufnahme melden, dass am Rechner Platz ist.
-            # Ohne diese Meldung bewegt die Kamera im Direktbetrieb zwar den
-            # Spiegel, legt das Bild aber nirgends ab — genau das Bild, das
-            # Christian am 24.08.2026 beschrieb ("die kamera hat doch fotos
-            # gemacht", aber nichts kam an). Die Meldung ist flüchtig und muss
-            # deshalb wiederholt werden, nicht nur einmal beim Verbinden.
-            if self._use_host_download:
-                if not edsdk.melde_freien_speicher(self._camera_ref):
-                    logger.warning(
-                        "[3/5] Speicherplatz-Meldung an die Kamera fehlgeschlagen — "
-                        "sie könnte die Aufnahme verweigern"
-                    )
-
-            logger.info("[3/5] Löse Kamera aus...")
-            if not edsdk.take_picture(self._camera_ref, self._live_view_active):
+            logger.info(
+                f"[3/5] Löse Kamera genau einmal aus "
+                f"(Capture {self._aktueller_capture_id})..."
+            )
+            if not edsdk.take_picture(
+                self._camera_ref,
+                self._live_view_active,
+                before_shutter=self._capture_scharfschalten,
+            ):
                 fehler = getattr(edsdk, "letzter_fehler", 0)
                 name = edsdk.ERROR_NAMES.get(fehler, "UNBEKANNT")
                 logger.error(f"[3/5] ✗ Auslösen fehlgeschlagen! Kamera meldet: {name} ({hex(fehler)})")
@@ -892,110 +1154,82 @@ class CanonCameraManager(CameraManager):
                 elif edsdk.ist_verbindung_tot(fehler):
                     logger.error("   >>> Verbindung zur Kamera ist weg — baue neu auf.")
 
+                if fehler == getattr(
+                    edsdk, "EDS_ERR_TAKE_PICTURE_CARD_NG", 0x00008D07
+                ):
+                    self._host_storage_ready = False
+                    self._camera_shutdown = True
+                    logger.error(
+                        "   >>> Canon meldet CARD_NG trotz Host-Transfer. "
+                        "Host-Bereitschaft verworfen; vor dem nächsten Foto "
+                        "wird die Session vollständig neu aufgebaut."
+                    )
+
                 if edsdk.ist_verbindung_tot(fehler):
+                    self._host_storage_ready = False
+                    # Falls der sofortige Neuaufbau gerade gedrosselt oder
+                    # bereits belegt ist, muss der nächste Benutzer-Capture
+                    # trotzdem erneut durch die vollständige Recovery laufen.
+                    self._camera_shutdown = True
                     self._verbindung_neu_aufbauen(f"Auslösen scheiterte mit {name}")
 
                 return self._fallback_to_live_view(live_view_was_active)
 
-            logger.info("[3/5] ✓ Kamera ausgelöst!")
+            logger.info(
+                "[3/5] ✓ Kamera ausgelöst! "
+                f"command_ms={(time.monotonic() - self._capture_gestartet) * 1000:.1f}"
+            )
 
             # SCHRITT 4: Auf Bild warten (je nach Modus)
             image_data = None
 
             if self._use_host_download:
-                # HOST-MODUS: Bild kommt über Event-Handler in _photo_queue
-                #
-                # 2.4.46: Zusätzlich werden hier Windows-Nachrichten abgearbeitet.
-                # Diese Schleife läuft seit dem Umbau auf Hintergrund-Aufnahme in
-                # einem Neben-Faden; `EdsGetEvent()` allein reicht dort nicht, weil
-                # das EDSDK seine Ereignisse über die Nachrichtenschlange zustellt.
-                # Die eigentliche Abholung macht app.py im Haupt-Faden
-                # (siehe pump_events) — das hier ist der Gürtel zum Hosenträger.
+                # Nur warten. Event-Poll, Windows-Message-Pump und Download
+                # gehoeren dem Owner-Thread und duerfen hier nicht stattfinden.
                 events_vorher = self._events_gesehen
-
-                # 2.4.46 — WARTEZEIT AN DIE WIRKLICHKEIT ANPASSEN.
-                #
-                # Christian am 21.08.2026: "das ist alles viel zu träge und
-                # dauert ewig". Gemessen im Box-Log: 12,7 Sekunden pro Foto.
-                # Davon waren 10 Sekunden reines Warten auf ein Bild, das gar
-                # nicht kommen konnte — der Rückkanal der Kamera war nicht
-                # eingerichtet.
-                #
-                # Zwei Fälle:
-                #  - Rückkanal nachweislich nicht da  -> 1,5 s (nur pro forma)
-                #  - Rückkanal da, aber noch nie ein Bild gebracht -> 4 s
-                # Sobald einmal ein Bild angekommen ist, gilt wieder die volle
-                # Wartezeit: Dann ist der Weg belegt und ein langsamer Download
-                # darf nicht abgeschnitten werden.
-                if not self._event_handler_registered:
-                    timeout = min(timeout, 1.5)
-                    logger.warning(
-                        f"[4/5] Rückkanal der Kamera ist nicht eingerichtet — warte nur "
-                        f"{timeout}s statt 10s. Ein echtes DSLR-Foto ist so nicht möglich; "
-                        f"eine SD-Karte in der Kamera würde das lösen."
-                    )
-                elif self._events_gesehen == 0:
-                    timeout = min(timeout, 4.0)
-                    logger.info(
-                        f"[4/5] Bisher kam noch nie ein Kamera-Ereignis an — warte "
-                        f"verkürzt {timeout}s statt 10s, damit die Box nicht stockt."
-                    )
-
                 logger.info(f"[4/5] Warte auf Host-Download (max {timeout}s)...")
-                start_time = time.time()
-                while time.time() - start_time < timeout:
-                    # Events pollen (WICHTIG - ohne das kommen keine Events auf Windows!)
-                    edsdk.get_event()
-                    edsdk.pump_windows_messages()
+                deadline = time.monotonic() + timeout
+                while time.monotonic() < deadline:
                     try:
-                        image_data = self._photo_queue.get(timeout=0.1)
+                        queue_item = self._photo_queue.get(
+                            timeout=min(0.25, max(0.01, deadline - time.monotonic()))
+                        )
+                        if not (
+                            isinstance(queue_item, tuple)
+                            and len(queue_item) == 2
+                        ):
+                            logger.error(
+                                "CANON-CAPTURE ungueltiger Queue-Eintrag verworfen"
+                            )
+                            continue
+                        queue_capture_id, kandidat = queue_item
+                        if queue_capture_id != self._aktueller_capture_id:
+                            logger.warning(
+                                "CANON-CAPTURE fremdes Queue-Bild verworfen "
+                                f"expected={self._aktueller_capture_id} "
+                                f"received={queue_capture_id}"
+                            )
+                            continue
+                        image_data = kandidat
                         if image_data:
-                            logger.info(f"[4/5] ✓ Bild via Host-Download: {len(image_data)} bytes")
+                            self._capture_accepting = False
+                            logger.info(
+                                f"[4/5] ✓ Bild via Host-Download: "
+                                f"{len(image_data)} bytes, "
+                                f"shutter_to_queue_ms="
+                                f"{(time.monotonic() - self._capture_gestartet) * 1000:.1f}"
+                            )
                             break
-                        else:
-                            logger.warning("[4/5] None aus Queue - Download fehlgeschlagen")
-                            image_data = None
                     except Empty:
                         continue
 
                 if image_data is None:
-                    # 2.4.54 — SELBSTHEILUNG: Kam auf dem Direktweg noch NIE ein
-                    # Ereignis an, funktioniert er auf dieser Box nicht. Dann
-                    # einmalig auf die Karte umstellen, statt bei jedem Foto
-                    # erneut ins Leere zu laufen. Der Direktweg bleibt die
-                    # erste Wahl — aber eine Box, die gar keine Fotos liefert,
-                    # ist schlimmer als eine, die den langsameren Weg nimmt.
-                    if self._events_gesehen == 0 and not self._karte_als_notnagel_geprueft:
-                        self._karte_als_notnagel_geprueft = True
-                        volume = edsdk.get_first_volume(self._camera_ref)
-                        if volume:
-                            edsdk.EDSDK_DLL.EdsRelease(volume)
-                            logger.error(
-                                "Auf dem Direktweg kam noch nie ein Ereignis an — "
-                                "stelle dauerhaft auf die Speicherkarte um. "
-                                "Das ist der langsamere Weg, liefert aber Fotos."
-                            )
-                            if edsdk.set_save_to_camera(self._camera_ref):
-                                self._use_host_download = False
-                        else:
-                            logger.error(
-                                "Direktweg liefert nichts und es steckt keine Karte "
-                                "in der Kamera. So kann kein Foto entstehen — "
-                                "USB-Verbindung und Kamera-Einstellungen prüfen."
-                            )
-
-                    # Diagnose fürs nächste Box-Log: Hat der Rückkanal überhaupt
-                    # gefeuert? "0 Ereignisse" heißt: Kamera hat nie ausgelöst
-                    # bzw. das Ereignis kam nie an. "Ereignisse, aber kein Bild"
-                    # heißt: ausgelöst, aber der Download scheiterte.
                     neu = self._events_gesehen - events_vorher
                     logger.error(
-                        f"[4/5] DIAGNOSE: In der Wartezeit kamen {neu} Kamera-Ereignisse an "
-                        f"(insgesamt {self._events_gesehen} seit Start, "
-                        f"{self._pump_laeufe} Abholungen). "
-                        + ("KEIN Ereignis -> Kamera hat nicht ausgelöst oder der Rückkanal ist tot."
-                           if neu == 0 else
-                           "Ereignisse kamen an, aber kein Bild -> Download scheiterte.")
+                        "CANON-CAPTURE TIMEOUT "
+                        f"capture={self._aktueller_capture_id} timeout_s={timeout} "
+                        f"new_events={neu} total_events={self._events_gesehen} "
+                        f"owner={edsdk.owner_snapshot(fail_if_busy=True)}"
                     )
             else:
                 # SD-MODUS: Directory-Polling
@@ -1008,7 +1242,9 @@ class CanonCameraManager(CameraManager):
                 karten_timeout = min(timeout, 6.0)
                 logger.info(f"[4/5] Warte auf Bild von der Karte (max {karten_timeout}s)...")
                 image_data = edsdk.wait_for_new_image(
-                    self._camera_ref, timeout=karten_timeout
+                    self._camera_ref,
+                    timeout=karten_timeout,
+                    baseline=karten_baseline,
                 )
 
             if image_data is None:
@@ -1019,10 +1255,16 @@ class CanonCameraManager(CameraManager):
 
             # SCHRITT 5: Bild dekodieren + LiveView starten
             logger.info("[5/5] Dekodiere Bild...")
+            decode_start = time.monotonic()
             try:
                 image = Image.open(io.BytesIO(image_data))
                 image.load()
-                logger.info(f"[5/5] ✓ Bild dekodiert: {image.size[0]}x{image.size[1]} ({image.mode})")
+                self._log_foto_belichtung(image)
+                logger.info(
+                    f"[5/5] ✓ Bild dekodiert: {image.size[0]}x{image.size[1]} "
+                    f"({image.mode}), decode_ms="
+                    f"{(time.monotonic() - decode_start) * 1000:.1f}"
+                )
             except Exception as e:
                 logger.error(f"[5/5] ✗ Fehler beim Dekodieren: {e}")
                 return self._fallback_to_live_view(live_view_was_active)
@@ -1038,7 +1280,9 @@ class CanonCameraManager(CameraManager):
             self._letzter_fallback_fp = None  # echtes Foto -> Doppelbild-Sperre zurücksetzen
             logger.info("=" * 60)
             logger.info(
-                f"=== ECHTES DSLR-FOTO: {image.size[0]}x{image.size[1]} === "
+                f"=== ECHTES DSLR-FOTO: capture={self._aktueller_capture_id} "
+                f"{image.size[0]}x{image.size[1]} "
+                f"total_ms={(time.monotonic() - capture_start) * 1000:.1f} === "
                 f"Bilanz: {self._fotos_echt} echt / {self._fotos_notloesung} Notlösung / "
                 f"{self._fotos_leer} leer"
             )
@@ -1050,6 +1294,19 @@ class CanonCameraManager(CameraManager):
             import traceback
             logger.error(traceback.format_exc())
             return self._fallback_to_live_view(live_view_was_active)
+        finally:
+            self._diag(
+                "CAPTURE-END",
+                capture=self._aktueller_capture_id,
+                total_ms=f"{(time.monotonic() - capture_start) * 1000:.1f}",
+                events=self._events_gesehen,
+                real=self._fotos_echt,
+                fallback=self._fotos_notloesung,
+                empty=self._fotos_leer,
+            )
+            self._capture_accepting = False
+            self._aktueller_capture_id = None
+            self._capture_gestartet = 0.0
 
     def _fallback_to_live_view(self, restart_live_view: bool) -> Optional[Image.Image]:
         """Notlösung: Vorschaubild statt DSLR-Foto, wenn die Aufnahme scheitert.
@@ -1144,17 +1401,18 @@ class CanonCameraManager(CameraManager):
         return rgb
     
     def take_picture(self) -> bool:
-        """Löst die Kamera aus (ohne auf Bild zu warten)
-        
-        Für manuelles Auslösen. Nutze capture_photo() wenn du das Bild brauchst.
-        
-        Returns:
-            True wenn erfolgreich ausgelöst
+        """Sperrt den alten Direktshutter ohne Queue-/Host-Vertrag.
+
+        Ein Canon-Foto darf nur über :meth:`capture_photo` laufen. Dort sind
+        Host-Readiness, Capture-ID, Transfer-Queue und genau ein Shutter als
+        eine Einheit abgesichert. Die Methode bleibt nur als fehlertoleranter
+        Kompatibilitaetsstub bestehen.
         """
-        if not self._is_initialized or not self._camera_ref:
-            return False
-        
-        return edsdk.take_picture(self._camera_ref)
+        logger.error(
+            "Canon take_picture() ohne Downloadvertrag ist gesperrt; "
+            "capture_photo() verwenden"
+        )
+        return False
     
     @property
     def is_initialized(self) -> bool:

@@ -2709,9 +2709,9 @@ class PhotoboothApp:
                     # Kamera-Handles freigeben (sonst EDSDK Handle-Leak bei jedem Check!)
                     for cam in cameras:
                         ref = cam.get("ref")
-                        if ref and _edsdk.EDSDK_DLL:
+                        if ref:
                             try:
-                                _edsdk.EDSDK_DLL.EdsRelease(ref)
+                                _edsdk.release(ref)
                             except Exception:
                                 pass
             elif camera_type == "nikon":

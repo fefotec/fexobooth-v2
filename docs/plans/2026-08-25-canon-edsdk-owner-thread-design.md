@@ -1,7 +1,8 @@
 # Canon-EDSDK: Ein Eigentümerfaden für alle DSLR-Aufrufe
 
 Datum: 25.08.2026  
-Status: von Christian freigegeben
+Status: implementiert; Host-Transfer mit 2.4.59 hardwarebestaetigt,
+Flottentest ohne Speicherkarte offen
 
 ## Ziel
 
@@ -26,6 +27,9 @@ ausgelöst wird; das Webcam-Verhalten selbst wird nicht geändert.
 - Box-Logs zeigen einen echten Transfer-Event `0x208` mit Dateiname und
   Dateigröße; die Kamera erzeugt das Bild, aber Registrierung bzw. Download
   scheitern im derzeitigen Thread-Mix.
+- Der reale PyInstaller-One-Folder-Build legt `EDSDK.dll` und `EdsImage.dll`
+  unter `_internal` ab. Der bisherige Loader suchte diesen Installationspfad
+  nicht und konnte Canon deshalb nach einer Neuinstallation deaktivieren.
 
 ## Architektur
 
@@ -61,11 +65,16 @@ Session-Thread registriert.
 
 ### 3. Aufnahmefluss ohne Speicherkarte
 
-1. Host-Speicherung setzen.
-2. Object- und State-Handler bestätigt registrieren.
-3. Vor jeder Aufnahme `SetCapacity` senden.
-4. Alte Transferergebnisse verwerfen.
-5. Kamera genau einmal auslösen.
+1. Object- und State-Handler vor `OpenSession` bestaetigt registrieren.
+2. Nach dem Oeffnen `SaveTo=Host` setzen und den Host-Speicher atomar
+   initialisieren: `UILock`, `SetCapacity(reset=1)` genau einmal pro Session,
+   garantiertes `UIUnlock` sowie begrenztes Readback von
+   `SaveTo`/`AvailableShots`.
+3. Ohne bestaetigte Host-Bereitschaft keinen Shutter senden; Capacity nicht
+   vor jedem Foto erneut initialisieren.
+4. Queue im Owner unmittelbar vor dem Shutter für eine Capture-ID
+   scharfschalten; verspätete fremde Events canceln.
+5. Kamera genau einmal auslösen und Shutter-OFF prüfen.
 6. Eigentümerfaden pumpt Events und verarbeitet den Transferauftrag.
 7. JPEG laden, vollständig dekodieren und Auflösung protokollieren.
 
@@ -75,6 +84,13 @@ High-Resolution-Fallback fallen, weil dieser beim Canon-Manager erneut
 
 Der Kartenweg erfasst seine Dateibestands-Baseline vor dem Auslösen. Er dient
 als Diagnose-/Notweg, nicht als Voraussetzung für die Live-Flotte.
+
+### 4. Installierter Build
+
+Der DLL-Loader prüft PyInstallers `sys._MEIPASS` zuerst und verlangt
+`EDSDK.dll` sowie `EdsImage.dll` im selben Verzeichnis. Das von
+`os.add_dll_directory()` gelieferte Handle bleibt für die Prozesslebensdauer
+erhalten, damit die EDSDK ihre Nachbar-DLL zuverlässig nachladen kann.
 
 ## Fehlerbehandlung
 
@@ -111,7 +127,10 @@ Capture-Ereignisse im Dashboard-Log sichtbar bleiben.
   `edsdk-kamera` ausgeführt werden.
 - Tests belegen Callback-Queue, State-Handler, Transfer-Cancel/Release,
   Karten-Baseline vor Trigger und genau einen DSLR-Capture pro Countdown.
-- Bestehende Windows-Tests und Syntax-/Importprüfungen müssen bestehen.
-- Hardware-Erfolg gilt erst als bewiesen, wenn Box 245 ohne Speicherkarte im
-  Dev-Modus Live-View und ein echtes DSLR-JPEG in ungefähr 6000×4000 liefert.
-
+- Ein eigener Test simuliert den gepackten `_internal`-Ordner; ein integrierter
+  Fake-DLL-Test fährt `0x208 → Host-Download → Queue → 6000×4000-JPEG`.
+- Der erweiterte 2.4.60-Abschluss besteht 18/18 Windows-Tests und
+  `py_compile`; `webcam.py` hat keinen semantischen Diff.
+- 2.4.59 hat auf Box 245 mit eingesetzter Karte sieben echte DSLR-JPEGs in
+  6000 x 4000 ueber `SaveTo=Host` geliefert. Der abschliessende Flottenbeweis
+  bleibt ein gleicher Lauf ohne Speicherkarte.

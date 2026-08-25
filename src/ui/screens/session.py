@@ -28,6 +28,17 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _canon_foto_aufbereiten(
+    photo: Image.Image, rotate_180: bool = False
+) -> Image.Image:
+    """Canon-PIL-Bild ohne unnoetigen NumPy/OpenCV-Farbumweg aufbereiten."""
+    if photo.mode != "RGB":
+        photo = photo.convert("RGB")
+    if rotate_180:
+        photo = photo.transpose(Image.Transpose.ROTATE_180)
+    return photo
+
+
 class SessionScreen(ctk.CTkFrame):
     """Session-Screen mit Vollbild-LiveView"""
 
@@ -1218,7 +1229,7 @@ class SessionScreen(ctk.CTkFrame):
         # Deshalb: 900 ms Schonfrist. Ist das Foto vorher da (so soll es sein),
         # sieht der Gast den Hinweis nie. Dauert es doch länger, weiß er
         # wenigstens, dass das eingefrorene Bild nicht sein Foto ist.
-        if self._ist_dslr():
+        if self._zeigt_dslr_wartehinweis():
             self._dslr_hinweis_timer = self.after(900, self._zeige_dslr_wartehinweis)
 
         # Capture in Background-Thread starten (blockiert nicht die UI)
@@ -1229,6 +1240,10 @@ class SessionScreen(ctk.CTkFrame):
         """Läuft die Box mit einer Spiegelreflexkamera?"""
         return str(self.config.get("camera_type", "webcam")).lower() in ("canon", "nikon")
 
+    def _zeigt_dslr_wartehinweis(self) -> bool:
+        """Der schwarze Aufnahmehinweis bleibt ausschließlich bei Nikon aktiv."""
+        return str(self.config.get("camera_type", "webcam")).lower() == "nikon"
+
     def _zeige_dslr_wartehinweis(self):
         """Legt „Foto wird aufgenommen…" über die eingefrorene Vorschau.
 
@@ -1237,7 +1252,7 @@ class SessionScreen(ctk.CTkFrame):
         ganz anderes Bild erscheint. Genau dieser Sprung wurde als Fehler
         gemeldet.
         """
-        if not self._ist_dslr():
+        if not self._zeigt_dslr_wartehinweis():
             return
 
         try:
@@ -1375,6 +1390,7 @@ class SessionScreen(ctk.CTkFrame):
     def _capture_photo_camera_calls(self) -> Optional[Image.Image]:
         """Die eigentlichen Kamera-Aufrufe des Captures (läuft unter _cam_access_lock)."""
         photo = None
+        ist_canon = self.config.get("camera_type", "webcam") == "canon"
 
         try:
             # Canon DSLR
@@ -1382,20 +1398,27 @@ class SessionScreen(ctk.CTkFrame):
                 try:
                     photo = self.app.camera_manager.capture_photo(timeout=10.0)
                     if photo:
-                        frame = np.array(photo)
-                        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                        if self.config.get("rotate_180", False):
-                            frame = cv2.rotate(frame, cv2.ROTATE_180)
-                        # KEIN cv2.flip(frame, 1): LiveView ist gespiegelt (Spiegel-Effekt für
-                        # intuitive Bewegung), aber das gespeicherte/gedruckte Foto darf nicht
-                        # gespiegelt sein — sonst sind Texte auf Kleidung seitenverkehrt.
-                        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                        photo = Image.fromarray(rgb)
+                        if ist_canon:
+                            photo = _canon_foto_aufbereiten(
+                                photo, self.config.get("rotate_180", False)
+                            )
+                        else:
+                            frame = np.array(photo)
+                            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                            if self.config.get("rotate_180", False):
+                                frame = cv2.rotate(frame, cv2.ROTATE_180)
+                            # KEIN cv2.flip(frame, 1): LiveView ist gespiegelt
+                            # (Spiegel-Effekt für intuitive Bewegung), aber das
+                            # gespeicherte Foto darf nicht gespiegelt sein.
+                            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                            photo = Image.fromarray(rgb)
                 except Exception as e:
                     logger.error(f"DSLR Fehler: {e}")
 
-            # Webcam
-            if photo is None:
+            # Webcam/Nikon-Fallback. Bei Canon wuerde get_high_res_frame()
+            # erneut capture_photo() starten. Der Webcam-Pfad selbst bleibt
+            # unveraendert; nur Canon wird hier ausgeschlossen.
+            if photo is None and not ist_canon:
                 cam_settings = self.config.get("camera_settings", {})
                 capture_w = cam_settings.get("single_photo_width", 1920)
                 capture_h = cam_settings.get("single_photo_height", 1080)
@@ -1426,6 +1449,12 @@ class SessionScreen(ctk.CTkFrame):
                     # LiveView wird gespiegelt (Z. ~279), das Foto selbst nicht.
                     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     photo = Image.fromarray(rgb)
+
+            if photo is None and ist_canon:
+                logger.error(
+                    "Canon-Capture lieferte kein echtes Foto; kein zweiter "
+                    "DSLR-Ausloeseversuch ueber den Webcam-Fallback"
+                )
 
         except Exception as e:
             logger.error(f"Capture-Worker Fehler: {e}")

@@ -86,28 +86,28 @@ def _sende(edsdk, ref, methode: str) -> None:
     PRESS = edsdk.kEdsCameraCommand_PressShutterButton
 
     if methode == "take_picture":
-        edsdk.EDSDK_DLL.EdsSendCommand(ref, edsdk.kEdsCameraCommand_TakePicture, 0)
+        edsdk.send_command(ref, edsdk.kEdsCameraCommand_TakePicture, 0)
         return
 
     if methode == "shutter_completely":
         # Genau wie Canons Beispiel: ganz durch, dann loslassen.
-        edsdk.EDSDK_DLL.EdsSendCommand(
+        edsdk.send_command(
             ref, PRESS, edsdk.kEdsCameraCommand_ShutterButton_Completely
         )
-        edsdk.EDSDK_DLL.EdsSendCommand(
+        edsdk.send_command(
             ref, PRESS, edsdk.kEdsCameraCommand_ShutterButton_OFF
         )
         return
 
     if methode == "shutter_half_then_nonaf":
-        edsdk.EDSDK_DLL.EdsSendCommand(
+        edsdk.send_command(
             ref, PRESS, edsdk.kEdsCameraCommand_ShutterButton_Halfway
         )
         time.sleep(0.35)
-        edsdk.EDSDK_DLL.EdsSendCommand(
+        edsdk.send_command(
             ref, PRESS, edsdk.kEdsCameraCommand_ShutterButton_Completely_NonAF
         )
-        edsdk.EDSDK_DLL.EdsSendCommand(
+        edsdk.send_command(
             ref, PRESS, edsdk.kEdsCameraCommand_ShutterButton_OFF
         )
         return
@@ -120,7 +120,7 @@ def _karte_zaehlen(edsdk, ref) -> int:
     try:
         anzahl, folder = edsdk._zaehle_bilder_frisch(ref)
         if folder:
-            edsdk.EDSDK_DLL.EdsRelease(folder)
+            edsdk.release(folder)
         return anzahl
     except Exception as e:
         logger.debug(f"Kartenzaehlung fehlgeschlagen: {e}")
@@ -173,14 +173,17 @@ def _teste_variante(kamera, edsdk, variante: Dict[str, Any], wartezeit: float) -
         print(f"  Ausloesen …")
 
         start = time.time()
+        kamera._aktueller_capture_id = f"diagnose-{name}-{int(start * 1000)}"
+        edsdk.im_kamera_faden(kamera._capture_scharfschalten)
         _sende(edsdk, ref, variante["methode"])
 
         # Warten und dabei BEIDE Wege beobachten
         while time.time() - start < wartezeit:
-            edsdk.get_event()
-
             if not kamera._photo_queue.empty():
-                daten = kamera._photo_queue.get_nowait()
+                queue_capture, daten = kamera._photo_queue.get_nowait()
+                if queue_capture != kamera._aktueller_capture_id:
+                    print(f"  ! Fremdes Queue-Bild verworfen ({queue_capture})")
+                    continue
                 dauer = time.time() - start
                 ergebnis.update(
                     erfolg=True, sekunden=round(dauer, 1), quelle="Direktdownload",
@@ -219,10 +222,13 @@ def _teste_variante(kamera, edsdk, variante: Dict[str, Any], wartezeit: float) -
         print(f"  ✗ Abbruch: {e}")
         return ergebnis
     finally:
+        kamera._capture_accepting = False
+        kamera._aktueller_capture_id = None
+        kamera._capture_gestartet = 0.0
         # Ausloeser sicherheitshalber loslassen — bleibt er gedrueckt, ignoriert
         # die Kamera den naechsten Befehl.
         try:
-            edsdk.EDSDK_DLL.EdsSendCommand(
+            edsdk.send_command(
                 ref, edsdk.kEdsCameraCommand_PressShutterButton,
                 edsdk.kEdsCameraCommand_ShutterButton_OFF,
             )
@@ -262,6 +268,12 @@ def run(wartezeit: float = 8.0) -> int:
     print(f"  Verbunden mit: {kamera._camera_info.get('name', '?')}")
     modus = "Direktdownload (keine Karte)" if kamera._use_host_download else "Speicherkarte"
     print(f"  Die Box wuerde aktuell nutzen: {modus}")
+    if kamera._use_host_download and not kamera._host_storage_ready:
+        print("  FEHLER: Host-Speicher wurde von der Kamera nicht bestätigt.")
+        kamera.release()
+        return 2
+    if kamera._use_host_download:
+        print("  Host-Speicher: beim Session-Aufbau bestätigt")
 
     ergebnisse: List[Dict[str, Any]] = []
     try:

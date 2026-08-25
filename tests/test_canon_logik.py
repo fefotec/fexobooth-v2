@@ -7,6 +7,7 @@ sys.path.insert(0, r"C:\Git-Projects\fexobooth-v2")
 # --- edsdk faelschen, damit canon.py ohne DLL importierbar ist -------------
 fake = types.ModuleType("src.camera.edsdk")
 fake.letzter_fehler = 0
+fake.EDS_ERR_OK = 0
 fake.ERROR_NAMES = {0x81: "DEVICE_BUSY", 0xc1: "COMM_DISCONNECTED", 0: "OK"}
 fake.VERBINDUNG_TOT = {0x81, 0xc1, 0x80}
 fake.ist_verbindung_tot = lambda e: e in fake.VERBINDUNG_TOT
@@ -36,6 +37,9 @@ fake.close_session = lambda ref: None
 fake.set_save_to_host = lambda ref: True
 fake.set_save_to_camera = lambda ref: True
 fake.set_object_event_handler = lambda ref, cb: True
+fake.set_state_event_handler = lambda ref, cb: True
+fake.dispose_camera = lambda ref, session_open: True
+fake.owner_snapshot = lambda: "fake-owner"
 fake.log_camera_settings = lambda ref: None
 sys.modules["src.camera.edsdk"] = fake
 
@@ -107,6 +111,30 @@ b2 = cam._fallback_to_live_view(False)
 print(f"  1. Notloesung: {'Bild' if b1 is not None else 'None'}  (darf durch)")
 print(f"  2. Notloesung: {'Bild -> FALSCH!' if b2 is not None else 'None -> RICHTIG (Doppelbild geblockt)'}")
 assert b1 is not None and b2 is None
+
+print()
+print("TEST 6: Reguläres None vom EDSDK wird als Live-View-Fehler gezaehlt")
+fake.get_live_view_image = lambda ref: None
+fake.letzter_fehler = 0xa102  # OBJECT_NOTREADY, noch kein Verbindungsabbruch
+cam._live_view_active = True
+cam._evf_error_count = 0
+assert cam.get_frame(use_cache=False, allow_stale=False) is None
+assert cam._evf_error_count == 1
+
+print()
+print("TEST 7: Fataler Live-View-Fehler stoesst Neu-Enumeration an")
+neuaufbau = []
+fake.letzter_fehler = 0xc1
+cam._verbindung_neu_aufbauen = lambda grund: neuaufbau.append(grund) or True
+assert cam.get_frame(use_cache=False, allow_stale=False) is None
+assert neuaufbau and "COMM_DISCONNECTED" in neuaufbau[0]
+
+print()
+print("TEST 8: Owner-Fehler bei Kameraliste verklemmt Initialisierung nicht")
+fake.get_camera_list = lambda: None
+init_cam = CanonCameraManager()
+assert init_cam.initialize() is False
+assert init_cam._initializing is False
 
 print()
 print("=" * 62)

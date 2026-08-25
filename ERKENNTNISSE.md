@@ -6,6 +6,60 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### Host-Bereitschaft ist ein Session-Vertrag, kein Capture-Ritual (2.4.60)
+
+| | |
+|---|---|
+| **Hardwarebefund** | 2.4.59 stellte `SaveTo=Host` ein und meldete Capacity unmittelbar vor jedem Foto. Beim ersten Capture nach dem Kaltstart antwortete die EOS 2000D trotzdem mit `TAKE_PICTURE_CARD_NG`; danach kamen sieben echte 6000-x-4000-JPEGs fehlerfrei. |
+| **Ursache** | Ein erfolgreicher Setter beweist noch nicht, dass das Speicherziel in der Kamera bereits wirksam und aufnahmebereit ist. Die vorherige Folge verteilte Konfiguration und Nutzung zudem auf zwei Zeitpunkte statt sie als abgeschlossenen Initialisierungsschritt zu behandeln. |
+| **Lösung** | `SaveTo=Host`, `UILock`, genau ein `EdsSetCapacity(reset=1)`, garantiertes `UIUnlock` und begrenzte Readbacks laufen atomar nach `OpenSession`. Erst danach gilt die Session als Host-ready. Vor einem Foto wird nur dieses Flag geprueft; Capacity wird nicht jedes Mal neu initialisiert. |
+| **Fehlervertrag** | Ohne bestaetigtes Host-Ziel kein Shutter. Ein `CARD_NG` invalidiert die Bereitschaft fuer den naechsten kontrollierten Aufbau, fuehrt aber niemals zu einem automatischen zweiten Shutter. Nicht lesbare oder von Canon als unbekannt gemeldete `AvailableShots` blockieren nicht, wenn Setter, Capacity und `SaveTo`-Readback erfolgreich waren. |
+| **Merke** | Hardware-Initialisierung braucht einen pruefbaren Abschlusszustand. Wiederholtes Setzen direkt vor der Nutzung ersetzt diesen Nachweis nicht und kann selbst ein Race erzeugen. |
+
+### Gemeinsamer UI-Code braucht eine explizite Kameratyp-Grenze (2.4.60)
+
+| | |
+|---|---|
+| **Problem** | Der fuer langsame DSLR-Captures gedachte schwarze Wartehinweis erschien nach 900 ms auch bei jedem funktionierenden Canon-Foto. Gleichzeitig lief ein bereits dekodiertes Canon-PIL-Bild ohne sichtbaren Nutzen durch NumPy, zwei Farbkonvertierungen und wieder zurueck nach PIL. |
+| **Lösung** | Nur Canon plant den Balken nicht mehr und bleibt fuer Anzeige sowie 180-Grad-Drehung im PIL-Pfad. Nikon behaelt seinen Hinweis. Der Webcam-Zweig und `webcam.py` bleiben semantisch unveraendert. |
+| **Merke** | `DSLR` ist keine ausreichende Verhaltenskategorie, wenn Canon und Nikon unterschiedliche Laufzeiten und Datenformate haben. Gemeinsamer Code muss an der kleinsten fachlich richtigen Grenze verzweigen. |
+
+### Der installierte Build ist ein eigener Laufzeitkontext (2.4.59)
+
+| | |
+|---|---|
+| **Problem** | Canon konnte im Quellbaum vorhanden sein und nach einer Neuinstallation trotzdem verschwinden. dslrBooth funktionierte auf demselben Gerät weiter. |
+| **Ursache** | Der PyInstaller-One-Folder-Build packte `EDSDK.dll` und `EdsImage.dll` ausschließlich nach `_internal`. Der Loader suchte Repo-/Altpfade und den EXE-Root, aber nicht `sys._MEIPASS`. Zusätzlich wurde das Handle von `os.add_dll_directory()` nicht gehalten und konnte den Abhängigkeitspfad wieder entfernen. |
+| **Lösung** | `_MEIPASS` zuerst prüfen, danach Frozen-Fallbacks; beide Canon-DLLs am selben Ort verlangen; das DLL-Directory-Handle für die Prozesslebensdauer halten. `tests/test_dll_loader.py` simuliert exakt den installierten Aufbau. |
+| **Merke** | Ein grüner Quelltest beweist nicht, dass eine native DLL im Paket auffindbar ist. Bei jeder PyInstaller-Nativanbindung gehören Paketinhalt, `_MEIPASS` und Abhängigkeits-DLLs in einen eigenen Regressionstest. |
+
+### Ein teilweise zentralisierter Hardware-Faden ist weiterhin Mehrfadenbetrieb (2.4.59)
+
+| | |
+|---|---|
+| **Problem** | 2.4.57 hieß „ein Faden“, routete aber nur SDK-Start, Kameraliste und `OpenSession` dorthin. Handler, Properties, Live-View, Shutter, Events, Download und Release liefen weiter verteilt. |
+| **Entscheidung** | Genau ein COM-STA-Owner besitzt ausnahmslos SDK, Session, Referenzen und jeden `EDSDK_DLL.*`-Aufruf. Öffentliche Wrapper dispatchen dorthin; ein AST-Test verhindert neue undekorierte DLL-Einstiege. |
+| **Callback-Vertrag** | Der native Callback macht keinen reentranten Download. Er legt nur einen priorisierten Auftrag ab und kehrt sofort zur DLL zurück. Download/Complete/Cancel/Release folgen danach im Owner. Object- und State-Handler werden vor `OpenSession` registriert. |
+| **Fail-closed** | Parallele Starter warten auf dasselbe Ready-Event. Nach einem nativen Timeout gilt der Owner als ungesund und nimmt nichts Neues an. Queuezustände wechseln unter Lock, damit ein gecancelter Auftrag niemals später doch noch auslöst. |
+| **Merke** | „Fast alle“ nativen Aufrufe auf einem Faden ist bei einer STA-Bibliothek keine Architektur. Owner-Grenze, Callback-Reentranz und Timeoutverhalten müssen maschinell geprüft werden. |
+
+### Canon-Konstanten sind Herstellervertrag, keine Modellbesonderheit (2.4.59)
+
+| | |
+|---|---|
+| **Ursache** | Object-Events waren im Code um `0x100` verschoben und JPEG-Qualitäten falsch. `0x208` wurde deshalb als EOS-2000D-Sonderwert behandelt, obwohl `EDSDKTypes.h` ihn offiziell als `DirItemRequestTransfer` definiert. State-Event `0x301` war zeitweise im Object-Handler vermischt. |
+| **Lösung** | Konstanten direkt aus `EDSDKTypes.h`: Object-All `0x200`, Transfer `0x208`, State-All `0x300`, Shutdown `0x301`, CaptureError `0x305`, InternalError `0x306`; Object und State haben getrennte Handler. |
+| **Merke** | Headerwerte nicht aus Erinnerungen, alten Wrappern oder vermeintlichen Kameraspezialfällen ableiten. Ein Test gleicht die produktionskritischen Werte direkt gegen den mitgelieferten Header ab. |
+
+### Eine gemeinsame Capture-Abstraktion darf keine zweite Hardwareaufnahme verstecken (2.4.59)
+
+| | |
+|---|---|
+| **Problem** | Nach einem fehlgeschlagenen Canon-`capture_photo()` lief der generische High-Res-Fallback weiter. Bei Canon führte auch dieser wieder zu `capture_photo()` und konnte ein zweites DSLR-Foto auslösen. Die Webcam-Optimierung aus `841de6c` hatte damit unbeabsichtigt den Canon-Vertrag verändert. |
+| **Lösung** | Nur Canon wird am generischen Fallback vorbeigeführt; der Webcam-Pfad bleibt semantisch unverändert. Canon sendet genau einen Capture-Befehl plus geprüftes Shutter-OFF. AF_NG wird sichtbar gemeldet, nicht automatisch mit NonAF wiederholt. |
+| **Queue-Vertrag** | Die Host-Queue wird im Owner unmittelbar vor dem Shutter für eine Capture-ID scharfgeschaltet. Verspätete Events außerhalb dieses Fensters werden gecancelt; Queueeinträge einer anderen ID werden verworfen. |
+| **Merke** | Eine Optimierung in gemeinsamem Capture-Code braucht explizite Verträge pro Kameratyp. Bei Hardware bedeutet ein harmlos wirkender Fallback eventuell eine zweite physische Aktion. |
+
 ### Eine geaenderte ctypes-Signatur ohne Aufrufstellen-Pruefung ist eine Zeitbombe (2.4.58)
 
 | | |
@@ -34,8 +88,8 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 | **Problem** | Die Box fror beim Start jeder Session ein. |
 | **Ursache** | In 2.4.49 wurde ein schuetzender Nebenfaden um `EdsSetObjectEventHandler` entfernt — mit der Begruendung, eine aeltere Fassung habe den Aufruf direkt gemacht und "lief frueher zuverlaessig". Der Aufruf kehrt aber nicht von allein zurueck: Er wartet darauf, dass der Programmfaden Windows-Nachrichten abarbeitet, und blockiert genau diesen Faden. |
 | **Der Fehlschluss** | Die aeltere Fassung lief tatsaechlich — aber in ihr wurde der Direktbetrieb praktisch nie benutzt, der problematische Aufruf kam also kaum vor. Aus "die Version lief" wurde faelschlich "diese Zeile in der Version war richtig". |
-| **Lösung** | Nebenfaden zurueck, Nachrichtenschleife im Haupt-Faden, und ein hartes Zeitlimit: Nach 4 Sekunden laeuft die Box weiter, egal was die Kamera tut. |
-| **Merke** | Ein Hinweis wie "frueher lief das" grenzt den Suchraum ein — er beweist aber nicht, dass jede einzelne Zeile jener Fassung richtig war. Vor dem Zurueckbauen pruefen, ob der fragliche Pfad damals ueberhaupt durchlaufen wurde. **Und unabhaengig davon:** Ein Aufruf an fremde Hardware, der die Bedienoberflaeche blockieren kann, braucht IMMER ein hartes Zeitlimit. Eine Box darf langsam sein, aber nie stehen. |
+| **Lösung** | **Korrigiert in 2.4.59:** Kein Wegwerf-Nebenfaden und kein Pump im Hauptfaden. Der Handler wird im einzigen STA-Owner vor `OpenSession` registriert; ein Timeout sperrt diesen Owner fail-closed, statt den nativen Aufruf im Hintergrund weiterlaufen und einen zweiten Versuch zuzulassen. |
+| **Merke** | Ein Hinweis wie "frueher lief das" grenzt den Suchraum ein — er beweist aber nicht, dass jede einzelne Zeile jener Fassung richtig war. Vor dem Zurueckbauen pruefen, ob der fragliche Pfad damals ueberhaupt durchlaufen wurde. Ein nativer Timeout darf nie zu einem weiterlebenden Zombie-Aufruf plus Retry fuehren. |
 
 
 ### Die Fotos gehen direkt in den Rechner, nicht ueber die Karte (2.4.53)
@@ -47,14 +101,15 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 | **Begruendung** | Fuer eine Fotobox ist der Kartenweg in jeder Hinsicht schlechter: Er schreibt erst und liest dann wieder, haengt am Zustand und Tempo der Karte, und die Bilder liegen doppelt. Der Direktweg ist das, was Fotobox-Software ueblicherweise tut. |
 | **Merke** | Der Vorrang war nicht nur langsam, er hat auch die Fehlersuche verfaelscht: Weil in der Testbox zufaellig eine Karte lag, lief die Box ueber Wochen auf dem Notweg — und eine Reparatur am eigentlich gewollten Weg blieb ungetestet, ohne dass es auffiel. **Wenn es zwei Wege zum selben Ziel gibt, muss im Log stehen, welcher gerade genommen wird und warum.** Und der bevorzugte Weg gehoert dorthin, wo die Anforderung ihn hinstellt — nicht dorthin, wo die Testhardware ihn zufaellig hindraengt. |
 
-### Eine fluechtige Freigabe muss vor jeder Nutzung erneuert werden (2.4.53)
+### Capacity initialisiert den Host-Speicher einmal pro Session (korrigiert in 2.4.60)
 
 | | |
 |---|---|
 | **Problem** | Die Kamera loeste hoerbar aus ("ich hoere den spiegel"), legte das Bild aber nirgends ab. |
-| **Ursache** | Im Direktbetrieb loest eine Canon nur aus, wenn ihr zuvor freier Speicher am Rechner gemeldet wurde (`EdsSetCapacity`). Diese Meldung verfaellt — nach einer Aufnahme, einem Verbindungswackler oder dem Aufwachen. Sie wurde aber nur einmal beim Verbinden gesetzt. |
-| **Lösung** | Vor jeder Aufnahme erneut melden. Kostet Millisekunden. |
-| **Merke** | Bei Geraeten, die eine Freigabe/Reservierung brauchen, immer pruefen, ob sie dauerhaft gilt oder verfaellt. Eine einmalige Anmeldung beim Verbinden reicht bei fluechtigen Zustaenden nicht — und der Fehlerfall sieht dann nicht nach "Freigabe fehlt" aus, sondern nach "Geraet tut nichts". |
+| **Fruehere Annahme (2.4.53)** | `EdsSetCapacity` muesse vor jeder Aufnahme erneuert werden. Diese Annahme war nicht durch den Canon-Vertrag oder einen erfolgreichen Hardwarevergleich belegt. |
+| **Neue Evidenz** | 2.4.59 meldete Capacity vor jedem Foto. Trotzdem scheiterte nur der erste Kaltstart-Versuch mit `CARD_NG`; sieben weitere Fotos derselben Session funktionierten. Das spricht fuer eine unvollstaendig bestaetigte Initialisierung, nicht fuer eine pro Foto verfallende Freigabe. |
+| **Lösung** | Capacity nach `SaveTo=Host` genau einmal im geschuetzten Initialisierungsblock setzen und die Wirksamkeit danach begrenzt zuruecklesen. Nach Neuverbindung oder Recovery wird der gesamte Block erneut ausgefuehrt. |
+| **Merke** | Eine wiederholte Massnahme darf nicht allein deshalb zum Vertrag werden, weil sie billig wirkt. Erst Herstellerfolge und Hardwaredaten entscheiden, ob ein Zustand pro Session oder pro Aktion hergestellt werden muss. |
 
 
 ### Vier Runden "eine Vermutung pro Build" sind teurer als ein Messlauf (2.4.51)
@@ -73,8 +128,8 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 |---|---|
 | **Problem** | Das Box-Log meldete "✓ Kamera ausgeloest!", danach lief die Aufnahme in einen 10-Sekunden-Timeout. Die Bildanzahl auf der Karte blieb bei 1726. |
 | **Ursache** | `EdsSendCommand(TakePicture)` bestaetigt nur, dass der Befehl bei der Kamera angekommen ist. Ob sie ihn ausfuehrt, steht auf einem anderen Blatt: Findet der Autofokus keinen Halt, loest sie nicht aus — ohne Fehlermeldung. |
-| **Lösung** | Ausloesen in drei Schritten wie mit dem Finger: halb druecken (AF laeuft), ganz durchdruecken ohne AF-Zwang (Aufnahme erzwingen), loslassen. Der AF bleibt aktiv, blockiert aber nicht mehr. |
-| **Merke** | Bei Geraetesteuerung immer zwischen "Befehl angenommen" und "Wirkung eingetreten" unterscheiden — und die **Wirkung** protokollieren, nicht die Annahme. Hier war der Beweis eine simple Zahl: die Bildanzahl vor und nach dem Ausloesen. Eine Erfolgsmeldung, die nur den Transport bestaetigt, ist im Log schlimmer als keine, weil sie den naechsten Sucher am eigentlichen Problem vorbeifuehrt. |
+| **Lösung** | **Korrigiert in 2.4.59:** Genau Canons Referenzfolge `Completely` → `OFF`, ohne halben Druck und ohne automatischen NonAF-Zweitausloeser. Press- und OFF-Rueckgabe werden getrennt geloggt. Erfolg gilt erst nach passendem Transfer-Event, Download und dekodiertem JPEG. |
+| **Merke** | Bei Geraetesteuerung immer zwischen "Befehl angenommen" und "Wirkung eingetreten" unterscheiden — und die **Wirkung** protokollieren, nicht die Annahme. Ein automatischer Zweitausloeser ist keine harmlose Fehlerbehandlung: Das erste Bild kann nur verspaetet sein und dann entstehen zwei physische Aufnahmen. |
 
 ### Wenn der Nutzer sagt "frueher lief das", ist das ein Fahrplan, keine Meinung (2.4.49)
 
@@ -145,8 +200,8 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 |---|---|
 | **Problem** | Zwei DSLR-Boxen, 212 Auslösungen, **null** echte Fotos. Die Kamera löste aus, aber kein Bild kam je an. |
 | **Ursache** | Canons Bibliothek meldet „Bild ist fertig" über die Windows-Nachrichtenschlange an genau den Programmfaden, der die Kamera geöffnet hat — den Haupt-Faden mit der Bedienoberfläche. Abgeholt wurde die Meldung aber nur in der Warteschleife der Aufnahme. Und die wurde irgendwann in einen Hintergrund-Faden verlegt, damit die Oberfläche flüssig bleibt. Seitdem lagen die Meldungen ungelesen im Haupt-Faden. |
-| **Lösung** | `app.py` holt die Ereignisse alle 50 ms im Haupt-Faden ab — hinter einer Abfrage auf `camera_type == "canon"`, damit die Webcam-Flotte nichts davon merkt. |
-| **Merke** | Verlagerung in einen Hintergrund-Faden ist bei Bibliotheken mit Ereignis-Rückruf nie folgenlos. Wenn nach so einem Umbau „alles läuft, nur die Rückmeldung kommt nicht", zuerst fragen: In welchem Faden wird die Rückmeldung eigentlich abgeholt? Und: Ein Zähler, der zeigt wie oft ein Rückruf gefeuert hat, hätte das in Minuten statt Monaten geklärt. |
+| **Lösung** | **Korrigiert in 2.4.59:** Der einzige Canon-Owner öffnet die Session, pumpt alle 50 ms `EdsGetEvent` und die Windows-Nachrichten. Tk- und Capture-Thread rufen EDSDK nie auf. Der native Callback stellt nur Folgearbeit in dieselbe Owner-Queue. |
+| **Merke** | Verlagerung in einen Hintergrund-Faden ist bei Bibliotheken mit Ereignis-Rückruf nie folgenlos. Wenn nach so einem Umbau „alles läuft, nur die Rückmeldung kommt nicht", zuerst fragen: Welcher Faden besitzt Session, Message-Pump und Callback — und ist es wirklich derselbe? |
 
 
 ### Ein „Optimierung": Wer eine Arbeit einspart, kann eine unbemerkte Selbstheilung mit einsparen (2.4.44)
@@ -333,32 +388,30 @@ ctk_img = ctk.CTkImage(size=(logical_w, logical_h))
 
 Betrifft: `_display_preview()`, `_build_flash_cache()`, `_show_main_preview()`, Final-Screen Preview.
 
-### EDSDK: EdsSetObjectEventHandler kehrt nie zurück, funktioniert aber trotzdem!
+### VERWORFEN 2.4.59: Handler im Wegwerfthread und Erfolg trotz Timeout
 
 | | |
 |---|---|
-| **Kontext** | Canon EOS 2000D: `EdsSetObjectEventHandler` DLL-Call blockiert permanent (kehrt nie zurück), registriert aber den Event-Handler trotzdem (~150ms). Events feuern korrekt |
-| **Ursache** | EDSDK nutzt intern COM (STA). Der DLL-Call wartet vermutlich auf eine COM-Synchronisation die nie abschließt. Das Message-Pumping ermöglicht die Handler-Registrierung, aber die Funktion kehrt trotzdem nicht zurück |
-| **Entscheidung** | DLL-Call in daemon Background-Thread starten, Hauptthread pumpt 500ms Windows-Messages. Danach gilt der Handler als registriert (basierend auf beobachteten Events). Daemon-Thread bleibt im Hintergrund, wird bei App-Exit automatisch beendet |
-| **Alternativen** | 5s Timeout (zu lang, blockiert Session-Start), Lazy Registration in `capture_photo()` (gleicher Deadlock), alle EDSDK-Calls in dediziertem Thread (zu großer Refactor) |
-| **Begründung** | Der Handler funktioniert trotz non-return. 500ms Pump reicht (Events nach ~150ms). Daemon-Thread verhindert Resource-Leaks. Minimal-invasiv: nur `edsdk.py` geändert |
-| **Merke** | EDSDK `EdsSetObjectEventHandler` kehrt auf manchen Systemen nie zurück. Nicht auf Return warten! Stattdessen: Threaded Call + kurzes Message-Pumping + vertrauen dass Handler funktioniert (Events prüfen) |
+| **Alte Annahme** | Ein blockierter `EdsSetObjectEventHandler` wurde nach 500 ms trotzdem als Erfolg behandelt; der native Aufruf lebte in einem Daemon-Thread weiter. |
+| **Warum verworfen** | Das war kein Cleanup: Die DLL konnte weiter blockiert bleiben, die Kamera danach DEVICE_BUSY melden und jeder Retry einen weiteren Zombie-Aufruf erzeugen. „Registriert vermutlich“ war nie ein belastbarer Erfolg. |
+| **Aktuelle Entscheidung** | Object- und State-Handler werden im einzigen STA-Owner vor `OpenSession` registriert. Nur echte Rückgabe `EDS_ERR_OK` zählt. Hängt ein nativer Aufruf, wird der Owner gesperrt und kein weiterer EDSDK-Auftrag gestartet. |
+| **Merke** | Einen nicht zurückgekehrten Hardwareaufruf nicht als Erfolg deklarieren. Ein Daemon-Thread beseitigt keinen nativen Lock. |
 
-### Canon EOS 2000D: Event 0x208 statt 0x108 bei Host-Download
+### Korrigiert 2.4.59: Event 0x208 ist der offizielle Host-Transfer
 
 | | |
 |---|---|
-| **Kontext** | Canon EOS 2000D sendet bei Host-Download (ohne SD-Karte) Event `0x00000208` statt Standard `0x00000108` (DirItemRequestTransfer). Wird dieses Event ignoriert, läuft der Capture in einen 10s-Timeout, Bilder werden nie heruntergeladen |
-| **Entscheidung** | `_on_object_event()` behandelt `0x108`, `0x208` UND `0x100` (DirItemCreated) als Download-Trigger. Objekt wird nach Download mit `EdsRelease()` freigegeben |
-| **Merke** | Nicht alle Canon-Modelle senden dieselben Events! Event-IDs immer loggen und großzügig behandeln. Standard-Events aus der EDSDK-Doku sind nur Richtwerte |
+| **Kontext** | Der alte Wrapper nannte `0x108` Standard und `0x208` eine EOS-2000D-Abweichung. Der mitgelieferte `EDSDKTypes.h` definiert aber Object-All=`0x200`, DirItemCreated=`0x204` und DirItemRequestTransfer=`0x208`. |
+| **Entscheidung** | Nur die offiziellen Transfer-Events `0x208`/`0x209` starten einen Download. `0x204` ist kein Transferauftrag; unbekannte Events mit Referenz werden sauber freigegeben. |
+| **Merke** | Eventwerte direkt aus dem Hersteller-Header testen. „Großzügig behandeln“ kann bei Ownership-Events zu doppeltem Download, falschem Complete oder Leaks führen. |
 
 ### Canon DSLR: Kamera-Shutdown Recovery (Event 0x301)
 
 | | |
 |---|---|
 | **Kontext** | Canon EOS 2000D sendet `0x00000301` (Shutdown) wenn Transfer-Events nicht beantwortet werden. Danach schlagen ALLE EDSDK-Calls mit Fehler 0x61 (UNKNOWN) fehl |
-| **Entscheidung** | `_camera_shutdown` Flag wird bei 0x301 gesetzt. Beim nächsten `capture_photo()` wird automatisch die Session geschlossen und neu geöffnet (SaveTo + Event-Handler neu konfiguriert) |
-| **Merke** | EDSDK-Kamera kann sich in einen unrecoverable State begeben. Proaktive Recovery (Session close/reopen) ist besser als App-Neustart |
+| **Entscheidung** | `_camera_shutdown` wird bei State-Event `0x301` gesetzt. Beim nächsten Capture werden Session und alte Kamera-Referenz atomar freigegeben; danach folgt eine vollständige Neu-Enumeration mit neuen Handles, Handlern und `SaveTo=Host`. |
+| **Merke** | Alte EDSDK-Referenzen nach Shutdown/SDK-Störung nicht wiederverwenden. Recovery bedeutet neue Enumeration, nicht nur Close/Open auf demselben Handle. |
 
 ### Performance: Kamera zwischen Sessions offen halten!
 
@@ -369,14 +422,14 @@ Betrifft: `_display_preview()`, `_build_flash_cache()`, `_show_main_preview()`, 
 | **Ergänzung** | Kamera-Vorinitialisierung während Start-Video: `play_video("video_start")` startet Init nach 200ms parallel. VLC spielt in eigenem Thread weiter. Wenn Video endet, ist Kamera bereit |
 | **Merke** | EDSDK Session/Init ist teuer (~1-5s). Kamera-Connection zwischen Sessions wiederverwenden, nicht jedes Mal neu aufbauen |
 
-### EDSDK ist NICHT thread-safe! (Windows COM STA)
+### Korrigiert 2.4.59: EDSDK gehört ausnahmslos einem COM-STA-Owner
 
 | | |
 |---|---|
 | **Kontext** | Canon EDSDK DLL nutzt Windows COM mit Single-Threaded Apartment. Wenn zwei Threads gleichzeitig EDSDK-Funktionen aufrufen (z.B. UI-Thread `list_cameras()` + Background-Thread `capture_photo()`), entsteht ein Deadlock |
-| **Entscheidung** | Alle EDSDK-Aufrufe vom UI-Thread nur wenn `camera_manager.is_initialized == False` (= keine aktive Session). Wenn die Kamera in Benutzung ist, überspringt `_check_camera_status()` den EDSDK-Check komplett |
-| **Alternativen** | Thread-Lock um alle EDSDK-Aufrufe (komplexer, fehleranfällig), EDSDK nur von einem Thread (erfordert Message-Queue-Architektur), Kamera-Status ohne EDSDK prüfen (WMI/USB-Enumeration - Overkill) |
-| **Begründung** | Pragmatische Lösung: `is_initialized` ist ein zuverlässiger Proxy. Wenn die Kamera initialisiert ist, wissen wir dass sie verbunden ist. Wenn nicht, ist es sicher EDSDK aufzurufen weil kein anderer Thread es nutzt |
+| **Entscheidung** | Jeder `EDSDK_DLL.*`-Aufruf läuft im dedizierten `edsdk-kamera`-STA mit Queue, zentralem `EdsGetEvent` und Windows-Message-Pump. UI-, Capture- und Status-Threads rufen nur dispatchende Python-Wrapper auf. |
+| **Verworfen** | `is_initialized` als Proxy sowie einzelne Locks. Auch Initialisierung, Statusprobe, Release und Fehlerpfade besitzen native Handles und müssen denselben Owner nutzen. |
+| **Begründung** | Ein Lock verhindert Gleichzeitigkeit, aber nicht den Wechsel des COM-Apartments. Nur derselbe ausführende Thread erfüllt beide Bedingungen. |
 
 ### Kiosk-Modus: Taskleiste verstecken + Benachrichtigungen unterdrücken (KEIN permanentes topmost!)
 
@@ -404,14 +457,14 @@ Betrifft: `_display_preview()`, `_build_flash_cache()`, `_show_main_preview()`, 
 | **Entscheidung** | Buttons auf einer schwarzen Leiste (`CTkFrame` mit `fg_color="#000000"`) platzieren statt direkt über dem Bild. Die Leiste geht über die volle Breite → Buttons mit `corner_radius` sehen sauber aus |
 | **Merke** | CTk-Widgets können keine echte Transparenz über Bildern. Workaround: einheitlich farbiger Container als Basis für gerundete Buttons |
 
-### Canon DSLR: Dual-Modus Capture (SD-Karte optional, Host-Download als Fallback)
+### Ueberholt 2.4.59: Canon-Produktion ist Host-only, nicht Dual-Modus
 
 | | |
 |---|---|
 | **Kontext** | Canon EOS 2000D auf Fotoboxen - manche haben SD-Karte, manche nicht. Bilder müssen in voller DSLR-Auflösung auf dem Tablet landen. Host-Download hing anfangs → Ursache war der EDSDK-Deadlock (UI-Thread + Session-Thread gleichzeitig), NICHT der Host-Download selbst |
-| **Entscheidung** | Zwei Modi: (1) MIT SD-Karte: `set_save_to_camera()` + Directory-Polling (zuverlässigster Modus). (2) OHNE SD-Karte: `set_save_to_host()` + Event-Handler (`_on_object_event`) + Queue-basierter Download. System-Test nutzt immer LiveView (braucht keine SD-Karte, schneller) |
-| **Alternativen** | Nur Directory-Polling (braucht SD-Karte - nicht akzeptabel für Boxen ohne SD), nur Host-Download (weniger getestet als Directory-Polling), LiveView-Fallback statt echtem Capture (reduzierte Auflösung) |
-| **Begründung** | Beide Modi müssen funktionieren. Directory-Polling ist bewährt und zuverlässig. Host-Download ist notwendig für Boxen ohne SD-Karte. Der EDSDK-Deadlock-Fix (kein EDSDK vom UI-Thread wenn Session aktiv) war die eigentliche Lösung für das Hängen. `get_event()` MUSS regelmäßig gepollt werden damit Events auf Windows dispatched werden |
+| **Entscheidung** | Die Flotte hat in der Regel keine Karte. Produktion setzt daher immer `SaveTo=Host` und nutzt Object-Event `0x208` plus Memory-Download. Kartenfunktionen bleiben nur als explizites Diagnosewerkzeug, nicht als automatische Laufzeitweiche. |
+| **Verworfen** | Karte bevorzugen oder bei Fehlern still umschalten. Das machte Tests auf einer zufällig bestückten Box nicht auf die echte Flotte übertragbar und verdeckte zwei unabhängige Fehlerpfade. |
+| **Begründung** | Ein verbindlicher Produktionsweg ist testbar. Das zentrale Owner-/Callback-Modell beseitigt die Architekturursache des früheren Host-Hängens. |
 
 ### Taskleiste: Crash-Sicherheit durch 3-Schichten-Schutz
 

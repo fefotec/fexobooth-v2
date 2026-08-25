@@ -6,6 +6,145 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.60] - 2026-08-25 - Canon-Kaltstart und Capture-Anzeige nachgebessert
+
+> Ausschliesslich der interne Canon-DSLR-Pfad wurde nachgebessert. Nikon
+> behaelt seinen Wartehinweis; der funktionierende Webcam-Pfad und
+> `webcam.py` bleiben semantisch unveraendert.
+
+### Ergebnis des ersten 2.4.59-Hardwaretests
+
+Box 245 lieferte mit der EOS 2000D und eingesetzter SD-Karte nach dem ersten
+Versuch sieben echte JPEGs mit 6000 x 4000 Pixeln sauber per Host-Transfer.
+Damit sind Owner, Event-Queue, Download und Dekodierung erstmals auf Hardware
+bestaetigt. Nur das allererste Foto nach dem Kaltstart wurde mit
+`TAKE_PICTURE_CARD_NG (0x8d07)` abgelehnt und durch ein Live-View-Notbild
+ersetzt.
+
+Die zunaechst auffaellige Ueberbelichtung kam von einer verstellten
+Belichtungskorrektur an der Kamera und ist dort behoben. FexoBooth aendert
+weiterhin keine Belichtungswerte automatisch.
+
+### Host-Speicher vor dem ersten Shutter verbindlich bereit
+
+- `SaveTo=Host`, Kamera-`UILock`, ein einmaliges `EdsSetCapacity(reset=1)`,
+  garantiertes `UIUnlock` und die Readiness-Pruefung laufen als ein atomarer
+  Auftrag im EDSDK-Owner.
+- `SaveTo` wird bis zu einer Sekunde auf `Host` zurueckgelesen. Ein
+  `AvailableShots` von null wird ebenfalls begrenzt abgewartet; nicht
+  unterstuetzte bzw. unbekannte Werte werden sichtbar protokolliert.
+- Der Capacity-Reset erfolgt genau einmal pro geoeffneter Kamera-Session und
+  nicht mehr unmittelbar vor jedem Foto.
+- Ohne bestaetigtes Host-Ready-Flag wird kein Shutter gesendet. Ein
+  `CARD_NG` verwirft den Zustand fuer den naechsten kontrollierten Aufbau,
+  loest aber keinen automatischen zweiten Versuch aus.
+
+### Ruhigere und schnellere Canon-Aufnahme
+
+- Canon plant den schwarzen Balken `Foto wird aufgenommen ...` nicht mehr.
+  Der kurze weisse Ausloeseblitz, die Capture-Sperren und das eingefrorene
+  letzte Live-View-Bild bleiben erhalten.
+- Das bereits dekodierte Canon-PIL-Bild wird ohne wirkungslose
+  PIL-NumPy-OpenCV-PIL-Rundreise weitergereicht. Eine konfigurierte
+  180-Grad-Drehung nutzt direkt PIL; nur unerwartete Bildmodi werden nach RGB
+  konvertiert.
+- Auf Box 245 sollten damit rund 300 ms Bildaufbereitung plus etwa 40 bis
+  60 ms Capacity-Aufruf pro Foto entfallen. Der Autofokus-/Shutter-Anteil der
+  Kamera bleibt bewusst unveraendert.
+
+### Belichtung besser diagnostizierbar, aber nicht ferngesteuert
+
+- AE-Modus, Weissabgleich, Messmethode und Belichtungskorrektur werden mit den
+  Canon-Werten korrekt benannt.
+- Die Belichtungskorrektur steht einmal beim Verbinden im normalen Log; ein
+  Wert ungleich null erzeugt eine Warnung, wird aber nicht zurueckgesetzt.
+- Nur im Dev-Modus werden pro Foto weitere EDSDK-Werte sowie JPEG-EXIF und
+  eine kleine Helligkeitsanalyse protokolliert. Fehlende Diagnosedaten brechen
+  kein Foto ab und das Originalbild wird nicht veraendert.
+
+### Tests
+
+`python tests/alle_tests.py`: **18/18 unter Windows bestanden**, ohne Kamera.
+Die neuen Regressionen pruefen unter anderem Host-Reihenfolge und
+Unlock-Fehlerpfade, Capacity genau einmal pro Session, Shutter-Guard,
+Canon-/Nikon-/Webcam-Anzeigegrenzen, PIL-Fastpath sowie
+Belichtungszuordnungen und fehlertolerante JPEG-Diagnose. `py_compile` ist
+ebenfalls gruen; `webcam.py` hat keinen semantischen Diff.
+
+**Offen:** 2.4.60 bauen und auf Box 245 erneut im Dev-Modus pruefen. Der
+entscheidende Test ist direkt das erste Foto nach einem Kamera-Kaltstart:
+kein `CARD_NG`, kein schwarzer Balken, genau ein Shutter und ein echtes
+6000-x-4000-JPEG. Danach folgt mindestens ein Flottentest ohne SD-Karte.
+
+---
+
+## [2.4.59] - 2026-08-25 - Canon-Owner, installierte DLLs und Host-Capture repariert
+
+> Ziel ist ausschließlich die interne Canon-DSLR. Der funktionierende
+> Webcam-Pfad wurde nicht umgebaut.
+
+### Wahrscheinlicher Installationsbruch gefunden
+
+Der One-Folder-Build enthält `EDSDK.dll` und `EdsImage.dll` unter `_internal`,
+der bisherige Loader suchte dort aber nicht. Damit konnte Canon im Quellbaum
+gefunden werden und nach einer Neuinstallation trotzdem komplett fehlen. Der
+Loader prüft nun zuerst PyInstallers `sys._MEIPASS` und hält das von
+`os.add_dll_directory()` gelieferte Handle am Leben, damit auch `EdsImage.dll`
+beim Nachladen erreichbar bleibt.
+
+### Canon vollständig auf einen Owner gebracht
+
+- Ein STA-Thread `edsdk-kamera` besitzt SDK, Referenzen, Handler, Session,
+  Properties, Live-View, Shutter, Event-Pump, Downloads und Cleanup.
+- Object- und State-Handler werden wie im Canon-Sample vor `OpenSession`
+  registriert. Der native Callback reiht nur einen priorisierten Folgeauftrag
+  ein; Download/Cancel/Release passieren erst nach seiner Rückkehr.
+- `CloseSession → EdsRelease → Python-Callbackhalter entfernen` läuft atomar.
+  Dadurch kann die DLL nie auf bereits freigegebenen ctypes-Callbackcode zeigen.
+- Parallele Starter warten auf dieselbe SDK-Bereitschaft. Nach jedem nativen
+  Timeout sperrt der Owner fail-closed; ein abgebrochener Queueauftrag kann
+  später nicht doch noch auslösen.
+- Recovery verwirft alte Handles und enumeriert vollständig neu.
+
+### Host-Capture ohne Speicherkarte
+
+- `SaveTo=Host` ist der feste Produktionsweg; kein stiller Wechsel auf Karte.
+- Offizielle Werte aus `EDSDKTypes.h`: Object-All `0x200`, Transfer `0x208`,
+  State-All `0x300`, Shutdown `0x301`, CaptureError `0x305`, InternalError
+  `0x306` sowie die korrekten JPEG-Qualitäten.
+- Pro App-Capture wird die Transfer-Queue unmittelbar vor dem Shutter
+  scharfgeschaltet und mit einer Capture-ID versehen. Verspätete Events einer
+  alten Aufnahme werden gecancelt, fremde Queuebilder verworfen.
+- Genau ein Capture-Befehl plus Shutter-OFF. Kein automatischer AF-NG-
+  Zweitauslöser und kein zweiter Canon-Capture über den Webcam-Fallback.
+- Downloadpfade enden immer mit Complete oder Cancel und geben Stream/Objekt
+  genau einmal frei. Dateiname, Format, Bytezahl und Laufzeit stehen im Log.
+- Live-View-`None` zählt jetzt als echter Fehler; fatale EDSDK-Codes stoßen die
+  vollständige Neu-Enumeration an.
+
+### Dev-Diagnose
+
+`--dev` protokolliert Owner-Start, Auftrag-ID, anfordernden/ausführenden Thread,
+Queue-Wartezeit, native Laufzeit, Owner-Stack bei Timeout, Capture-ID, Shutter,
+Object-/State-Event, Transfer und JPEG-Auflösung. `--dev --dslr-test` richtet
+das Dashboard-Logging nun ebenfalls vor dem Messlauf ein. Pointer, Bilddaten,
+Tokens und Konfiguration werden nicht geloggt.
+
+### Tests
+
+`python tests/alle_tests.py`: **15/15 unter Windows bestanden**, ohne Kamera.
+Enthalten sind unter anderem Hersteller-Header, PyInstaller-`_internal`,
+Thread-ID/Owner-Grenze, Parallelstart und Timeout-Races, exakt ein Auslöser,
+Callback-Entkopplung, Transfer-Cleanup, verzögerte Events und die integrierte
+Fake-Kette `0x208 → Host-Download → Queue → 6000×4000-JPEG`.
+
+**Hardware-Nachtrag:** Box 245 lieferte mit EOS 2000D und eingesetzter Karte
+nach einem `CARD_NG` beim ersten Versuch sieben echte 6000-x-4000-JPEGs ueber
+`SaveTo=Host`. Damit ist 2.4.59 als Grundreparatur bestaetigt; Kaltstart und
+der Flottennachweis ohne Karte werden mit 2.4.60 nachgetestet.
+
+---
+
 ## [2.4.58] - 2026-08-24 - Live-View zurueck (uebersehene Aufrufstelle)
 
 > Christian: "kein liveview! kamera in endlosschleife beim 1 foto! wird immer
@@ -288,15 +427,15 @@ Zug, falls sich der Rueckkanal nicht einrichten laesst.
 die Box seit 2.4.48 ausschliesslich ueber die Karte — die Reparatur des
 Direktwegs aus 2.4.49 kam nie zum Einsatz und blieb ungetestet.
 
-### Behoben
+### Damalige Aenderung, in 2.4.60 korrigiert
 
-- **Der Kamera wird vor JEDER Aufnahme freier Speicher gemeldet.** Im
-  Direktbetrieb loest eine Canon nur aus, wenn ihr jemand bestaetigt hat, dass
-  am Rechner Platz ist. Diese Meldung ist fluechtig — nach einer Aufnahme oder
-  einem Verbindungswackler steht sie wieder auf null. Dann bewegt die Kamera
-  zwar den Spiegel, legt das Bild aber nirgends ab. Genau dieses Bild
-  beschrieb Christian: hoerbar ausgeloest, nichts kam an. Bisher wurde die
-  Meldung nur einmal beim Verbinden gesetzt.
+- **2.4.53 meldete der Kamera vor jeder Aufnahme freien Speicher.** Dahinter
+  stand die nicht belegte Annahme, `EdsSetCapacity` verfalle nach jedem Foto.
+  Der 2.4.59-Hardwaretest widersprach dem: Trotz Capacity unmittelbar vor
+  jedem Foto scheiterte nur der erste Kaltstart-Capture, sieben weitere
+  funktionierten. Seit 2.4.60 gilt deshalb der Canon-Vertrag: Capacity genau
+  einmal im atomaren Host-Initialisierungsblock pro geoeffneter Session setzen
+  und `SaveTo`/`AvailableShots` vor dem ersten Shutter begrenzt bestaetigen.
 
 ### Was dabei noch aufgefallen ist
 
