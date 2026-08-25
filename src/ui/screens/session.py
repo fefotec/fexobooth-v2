@@ -1208,9 +1208,99 @@ class SessionScreen(ctk.CTkFrame):
         # Kurzer echter Auslöse-Blitz: reines Tk-Overlay, keine Bildberechnung im LiveView.
         self._show_shutter_flash()
 
+        # 2.4.55: Der Hinweis erscheint erst, WENN es wirklich dauert.
+        #
+        # Christian am 24.08.2026: "der dialog 'Bild wird geschossen' ist auch
+        # keine lösung!!" — und das stimmt. Ein Hinweis, der bei jedem Foto
+        # aufblitzt, ist selbst eine Störung; er kaschiert nur, dass es zu
+        # lange dauert.
+        #
+        # Deshalb: 900 ms Schonfrist. Ist das Foto vorher da (so soll es sein),
+        # sieht der Gast den Hinweis nie. Dauert es doch länger, weiß er
+        # wenigstens, dass das eingefrorene Bild nicht sein Foto ist.
+        if self._ist_dslr():
+            self._dslr_hinweis_timer = self.after(900, self._zeige_dslr_wartehinweis)
+
         # Capture in Background-Thread starten (blockiert nicht die UI)
         thread = threading.Thread(target=self._capture_photo_worker, daemon=True)
         thread.start()
+
+    def _ist_dslr(self) -> bool:
+        """Läuft die Box mit einer Spiegelreflexkamera?"""
+        return str(self.config.get("camera_type", "webcam")).lower() in ("canon", "nikon")
+
+    def _zeige_dslr_wartehinweis(self):
+        """Legt „Foto wird aufgenommen…" über die eingefrorene Vorschau.
+
+        Ohne diesen Hinweis sieht der Gast nach dem Blitz sein eingefrorenes
+        Vorschaubild und hält es für das Ergebnis — bis Sekunden später ein
+        ganz anderes Bild erscheint. Genau dieser Sprung wurde als Fehler
+        gemeldet.
+        """
+        if not self._ist_dslr():
+            return
+
+        try:
+            if getattr(self, "_dslr_wait_overlay", None) is None:
+                self._dslr_wait_overlay = tk.Frame(
+                    self.preview_container, bg="#000000",
+                    bd=0, highlightthickness=0,
+                )
+                self._dslr_wait_label = tk.Label(
+                    self._dslr_wait_overlay,
+                    text=t(self.config, "session.capture_loading", dots=""),
+                    bg="#000000", fg="#ffffff",
+                    font=("Segoe UI", 26, "bold"),
+                )
+                self._dslr_wait_label.place(relx=0.5, rely=0.5, anchor="center")
+
+            # Halbdunkel über der Vorschau: Das eingefrorene Bild bleibt
+            # erkennbar (der Gast sieht, dass die Box arbeitet), ist aber
+            # eindeutig nicht das fertige Foto.
+            self._dslr_wait_overlay.place(relx=0, rely=0.5, relwidth=1, relheight=0.34,
+                                          anchor="w")
+            self._dslr_wait_overlay.tkraise()
+            self._dslr_wait_punkte = 0
+            self._animiere_dslr_wartehinweis()
+        except Exception as e:
+            logger.debug(f"DSLR-Wartehinweis konnte nicht angezeigt werden: {e}")
+
+    def _animiere_dslr_wartehinweis(self):
+        """Punkte laufen mit — zeigt dem Gast, dass die Box nicht hängt."""
+        try:
+            if getattr(self, "_dslr_wait_overlay", None) is None:
+                return
+            if not self._dslr_wait_overlay.winfo_ismapped():
+                return
+
+            self._dslr_wait_punkte = (getattr(self, "_dslr_wait_punkte", 0) + 1) % 4
+            self._dslr_wait_label.configure(
+                text=t(self.config, "session.capture_loading",
+                       dots="." * self._dslr_wait_punkte)
+            )
+            self.after(400, self._animiere_dslr_wartehinweis)
+        except Exception:
+            pass
+
+    def _verstecke_dslr_wartehinweis(self):
+        """Nimmt den Hinweis weg — das echte Foto ist da (oder es kam keins).
+
+        Bricht auch den Timer ab: War das Foto vor Ablauf der Schonfrist da,
+        darf der Hinweis gar nicht erst erscheinen.
+        """
+        timer = getattr(self, "_dslr_hinweis_timer", None)
+        if timer is not None:
+            try:
+                self.after_cancel(timer)
+            except Exception:
+                pass
+            self._dslr_hinweis_timer = None
+
+        try:
+            if getattr(self, "_dslr_wait_overlay", None) is not None:
+                self._dslr_wait_overlay.place_forget()
+        except Exception:
+            pass
 
     def _show_shutter_flash(self):
         """Zeigt beim eigentlichen Capture einen sehr leichten White-Flash.
@@ -1345,6 +1435,10 @@ class SessionScreen(ctk.CTkFrame):
     def _on_capture_complete(self, photo: Optional[Image.Image]):
         """Callback auf UI-Thread nach abgeschlossenem Capture"""
         self._capture_in_progress = False
+        # 2.4.52: Wartehinweis weg — ab hier steht das Ergebnis (oder es kam
+        # keins). Muss VOR jedem weiteren Schritt passieren, damit er nicht
+        # über dem fertigen Foto stehen bleibt.
+        self._verstecke_dslr_wartehinweis()
         # Fotoanzeige-Cache invalidieren: gleich wird ein NEUES Foto angezeigt
         # (id()-Kollisionen über Sessions hinweg ausschließen)
         self._photo_display_key = None

@@ -4,6 +4,222 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-08-24 (Abschluss der Sitzung) — Uebergabe DSLR (2.4.51 bis 2.4.58)
+
+**Vollstaendige Uebergabe: [DSLR-STAND.md](DSLR-STAND.md)**
+
+Diese Sitzung hat acht echte Ursachen der DSLR-Baustelle gefunden und behoben.
+Die Box liefert trotzdem noch keine Fotos — 2.4.58 ist ungetestet.
+
+**Behoben in dieser Sitzung:**
+
+| Version | Ursache |
+|---|---|
+| 2.4.51 | Messmodus `--dslr-test` (statt einer Vermutung pro Build) |
+| 2.4.52 | Auslösen und Live-View zurueck auf Canons Referenzweg (~4 s gespart) |
+| 2.4.53 | Speicherplatz-Meldung fehlte vor jeder Aufnahme |
+| 2.4.54 | Einfrieren beim Session-Start (Rueckschritt aus 2.4.49 behoben) |
+| 2.4.55 | Download scheiterte: drei Funktionen mit 32- statt 64-Bit-Parametern |
+| 2.4.56 | Haengender Aufruf blockierte die Kamera bei jedem Versuch erneut |
+| 2.4.57 | **Kernursache:** EDSDK wurde aus zwei verschiedenen Faden gestartet |
+| 2.4.58 | Uebersehene Aufrufstelle → kein Live-View (166 Fehler pro Sitzung) |
+
+**Der rote Faden:** Fuenf von acht Ursachen waren derselbe Fehlertyp — ein
+64-Bit-Wert der Canon-Schnittstelle, im Code als 32 Bit. Vier Fundstellen
+kosteten je eine Testrunde auf der echten Box.
+
+**Gegenmassnahme:** `python tests/alle_tests.py` — sechs Tests, keine Kamera
+noetig, laeuft in Sekunden. Faengt die ganze Fehlerfamilie ab, bevor ein Build
+entsteht. Gegenprobe gemacht: Der kuenstlich wieder eingebaute Fehler aus
+2.4.57 wird mit Zeilennummer gemeldet.
+
+**Ausserdem neu:** Log-Versand von der Box ins Dashboard per Knopfdruck
+(Service-Menue → „Logs ans Dashboard senden", Dashboard → Fotoboxen →
+Box-Logs). Spart bei jeder Testrunde den Weg mit dem USB-Stick. Dashboard-Seite
+ist deployt und live.
+
+**Zwei Rueckschritte in dieser Sitzung** (Einfrieren in 2.4.49, blockierte
+Kamera ab 2.4.53) entstanden beide gleich: Aenderungen, die ohne Hardware nicht
+pruefbar waren, gingen ungetestet auf die Box. Genau dagegen sind die Tests
+und der Messmodus gedacht.
+
+---
+
+## 2026-08-24 — Zurueck auf Canons Referenzweg (2.4.51 + 2.4.52)
+
+Christian hat die Herangehensweise grundsaetzlich in Frage gestellt: "dslr-booth
+laeuft ja auch auf der gleichen hardware und das problemlos fluessig mit dslr".
+Der Einwand war berechtigt — ueber vier Runden wurde jeweils eine Vermutung
+geaendert und neu gebaut, ohne Ergebnis.
+
+**2.4.51:** Messmodus `--dslr-test`. Probiert fuenf Ausloese-Varianten in einem
+Durchlauf durch, beobachtet Karte und Direktdownload gleichzeitig und nennt die
+schnellste funktionierende. Ersetzt das Raten pro Build.
+
+**2.4.52:** Zwei Abweichungen von Canons Beispielcode zurueckgenommen — beide
+stammten aus frueheren Reparaturversuchen:
+
+1. Der halbe Ausloeserdruck mit 0,35 s Pause (aus 2.4.49) machte das Ausloesen
+   2,5 s langsam und brachte trotzdem kein Foto. Canons Beispiel drueckt in
+   einem Zug durch.
+2. Der Live-View wurde vor jeder Aufnahme abgeschaltet und danach neu
+   gestartet: 1,5 s pro Foto. Canons Beispiel fasst ihn nicht an — und genau
+   das ist der sichtbare Unterschied zu anderer DSLR-Software.
+
+**Ausserdem:** Wartehinweis bei Spiegelreflex. Nach dem Blitz stand das
+eingefrorene Vorschaubild auf dem Schirm und wurde fuer das Foto gehalten.
+Jetzt liegt "Foto wird aufgenommen…" darueber. Nur bei canon/nikon, die
+Webcam-Flotte bleibt unberuehrt. Der Text war in allen sieben Sprachen bereits
+vorhanden und ungenutzt.
+
+**Offen:** Warum die Kamera trotz hoerbarem Ausloesen nichts ablegt. Der
+Messlauf beantwortet das.
+
+---
+
+## 2026-08-21 (Nachmittag, Fortsetzung) — Foto lag auf der Karte (2.4.49 + 2.4.50)
+
+**Log-Versand laeuft.** Box 245 hat ihre Logs selbst ins Dashboard geschickt —
+kein USB-Stick mehr noetig. Ein Tippfehler blockierte ihn zunaechst
+(`self.config` statt `self.config_data`; ersteres ist die geerbte Tk-Methode).
+
+**2.4.49 — Die Kamera hat gar nicht ausgeloest.** `TakePicture` gibt der Kamera
+den ganzen Ablauf inkl. Scharfstellen vor; findet der Autofokus nichts, loest
+sie nicht aus und meldet trotzdem Erfolg. Jetzt wird wie mit dem Finger
+ausgeloest: halb druecken (AF laeuft), ganz durch (ohne AF-Zwang), loslassen.
+Ergebnis laut Christian: "vom geraeusch her macht die kamera fotos, ich hoere
+den spiegel" — der Fix greift.
+
+Ausserdem: Rueckkanal fuer Boxen OHNE Karte wiederhergestellt. Bis 09.03.2026
+wurde er direkt registriert; danach lief der Aufruf in einem Hintergrundfaden
+und blieb im COM-Marshaling haengen. Umgebaut wurde er in einem Commit, der
+laut Betreff um Collage-Buttons ging.
+
+**2.4.50 — Die Box sah das Foto nicht.** Das EDSDK friert den Inhalt eines
+Verzeichnis-Objekts beim ersten Abfragen ein. Die Warteschleife befragte immer
+dasselbe Objekt und bekam den alten Stand. Beweis: Bildanzahl 1726 (12:01) vs.
+1729 (12:16) — drei Fotos dazugekommen, innerhalb der Wartezeit aber nie
+bemerkt. Jetzt wird jedes Mal frisch nachgesehen; ein Foto wird nach ~1,4 s
+erkannt statt nach 10 s Timeout ins Leere zu laufen.
+
+**Offen:** Das Standbild zeigt einen anderen Bildausschnitt als das finale Foto
+(Vorschau vs. Aufnahme). Wird angefasst, sobald die Aufnahme steht.
+
+---
+
+## 2026-08-21 (spaeter Nachmittag) — Die Speicherkarte war die ganze Zeit da (2.4.48)
+
+Christian mitten im Test: "halt, bei dieser testbox ist doch eine sd karte in
+der kamera drin! das ist aber nicht immer der fall"
+
+Damit war klar: Die Box hat eine Karte uebersehen, die nachweislich steckte.
+
+**Gefunden:** In der Struktur `EdsDirectoryItemInfo` stand `size` als 32-Bit-Zahl,
+der Canon-Header sagt 64 Bit. Dadurch waren alle folgenden Felder um 4 Bytes
+verschoben — `isFolder` las die oberen Bits der Dateigroesse (also 0), der
+Dateiname kam leer an. Die Pruefung auf den DCIM-Ordner konnte nie zutreffen.
+
+Nachgestellt mit den Bytes, die eine Kamera fuer "DCIM" schickt:
+alter Code las `isFolder=0, Name=b''`, neuer Code liest `isFolder=1, Name=b'DCIM'`.
+
+**Das erklaert den Totalausfall:** Es gibt zwei Wege, ein Foto zu holen — ueber
+die Karte oder per Direktdownload. Beide waren kaputt (Karte: falsches Layout;
+Download: nie eingerichteter Rueckkanal). Der Code wich automatisch vom einen
+auf den anderen aus und verdeckte damit, dass es zwei Fehler waren.
+
+**Ausserdem:** Eine leere Karte gilt nicht mehr als "keine Karte". Der
+DCIM-Ordner entsteht erst mit dem ersten Foto; er wird jetzt waehrend der
+Aufnahme erneut gesucht. Damit geht auch das erste Foto auf einer neuen Karte
+nicht mehr verloren.
+
+**Erwartung fuer den naechsten Test:** Box mit Karte laeuft ueber die Karte —
+echte DSLR-Fotos in voller Aufloesung, keine 10 Sekunden Wartezeit, keine
+verwaschenen Bilder. Boxen ohne Karte nutzen weiter den Direktdownload.
+
+---
+
+## 2026-08-21 (Nachmittag) — Log-Versand ans Dashboard + DSLR-Traegheit (2.4.47)
+
+**Neu: Logs per Knopfdruck ins Dashboard.** Christian musste bisher bei jeder
+Testrunde mit dem USB-Stick zur Box laufen. Da die Boxen in der Firma im WLAN
+haengen, schicken sie ihre Logs jetzt selbst.
+
+- Box: Service-Menue (3198) → „Logs ans Dashboard senden"
+- Dashboard: Fotoboxen → Box-Logs (Filter je Box, Volltextsuche, Fehler farbig)
+- Kanal: derselbe wie der Heartbeat, Adresse wird abgeleitet
+  (`/booth/heartbeat` → `/booth/logs`) — **keine Konfigaenderung auf den ~280
+  Boxen noetig**
+- End-to-End getestet gegen einen simulierten Dashboard-Server mit echten
+  Box-Logs: 5 von 5 Dateien angekommen, 86 KB → 12 KB gepackt, falscher
+  Zugangsschluessel wird sauber abgefangen
+
+**Kamera-Befund aus dem 2.4.46-Test (Box im Dev-Mode):** Die Reparaturen von
+2.4.46 greifen — keine Endlosschleife, keine Doppelbilder mehr. Aber es kamen
+weiterhin 0 echte DSLR-Fotos an. Die Ursache liegt tiefer als vermutet:
+
+Die Registrierung des Kamera-Rueckkanals meldete Erfolg, obwohl der Aufruf
+haengen geblieben war — im Code stand woertlich „Handler funktioniert
+trotzdem". Diese Behauptung war falsch und hat die Fehlersuche blockiert. Der
+Haupt-Faden pumpte nur 0,5 s Windows-Nachrichten, wodurch der Aufruf nie
+zurueckkehren konnte. Jetzt 4 s, und bei Fehlschlag eine ehrliche Meldung.
+
+**Traegheit behoben:** 12,7 s pro Foto, davon 10 s Warten ins Leere. Die
+Wartezeit haengt jetzt davon ab, ob der Rueckkanal ueberhaupt existiert
+(1,5 s / 4 s / 10 s).
+
+**Offen:** Ob die verlaengerte Registrierung reicht, muss die Box zeigen. Der
+zuverlaessigste Weg waere eine SD-Karte in der Kamera — dann faellt der ganze
+Ereignis-Weg weg. Ausserdem erklaert sich damit die Unschaerfe: Es sind gar
+keine Fotos, sondern hochgezogene Vorschaubilder (1056x704 statt 6000x4000).
+
+---
+
+## 2026-08-21 — DSLR-Boxen repariert: Fotos, Endlosschleife, Doppelbilder (2.4.46)
+
+Christian hat die Software erstmals auf anderen Tablets und mit Spiegelreflex-
+kamera getestet (Box 245 und Box 248, beide Canon EOS 2000D) und zwei Fehler
+gemeldet: Endlosschleife und immer dasselbe Bild in der Collage.
+
+**Befund aus den Box-Logs** — deutlicher als erwartet:
+
+| | Box 245 | Box 248 |
+|---|---|---|
+| Aufnahmen | 133 | 79 |
+| davon echte DSLR-Fotos | **0** | **0** |
+| Kamera-Ereignisse empfangen | **0** | **0** |
+
+Die Kamera hat kein einziges Foto geliefert. Alle Bilder waren Vorschaubilder
+mit 1056x704 statt 6000x4000.
+
+**Vier Ursachen gefunden und behoben:**
+
+1. Die Foto-Meldungen der Kamera wurden im falschen Programmfaden abgeholt und
+   blieben deshalb ungelesen liegen (Hauptursache). → Ereignis-Takt im
+   Haupt-Faden, nur bei Canon.
+2. Die Notlösung nahm ein altes Vorschaubild für ein frisches → dreimal
+   dasselbe Bild in der Collage. → `allow_stale=False` + Fingerabdruck-Sperre.
+3. Bei Verbindungsabbruch blockierte jeder Vorschau-Versuch 1,5 s, 1.611 mal
+   über 29 Minuten, bis Windows die App abschoss. → Ruhepause nach verlorener
+   Runde (30 Aufrufe: 0,000 s statt 45 s).
+4. Die Wiederherstellung griff nur bei einem Fehlerfall, der nie auftrat. →
+   Neuaufbau bei jedem Verbindungsfehler, gedrosselt.
+
+**Nebenbefund:** Die EDSDK-Fehlertabelle war falsch. `0x81` wurde als
+„INVALID_PARAMETER" übersetzt, heißt aber `DEVICE_BUSY`; `0xc1` heißt
+`COMM_DISCONNECTED` (USB weg). Die Logs haben die Fehlersuche also aktiv in
+die falsche Richtung geschickt. Tabelle jetzt aus dem Canon-Header erzeugt.
+
+**Flotten-Sicherheit:** `webcam.py` und `session.py` wurden nicht angefasst.
+`app.py` hat nur Ergänzungen bekommen, die hinter `camera_type == "canon"`
+liegen. Logik ohne Hardware getestet (5 Tests, alle bestanden), Import-Test
+für den Webcam-Pfad ebenfalls sauber.
+
+**Offen:** Warum die Kamera-Verbindung auf den neuen Tablets überhaupt
+abreißt (COMM_DISCONNECTED), ist noch nicht geklärt — Verdacht USB-Energie-
+sparen. Das neue Logging soll das beim nächsten Test zeigen.
+
+---
+
 ## 2026-08-20 (Nacht) — Etappe 2 nachgebessert nach Gegenprüfung (2.4.44)
 
 Zwei unabhängige Gegenprüfungen von 2.4.43 haben sechs Stellen gefunden. Alle

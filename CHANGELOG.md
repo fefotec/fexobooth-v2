@@ -6,6 +6,773 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.58] - 2026-08-24 - Live-View zurueck (uebersehene Aufrufstelle)
+
+> Christian: "kein liveview! kamera in endlosschleife beim 1 foto! wird immer
+> schlimmer!"
+
+**Das war mein Fehler aus 2.4.55.** Er stand 166 Mal im Box-Log:
+
+    Fehler beim Holen des Live View: argument 2: TypeError:
+    expected LP_c_ulonglong instead of pointer to c_ulong
+
+### Was passiert ist
+
+In 2.4.55 wurde die Signatur von `EdsGetLength` korrekt auf 64 Bit umgestellt.
+Die Aufrufstelle im Live-View blieb aber auf 32 Bit stehen — und damit
+scheiterte **jedes einzelne Vorschaubild**. Kein Live-View, und weil die
+Aufnahme darauf aufbaut, auch kein Foto.
+
+ctypes prueft solche Typen erst zur Laufzeit. Beim Start faellt nichts auf,
+Syntaxpruefung und Import laufen sauber durch — der Fehler zeigt sich erst auf
+der Box.
+
+### Behoben
+
+- Die uebersehene Aufrufstelle nutzt jetzt `ctypes.c_uint64`.
+- Eine systematische Suche ueber die ganze Datei bestaetigt: keine weitere
+  32-Bit-Variable an einem 64-Bit-Parameter.
+
+### Neu: `tests/test_edsdk_typen.py`
+
+Ein Test, der ohne Kamera in Sekunden prueft:
+
+1. Stimmen alle Signaturen mit dem Canon-Header ueberein?
+2. Passen alle **Aufrufstellen** zu diesen Signaturen?
+
+Gegenprobe gemacht: Baut man den Fehler von 2.4.57 kuenstlich wieder ein,
+meldet der Test ihn mit Datei und Zeilennummer und gibt Rueckgabewert 1.
+
+**Warum das noetig war:** Genau dieser Fehlertyp — 64-Bit-Wert als 32 Bit — war
+im August 2026 fuenfmal die Ursache. Vier Fundstellen kosteten je eine
+Testrunde auf der echten Box, die fuenfte entstand beim Beheben der vierten.
+Dieser Test faengt die ganze Familie ab, bevor ein Build entsteht.
+
+**Ab jetzt gilt: `python tests/test_edsdk_typen.py` vor jedem DSLR-Build.**
+
+---
+
+## [2.4.57] - 2026-08-24 - Ein Faden fuer die Kamera (Ursache des Haengens)
+
+> Christian: "du musst kapieren das die geraete in der regel gar keine karte
+> drin haben!! merk dir das!"
+
+Damit ist der Kartenweg keine Loesung, sondern hoechstens ein Notbehelf fuer
+die eine Testbox. Der Direktweg MUSS laufen — und der braucht den Rueckkanal,
+der bisher haengenblieb. Diese Version geht an die Ursache.
+
+### Die Ursache
+
+Canons Bibliothek arbeitet innen mit COM im STA-Modell: Sie bindet sich an den
+Programmfaden, der sie zuerst startet. Aufrufe aus einem ANDEREN Faden muessen
+von COM dorthin vermittelt werden — und das gelingt nur, solange der
+urspruengliche Faden Windows-Nachrichten abarbeitet.
+
+In der App wurde die Kamera aus **zwei verschiedenen Faden** gestartet:
+
+| Stelle | Faden |
+|---|---|
+| `src/app.py` `_pre_init_camera` | Haupt-Faden (ueber `root.after`) |
+| `src/ui/dialogs/system_test.py:297` | eigener Hintergrund-Faden |
+
+Je nachdem, was zuerst lief, war die Bibliothek an den einen oder anderen
+gebunden — und der jeweils andere Weg hing. Danach meldete die Kamera
+DEVICE_BUSY, es gab weder Live-View noch Fotos.
+
+### Behoben
+
+- **Ein fester Kamera-Faden.** Er meldet ein eigenes COM-Apartment an, startet
+  die Bibliothek und arbeitet danach **dauerhaft** Nachrichten ab. Genau das
+  hat vorher gefehlt: Frueher pumpte nur kurz jemand waehrend der
+  Registrierung, danach war Ruhe — und der Aufruf blieb fuer immer haengen.
+  Kameraliste und Sitzung laufen jetzt garantiert ueber diesen Faden, egal wer
+  sie anstoesst.
+
+- **Der Rueckkanal laeuft BEWUSST daneben.** Er kann haengen; laege er im
+  Kamera-Faden, waere dieser blockiert und mit ihm Live-View, Aufnahme und
+  Freigeben — aus einem Problem wuerde eine tote Box. (Dieser Fehler steckte im
+  ersten Anlauf dieser Version und wurde vom Test gefunden, bevor er auf eine
+  Box kam.)
+
+### Getestet
+
+    SDK-Start  -> Faden 'edsdk-kamera'
+    Sitzung    -> Faden 'edsdk-kamera'      (angestossen aus 'system-test')
+    Rueckkanal -> Faden 'edsdk-rueckkanal'  (blockiert den Kamera-Faden nicht)
+
+Dazu: Der Kamera-Faden nimmt danach weiter Auftraege an; ein haengender
+Registrierungs-Aufruf wird genau einmal versucht und blockiert nichts.
+
+---
+
+## [2.4.56] - 2026-08-24 - Rueckschritt behoben: kein Live-View, keine Kamera
+
+> Christian: "kein liveview mehr, die kamera wird erst als nicht verbunden
+> gezeigt, dann nach an und ab stecken wieder da. sie macht geraeusche aber ich
+> sehe weder live view noch fotos! wird ja immer schlechter!"
+
+**Das war ein Rueckschritt, den ich mit 2.4.53 eingebaut habe.** Die Box war
+vorher benutzbar, danach nicht mehr.
+
+### Was passiert ist
+
+Das Box-Log zeigt die Kette:
+
+    11:10:30  Rueckkanal-Registrierung nach 4s nicht abgeschlossen
+    11:10:30  EDSDK Fehler 0x81 (DEVICE_BUSY)       <- Kamera blockiert
+    11:12:47  Rueckkanal-Registrierung nach 4s ...  <- naechster Versuch
+    11:13:07  Rueckkanal-Registrierung nach 4s ...
+    11:13:27  Rueckkanal-Registrierung nach 4s ...
+
+`EdsSetObjectEventHandler` bleibt auf dieser Hardware haengen. Der wartende
+Aufruf haelt die Kamera besetzt — direkt danach meldet sie DEVICE_BUSY, es kommt
+kein Live-View und kein Foto. Und weil bei jeder Neuinitialisierung erneut
+registriert wurde, legte sich Blockade auf Blockade. Genau deshalb wurde es
+"immer schlechter".
+
+In 2.4.53 hatte ich den Direktweg zur ersten Wahl gemacht — und damit wurde
+dieser Aufruf ueberhaupt erst bei jeder Box mit Karte ausgefuehrt.
+
+### Behoben
+
+- **Einmal haengen genuegt.** Bleibt die Registrierung haengen, wird sie auf
+  diesem Rechner nie wieder angefasst. Getestet: Bei vier Versuchen erreicht
+  genau EIN Aufruf die Kamera, die restlichen werden sofort abgewiesen.
+
+- **Der Kamera-Zwischenspeicher hat wieder Vorrang.** Steckt eine Karte, wird
+  der Rueckkanal gar nicht erst angefordert.
+
+  **Wichtig zur Einordnung — das war ein Missverstaendnis meinerseits:** Die
+  Fotos landen in BEIDEN Faellen auf der PC-Festplatte
+  (`C:exobooth\BILDER`). Unterschiedlich ist nur der Transportweg aus der
+  Kamera heraus. Ueber den Zwischenspeicher heisst NICHT, dass die Bilder auf
+  der Karte bleiben — die Box holt jedes Foto sofort ab.
+
+  Ohne Karte bleibt nur der Direktweg; dort wird der Rueckkanal weiterhin
+  versucht, mit klarer Ansage im Log.
+
+### Weiterhin gueltig aus 2.4.55
+
+Der Download-Fehler (`INTERNAL_ERROR`) ist behoben — drei EDSDK-Funktionen
+bekamen 64-Bit-Werte als 32 Bit uebergeben. Genau dieser Fehler hat verhindert,
+dass ein bereits gemeldetes Foto abgeholt werden konnte. Mit dem Weg ueber den
+Zwischenspeicher greift diese Korrektur jetzt.
+
+---
+
+## [2.4.55] - 2026-08-24 - Das Foto war da, es liess sich nur nicht abholen
+
+> Christian: "nun der dialog 'Bild wird geschossen' ist auch keine lösung!!
+> nach wie vor alles buggy, liveview macht freeze und zeigt nicht das foto >
+> dauert alles viel zu lange!"
+
+### Der Durchbruch im Log
+
+Zum ersten Mal ist die vollstaendige Kette sichtbar — und sie zeigt, dass alles
+funktioniert bis auf den letzten Schritt:
+
+    >>> OBJECT EVENT: DirItemRequestTransfer_Alt        <- Kamera meldet das Foto
+    >>> Transfer-Event erkannt - starte Download...
+    Lade Bild in Speicher: IMG_0001.JPG (820393 bytes)  <- Groesse korrekt gelesen
+    EDSDK Fehler 0x2 (INTERNAL_ERROR) bei Download      <- HIER bricht es ab
+
+Das Foto existiert, die Kamera bietet es an, der Dateiname und die Groesse
+kommen sauber an. Nur das Abholen scheitert.
+
+### Behoben — dieselbe Fehlerfamilie wie 2.4.48
+
+Drei EDSDK-Funktionen bekamen 64-Bit-Werte als 32 Bit uebergeben. Gegen den
+Canon-Header `EDSDK.h` geprueft:
+
+| Funktion | Header | stand im Code |
+|---|---|---|
+| `EdsCreateMemoryStream(inBufferSize)` | EdsUInt64 | `c_uint` |
+| `EdsDownload(…, inReadSize, …)` | EdsUInt64 | `c_uint` |
+| `EdsGetLength(…, outLength)` | EdsUInt64* | `POINTER(c_uint)` |
+
+Bei falscher Parameterbreite werden die Register falsch belegt: Die DLL bekommt
+eine unsinnige Groesse und bricht mit INTERNAL_ERROR ab. Dazu schrieb
+`EdsGetLength` 8 Byte in eine 4-Byte-Variable — ein Speicherueberlauf, der
+lange unauffaellig bleibt.
+
+Das ist derselbe Fehler wie beim Speicher-Layout von `EdsDirectoryItemInfo`
+(2.4.48): ein 64-Bit-Wert als 32 Bit behandelt. Ein automatischer Abgleich
+gegen den Header bestaetigt jetzt, dass alle benutzten Funktionen mit
+64-Bit-Parametern stimmen.
+
+Zusaetzlich: Die gemeldete Dateigroesse wird auf Plausibilitaet geprueft, bevor
+damit Speicher angefordert wird. Ein absurder Wert wird als das gemeldet, was
+er ist — ein falsch gelesenes Datenfeld, kein defektes Foto.
+
+### Geaendert — der Wartehinweis erscheint nur noch, wenn es wirklich dauert
+
+Der Hinweis aus 2.4.52 blitzte bei jedem Foto auf und war damit selbst eine
+Stoerung. Jetzt gilt eine Schonfrist von 900 ms: Ist das Foto vorher da — so
+soll es sein —, sieht der Gast ihn nie. Dauert es doch laenger, weiss er
+wenigstens, dass das eingefrorene Bild nicht sein Foto ist.
+
+---
+
+## [2.4.54] - 2026-08-24 - Einfrieren beim Session-Start behoben
+
+> Christian: "box friert ein sobald eine session gestartet wird"
+
+**Das war ein Fehler, den ich in 2.4.49 eingebaut habe.**
+
+### Ursache
+
+Der Wachhund aus 2.4.49 hat es exakt gemeldet:
+
+    EdsSetObjectEventHandler haengt seit 3 s. Das darf aus dem Haupt-Faden
+    nicht passieren
+
+Der DLL-Aufruf kehrt auf diesen Boxen nicht von allein zurueck — er wartet
+darauf, dass der Programmfaden Windows-Nachrichten abarbeitet. Ruft man ihn
+direkt im Haupt-Faden auf, blockiert er genau den Faden, der diese Nachrichten
+abarbeiten muesste. Die Anwendung steht.
+
+In 2.4.49 wurde der schuetzende Nebenfaden entfernt, weil eine aeltere Fassung
+den direkten Aufruf hatte und als "lief frueher" galt. Das war ein Fehlschluss:
+In jener Fassung wurde der Direktbetrieb praktisch nie benutzt, der Aufruf kam
+also kaum vor.
+
+### Behoben
+
+- **Nebenfaden + Nachrichtenschleife + hartes Zeitlimit.** Der DLL-Aufruf laeuft
+  im Nebenfaden, der Haupt-Faden arbeitet waehrenddessen Nachrichten ab (damit
+  der Aufruf ueberhaupt fertig werden kann), und nach 4 Sekunden geht es weiter
+  — komme was wolle. Getestet mit einem Aufruf, der nie zurueckkehrt: Die Box
+  laeuft nach 4,0 s weiter statt einzufrieren.
+
+- **Drei Antworten statt zwei.** Die Registrierung meldet jetzt
+  *steht* / *unklar* / *abgelehnt*. Frueher wurde aus "unklar" entweder eine
+  Falschmeldung ("steht") — die die Fehlersuche monatelang blockiert hat — oder
+  ein unnoetiger Rueckfall auf den Kartenweg. Bei *unklar* wird der Direktweg
+  jetzt trotzdem versucht, denn meist ist der Rueckkanal bereits eingetragen.
+
+- **Selbstheilung im Betrieb.** Kam auf dem Direktweg noch NIE ein Ereignis an,
+  stellt die Box einmalig auf die Speicherkarte um, statt bei jedem Foto erneut
+  ins Leere zu laufen. Der Direktweg bleibt die erste Wahl — aber eine Box, die
+  gar keine Fotos liefert, ist schlimmer als eine, die den langsameren Weg
+  nimmt. Steckt keine Karte, sagt das Log klar, dass so kein Foto entstehen
+  kann.
+
+---
+
+## [2.4.53] - 2026-08-24 - Fotos gehen direkt auf die PC-Festplatte
+
+> Christian: "warte was meinst du damit?? die kamera hat doch fotos gemacht!
+> autofokus hatte auch funktioniert! wir brauchen keine KARTE!!!! ich will nur
+> auf die festplatte vom PC speichern!"
+
+Das war ein Missverstaendnis auf meiner Seite, und es hat mehrere Runden
+gekostet. In der Testbox steckte eine Speicherkarte — daraufhin wurde der Weg
+ueber die Karte repariert, obwohl er fuer eine Fotobox gar nicht gewollt ist.
+
+### Geaendert — der Direktweg ist jetzt der Hauptweg
+
+Im Code stand woertlich: *"Speicherung konfigurieren: SD-Karte bevorzugt,
+Host-Download als Fallback"*. Fuer eine Fotobox ist das genau verkehrt herum.
+Steckte eine Karte in der Kamera, nahm die Box den Umweg
+
+    Kamera speichert auf die Karte  ->  Box fragt die Karte staendig ab
+
+Das ist langsam (erst schreiben, dann ueber USB wieder lesen), haengt am
+Zustand der Karte, und die Bilder liegen am Ende doppelt.
+
+**Jetzt gilt immer:** Die Kamera liefert das Bild direkt in den Rechner, es
+landet in `C:exobooth\BILDER`. Die Karte kommt nur noch als Notnagel zum
+Zug, falls sich der Rueckkanal nicht einrichten laesst.
+
+**Nebenwirkung des alten Vorrangs:** Weil in der Testbox eine Karte lag, lief
+die Box seit 2.4.48 ausschliesslich ueber die Karte — die Reparatur des
+Direktwegs aus 2.4.49 kam nie zum Einsatz und blieb ungetestet.
+
+### Behoben
+
+- **Der Kamera wird vor JEDER Aufnahme freier Speicher gemeldet.** Im
+  Direktbetrieb loest eine Canon nur aus, wenn ihr jemand bestaetigt hat, dass
+  am Rechner Platz ist. Diese Meldung ist fluechtig — nach einer Aufnahme oder
+  einem Verbindungswackler steht sie wieder auf null. Dann bewegt die Kamera
+  zwar den Spiegel, legt das Bild aber nirgends ab. Genau dieses Bild
+  beschrieb Christian: hoerbar ausgeloest, nichts kam an. Bisher wurde die
+  Meldung nur einmal beim Verbinden gesetzt.
+
+### Was dabei noch aufgefallen ist
+
+`download_image_to_memory` liest die Dateigroesse aus derselben Struktur, in
+der bis 2.4.48 das Speicher-Layout falsch war. Selbst wenn frueher ein Bild
+gemeldet worden waere, haette der Download mit falscher Groesse fehlgeschlagen.
+Das ist seit 2.4.48 behoben — hier nur zur Vollstaendigkeit, weil es erklaert,
+warum der Direktweg auch vor dem 09.03.2026-Umbau schon anfaellig war.
+
+### Gemessen (ohne Kamera, mit nachgebautem Ablauf)
+
+    SaveTo = Rechner  ->  Rueckkanal eingerichtet
+    Speicherplatz gemeldet  ->  ausgeloest (Live-View an)  ->  Bild fertig
+    Ergebnis nach 0,4 s: 6000x4000, keine Karte beteiligt
+
+---
+
+## [2.4.52] - 2026-08-24 - Zurueck auf Canons Referenzweg + Wartehinweis
+
+> Christian: "live view friert ein in der collage und man denkt das ist das
+> foto > dann wird aber was ganz anderes angezeigt (wie bei webcam frueher)"
+> und "wartezeit nach wie vor viel zu lange".
+
+### Befund aus dem Box-Log (2.4.51, Box 245)
+
+- Der Kartenstand blieb ueber den **ganzen** Testlauf bei 1735 — in diesem Lauf
+  kam kein einziges Foto an.
+- Das Ausloesen allein dauerte **2,5 Sekunden**
+  (09:37:41.861 Befehl raus → 09:37:44.427 bestaetigt).
+
+Beides geht auf zwei Stellen zurueck, an denen die Box von Canons eigenem
+Beispielcode abweicht — und beide Abweichungen stammen aus frueheren
+Reparaturversuchen, nicht aus einer Anforderung.
+
+### Behoben — beide Abweichungen zurueckgenommen
+
+- **Ausloesen wie in Canons Referenz.** Der Beispielcode im Repo
+  (`EDSDK/.../sample/CSharp/.../TakePictureCommand.cs`) besteht aus zwei
+  Zeilen: Ausloeser ganz durch, dann loslassen. In 2.4.49 kam ein halber Druck
+  mit 0,35 s Pause dazu, damit der Autofokus vorher arbeiten kann — gut
+  gemeint, aber genau das machte das Ausloesen 2,5 s langsam und brachte
+  trotzdem kein Foto. Der Autofokus geht dabei nicht verloren: Ein Druck in
+  einem Zug schliesst das Scharfstellen mit ein. Scheitert er doch, folgt
+  automatisch ein zweiter Versuch ohne Fokus-Zwang.
+
+- **Der Live-View bleibt waehrend der Aufnahme an.** Bisher wurde er vorher
+  abgeschaltet und danach neu gestartet: gemessen 1,5 s pro Foto (0,7 s aus +
+  0,8 s an). Canons Beispiel fasst den Live-View nicht an. Das war auch der
+  sichtbare Unterschied zu anderer DSLR-Booth-Software auf derselben Hardware.
+
+  Zusammen mit dem Punkt oben faellt damit rund die Haelfte der Wartezeit weg,
+  noch bevor das Foto ueberhaupt eintrifft.
+
+### Neu: Wartehinweis bei Spiegelreflex
+
+Nach dem Blitz stand bisher das eingefrorene Vorschaubild auf dem Schirm — und
+der Gast hielt es fuer sein Foto, bis Sekunden spaeter ein anderes Bild
+erschien. Jetzt liegt ein deutlicher Balken mit "Foto wird aufgenommen…"
+darueber, bis das echte Bild steht.
+
+- **Nur bei Kameratyp canon/nikon.** Bei der Webcam-Flotte ist das Foto so
+  schnell da, dass eine Einblendung nur flackern wuerde — dort aendert sich
+  nichts.
+- Der Text existierte bereits in allen sieben Sprachen
+  (`session.capture_loading`) und war seit einem frueheren Umbau verwaist.
+
+### Weiterhin offen
+
+Warum die Kamera trotz hoerbarem Ausloesen nichts auf der Karte ablegt, ist
+noch nicht abschliessend geklaert. Der Messmodus `--dslr-test` aus 2.4.51
+beantwortet genau das in einem Durchlauf und wurde noch nicht gefahren.
+
+---
+
+## [2.4.51] - 2026-08-24 - Messen statt raten: DSLR-Ausloesetest
+
+> Christian nach dem Test: "das ergebnis ist katastrophal und nicht verwendbar
+> (...) ich denke die ganze herangehensweise ist fuer die dslr falsch.
+> dslr-booth laeuft ja auch auf der gleichen hardware und das problemlos
+> fluessig mit dslr!!"
+>
+> Der Einwand ist berechtigt. Ueber vier Testrunden wurde jeweils EINE
+> Vermutung geaendert und ein neuer Build gebaut — ohne Ergebnis. Das war die
+> falsche Methode.
+
+### Befund aus dem Box-Log vom 24.08.2026
+
+Die Kamera loest hoerbar aus (Spiegel), aber auf der Karte kommt nichts an:
+Der Zaehler blieb ueber alle drei Aufnahmen bei **1732**.
+
+Wohin die 13,5 Sekunden pro Foto gehen:
+
+| Schritt | Dauer |
+|---|---|
+| Live-View stoppen | 0,7 s |
+| Ausloesen | 1,0 s |
+| **Warten auf ein Foto, das nicht kommt** | **10,3 s** |
+| Live-View wieder starten | 0,8 s |
+| Notbild bauen | 0,7 s |
+
+### Neu: `--dslr-test`
+
+Ein eigener Messmodus, der in EINEM Durchlauf fuenf Ausloese-Varianten
+durchprobiert und misst, welche wirklich ein Foto liefert:
+
+| | Variante |
+|---|---|
+| A | Live-View AN + Ausloeser ganz durch (Canons eigener Beispielweg) |
+| B | Live-View AN + halb druecken, dann ganz durch ohne AF-Zwang |
+| C | Live-View AN + TakePicture |
+| D | Live-View AUS + TakePicture (der bisherige Weg der Box) |
+| E | Live-View AUS + Ausloeser ganz durch |
+
+Er beobachtet dabei BEIDE Wege gleichzeitig (Speicherkarte und
+Direktdownload) und nennt am Ende die schnellste funktionierende Variante.
+Liefert keine ein Foto, spricht das fuer die Kamera selbst statt fuer die
+Software — auch das sagt der Bericht mit konkreten Pruefpunkten.
+
+Aufruf: `fexobooth.exe --dslr-test`
+
+### Geaendert
+
+- **Wartezeit auf die Karte von 10 s auf 6 s.** Eine EOS 2000D schreibt ein
+  JPEG in ein bis zwei Sekunden. Ist nach sechs Sekunden nichts da, kommt auch
+  nichts mehr — weiteres Warten kostet den Gast nur Zeit vor einem
+  eingefrorenen Bild.
+
+### Bewusst NICHT geaendert
+
+Der Ablauf schaltet den Live-View vor jeder Aufnahme ab und danach wieder an
+(zusammen ~1,5 s). Canons eigenes Beispiel tut das nicht. Das ist der naechste
+Verdacht — aber er wird erst nach dem Messlauf umgestellt, nicht auf Verdacht.
+Genau dieses Vorgehen hat die letzten vier Runden gekostet.
+
+### Weiterhin offen
+
+- Foto in der Collage stimmt nicht mit dem Foto im Weiter-Bildschirm ueberein
+- Aufnahmen sind ueberbelichtet
+
+Beides betrifft aktuell die Notbilder aus dem Live-View, nicht echte Fotos.
+Ob es danach noch besteht, zeigt sich erst, wenn die Aufnahme steht.
+
+---
+
+## [2.4.50] - 2026-08-21 - Das Foto lag auf der Karte, die Box sah es nur nicht
+
+> Christian: "keine verbesserung aber vom geraeusch her macht die kamera fotos,
+> ich hoere den spiegel" und "vor allem wenn das ausloesegeraeusch kam passiert
+> ewig nichts"
+>
+> Das Spiegelgeraeusch war der entscheidende Hinweis: Die Kamera arbeitete, die
+> Software bekam es nur nicht mit.
+
+### Behoben
+
+- **Die Box hat neue Fotos auf der Speicherkarte nicht bemerkt.** Das EDSDK
+  merkt sich den Inhalt eines Verzeichnis-Objekts beim ersten Abfragen. Die
+  Warteschleife holte das Verzeichnis EINMAL und befragte danach immer dasselbe
+  Objekt — und bekam deshalb bis zum Timeout den eingefrorenen Stand von vorhin
+  zurueck, auch nachdem die Kamera laengst gespeichert hatte.
+
+  Der Beweis stand in zwei Logs derselben Box:
+
+  | Test | Bildanzahl beim Start der Wartezeit |
+  |---|---|
+  | 12:01 | 1726 |
+  | 12:16 | **1729** |
+
+  Zwischen beiden Durchlaeufen sind DREI Fotos dazugekommen — die Kamera hat
+  also ausgeloest und gespeichert. Innerhalb der Wartezeit stieg die Zahl
+  trotzdem nie.
+
+  Jetzt wird bei jedem Durchgang frisch nachgesehen (Karte → DCIM → Ordner neu
+  geholt). Nachgestellt: Ein Foto, das 1,2 s nach dem Ausloesen auf der Karte
+  landet, wird nach **1,4 s** erkannt statt gar nicht.
+
+  Damit erledigt sich auch das "nach dem Ausloesegeraeusch passiert ewig
+  nichts": Das waren die vollen 10 Sekunden Timeout bei jedem Foto.
+
+- **Falscher Verwacklungs-Alarm bei jedem Foto.** Die Belichtungszeit `0x00`
+  bedeutet "kein Wert" — in den Vollautomatik-Modi legt die Kamera Zeit und
+  Blende erst beim Ausloesen fest. Das Log las das als "sehr lange Zeit" und
+  warnte bei jeder Aufnahme vor Verwacklung.
+
+### Hinweis zur Fehlersuche
+
+Die Zeile "Aktuelle Bildanzahl: 1726" stand seit 2.4.48 im Log. Sie war die
+ganze Zeit der Schluessel — sie musste nur mit dem naechsten Testlauf
+verglichen werden. Deshalb schreibt die Wartschleife jetzt den Stand vorher
+und nachher mit und meldet, wie lange es bis zum Auftauchen des Fotos gedauert
+hat.
+
+---
+
+## [2.4.49] - 2026-08-21 - Die Kamera hat gar nicht ausgeloest
+
+> Christian: "canon kameras liefen immer zuverlaessig ohne sd karte!" und
+> "wie gesagt in einer alten version hat das schon mal viel besser
+> funktioniert! ich will das das auch ohne sd karte funktioniert"
+
+Beide Hinweise haben gestimmt und direkt zu zwei Fehlern gefuehrt.
+
+### Behoben
+
+- **Die Kamera hat auf den Ausloesebefehl gar nicht reagiert.** Der Befehl
+  `TakePicture` gibt der Kamera den ganzen Ablauf inklusive Scharfstellen vor.
+  Findet der Autofokus nichts — und im dunklen Box-Inneren findet er oft
+  nichts — **loest die Kamera einfach nicht aus**. Der Befehl meldet trotzdem
+  Erfolg, weil er korrekt uebermittelt wurde.
+
+  Im Box-Log stand das schwarz auf weiss:
+
+      [3/5] ✓ Kamera ausgeloest!
+      Aktuelle Bildanzahl: 1726
+      Timeout nach 10.0s - kein neues Bild erkannt
+
+  Karte lesbar, Ordner gefunden, 1726 Bilder gezaehlt — und es kam keins dazu.
+
+  Jetzt laeuft es wie bei einem Menschen am Ausloeser: **halb druecken**
+  (Autofokus arbeitet), **ganz durchdruecken** (Aufnahme, auch bei unsicherem
+  Fokus), **loslassen**. Der Autofokus bleibt damit voll aktiv — in einer
+  Mietbox unverzichtbar, weil Gaeste unterschiedlich weit weg stehen und sich
+  bewegen — kann die Aufnahme aber nicht mehr verhindern. Ein leicht
+  unscharfes Foto ist besser als gar keines.
+
+- **Der Rueckkanal fuer Boxen ohne Speicherkarte ist wiederhergestellt.** Bis
+  zum 09.03.2026 wurde `EdsSetObjectEventHandler` direkt aufgerufen — in dieser
+  Fassung liefen die Canon-Boxen ohne Karte. Im Commit 841de6c ("Collage
+  Nochmal/Weiter Buttons, Template-Overlay Default, Capture-Optimierung")
+  wurde der Aufruf beilaeufig in einen Hintergrundfaden verlegt.
+
+  Das ist genau der Fehler: Das EDSDK arbeitet mit COM im STA-Modell, ein
+  Rueckruf gehoert dem Faden, der die Kamera geoeffnet hat. Aus einem anderen
+  Faden muss COM den Aufruf dorthin vermitteln — dabei blieb er haengen. Der
+  Kommentar behauptete, der Handler sei "trotzdem registriert"; die Logs
+  beweisen das Gegenteil.
+
+  Der direkte Aufruf ist wiederhergestellt, mit einem Wachhund, der es ins Log
+  schreibt, falls doch etwas haengt.
+
+- **Log-Versand vom Service-Menue ging nicht** ("'function' object has no
+  attribute 'get'"). Im Dialog heisst die Konfiguration `config_data`;
+  `self.config` ist die geerbte Tk-Methode zum Einstellen von Widgets.
+
+### Noch offen
+
+- **Im Standbild wird etwas anderes gezeigt als im finalen Foto.** Zwei
+  Ursachen: der Zeitversatz (schrumpft, sobald echte Fotos ankommen) und der
+  unterschiedliche Bildausschnitt von Vorschau und Foto. Letzteres ist ein
+  eigenes Thema und wird erst angefasst, wenn die Aufnahme steht.
+
+---
+
+## [2.4.48] - 2026-08-21 - Die Speicherkarte war die ganze Zeit da
+
+> Christian, mitten im Test: "halt, bei dieser testbox ist doch eine sd karte
+> in der kamera drin! das ist aber nicht immer der fall"
+>
+> Damit war klar, dass die Box eine Karte uebersehen hat, die nachweislich
+> steckte — und die Suche fuehrte auf einen Fehler, der beide Wege zur Kamera
+> gleichzeitig blockiert hat.
+
+### Behoben
+
+- **Ein falsches Speicher-Layout liess die Box jede Speicherkarte uebersehen.**
+  In `EdsDirectoryItemInfo` stand `size` als 32-Bit-Zahl. Der offizielle
+  Canon-Header EDSDKTypes.h sagt `EdsUInt64 size` — **64 Bit**:
+
+  | Feld | bisher gelesen ab Byte | richtig ab Byte |
+  |---|---|---|
+  | size | 0 | 0 |
+  | isFolder | 4 | **8** |
+  | szFileName | 16 | **20** |
+
+  Ab dem zweiten Feld war alles um 4 Bytes verschoben. `isFolder` las die
+  oberen 32 Bit der Dateigroesse — bei normalen Dateien also 0, "kein Ordner".
+  Der Dateiname wurde ab der falschen Stelle gelesen und kam leer an.
+
+  Nachgestellt mit den Bytes, die eine Kamera fuer den Ordner "DCIM" schickt:
+
+  | | isFolder | Name | Ergebnis |
+  |---|---|---|---|
+  | alter Code | 0 | `b''` | "Keine SD-Karte" |
+  | neuer Code | 1 | `b'DCIM'` | Karte erkannt |
+
+  Die Pruefung `name == "DCIM" and isFolder` konnte damit **nie** zutreffen.
+  Die Box meldete "Keine SD-Karte (DCIM nicht gefunden)", obwohl eine Karte
+  steckte, und wich auf den Host-Download aus — der seinerseits kaputt war
+  (Rueckkanal nie eingerichtet, siehe 2.4.47). Beide Wege zur Kamera waren
+  gleichzeitig blockiert. Das ist der Grund, warum ueberhaupt kein einziges
+  echtes DSLR-Foto ankam.
+
+- **Eine leere Speicherkarte gilt nicht mehr als "keine Karte".** Vorher war
+  der DCIM-Ordner das Erkennungsmerkmal. Eine frisch formatierte Karte hat den
+  aber noch nicht — die Kamera legt ihn erst mit dem ersten Foto an. Jetzt
+  entscheidet, ob eine Karte da ist; fehlt der Ordner, wird er waehrend der
+  Aufnahme erneut gesucht, sobald die Kamera ihn angelegt hat.
+
+  Damit geht auch das erste Foto auf einer neuen Karte nicht mehr verloren.
+
+### Was das fuer die Boxen bedeutet
+
+- **Box MIT Karte** (wie die Testbox): laeuft ueber die Karte. Kein
+  Ereignis-Weg, kein COM, keine 10 Sekunden Wartezeit — und echte DSLR-Fotos
+  in voller Aufloesung statt hochgezogener Vorschaubilder.
+- **Box OHNE Karte**: weiterhin Host-Download. Der bleibt der empfindlichere
+  Weg; die Verbesserungen aus 2.4.47 greifen dort.
+
+---
+
+## [2.4.47] - 2026-08-21 - Log-Versand ans Dashboard + DSLR-Traegheit
+
+> Christian nach dem 2.4.46-Test: "das ist alles viel zu traege und dauert
+> ewig" — und: "koennen wir nicht einen button einbauen der die logs an das
+> laravel dashboard schickt > dann kannst du sie direkt lesen und ich muss
+> nicht immer mit dem stick hin und her kopieren?"
+
+### Neu
+
+- **Knopf „Logs ans Dashboard senden"** im Service-Menue (PIN 3198, Tab
+  Allgemein). Die Box packt ihre juengsten Logdateien und schickt sie ueber
+  denselben Kanal ans Dashboard, ueber den sie ohnehin schon ihren Heartbeat
+  meldet. Dort stehen sie unter **Fotoboxen → Box-Logs**, nach Box gefiltert,
+  mit Volltext-Filter und Farbmarkierung fuer Fehler und Warnungen.
+
+  Keine Konfigurationsaenderung noetig: Die Adresse wird aus dem bereits
+  hinterlegten Heartbeat-Endpunkt abgeleitet (`/booth/heartbeat` →
+  `/booth/logs`), der Zugangsschluessel ist derselbe. Damit muss keine der
+  rund 280 Boxen einzeln angefasst werden.
+
+  Gemessen am echten Box-Log: 86 KB werden zu 12 KB gepackt uebertragen.
+
+### Behoben
+
+- **Der Rueckkanal der Kamera wurde nie eingerichtet — und die Software hat es
+  behauptet.** In `set_object_event_handler` stand bisher der Kommentar
+  „Handler funktioniert trotzdem" und die Funktion meldete Erfolg, obwohl der
+  Aufruf haengen geblieben war. Das war eine Annahme, und sie war falsch: Im
+  Box-Log vom 21.08.2026 kam bei ueber 200 Ausloesungen kein einziges
+  Kamera-Ereignis an.
+
+  Ursache: Der Aufruf laeuft in einem Nebenfaden und muss sein Ergebnis ueber
+  COM an den Faden zurueckreichen, der die Kamera geoeffnet hat. Das gelingt
+  nur, solange dieser Faden Windows-Nachrichten abarbeitet. Nach 0,5 Sekunden
+  hoerte das auf — zu frueh. Jetzt sind es 4 Sekunden, und wenn es dann immer
+  noch klemmt, meldet die Funktion ehrlich einen Fehlschlag.
+
+- **12,7 Sekunden pro Foto.** Davon waren 10 Sekunden reines Warten auf ein
+  Bild, das gar nicht kommen konnte. Die Wartezeit richtet sich jetzt nach der
+  Lage: 1,5 s wenn der Rueckkanal nachweislich fehlt, 4 s wenn er da ist aber
+  noch nie ein Bild gebracht hat, volle 10 s sobald einmal eines ankam. Damit
+  ist auch der zu frueh wirkende Ausloese-Blitz weitgehend entschaerft — er
+  kam nicht zu frueh, das Foto kam zu spaet.
+
+### Bekannt und offen
+
+- **Die Fotos sind unscharf, weil es keine Fotos sind.** Was in der Collage
+  landet, ist das Vorschaubild mit 1056x704 statt eines DSLR-Fotos mit
+  6000x4000 — auf Collagengroesse hochgezogen wirkt das zwangslaeufig
+  verwaschen. Das loest sich erst, wenn echte Fotos ankommen.
+- **Zuverlaessigster Ausweg waere eine SD-Karte in der Kamera.** Dann holt die
+  Box die Bilder direkt von der Karte (Directory-Polling) und braucht den
+  ganzen Ereignis-Weg nicht. Der Code kann das bereits; im Test meldete die
+  Kamera „DCIM nicht gefunden" und fiel deshalb auf den Ereignis-Weg zurueck.
+
+---
+
+## [2.4.46] - 2026-08-21 - DSLR-Boxen: Fotos kamen nie an, Endlosschleife, Doppelbilder
+
+> Anlass sind die Tests vom 21.08.2026 auf Box 245 und Box 248 (beide Canon
+> EOS 2000D). Christian: „teilweise sind die boxen in einer art endlossschleife
+> und manchmal wird immer wieder das gleiche bild in die collagen gelegt."
+>
+> Der Befund aus den Box-Logs war deutlicher als erwartet:
+>
+> | | Box 245 | Box 248 |
+> |---|---|---|
+> | Aufnahmen | 133 | 79 |
+> | **davon echte DSLR-Fotos** | **0** | **0** |
+> | Notloesung (Vorschaubild) | 133 | 79 |
+> | Kamera-Ereignisse empfangen | **0** | **0** |
+>
+> Die Spiegelreflexkamera hat in diesen Tests kein einziges Foto geliefert.
+> Jedes Bild in der Collage war in Wahrheit ein Vorschaubild mit 1056x704
+> Pixeln statt eines 6000x4000-Fotos.
+
+### Behoben
+
+- **Die aufgenommenen Fotos kamen nie bei der App an.** Canons Kamera-Bibliothek
+  meldet „Bild ist fertig" ueber die Windows-Nachrichtenschlange an den
+  Programmfaden, der die Kamera geoeffnet hat — bei uns der Haupt-Faden mit der
+  Bedienoberflaeche. Abgeholt wurde die Meldung aber nur in der Warteschleife
+  der Aufnahme, und die laeuft seit dem Umbau auf Hintergrund-Aufnahme in einem
+  NEBEN-Faden. Die Meldungen blieben ungelesen liegen.
+
+  Beweis: In beiden Box-Logs steht kein einziges `>>> OBJECT EVENT` — der
+  Rueckkanal hat bei 212 Ausloesungen kein einziges Mal gefeuert.
+
+  Neu holt `app.py` die Ereignisse alle 50 ms im Haupt-Faden ab
+  (`_starte_canon_event_takt`). **Nur bei Kameratyp `canon`** — bei den
+  Webcam-Boxen der laufenden Flotte wird nicht einmal ein Timer angelegt.
+
+- **Immer dasselbe Bild in der Collage.** `get_frame()` gab bei toter Kamera
+  stillschweigend das zuletzt gelungene Vorschaubild zurueck — auch wenn es
+  Minuten alt war. Die Foto-Notloesung hielt das fuer ein frisches Bild und
+  brach ihre Wiederhol-Schleife nach dem ERSTEN Versuch ab. So landete dreimal
+  exakt dasselbe Standbild in der Collage.
+
+  Neu: Die Vorschau darf weiter ein Altbild zeigen (besser als ein schwarzer
+  Schirm), die Foto-Aufnahme bekommt es nicht mehr (`allow_stale=False`).
+  Zusaetzlich hat jedes Notbild einen Fingerabdruck — ein Wiederholungstaeter
+  wird abgelehnt. Ein leerer Collagen-Platz ist besser als ein Doppelbild.
+
+- **Endlosschleife bis zum Absturz.** Riss die USB-Verbindung ab, kostete jeder
+  Vorschau-Versuch 1,5 Sekunden (3 Versuche à 0,5 s Pause) — und der
+  Vorschau-Arbeiter ruft das mehrmals pro Sekunde. Box 245: 1.611 Fehlversuche
+  ueber 29 Minuten. Box 248 fror komplett ein, Windows meldete sie um 10:28 als
+  „reagiert nicht" (AppHang).
+
+  Neu gilt nach einer verlorenen Runde eine Ruhepause von 5 Sekunden, in der
+  sofort zurueckgekehrt wird. Gemessen: 30 Aufrufe brauchen jetzt 0,000 s
+  statt rund 45 Sekunden Blockade.
+
+- **Die Kamera fand nie zurueck.** Eine Wiederherstellung gab es nur fuer das
+  Abschalt-Ereignis `0x301`. Die real auftretenden Faelle — DEVICE_BUSY und
+  COMM_DISCONNECTED — haben sie nie ausgeloest. Neu wird die Verbindung bei
+  jedem Verbindungsfehler neu aufgebaut (gedrosselt auf hoechstens alle 10 s).
+
+- **Die EDSDK-Fehlertabelle war falsch und hat die Fehlersuche in die Irre
+  gefuehrt.** Gegen den offiziellen Canon-Header `EDSDKErrors.h` geprueft
+  (liegt im Repo unter `EDSDK/.../Header/`):
+
+  | Code | stand im Log als | ist in Wahrheit |
+  |---|---|---|
+  | `0x81` | INVALID_PARAMETER | **DEVICE_BUSY** — Kamera belegt |
+  | `0xc1` | UNKNOWN | **COMM_DISCONNECTED** — USB-Verbindung weg |
+  | `0x88` | UNKNOWN | **DEVICE_DISK_ERROR** |
+  | `0xa102` | EVF_INTERNAL_ERROR | **OBJECT_NOTREADY** — harmlos |
+
+  Wer „INVALID_PARAMETER" las, suchte den Fehler im eigenen Code. Tatsaechlich
+  meldete die Kamera „ich bin beschaeftigt" bzw. „das USB-Kabel ist weg" — ein
+  Hardware-Problem. Ausserdem standen zwei Einzelkonstanten falsch
+  (`EDS_ERR_DEVICE_BUSY`, `EDS_ERR_SESSION_ALREADY_OPEN`), weshalb
+  `open_session()` die Lage „Kamera noch belegt" nie erkannte.
+
+  `0xa102` laeuft jetzt als DEBUG statt als ERROR — es ist der Normalfall
+  waehrend der Live-View-Anlaufzeit und hat pro Abend zehntausende rote Zeilen
+  erzeugt, zwischen denen die echten Fehler untergingen.
+
+### Dev-Mode-Logging
+
+- **Foto-Bilanz in jeder Zeile**: `echt / Notloesung / leer`. Damit ist auf
+  einen Blick sichtbar, ob die Kamera wirklich Fotos liefert — genau das war
+  in den alten Logs nicht zu sehen.
+- **Ereignis-Zaehler**: Jedes Kamera-Ereignis wird durchnummeriert. Bleibt der
+  Zaehler auf 0, ist der Rueckkanal tot.
+- **Diagnose bei „kein Bild"**: unterscheidet jetzt „Kamera hat nicht
+  ausgeloest" von „ausgeloest, aber Download scheiterte".
+- **Kamera-Zustand vor jedem Ausloesen**: Akkustand, Programmwahlrad,
+  Fokus-Art — alle drei koennen ein Ausloesen verhindern, ohne dass die
+  Software etwas falsch macht.
+- **Bild-Fingerabdruck** bei jeder Notloesung: Doppelbilder sind im Log sofort
+  erkennbar.
+- **Klartext bei Ausloesefehlern**: z. B. „Kamera konnte nicht scharfstellen —
+  Objektiv auf manuellen Fokus (MF) stellen."
+- **Wiederholungen gedrosselt**: identische Fehler nur noch jede 20. Runde.
+
+### Nicht angefasst
+
+`webcam.py` und `session.py` wurden bewusst **nicht** veraendert — die laufende
+Flotte arbeitet mit Webcams und darf von dieser Reparatur nicht beruehrt
+werden. `app.py` hat ausschliesslich Ergaenzungen bekommen, die hinter einer
+Abfrage auf `camera_type == "canon"` liegen.
+
+---
+
 ## [2.4.45] - 2026-08-20 - Umschalten pro Foto ersatzlos raus, Aufloesung per Regler
 
 > Christian, nachdem der Dauerbetrieb auf Box 101 ueber drei Sessions gemessen

@@ -6,6 +6,149 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### Eine geaenderte ctypes-Signatur ohne Aufrufstellen-Pruefung ist eine Zeitbombe (2.4.58)
+
+| | |
+|---|---|
+| **Problem** | Nach der Korrektur der 64-Bit-Signaturen (2.4.55) gab es auf der Box gar keinen Live-View mehr — 166 Fehler pro Sitzung. |
+| **Ursache** | Die Signatur von `EdsGetLength` wurde richtig auf 64 Bit gestellt, eine von zwei Aufrufstellen blieb aber auf `c_uint`. ctypes prueft Argumenttypen erst beim tatsaechlichen Aufruf: Syntaxpruefung, Import und Start laufen sauber durch, der Fehler zeigt sich erst auf der Hardware. |
+| **Lösung** | `tests/test_edsdk_typen.py` — prueft ohne Kamera (a) Signaturen gegen den Hersteller-Header und (b) alle Aufrufstellen gegen die Signaturen. Gegenprobe: Der kuenstlich wieder eingebaute Fehler wird mit Zeilennummer gemeldet. |
+| **Merke** | Bei ctypes gehoert zu jeder Signaturaenderung ein Durchgang durch ALLE Aufrufstellen — der Compiler uebernimmt das hier nicht. Und wenn derselbe Fehlertyp mehr als zweimal auftritt, ist ein automatischer Pruefer billiger als die naechste Testrunde beim Nutzer: Vier Fundstellen kosteten je einen Bau- und Testzyklus auf der Box, der Pruefer braucht Sekunden und findet alle auf einmal. |
+
+
+### 64-Bit-Werte als 32 Bit: derselbe Fehler an vier Stellen (2.4.55)
+
+| | |
+|---|---|
+| **Problem** | Ueber Wochen kam kein DSLR-Foto an. Vier aufeinanderfolgende Ursachen wurden gefunden und behoben — jede erklaerte den Ausfall, keine loeste ihn. |
+| **Gemeinsamer Nenner** | Alle vier waren derselbe Fehlertyp: ein 64-Bit-Wert der Canon-Schnittstelle wurde als 32 Bit behandelt. Einmal im Speicher-Layout (`EdsDirectoryItemInfo.size`, 2.4.48), dreimal in Funktionssignaturen (`EdsCreateMemoryStream`, `EdsDownload`, `EdsGetLength`, 2.4.55). |
+| **Warum das so lange dauerte** | Ein falscher Datentyp wirft keine Ausnahme. Er liefert plausible falsche Werte oder bricht mit einem nichtssagenden INTERNAL_ERROR ab — und die Suche wandert zur naechsten Schicht, statt den Typ zu pruefen. |
+| **Lösung** | Alle Signaturen automatisch gegen den Hersteller-Header abgeglichen (`EDSDK.h` liegt im Repo). Der Abgleich ist wiederholbar und findet in Sekunden, was manuell wochenlang uebersehen wurde. |
+| **Merke** | Wenn eine ctypes-Anbindung an eine fremde DLL Aerger macht, ist die ERSTE Massnahme ein vollstaendiger Abgleich aller Strukturen und Signaturen gegen den Original-Header — nicht die Suche nach dem einen kaputten Aufruf. Bei einer 64-Bit-DLL ist jedes `EdsUInt64` im Header, das im Code `c_uint` heisst, ein Fehler. Solche Fehler treten fast nie einzeln auf: Wer eine Stelle abgeschrieben hat, hat meist mehrere abgeschrieben. |
+
+
+### "Lief frueher mal so" ersetzt keinen Beweis, dass es funktioniert hat (2.4.54)
+
+| | |
+|---|---|
+| **Problem** | Die Box fror beim Start jeder Session ein. |
+| **Ursache** | In 2.4.49 wurde ein schuetzender Nebenfaden um `EdsSetObjectEventHandler` entfernt — mit der Begruendung, eine aeltere Fassung habe den Aufruf direkt gemacht und "lief frueher zuverlaessig". Der Aufruf kehrt aber nicht von allein zurueck: Er wartet darauf, dass der Programmfaden Windows-Nachrichten abarbeitet, und blockiert genau diesen Faden. |
+| **Der Fehlschluss** | Die aeltere Fassung lief tatsaechlich — aber in ihr wurde der Direktbetrieb praktisch nie benutzt, der problematische Aufruf kam also kaum vor. Aus "die Version lief" wurde faelschlich "diese Zeile in der Version war richtig". |
+| **Lösung** | Nebenfaden zurueck, Nachrichtenschleife im Haupt-Faden, und ein hartes Zeitlimit: Nach 4 Sekunden laeuft die Box weiter, egal was die Kamera tut. |
+| **Merke** | Ein Hinweis wie "frueher lief das" grenzt den Suchraum ein — er beweist aber nicht, dass jede einzelne Zeile jener Fassung richtig war. Vor dem Zurueckbauen pruefen, ob der fragliche Pfad damals ueberhaupt durchlaufen wurde. **Und unabhaengig davon:** Ein Aufruf an fremde Hardware, der die Bedienoberflaeche blockieren kann, braucht IMMER ein hartes Zeitlimit. Eine Box darf langsam sein, aber nie stehen. |
+
+
+### Die Fotos gehen direkt in den Rechner, nicht ueber die Karte (2.4.53)
+
+| | |
+|---|---|
+| **Entscheidung** | Die Kamera liefert jedes Foto direkt an den Box-Rechner (`SaveTo = Host`). Die Speicherkarte ist nur noch Notnagel, falls sich der Rueckkanal nicht einrichten laesst. |
+| **Vorher** | Im Code stand "SD-Karte bevorzugt, Host-Download als Fallback". Steckte eine Karte in der Kamera, nahm die Box den Umweg: Kamera schreibt auf die Karte, Box fragt die Karte per USB staendig ab. |
+| **Begruendung** | Fuer eine Fotobox ist der Kartenweg in jeder Hinsicht schlechter: Er schreibt erst und liest dann wieder, haengt am Zustand und Tempo der Karte, und die Bilder liegen doppelt. Der Direktweg ist das, was Fotobox-Software ueblicherweise tut. |
+| **Merke** | Der Vorrang war nicht nur langsam, er hat auch die Fehlersuche verfaelscht: Weil in der Testbox zufaellig eine Karte lag, lief die Box ueber Wochen auf dem Notweg — und eine Reparatur am eigentlich gewollten Weg blieb ungetestet, ohne dass es auffiel. **Wenn es zwei Wege zum selben Ziel gibt, muss im Log stehen, welcher gerade genommen wird und warum.** Und der bevorzugte Weg gehoert dorthin, wo die Anforderung ihn hinstellt — nicht dorthin, wo die Testhardware ihn zufaellig hindraengt. |
+
+### Eine fluechtige Freigabe muss vor jeder Nutzung erneuert werden (2.4.53)
+
+| | |
+|---|---|
+| **Problem** | Die Kamera loeste hoerbar aus ("ich hoere den spiegel"), legte das Bild aber nirgends ab. |
+| **Ursache** | Im Direktbetrieb loest eine Canon nur aus, wenn ihr zuvor freier Speicher am Rechner gemeldet wurde (`EdsSetCapacity`). Diese Meldung verfaellt — nach einer Aufnahme, einem Verbindungswackler oder dem Aufwachen. Sie wurde aber nur einmal beim Verbinden gesetzt. |
+| **Lösung** | Vor jeder Aufnahme erneut melden. Kostet Millisekunden. |
+| **Merke** | Bei Geraeten, die eine Freigabe/Reservierung brauchen, immer pruefen, ob sie dauerhaft gilt oder verfaellt. Eine einmalige Anmeldung beim Verbinden reicht bei fluechtigen Zustaenden nicht — und der Fehlerfall sieht dann nicht nach "Freigabe fehlt" aus, sondern nach "Geraet tut nichts". |
+
+
+### Vier Runden "eine Vermutung pro Build" sind teurer als ein Messlauf (2.4.51)
+
+| | |
+|---|---|
+| **Problem** | Der DSLR-Ausfall wurde ueber vier Testrunden bearbeitet. Jede Runde fand eine echte Ursache, behob sie — und der Ausfall blieb. Jede Runde kostete Christian einen Build, einen Aufbau und einen Testlauf. |
+| **Ursache des Vorgehens** | Jede gefundene Ursache erklaerte das Symptom vollstaendig und wirkte deshalb wie DIE Loesung. Tatsaechlich lagen mehrere Fehler uebereinander, und der Code wich beim Scheitern eines Weges automatisch auf den anderen aus — was den Blick auf die jeweils naechste Schicht verstellte. |
+| **Lösung** | Ein Messmodus (`--dslr-test`), der alle plausiblen Varianten in einem Durchlauf durchprobiert und misst, statt eine pro Build zu raten. |
+| **Merke** | Wenn zwei Reparaturrunden am selben Symptom scheitern, ist die dritte Vermutung nicht das Problem — die Methode ist es. Ab dem Punkt lohnt sich ein Werkzeug, das den Suchraum in einem Lauf abdeckt, fast immer: Es kostet einmal Entwicklungszeit statt jedes Mal einen kompletten Testzyklus beim Nutzer. **Und:** Der Hinweis "andere Software macht das auf derselben Hardware fluessig" ist kein Nebensatz, sondern der Beweis, dass die Hardware es kann und die eigene Herangehensweise falsch ist. |
+
+
+### "Befehl erfolgreich uebermittelt" ist nicht "Aktion ausgefuehrt" (2.4.49)
+
+| | |
+|---|---|
+| **Problem** | Das Box-Log meldete "✓ Kamera ausgeloest!", danach lief die Aufnahme in einen 10-Sekunden-Timeout. Die Bildanzahl auf der Karte blieb bei 1726. |
+| **Ursache** | `EdsSendCommand(TakePicture)` bestaetigt nur, dass der Befehl bei der Kamera angekommen ist. Ob sie ihn ausfuehrt, steht auf einem anderen Blatt: Findet der Autofokus keinen Halt, loest sie nicht aus — ohne Fehlermeldung. |
+| **Lösung** | Ausloesen in drei Schritten wie mit dem Finger: halb druecken (AF laeuft), ganz durchdruecken ohne AF-Zwang (Aufnahme erzwingen), loslassen. Der AF bleibt aktiv, blockiert aber nicht mehr. |
+| **Merke** | Bei Geraetesteuerung immer zwischen "Befehl angenommen" und "Wirkung eingetreten" unterscheiden — und die **Wirkung** protokollieren, nicht die Annahme. Hier war der Beweis eine simple Zahl: die Bildanzahl vor und nach dem Ausloesen. Eine Erfolgsmeldung, die nur den Transport bestaetigt, ist im Log schlimmer als keine, weil sie den naechsten Sucher am eigentlichen Problem vorbeifuehrt. |
+
+### Wenn der Nutzer sagt "frueher lief das", ist das ein Fahrplan, keine Meinung (2.4.49)
+
+| | |
+|---|---|
+| **Problem** | Ueber mehrere Runden wurde am DSLR-Ausfall repariert, ohne die Ursache zu treffen. |
+| **Wendepunkt** | Christians zwei Saetze: "canon kameras liefen immer zuverlaessig ohne sd karte" und "in einer alten version hat das schon mal viel besser funktioniert". Beides liess sich in der Git-Historie in wenigen Minuten pruefen — und beides stimmte. `git log -- src/camera/` zeigte, dass der Rueckkanal am 09.03.2026 in einem Commit umgebaut wurde, in dem es laut Betreff um Collage-Buttons und Webcam-Optimierung ging. |
+| **Merke** | Eine Aussage wie "frueher ging das" grenzt den Suchraum auf einen Zeitraum ein und macht aus einer offenen Fehlersuche einen Vergleich zweier Staende. Das ist fast immer schneller, als die aktuelle Fassung weiter zu durchdenken. **Und:** Beilaeufige Aenderungen an fremden Schnittstellen gehoeren nicht in einen Commit, der laut Betreff etwas anderes tut — dort findet sie bei der spaeteren Suche niemand. |
+
+
+### Ein falsches Byte-Layout sieht nicht wie ein Fehler aus — es sieht aus wie "nicht vorhanden" (2.4.48)
+
+| | |
+|---|---|
+| **Problem** | Die Box meldete "Keine SD-Karte", obwohl eine Karte in der Kamera steckte. Erst Christians Zwischenruf ("bei dieser testbox ist doch eine sd karte drin!") machte klar, dass die Meldung luegt. |
+| **Ursache** | In `EdsDirectoryItemInfo` war das erste Feld `size` als 32-Bit-Zahl deklariert, der Canon-Header sagt aber `EdsUInt64` (64 Bit). Dadurch waren alle folgenden Felder um 4 Bytes verschoben: `isFolder` las die oberen 32 Bit der Dateigroesse (bei normalen Dateien 0), der Dateiname kam leer an. Die Pruefung `name == "DCIM" and isFolder` konnte nie zutreffen. |
+| **Lösung** | Struktur gegen `EDSDKTypes.h` korrigiert (der Header liegt im Repo). Zusaetzlich: Eine leere Karte gilt nicht mehr als "keine Karte" — DCIM entsteht erst mit dem ersten Foto. |
+| **Merke** | Ein falsches Speicher-Layout wirft keine Ausnahme. Es liefert plausible, falsche Werte — und die Software zieht daraus eine plausible, falsche Schlussfolgerung ("keine Karte da"). Deshalb sucht man an der falschen Stelle weiter. **Zwei Konsequenzen:** Erstens Strukturen immer gegen den Hersteller-Header pruefen, nie aus einem Beispiel abschreiben. Zweitens: Wenn eine Software meldet, dass etwas "nicht da" ist, und ein Mensch widerspricht — dann hat der Mensch recht, bis das Gegenteil bewiesen ist. Der Zwischenruf war hier mehr wert als jede weitere Logrunde. |
+
+### Zwei kaputte Wege ergeben einen Totalausfall, der nach einem dritten Problem aussieht (2.4.48)
+
+| | |
+|---|---|
+| **Problem** | Ueber mehrere Runden hinweg kam kein einziges DSLR-Foto an. Jede gefundene Ursache erklaerte den Ausfall — und behob ihn trotzdem nicht. |
+| **Ursache** | Es gab zwei voneinander unabhaengige Wege, ein Foto von der Kamera zu holen: ueber die Speicherkarte und ueber den direkten Download. **Beide waren kaputt** — die Kartenerkennung durch das falsche Byte-Layout, der Download durch einen nie eingerichteten Rueckkanal. Der Code wich beim Scheitern des einen Weges automatisch auf den anderen aus und verdeckte damit, dass es zwei Fehler waren. |
+| **Merke** | Eine automatische Rueckfallebene ist eine Schuldenfalle, wenn sie stillschweigend greift: Sie macht aus zwei Fehlern einen einzigen, verwirrenden Ausfall. Wer einen Ausweichpfad einbaut, muss deutlich ins Log schreiben, DASS und WARUM ausgewichen wurde — und beim Suchen zuerst fragen, welcher Weg eigentlich gerade benutzt wird. Die Zeile "Keine SD-Karte -> Host-Download Modus" stand von Anfang an im Log; sie wurde nur als Feststellung gelesen statt als Symptom. |
+
+
+### Ein Kommentar, der eine Annahme als Tatsache ausgibt, kostet Monate (2.4.47)
+
+| | |
+|---|---|
+| **Problem** | Die DSLR-Boxen lieferten keine Fotos. Die Suche ging in mehreren Runden an der Ursache vorbei. |
+| **Ursache** | In `edsdk.set_object_event_handler` stand: „Der DLL-Call kehrt auf manchen Systemen NIE zurueck, registriert den Handler aber trotzdem" — und die Funktion meldete Erfolg. Das war nie geprueft worden. Tatsaechlich war der Rueckkanal nicht eingerichtet: bei ueber 200 Ausloesungen kam kein einziges Ereignis an. Weil die Funktion Erfolg meldete, galt dieser Teil als „funktioniert" und wurde bei jeder Fehlersuche uebersprungen. |
+| **Lösung** | Laenger pumpen (0,5 s → 4 s), und bei Fehlschlag ehrlich `False` melden. Dazu ein Zaehler, der sichtbar macht, wie oft der Rueckkanal wirklich gefeuert hat. |
+| **Merke** | Ein Kommentar wie „funktioniert trotzdem" ist eine Behauptung ueber fremden Code, die man nicht beweisen kann — er gehoert nicht in eine Erfolgsmeldung. Wenn eine Funktion nicht sicher weiss, ob sie erfolgreich war, muss sie das sagen duerfen. Und: Fuer jede solche Annahme einen Zaehler mitlaufen lassen. Die Frage „ist der Rueckkanal jemals gelaufen?" war mit einer einzigen Zahl in Minuten zu beantworten — ohne sie blieb es monatelang Ratespiel. |
+
+### Diagnosedaten muessen zum Entwickler kommen, nicht der Entwickler zu den Daten (2.4.47)
+
+| | |
+|---|---|
+| **Problem** | Jede Testrunde an einer Box endete damit, dass Christian mit einem USB-Stick zur Box lief, Logs kopierte und zum PC zurueckbrachte. Bei mehreren Runden am Tag war das der groesste Zeitfresser — und bei einer Box beim Kunden gar nicht moeglich. |
+| **Lösung** | Knopf im Service-Menue, der die Logs ueber den bereits vorhandenen Heartbeat-Kanal ans Dashboard schickt. Adresse wird aus dem Heartbeat-Endpunkt abgeleitet, Zugangsschluessel ist derselbe. |
+| **Merke** | Wenn ein bestehender, provisionierter Kanal zwischen zwei Systemen existiert, ist er fast immer die richtige Grundlage fuer den naechsten Anwendungsfall. Ein zweites Geheimnis auf ~280 Geraete auszurollen waere Wochen Arbeit gewesen, ohne einen Sicherheitsgewinn: Der neue Endpunkt nimmt nur Text entgegen und gibt nichts oeffentlich heraus. Faustregel fuer Feldgeraete: Wenn eine Diagnose dreimal per Hand geholt wurde, ist es Zeit, sie holen zu lassen. |
+
+
+### Fehlertabellen NIE aus dem Kopf schreiben — der Hersteller-Header liegt im Repo (2.4.46)
+
+| | |
+|---|---|
+| **Problem** | Die Box-Logs meldeten bei jeder DSLR-Störung „EDSDK Fehler 0x81 (INVALID_PARAMETER)". Das klang nach einem Programmierfehler auf unserer Seite, also wurde monatelang im eigenen Code gesucht. |
+| **Ursache** | Die Übersetzungstabelle von Fehlercode zu Klartext in `edsdk.py` war frei erfunden und an den entscheidenden Stellen falsch. `0x81` heißt in Wahrheit `DEVICE_BUSY`, `0xc1` heißt `COMM_DISCONNECTED` (USB-Verbindung abgerissen). Beides sind **Hardware**-Meldungen, keine Programmfehler. |
+| **Lösung** | Tabelle 1:1 aus `EDSDK/EDSDKv132010W/.../Header/EDSDKErrors.h` erzeugt — der Header liegt seit jeher im Repo. Dazu eine Liste `VERBINDUNG_TOT`, an der die App erkennt, wann Weiterprobieren zwecklos ist. |
+| **Merke** | Wenn ein fremdes System Zahlencodes liefert, ist die Übersetzung Teil der Diagnose. Eine falsche Übersetzung ist schlimmer als gar keine: Sie führt die Fehlersuche aktiv in die falsche Richtung. Bevor eine solche Tabelle von Hand gepflegt wird, erst prüfen, ob der Hersteller-Header vorliegt — und ihn dann als Quelle nehmen. |
+
+### Ein Notnagel, der nie „nein" sagt, ist kein Notnagel (2.4.46)
+
+| | |
+|---|---|
+| **Problem** | Auf den DSLR-Boxen landete dreimal exakt dasselbe Bild in einer Collage. |
+| **Ursache** | `get_frame()` gab bei toter Kamera stillschweigend das zuletzt gelungene Vorschaubild zurück — auch wenn es Minuten alt war. Für die laufende Vorschau ist das richtig. Die Foto-Notlösung rief dieselbe Funktion auf, bekam sofort ein Bild, hielt es für frisch und brach ihre 10er-Wiederhol-Schleife nach dem ersten Versuch ab. |
+| **Lösung** | Der Aufrufer entscheidet, ob ein Altbild zulässig ist (`allow_stale`). Vorschau: ja. Foto: nein. Zusätzlich Fingerabdruck über jedes gelieferte Notbild — zweimal dasselbe wird abgelehnt. |
+| **Merke** | Eine Rückfallebene muss unterscheiden können zwischen „ich habe etwas" und „ich habe etwas Brauchbares". Wer immer irgendetwas zurückgibt, macht aus einem sichtbaren Ausfall einen unsichtbaren Datenfehler — und der fällt erst beim Kunden auf. Im Zweifel lieber ehrlich `None` liefern: `session.py` behandelt „kein Foto" seit jeher sauber. |
+
+### Wer Arbeit in einen Neben-Faden verschiebt, verschiebt womöglich auch den Briefkasten (2.4.46)
+
+| | |
+|---|---|
+| **Problem** | Zwei DSLR-Boxen, 212 Auslösungen, **null** echte Fotos. Die Kamera löste aus, aber kein Bild kam je an. |
+| **Ursache** | Canons Bibliothek meldet „Bild ist fertig" über die Windows-Nachrichtenschlange an genau den Programmfaden, der die Kamera geöffnet hat — den Haupt-Faden mit der Bedienoberfläche. Abgeholt wurde die Meldung aber nur in der Warteschleife der Aufnahme. Und die wurde irgendwann in einen Hintergrund-Faden verlegt, damit die Oberfläche flüssig bleibt. Seitdem lagen die Meldungen ungelesen im Haupt-Faden. |
+| **Lösung** | `app.py` holt die Ereignisse alle 50 ms im Haupt-Faden ab — hinter einer Abfrage auf `camera_type == "canon"`, damit die Webcam-Flotte nichts davon merkt. |
+| **Merke** | Verlagerung in einen Hintergrund-Faden ist bei Bibliotheken mit Ereignis-Rückruf nie folgenlos. Wenn nach so einem Umbau „alles läuft, nur die Rückmeldung kommt nicht", zuerst fragen: In welchem Faden wird die Rückmeldung eigentlich abgeholt? Und: Ein Zähler, der zeigt wie oft ein Rückruf gefeuert hat, hätte das in Minuten statt Monaten geklärt. |
+
+
 ### Ein „Optimierung": Wer eine Arbeit einspart, kann eine unbemerkte Selbstheilung mit einsparen (2.4.44)
 
 | | |

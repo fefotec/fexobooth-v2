@@ -199,6 +199,34 @@ def main():
     # WICHTIG: Taskleiste wiederherstellen (Recovery von vorherigem Crash)
     _recover_taskbar()
 
+    # DSLR-Ausloesetest (2.4.51): eigener Modus, startet KEINE Oberflaeche.
+    #
+    # Probiert in einem Durchlauf alle sinnvollen Ausloese-Varianten durch und
+    # misst, welche wirklich ein Foto liefert. Anlass war, dass ueber vier
+    # Testrunden hinweg jeweils EINE Vermutung geaendert und neu gebaut wurde —
+    # ohne Ergebnis. Ein Messlauf ersetzt das Raten.
+    if "--dslr-test" in sys.argv:
+        try:
+            from src.utils.crashlog import install_faulthandler
+            install_faulthandler()
+        except Exception:
+            pass
+
+        try:
+            from src.tools.dslr_test import run as dslr_test_run
+            code = dslr_test_run()
+        except Exception as e:
+            print(f"DSLR-Test fehlgeschlagen: {e}")
+            import traceback
+            traceback.print_exc()
+            code = 2
+
+        try:
+            input("Zum Schliessen Enter druecken …")
+        except Exception:
+            pass
+        sys.exit(code)
+
     # Kamera-Messung (2.4.34): eigener Modus, startet KEINE Fotobox-Oberflaeche.
     # Beantwortet die Frage, ob die Kamera dauerhaft in 1080p laufen kann —
     # das laesst sich nur auf der echten Box messen, nicht am Entwickler-PC.

@@ -4,6 +4,102 @@ Aufgabenliste mit Prioritäten.
 
 ---
 
+## ➡️ NÄCHSTE SCHRITTE DSLR (Stand 2.4.58) 🔴
+
+> Vollständige Übergabe: **[DSLR-STAND.md](DSLR-STAND.md)** — dort erst lesen.
+
+- [ ] `python tests/alle_tests.py` — muss sauber durchlaufen (braucht keine Kamera)
+- [ ] **2.4.58 bauen und auf Box 245 testen.** Kernfrage: Ist der Live-View
+      wieder da? Er war in 2.4.57 komplett weg (übersehene Aufrufstelle,
+      166 Fehler pro Sitzung — in 2.4.58 behoben, aber ungetestet)
+- [ ] Im Log prüfen: `=== ECHTES DSLR-FOTO: 6000x4000 ===` statt `NOTLÖSUNG`?
+      Und steigt `echt` in der Bilanz am Zeilenende?
+- [ ] **Danach: Karte aus der Kamera nehmen und erneut testen.** Das ist der
+      Zustand der echten Flotte — alle bisherigen Tests liefen MIT Karte
+- [ ] Falls weiterhin keine Fotos: **`fexobooth.exe --dslr-test` fahren**,
+      BEVOR etwas geändert wird. Der Messlauf probiert fünf Auslöse-Varianten
+      in einem Durchgang durch und wurde noch nie gefahren
+- [ ] Falls die Box unbrauchbar ist: zurück auf 2.4.45 (letzter Stand vor
+      dieser Baustelle) und von dort in einzeln prüfbaren Schritten
+
+## Offen: Standbild zeigt anderen Bildausschnitt als das finale Foto 🟡
+
+> Mehrfach gemeldet. Zwei Anteile: Zeitversatz (schrumpft, sobald Fotos
+> schnell ankommen) und unterschiedlicher Bildausschnitt zwischen Vorschau
+> und Aufnahme. Letzteres ist ein eigenes Thema, noch nicht angefasst.
+
+- [ ] Erst angehen, wenn die Aufnahme steht — vorher nicht sinnvoll messbar
+
+## Offen: Belichtung ohne Blitz 🟡
+
+> Randbedingungen von Christian: kein Blitz, Autofokus MUSS aktiv bleiben,
+> Kunde darf an der Kamera nichts einstellen. Das Log schreibt Zeit, Blende,
+> ISO und Weißabgleich vor jedem Foto mit.
+
+- [ ] Nach dem nächsten Testlauf die Zeile `[3/5] Kamera-Zustand:` auswerten
+- [ ] Bei zu langen Belichtungszeiten Lösung suchen, die alle drei
+      Randbedingungen einhält
+
+## 2.4.48 auf der DSLR-Testbox gegenprüfen 🔴
+
+> Die Box hat eine steckende SD-Karte übersehen (falsches Byte-Layout). Mit dem
+> Fix müsste sie über die Karte laufen — das ist der robuste Weg ohne den
+> anfälligen Ereignis-Kanal.
+
+- [ ] Im Log prüfen: steht dort **„SD-Karte erkannt … Directory-Polling Modus"**?
+      (vorher stand dort fälschlich „Keine SD-Karte")
+- [ ] Im Log prüfen: `=== ECHTES DSLR-FOTO: 6000x4000 ===`
+- [ ] Fotos anschauen: scharf statt verwaschen?
+- [ ] Wartezeit: `Capture-Worker Timing` muss deutlich unter 12,7 s liegen
+- [ ] Auslöse-Blitz: passt er jetzt zum Moment der Aufnahme?
+- [ ] Logs über den neuen Knopf ans Dashboard schicken statt per USB-Stick
+
+## Boxen OHNE SD-Karte separat prüfen 🔴
+
+> Christian: „das ist aber nicht immer der fall". Ohne Karte läuft die Box über
+> den Direktdownload — und der ist der anfälligere Weg.
+
+- [ ] Eine Box ohne Karte testen und prüfen, ob der Rückkanal jetzt eingerichtet
+      wird (Log: kein „kehrt nicht zurück" mehr, dafür `>>> OBJECT EVENT`)
+- [ ] Falls nicht: entscheiden, ob in alle Kameras der Flotte eine Karte kommt
+      (kostet wenig, macht das Problem strukturell weg und sichert die Fotos
+      zusätzlich auf der Karte)
+
+## 2.4.46 auf einer DSLR-Box gegenprüfen 🔴
+
+> Die Reparatur ist ohne Hardware getestet (Logik-Tests + Import-Test). Ob die
+> Fotos wirklich ankommen, kann nur die Box zeigen.
+
+- [ ] Box 245 oder 248 mit Canon EOS 2000D, Dev-Mode, drei Fotos machen
+- [ ] Im Log prüfen: steht dort `>>> OBJECT EVENT`? (vorher: kein einziges)
+- [ ] Im Log prüfen: steht dort `=== ECHTES DSLR-FOTO: 6000x4000 ===`?
+- [ ] Bilanz am Zeilenende prüfen: `echt` muss hochzählen, nicht `Notlösung`
+- [ ] Falls weiter keine Fotos: die neue Zeile `[4/5] DIAGNOSE:` sagt jetzt,
+      ob die Kamera nicht ausgelöst hat oder ob der Download scheiterte
+
+## Ungeklärt: Warum reißt die USB-Verbindung auf den neuen Tablets ab? 🔴
+
+> Box 248 meldete `COMM_DISCONNECTED`, Box 245 `DEVICE_BUSY`. Beides heißt:
+> Die Kamera ist weg. Auf den Lenovo Miix mit Webcam gab es das nie.
+> Die Software fängt den Fall jetzt ab (Neuaufbau statt Endlosschleife) —
+> die Ursache ist damit aber nicht beseitigt.
+
+- [ ] Verdacht prüfen: USB-Energiesparen (USB Selective Suspend) im
+      Geräte-Manager und im Energieplan abschalten
+- [ ] Verdacht prüfen: Kamera-Ruhezustand (Auto-Power-Off) am Kameramenü aus
+- [ ] Verdacht prüfen: USB-Kabel/Port am neuen Tablet (Strom über USB?)
+- [ ] Prüfen ob die Abbrüche zeitlich mit etwas zusammenfallen (Akkubetrieb,
+      Bildschirm aus, Standby)
+
+## Prüfen: Kamera-Akku und Fokus-Art auf den DSLR-Boxen 🟡
+
+> Das neue Logging schreibt vor jedem Auslösen Akkustand, Programmwahlrad und
+> Fokus-Art ins Log. Steht der Fokus auf Autofokus, kann die Kamera im dunklen
+> Box-Inneren das Auslösen verweigern, ohne dass die Software etwas falsch macht.
+
+- [ ] Nach dem nächsten Test die Zeile `[3/5] Kamera-Zustand:` auswerten
+- [ ] Falls Autofokus aktiv: am Objektiv auf MF stellen und erneut testen
+
 ## 2.4.43 Dauerbetrieb HD auf EINER Testbox prüfen 🔴
 
 > Etappe 2 von 2. Der Schalter ist überall aus — er muss auf genau einer Box

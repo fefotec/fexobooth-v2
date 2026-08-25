@@ -12,6 +12,24 @@
 
 ---
 
+## ⚠️ Laufende Baustelle: DSLR (Canon)
+
+**Wer an der Canon-/DSLR-Unterstuetzung arbeitet, liest ZUERST
+[DSLR-STAND.md](DSLR-STAND.md).** Dort steht der vollstaendige Stand vom
+24.08.2026: was funktioniert, was nicht, die acht bereits behobenen Ursachen,
+die Werkzeuge und die Fallstricke.
+
+Zwei Punkte daraus sind so wichtig, dass sie hier stehen:
+
+1. **Die DSLR-Boxen haben in der Regel KEINE Speicherkarte.** Der Direktweg
+   (`SaveTo = Host`) ist der einzige Weg, der in der Flotte funktioniert.
+   Ein Rueckfall auf den Kartenweg ist keine Loesung.
+2. **Vor jedem DSLR-Build:** `python tests/alle_tests.py` — braucht keine
+   Kamera und faengt die Fehlerklasse ab, die im August 2026 fuenfmal die
+   Ursache war.
+
+---
+
 ## Projektabgrenzung
 
 Dieses Repo ist die **interne FexoBooth V2 / Live-Flotten-Software**. Es ist nicht der

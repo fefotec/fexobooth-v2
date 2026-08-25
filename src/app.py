@@ -557,6 +557,13 @@ class PhotoboothApp:
         if camera_type == "nikon":
             self._warmup_nikon_async()
 
+        # 2.4.46: Wechselt eine Buchung zur Laufzeit auf Canon-DSLR, muss der
+        # Ereignis-Takt nachgezogen werden — sonst kommen die Fotos nicht an.
+        # (Beim Programmstart erledigt das run().) Nur bei laufender
+        # Hauptschleife, sonst legt run() den Takt gleich selbst an.
+        if camera_type == "canon" and getattr(self, "_mainloop_started", False):
+            self._starte_canon_event_takt()
+
     def _sync_dauerbetrieb_hd(self):
         """Gibt die Kamera frei, wenn der HD-Dauerbetrieb umgelegt wurde (2.4.43).
 
@@ -3715,10 +3722,71 @@ class PhotoboothApp:
             if hasattr(self.current_screen, '_on_finish'):
                 self.current_screen._on_finish()
 
+    def _starte_canon_event_takt(self):
+        """Holt regelmäßig die Kamera-Ereignisse ab — NUR bei Canon-DSLR.
+
+        2.4.46 — Das war die Ursache dafür, dass die Spiegelreflexkameras auf
+        den Box-Tests am 21.08.2026 KEIN EINZIGES Foto lieferten (Box 245:
+        0 von 133, Box 248: 0 von 79 — alles nur Notlösungen).
+
+        Warum: Canons Kamera-Bibliothek meldet "Bild ist fertig" über die
+        Windows-Nachrichtenschlange, und zwar an den Programmfaden, der die
+        Kamera geöffnet hat — das ist der Haupt-Faden mit der Bedienoberfläche.
+        Abgeholt wurde die Meldung aber nur in der Warteschleife der Aufnahme,
+        und die läuft seit dem Umbau auf Hintergrund-Aufnahme in einem NEBEN-
+        Faden. Die Meldungen blieben also ungelesen liegen. Im Box-Log stand
+        deshalb kein einziges `>>> OBJECT EVENT`.
+
+        SICHERHEIT FÜR DIE FLOTTE: Dieser Takt startet ausschließlich, wenn der
+        Kameratyp 'canon' ist. Bei Webcam-Boxen — also der kompletten laufenden
+        Flotte — passiert hier gar nichts, es wird kein Timer angelegt.
+
+        Kosten: ein sehr kurzer Aufruf alle 50 ms. Auf den schwachen Tablets
+        gemessen unkritisch, weil EdsGetEvent() ohne wartende Ereignisse sofort
+        zurückkehrt.
+        """
+        if self.config.get("camera_type") != "canon":
+            return
+
+        # Nur EIN Takt gleichzeitig. Ohne die Sperre legt jeder Kameratyp-Wechsel
+        # einen weiteren Timer an und die Box pumpt am Ende vielfach parallel.
+        if getattr(self, "_canon_takt_laeuft", False):
+            logger.debug("Canon-Event-Takt läuft bereits")
+            return
+        self._canon_takt_laeuft = True
+
+        intervall_ms = 50
+
+        def _takt():
+            # Typ kann sich zur Laufzeit ändern (Buchung stellt auf Webcam um)
+            if self.config.get("camera_type") != "canon":
+                self._canon_takt_laeuft = False
+                logger.info("Canon-Event-Takt beendet (Kameratyp gewechselt)")
+                return
+
+            try:
+                pumpe = getattr(self.camera_manager, "pump_events", None)
+                if pumpe is not None:
+                    pumpe()
+            except Exception as e:
+                logger.debug(f"Canon-Event-Takt: {e}")
+
+            try:
+                self.root.after(intervall_ms, _takt)
+            except Exception:
+                self._canon_takt_laeuft = False  # Fenster ist weg (App beendet sich)
+
+        logger.info(
+            f"Canon-Event-Takt gestartet (alle {intervall_ms}ms im Haupt-Faden) — "
+            f"ohne den kommen die aufgenommenen Fotos nicht bei der App an"
+        )
+        self.root.after(intervall_ms, _takt)
+
     def run(self):
         """Startet die Anwendung"""
         logger.info("Starte Hauptschleife")
         self._mainloop_started = True
+        self._starte_canon_event_takt()
         try:
             self.root.mainloop()
         finally:

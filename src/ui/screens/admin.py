@@ -1811,6 +1811,39 @@ class AdminDialog(ctk.CTkToplevel):
             justify="left"
         ).pack(anchor="w", pady=(0, 10))
 
+        # Log-Versand ans Dashboard (2.4.46, Wunsch Christian 21.08.2026):
+        # "dann kannst du sie direkt lesen und ich muss nicht immer mit dem
+        # stick hin und her kopieren". Spart bei jeder Testrunde den Weg mit
+        # dem USB-Stick — und funktioniert auch bei einer Box beim Kunden.
+        ctk.CTkLabel(
+            scroll,
+            text="📤 Logs ans Dashboard senden",
+            font=FONTS["body"],
+            text_color=COLORS["text_secondary"]
+        ).pack(anchor="w", pady=(15, 2))
+
+        self._log_upload_btn = ctk.CTkButton(
+            scroll,
+            text="Logs ans Dashboard senden",
+            font=FONTS["small"],
+            height=36,
+            fg_color=COLORS["bg_light"],
+            hover_color=COLORS["info"],
+            text_color=COLORS["text_primary"],
+            command=self._on_log_upload
+        )
+        self._log_upload_btn.pack(anchor="w", pady=(0, 5))
+
+        self._log_upload_status = ctk.CTkLabel(
+            scroll,
+            text=("Schickt die letzten Logdateien dieser Box ins Dashboard\n"
+                  "(dort unter „Box-Logs\"). Die Box muss dafür im WLAN sein."),
+            font=FONTS["tiny"],
+            text_color=COLORS["text_muted"],
+            justify="left"
+        )
+        self._log_upload_status.pack(anchor="w", pady=(0, 10))
+
         # Neue PIN
         pin_frame = ctk.CTkFrame(scroll, fg_color="transparent")
         pin_frame.pack(fill="x", pady=(15, 5))
@@ -2222,6 +2255,137 @@ class AdminDialog(ctk.CTkToplevel):
         if hasattr(self, "box_id_error"):
             self.box_id_error.configure(text="")
     
+    def _on_log_upload(self):
+        """Schickt die Logs dieser Box ans Dashboard (2.4.46).
+
+        ANLASS (Christian, 21.08.2026): Logs wurden bisher mit dem USB-Stick von
+        der Box zum PC getragen. In der Firma haengen die Boxen im WLAN — sie
+        koennen das selbst erledigen.
+
+        LAEUFT IM HINTERGRUND: Der Versand kann je nach Logmenge und WLAN ein
+        paar Sekunden dauern. Wuerde er im Bedienfaden laufen, stuende das
+        Service-Menue solange still und wirkte abgestuerzt. Deshalb Hintergrund-
+        faden, und die Rueckmeldung wird per `after(0, ...)` zurueck auf den
+        Bedienfaden gereicht — Tk-Oberflaechen darf man nur von dort anfassen.
+        """
+        import threading
+
+        try:
+            self._log_upload_btn.configure(state="disabled", text="Sende …")
+        except Exception:
+            pass
+
+        def _status(text: str):
+            """Zwischenmeldung auf den Bedienfaden zurueckgeben."""
+            def _setzen():
+                try:
+                    self._log_upload_status.configure(text=text)
+                except Exception:
+                    pass
+            try:
+                self.after(0, _setzen)
+            except Exception:
+                pass
+
+        def _fertig(ergebnis: dict):
+            try:
+                self._log_upload_btn.configure(
+                    state="normal", text="Logs ans Dashboard senden"
+                )
+            except Exception:
+                pass
+
+            if ergebnis.get("ok"):
+                kurz = f"✓ {ergebnis.get('gesendet', 0)} Datei(en) gesendet"
+                farbe = COLORS["success"]
+            else:
+                kurz = "✗ Versand fehlgeschlagen"
+                farbe = COLORS["error"]
+
+            try:
+                self._log_upload_status.configure(text=kurz, text_color=farbe)
+            except Exception:
+                pass
+
+            self._zeige_log_upload_ergebnis(ergebnis.get("meldung", ""))
+
+        def _arbeit():
+            try:
+                from pathlib import Path
+                from src.utils.log_upload import sende_logs
+                from src.utils.logging import LOG_PATH, get_current_log_file
+
+                # LOG_PATH zeigt bei PyInstaller-Builds neben die EXE
+                # (C:exobooth\logs) — genau dorthin schreibt die Box.
+                log_pfad = Path(LOG_PATH)
+                if not log_pfad.exists():
+                    # Rueckfallebene: Ordner der gerade offenen Logdatei
+                    aktuell = get_current_log_file()
+                    if aktuell:
+                        log_pfad = Path(aktuell).parent
+
+                # ACHTUNG: self.config_data, NICHT self.config — letzteres ist
+                # die geerbte Tk-Methode zum Einstellen von Widgets. Der
+                # Zugriff darauf ergab "'function' object has no attribute
+                # 'get'" (Box-Test 21.08.2026).
+                ergebnis = sende_logs(
+                    self.config_data,
+                    log_pfad,
+                    notiz=f"Service-Menü, Box {self.config_data.get('box_id', '?')}",
+                    fortschritt=_status,
+                )
+            except Exception as e:
+                logger.error(f"Log-Versand fehlgeschlagen: {e}", exc_info=True)
+                ergebnis = {
+                    "ok": False,
+                    "gesendet": 0,
+                    "meldung": f"Der Versand ist fehlgeschlagen:\n{e}",
+                }
+
+            try:
+                self.after(0, lambda: _fertig(ergebnis))
+            except Exception:
+                pass
+
+        threading.Thread(target=_arbeit, daemon=True, name="log-upload").start()
+
+    def _zeige_log_upload_ergebnis(self, text: str):
+        """Ergebnisfenster nach dem Log-Versand (mehrzeilig, zum Wegklicken)."""
+        try:
+            dialog = ctk.CTkToplevel(self)
+            dialog.title("Log-Versand")
+            dialog.geometry("560x420")
+            dialog.transient(self)
+            dialog.attributes("-topmost", True)
+
+            dialog.update_idletasks()
+            x = (dialog.winfo_screenwidth() - 560) // 2
+            y = (dialog.winfo_screenheight() - 420) // 2
+            dialog.geometry(f"560x420+{x}+{y}")
+
+            rahmen = ctk.CTkFrame(dialog, fg_color=COLORS["bg_medium"])
+            rahmen.pack(fill="both", expand=True, padx=12, pady=12)
+
+            ctk.CTkLabel(
+                rahmen, text="Log-Versand ans Dashboard",
+                font=FONTS["body_bold"], text_color=COLORS["text_primary"]
+            ).pack(anchor="w", padx=14, pady=(12, 6))
+
+            box = ctk.CTkTextbox(
+                rahmen, font=FONTS["small"],
+                fg_color=COLORS["bg_card"], text_color=COLORS["text_primary"]
+            )
+            box.pack(fill="both", expand=True, padx=14, pady=(0, 10))
+            box.insert("1.0", text or "Keine Rückmeldung erhalten.")
+            box.configure(state="disabled")
+
+            ctk.CTkButton(
+                rahmen, text="Schließen", font=FONTS["small"],
+                width=140, height=34, command=dialog.destroy
+            ).pack(pady=(0, 12))
+        except Exception as e:
+            logger.warning(f"Ergebnisfenster konnte nicht angezeigt werden: {e}")
+
     def _on_wlan_radical_reset(self):
         """Netzwerk-Werksreset (3198-Menue, nur Werkstatt).
 
