@@ -6,6 +6,67 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.62] - 2026-08-26 - Canon-Host-Readiness ohne SD-Karte korrigiert
+
+> Ausschliesslich der interne Canon-Host-Readiness-Vertrag wurde korrigiert.
+> Webcam, Nikon, Canon-Shutter, Softwareblitz und Bildverarbeitung bleiben
+> unveraendert.
+
+### Hardwarebefund auf Box 248
+
+Die EOS 2000D wurde von EDSDK bei jedem Versuch gefunden und ihre Session
+erfolgreich geoeffnet. Auch `SaveTo=Host`, `UILock`,
+`EdsSetCapacity(reset=1)`, `UIUnlock` und der `SaveTo`-Readback waren
+erfolgreich. Ohne SD-Karte blieb `AvailableShots` jedoch dauerhaft bei null.
+2.4.61 wertete allein diesen Wert als fatal, gab die bereits verbundene Kamera
+wieder frei und meldete irrefuehrend, sie koenne nicht initialisiert werden.
+
+Die Kamera stand auf `P`; der Videomodus ist ausgeschlossen. Canons
+mitgelieferte Dokumentation verlangt fuer den Hostweg die Capacity-Meldung,
+aber keinen positiven `AvailableShots`-Readback. Auf manchen Bodies ist dieser
+Wert nur eine Anzeige und ohne Karte nicht belastbar.
+
+### Null ist nach bestaetigtem Hostweg kein Verbindungsfehler mehr
+
+- Die Pflichtfolge `SaveTo=Host -> UILock -> SetCapacity -> UIUnlock ->
+  SaveTo-Readback` bleibt unveraendert und fail-closed.
+- `AvailableShots=0` wird weiterhin eine Sekunde lang abgefragt. Bleibt der
+  Wert null, wird der kartelose Hostbetrieb deutlich gewarnt, danach aber auf
+  Basis von `SaveTo=Host` plus erfolgreicher Capacity als bereit markiert.
+- Positive Werte, Canons Unbekanntwert und nicht unterstuetzte Readbacks
+  behalten ihre bisherigen Wege. Andere unplausible UInt32-Werte bleiben
+  fatal; die Lockerung gilt ausschliesslich fuer die hardwarebelegte null.
+- Der Readiness-Marker nennt seine Beweisgrundlage explizit, zum Beispiel
+  `readiness=save_to+capacity` fuer die EOS ohne Karte.
+- Es gibt kein Dummyfoto, keinen automatischen zweiten Shutter und keinen
+  Rueckfall auf die Speicherkarte. Ein echtes `CARD_NG` invalidiert weiterhin
+  die Session und wird nicht automatisch wiederholt.
+
+### Vorheriger Timingtest bestanden
+
+Der 2.4.61-Lauf auf Box 245 lieferte vier von vier echte
+6000-x-4000-JPEGs. Press, Release, Blitz, Transfer und Fotoanzeige kamen je
+Capture genau einmal; der Blitz folgte Press-Return nur 60 bis 65 ms spaeter.
+Auch das erste Foto war vollstaendig. Damit bleibt der gerade bestaetigte
+Shutter-/Blitzablauf in 2.4.62 bewusst unangetastet.
+
+### Tests
+
+`python tests/alle_tests.py`: **18/18 unter Windows bestanden**, ohne Kamera.
+Der Readiness-Test deckt dauerhafte null, `0 -> positiv`, alle Pflichtfehler,
+unbekannte/nicht lesbare Werte und einen weiterhin fatalen unplausiblen Wert
+ab. Die integrierte Fake-Kette startet mit `AvailableShots=0`, erzeugt vor dem
+Benutzercapture kein Testfoto und liefert danach mit genau einem Press ein
+6000-x-4000-Host-JPEG. `py_compile` und `git diff --check` sind gruen;
+Webcam-, Nikon-, Canon-Manager- und Session-Dateien haben keinen Diff.
+
+**Offen:** 2.4.62 auf Box 248 ohne SD-Karte im Dev-Modus testen. Erwartet sind
+Null-Warnung, `CANON-HOST READY ... readiness=save_to+capacity`, LiveView und
+eine komplette Session mit echten 6000-x-4000-JPEGs ohne `CARD_NG`, Retry,
+Doppelbild oder Notloesung.
+
+---
+
 ## [2.4.61] - 2026-08-26 - Canon-Softwareblitz an den Shutter angenaehert
 
 > Ausschliesslich der interne Canon-DSLR-Ablauf wurde veraendert. Webcam und

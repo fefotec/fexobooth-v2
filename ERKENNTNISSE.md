@@ -6,6 +6,16 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### `AvailableShots` ist ohne Karte kein Host-Readiness-Beweis (2.4.62)
+
+| | |
+|---|---|
+| **Hardwarebefund** | Box 248 fand und oeffnete eine EOS 2000D im Fotomodus `P` ohne SD-Karte. `SaveTo=Host`, UI-Lock, `EdsSetCapacity`, UI-Unlock und `SaveTo`-Readback gelangen; `AvailableShots` blieb trotzdem dauerhaft null. 2.4.61 verwarf deshalb die funktionierende Verbindung. |
+| **Herstellervertrag** | Canon verlangt nach `SaveTo=Host` eine Capacity-Meldung. Laut mitgeliefertem Header koennen manche Bodies daraus eine verbleibende Bildzahl anzeigen; ein positiver `AvailableShots`-Readback ist keine Voraussetzung des Hosttransfers. |
+| **Loesung** | Null wird weiterhin eine Sekunde lang als Kaltstartsignal beobachtet. Bleibt sie bestehen, reicht die bestaetigte Pflichtfolge `SaveTo=Host + SetCapacity + SaveTo-Readback`; der kartelose Weg wird deutlich gewarnt und als host-ready markiert. Andere unplausible Werte bleiben fatal. |
+| **Sicherheitsgrenze** | Kein Dummyfoto und kein Retry. Ein echtes `CARD_NG` invalidiert den Zustand weiterhin. Die Lockerung betrifft nur den Null-Readback nach vollstaendig erfolgreicher Hostkonfiguration, nicht deren Pflichtschritte. |
+| **Merke** | Eine Anzeige-Property darf nicht zum harten Verbindungsbeweis werden, wenn der Hersteller sie nur fuer manche Bodies garantiert. Erst Pflichtaufrufe, Hardwarevergleich und der tatsaechliche Transfer bestimmen den Vertrag. |
+
 ### Ein UI-Blitz braucht einen belegbaren Kamera-Meilenstein und einen Capture-Token (2.4.61)
 
 | | |
@@ -24,7 +34,7 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 | **Hardwarebefund** | 2.4.59 stellte `SaveTo=Host` ein und meldete Capacity unmittelbar vor jedem Foto. Beim ersten Capture nach dem Kaltstart antwortete die EOS 2000D trotzdem mit `TAKE_PICTURE_CARD_NG`; danach kamen sieben echte 6000-x-4000-JPEGs fehlerfrei. |
 | **Ursache** | Ein erfolgreicher Setter beweist noch nicht, dass das Speicherziel in der Kamera bereits wirksam und aufnahmebereit ist. Die vorherige Folge verteilte Konfiguration und Nutzung zudem auf zwei Zeitpunkte statt sie als abgeschlossenen Initialisierungsschritt zu behandeln. |
 | **Lösung** | `SaveTo=Host`, `UILock`, genau ein `EdsSetCapacity(reset=1)`, garantiertes `UIUnlock` und begrenzte Readbacks laufen atomar nach `OpenSession`. Erst danach gilt die Session als Host-ready. Vor einem Foto wird nur dieses Flag geprueft; Capacity wird nicht jedes Mal neu initialisiert. |
-| **Fehlervertrag** | Ohne bestaetigtes Host-Ziel kein Shutter. Ein `CARD_NG` invalidiert die Bereitschaft fuer den naechsten kontrollierten Aufbau, fuehrt aber niemals zu einem automatischen zweiten Shutter. Nicht lesbare oder von Canon als unbekannt gemeldete `AvailableShots` blockieren nicht, wenn Setter, Capacity und `SaveTo`-Readback erfolgreich waren. |
+| **Fehlervertrag** | Ohne bestaetigtes Host-Ziel kein Shutter. Ein `CARD_NG` invalidiert die Bereitschaft fuer den naechsten kontrollierten Aufbau, fuehrt aber niemals zu einem automatischen zweiten Shutter. Seit 2.4.62 blockieren auch dauerhafte null, nicht lesbare oder unbekannte `AvailableShots` nicht, wenn Setter, Capacity und `SaveTo`-Readback erfolgreich waren. |
 | **Merke** | Hardware-Initialisierung braucht einen pruefbaren Abschlusszustand. Wiederholtes Setzen direkt vor der Nutzung ersetzt diesen Nachweis nicht und kann selbst ein Race erzeugen. |
 
 ### Gemeinsamer UI-Code braucht eine explizite Kameratyp-Grenze (2.4.60)

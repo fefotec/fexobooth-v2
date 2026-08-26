@@ -1,8 +1,8 @@
 # DSLR-Baustelle — Stand und Übergabe
 
 > **Zweck dieser Datei:** Vollständige Übergabe an die nächste Sitzung.
-> Stand: **26.08.2026, Version 2.4.61**. Testgerät: **Box 245**, Canon EOS 2000D,
-> Surface-Tablet.
+> Stand: **26.08.2026, Version 2.4.62**. Testgeräte: **Box 245 und Box 248**,
+> Canon EOS 2000D, Surface-Tablets.
 >
 > **Wer hier neu einsteigt, liest zuerst „Die wichtigste Regel" und
 > „Wo wir stehen".**
@@ -48,6 +48,8 @@ Zweite Regel, ebenso wichtig:
 | Owner/Event/Download sind hardwaretauglich | Keine Owner-Timeouts, Thread-Verstösse oder Downloadfehler im erfolgreichen Lauf |
 | 2.4.60-Kaltstart/Host-Readiness funktioniert | Vier von vier echte 6000-x-4000-JPEGs, kein `CARD_NG`, Retry oder Doppelbild |
 | Verbliebener Timingfehler in 2.4.60 | Softwareblitz lag 1.497 bis 1.569 ms vor Press-Return und dem hoerbaren Kameraklick |
+| 2.4.61-Blitz/Pose funktioniert | Box 245: vier echte JPEGs; Blitz 60 bis 65 ms nach Press-Return; erstes Foto vorhanden; keine Fehler oder Doppeltrigger |
+| 2.4.61 ohne SD-Karte blockiert falsch | Box 248: Kamera/Session und Host-Pflichtfolge erfolgreich, aber `AvailableShots=0` fuehrte zur Freigabe der bereits erkannten Kamera |
 | Log-Versand ins Dashboard | Läuft, siehe „Werkzeuge" |
 
 ### Aktueller Reparaturstand
@@ -106,13 +108,23 @@ Softwareblitzes:**
 - Dev-Marker korrelieren Press, Release, Flash, Transfer und Fotoanzeige.
 
 Canons API meldet keinen exakten physikalischen Verschlusszeitpunkt.
-Press-Return ist die beste verfuegbare Naeherung und muss deshalb mit der Pose
-auf dem echten Foto hardwareseitig abgenommen werden.
+Press-Return ist die beste verfuegbare Naeherung; Box 245 hat sie mit der Pose
+auf vier echten Fotos hardwareseitig bestaetigt.
 
-> **2.4.61 ist lokal implementiert und automatisch validiert; der
-> Hardware-Retest auf Box 245 ist offen.** Zuerst mit eingesetzter SD-Karte den
-> neuen Blitz-/Pose-Zeitpunkt pruefen. Der anschliessende Flottennachweis
-> erfolgt separat ohne SD-Karte.
+**2.4.61 ist auf Box 245 hardwarebestaetigt:** Vier von vier echte
+6000-x-4000-JPEGs, auch das erste Foto; pro Capture genau ein Press, Release,
+Blitz, Transfer und Foto. `FLASH SHOWN` folgte Press-Return nur 60 bis 65 ms
+spaeter. Es gab kein `CARD_NG`, Retry, Doppelbild oder Notbild.
+
+**2.4.62 korrigiert den anschliessenden Flottentest ohne SD-Karte:** Box 248
+bewies, dass eine EOS 2000D im Modus `P` trotz komplett erfolgreicher
+Host-Pflichtfolge dauerhaft `AvailableShots=0` melden kann. Null bleibt eine
+Sekunde lang ein Kaltstartsignal, wird danach aber auf Basis von
+`SaveTo=Host`, Capacity und Readback warnend akzeptiert. Pflichtfehler und
+andere unplausible Werte bleiben fatal. Kein Dummyfoto, Retry oder Kartenweg.
+
+> **2.4.62 ist lokal implementiert und mit 18/18 DSLR-Tests validiert. Offen
+> ist nur die Hardware-Abnahme auf Box 248 ohne SD-Karte.**
 
 ---
 
@@ -136,7 +148,8 @@ verdeckte damit, dass es mehrere Fehler waren.
 | 2.4.59 | Webcam-Optimierung `841de6c` verschob Canon-Capture/Handler auf Fremdthreads; falsche Event-/JPEG-Konstanten; Download reentrant im Callback | behoben, sieben echte Hardware-JPEGs |
 | 2.4.59 | **Build legte Canon-DLLs nur unter `_internal` ab, Loader suchte dort nicht** → installierte EXE konnte Canon verlieren, obwohl der Quellbaum funktionierte | behoben, eigener Build-Pfad-Test |
 | 2.4.60 | Erster Kaltstart-Shutter kam trotz gesetztem Host-Ziel zu frueh (`CARD_NG`); schwarzer Canon-Wartebalken und unnoetige Farb-Rundreise | behoben, vier echte Hardware-JPEGs ohne `CARD_NG` |
-| 2.4.61 | Softwareblitz wurde vor Worker/Autofokus gezeigt und lag im Hardwaretest rund 1,5 s vor dem echten Fotomoment | im Code an Press-Return gekoppelt, **Pose-Hardwaretest offen** |
+| 2.4.61 | Softwareblitz wurde vor Worker/Autofokus gezeigt und lag im Hardwaretest rund 1,5 s vor dem echten Fotomoment | behoben und auf Box 245 hardwarebestaetigt |
+| 2.4.62 | `AvailableShots=0` wurde trotz erfolgreichem Hostweg als fatal behandelt; EOS ohne SD-Karte erschien dadurch als nicht erkannt | im Code behoben, **Box-248-Hardwaretest offen** |
 
 ### Der rote Faden
 
@@ -231,7 +244,7 @@ ssh -i ~/.ssh/adminfexobox_claude c710394claude-code@admin.fexobox.de \
 
 ### 4. Logik-Tests ohne Hardware
 
-Die DSLR-Suite liegt dauerhaft unter `tests/`. 2.4.61 besteht **18/18 Tests
+Die DSLR-Suite liegt dauerhaft unter `tests/`. 2.4.62 besteht **18/18 Tests
 unter Windows**. Neben Host-Reihenfolge, Capacity, Owner und Transfer pruefen
 die Regressionen nun Press-/OFF-Exceptions, Owner-Timeout, das eingefrorene
 Shutter-Ergebnis, Callback-Thread und -Fehler, genau-einmal-Blitz, stale
@@ -248,7 +261,8 @@ Diff. Das ersetzt den Hardware-Retest nicht.
 | `EDSDK.dll gefunden: ...\_internal\EDSDK.dll` | installierter Build nutzt die mitgelieferte Canon-DLL |
 | `CANON-HANDLER READY object/state` | beide offiziellen Handler wurden im Owner registriert |
 | `Speicherung: direkter Host-Transfer ohne Speicherkarte` | Produktionsweg ist korrekt |
-| `CANON-HOST READY ... save_to=Host` | Host-Ziel, Capacity und Readback waren vor dem ersten Shutter bereit |
+| `CANON-HOST READY ... readiness=save_to+capacity` | Karteloser Hostweg: Pflichtschritte bestaetigt, `AvailableShots` blieb null/unbekannt/nicht lesbar |
+| `CANON-HOST READY ... readiness=save_to+capacity+available_shots` | Host-Pflichtschritte und positiver Anzeige-Readback bestaetigt |
 | `CANON-HOST NOT-READY` / `SHUTTER-BLOCKED` | Readiness-Vertrag nicht erfuellt; die App loest bewusst nicht aus |
 | `CANON-CAPTURE ARMED capture=...` | Queue wurde unmittelbar vor genau diesem Auslöser gebunden |
 | `CANON-SHUTTER PRESS-START/RETURN` | Beginn und synchrone Rueckkehr des einen Press-Commands; noch keine physikalische Verschlussgarantie |
@@ -276,33 +290,26 @@ Diff. Das ersetzt den Hardware-Retest nicht.
 
 ## Offene Punkte
 
-### 1. Liegt der neue 2.4.61-Blitz am gespeicherten Fotomoment? (offen, höchste Priorität)
+### 1. Funktioniert 2.4.62 auf Box 248 ohne Karte? (offen, höchste Priorität)
 
-Host-Transfer und Kaltstart-Readiness sind mit 2.4.60 auf Box 245 fuer vier
-Fotos bestaetigt. Offen ist die Hardware-Abnahme der neuen Press-Return-
-Naeherung aus 2.4.61.
+Box 248 steht auf `P` und besitzt keine SD-Karte. 2.4.61 erkannte und oeffnete
+die EOS 2000D, verwarf sie aber nach `AvailableShots=0`. 2.4.62 akzeptiert
+genau diesen Zustand erst nach der vollstaendigen Host-Pflichtfolge.
 
 **Prüfen:**
-- Vierer-Session im Dev-Modus mit eingesetzter SD-Karte aufnehmen
-- Bis zum neuen weissen Blitz stillhalten, direkt danach bewusst bewegen
-- Das JPEG muss noch die Pose am Blitzzeitpunkt zeigen
-- Pro Capture genau ein Press, Release, Flash und 6000-x-4000-JPEG
-- Kein `CARD_NG`, schwarzer Balken, Retry, Doppelbild oder `NOTLÖSUNG`
-- `PRESS-RETURN → FLASH-SHOWN` im Dashboard messen; EDSDK selbst garantiert
-  keinen physikalischen Verschlusszeitpunkt
+- 2.4.62 im Dev-Modus frisch starten; dslrBooth vollstaendig schliessen
+- `SaveTo=Host`, Capacity, Null-Warnung und danach
+  `CANON-HOST READY ... readiness=save_to+capacity` muessen erscheinen
+- LiveView muss starten
+- Vollstaendige Session mit echten 6000-x-4000-JPEGs aufnehmen
+- Pro Capture genau ein Press, Release, Flash, Transfer und Foto
+- Kein `CARD_NG`, Retry, Doppelbild oder `NOTLÖSUNG`
 
-### 2. Funktioniert der Direktweg ohne Karte? (offen, entscheidend für die Flotte)
-
-Auch der erfolgreiche 2.4.60-Lauf erfolgte mit eingesetzter Karte, laut Log
-aber ueber `SaveTo=Host`. Fuer den 2.4.61-Timingvergleich darf die Karte noch
-eingesetzt bleiben. Danach muss mindestens ein Nachweis **ohne Karte** folgen;
-das ist der echte Flottenweg.
-
-### 3. Standbild zeigt anderen Bildausschnitt als das finale Foto (offen)
+### 2. Standbild zeigt anderen Bildausschnitt als das finale Foto (offen)
 
 Christian mehrfach: *„liveview macht freeze und zeigt nicht das foto"*.
 Zwei Anteile:
-- **Zeitversatz** — in 2.4.61 gezielt an Press-Return gekoppelt, Hardwaretest offen
+- **Zeitversatz** — in 2.4.61 an Press-Return gekoppelt und auf Box 245 hardwarebestaetigt
 - **Unterschiedlicher Bildausschnitt** zwischen Vorschau und Aufnahme —
   eigenes Thema, noch nicht angefasst
 
@@ -310,14 +317,14 @@ Der Wartehinweis („Foto wird aufgenommen…") wurde seit 2.4.55 nach 900 ms
 eingeblendet. 2.4.60 plant ihn fuer Canon nicht mehr; bis das JPEG da ist,
 bleibt das letzte Live-View-Bild stehen. Nikon behaelt den Hinweis.
 
-### 4. Überbelichtete Fotos (Ursache geklaert)
+### 3. Überbelichtete Fotos (Ursache geklaert)
 
 Die Belichtungskorrektur war an der Kamera komplett verstellt und ist dort
 wieder korrigiert. Die App hatte ISO, Zeit, Blende und Korrektur nicht gesetzt.
 2.4.60 warnt beim Verbinden vor einer Korrektur ungleich null; im Dev-Log stehen
 zusätzlich EXIF und eine Helligkeitsprobe des echten JPEGs.
 
-### 5. Belichtungszeit im Auge behalten
+### 4. Belichtungszeit im Auge behalten
 
 Ohne Blitz wählt die Automatik bei dunkler Location lange Zeiten → verwackelte
 Fotos. Im Dev-Modus schreibt das Log Zeit, Blende, ISO, Weissabgleich,
@@ -369,19 +376,19 @@ Webcam-Capture folgt weiterhin seinem bisherigen Pfad.
 
 ---
 
-## Relevante Dateien in 2.4.61
+## Relevante Dateien in 2.4.62
 
 ```
-src/__init__.py              Version 2.4.61
+src/__init__.py              Version 2.4.62
 src/camera/edsdk.py          vollständiger Owner, Handler/Callback-Queue,
-                             Host-Readiness, Shutter-Ergebnis, Dev-Diagnose
-src/camera/canon.py          Host-Flow, State-Handler, Capture-Korrelation,
-                             Press-Callback, EXIF-/Helligkeitsdiagnose
-src/app.py                   Handle-Release über den Owner
-src/ui/screens/session.py    Canon-Blitz-Token, sofortiger PIL-Bildpfad,
-                             kein zweiter Canon-Capture im Webcam-Fallback
-src/main.py                  Dev-Logging auch bei --dslr-test
-src/tools/dslr_test.py       keine rohen DLL-Aufrufe mehr
+                             kartelose Host-Readiness und Dev-Diagnose
+tests/test_host_readiness.py Null-/Pflicht-/Grenzwertvertrag
+tests/test_host_capture_integration.py
+                             Null -> genau ein 6000-x-4000-Host-JPEG
+src/camera/canon.py          in 2.4.62 unveraendert
+src/ui/screens/session.py    in 2.4.62 unveraendert
+src/camera/webcam.py         in 2.4.62 unveraendert
+src/camera/nikon.py          in 2.4.62 unveraendert
 tests/                       18/18 DSLR-Regressionen ohne Kamera (Windows)
 CHANGELOG.md, ERKENNTNISSE.md, FORTSCHRITT.md, TODO.md
 ```
@@ -391,14 +398,13 @@ CHANGELOG.md, ERKENNTNISSE.md, FORTSCHRITT.md, TODO.md
 ## Empfehlung für den Einstieg
 
 1. **`python tests/alle_tests.py`** — muss komplett sauber durchlaufen.
-2. **2.4.61 bauen und mit `--dev` auf Box 245 starten; dslrBooth schließen.**
-3. Mit eingesetzter Karte eine Vierer-Session fahren: bis zum neuen Blitz
-   stillhalten und unmittelbar danach bewusst bewegen.
-4. Log ins Dashboard senden. Entscheidend ist die Kette
-   `PRESS-START → PRESS-RETURN → RELEASE-RETURN → FLASH REQUEST/SHOWN →
-   EVENT 0x208 → TRANSFER COMPLETE → PHOTO SHOWN` plus die Pose im JPEG.
-5. Nach bestandenem Timingtest denselben Host-Nachweis mindestens einmal ohne
-   SD-Karte erbringen.
+2. **2.4.62 bauen und mit `--dev` auf Box 248 starten; dslrBooth schließen.**
+3. SD-Karte entfernt und Wahlrad auf `P` lassen.
+4. Init-Kette bis `CANON-HOST READY ... readiness=save_to+capacity` pruefen,
+   danach eine vollstaendige Session fahren.
+5. Log ins Dashboard senden. Entscheidend ist die Kette aus Host-Ready,
+   LiveView, genau einem Press/Release/Blitz und einem echten
+   6000-x-4000-Transfer-JPEG pro Capture.
 6. Bei `CARD_NG`, `CANON-OWNER TIMEOUT` oder fehlender Kette nichts auf
    Verdacht ändern; zuerst dieses eine Log auswerten. Optional danach
    `--dev --dslr-test`.
@@ -407,10 +413,11 @@ CHANGELOG.md, ERKENNTNISSE.md, FORTSCHRITT.md, TODO.md
 
 ## Ehrliche Einordnung
 
-2.4.60 hat auf Box 245 vier echte 6000-x-4000-JPEGs ohne Kaltstartfehler,
-schwarzen Balken oder Doppelbild geliefert. Der verbliebene, hardwarebelegte
-Fehler war der rund 1,5 Sekunden zu fruehe Softwareblitz. 2.4.61 koppelt ihn
-an die Rueckkehr des akzeptierten Press-Commands und zeigt das fertige Foto
-direkt. Der ehrliche Status lautet: **Grundweg und 2.4.60-Kaltstart mit Karte
-hardwarebestaetigt; 2.4.61-Pose-Timing und Betrieb ohne SD-Karte noch
-abzunehmen.**
+2.4.61 ist auf Box 245 mit vier echten 6000-x-4000-JPEGs, korrekter
+Press-/Blitzfolge und vorhandenem ersten Foto hardwarebestaetigt. Box 248
+lieferte danach den klaren Restfehler: Ohne SD-Karte blieb `AvailableShots`
+bei null und der zu strenge Guard verwarf die funktionierende Session. 2.4.62
+akzeptiert diesen Wert erst nach allen bestaetigten Host-Pflichtschritten.
+Der ehrliche Status lautet: **Grundweg, Kaltstart und Pose-Timing mit Karte
+hardwarebestaetigt; 2.4.62 ohne SD-Karte automatisch validiert, Hardwarelauf
+auf Box 248 noch offen.**

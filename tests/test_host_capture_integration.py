@@ -34,7 +34,7 @@ def ref_wert(ref):
 
 
 class DLL:
-    def __init__(self):
+    def __init__(self, available_shots=128):
         self.object_handler = None
         self.state_handler = None
         self.pending_transfer = False
@@ -47,6 +47,7 @@ class DLL:
         self.download_complete = 0
         self.download_cancel = 0
         self.camera_release_hielt_callbacks = False
+        self.available_shots = available_shots
 
     def _call(self, name):
         self.calls.append((name, threading.get_ident()))
@@ -119,7 +120,7 @@ class DLL:
             out_value._obj.value = edsdk.kEdsSaveTo_Host
         elif int(prop) == edsdk.kEdsPropID_AvailableShots:
             self.host_actions.append("ReadAvailableShots")
-            out_value._obj.value = 128
+            out_value._obj.value = self.available_shots
         else:
             out_value._obj.value = 0
         return 0
@@ -209,7 +210,9 @@ class DLL:
         return 0
 
 
-dll = DLL()
+# Flottenfall: EOS 2000D im Fotomodus P, aber ohne SD-Karte. Der Body meldet
+# trotz bestaetigtem Hostziel und erfolgreicher Capacity dauerhaft 0.
+dll = DLL(available_shots=0)
 edsdk.EDSDK_DLL = dll
 edsdk.load_edsdk = lambda: True
 edsdk._setup_functions = lambda: None
@@ -242,6 +245,9 @@ try:
         "ReadAvailableShots",
     ], dll.host_actions
     assert dll.capacity_resets == [1]
+    assert "AvailableShots bleibt 0" in log_text.getvalue()
+    assert "readiness=save_to+capacity" in log_text.getvalue()
+    assert dll.shutter == [], "Host-Pruefung darf kein unsichtbares Testfoto machen"
 
     manager._live_view_active = True
     callback_payloads = []

@@ -1580,8 +1580,9 @@ def set_save_to_host(camera_ref: c_void_p) -> bool:
     """Konfiguriert und bestaetigt den Host-Speicher einmal pro Session.
 
     Canon erwartet nach ``SaveTo=Host`` eine Capacity-Meldung. Beides wird
-    hier in einem einzigen Owner-Auftrag eingerichtet. Erst nach bestaetigtem
-    SaveTo-Readback und plausiblen freien Aufnahmen darf ausgelöst werden.
+    hier in einem einzigen Owner-Auftrag eingerichtet. Der SaveTo-Readback
+    bleibt Pflicht; AvailableShots ist danach ein begrenztes Kaltstartsignal,
+    aber wegen karteloser EOS-Bodies kein positiver Pflichtnachweis.
     """
     global letzter_fehler
 
@@ -1664,6 +1665,7 @@ def set_save_to_host(camera_ref: c_void_p) -> bool:
         time.sleep(0.05)
 
     available_shots = None
+    readiness_basis = "save_to+capacity"
     shots_deadline = time.monotonic() + 1.0
     while True:
         available_shots, shots_err = _lese_uint_roh(kEdsPropID_AvailableShots)
@@ -1682,10 +1684,22 @@ def set_save_to_host(camera_ref: c_void_p) -> bool:
             )
             break
         if 1 <= available_shots <= 0x7FFFFFFF:
+            readiness_basis = "save_to+capacity+available_shots"
             break
-        if available_shots == 0 and time.monotonic() < shots_deadline:
-            time.sleep(0.05)
-            continue
+        if available_shots == 0:
+            if time.monotonic() < shots_deadline:
+                time.sleep(0.05)
+                continue
+            # Hardwarebeleg Box 248: Eine EOS 2000D im Fotomodus P meldet
+            # ohne SD-Karte dauerhaft 0, obwohl SaveTo=Host, SetCapacity und
+            # der SaveTo-Readback erfolgreich waren. Canons Dokumentation
+            # verlangt die Capacity-Meldung, aber keinen positiven Readback.
+            logger.warning(
+                "CANON-HOST AvailableShots bleibt 0; karteloser "
+                "Host-Betrieb wird auf Basis von SaveTo=Host + "
+                "SetCapacity fortgesetzt"
+            )
+            break
         logger.error(
             "CANON-HOST NOT-READY reason=available_shots "
             f"value={available_shots}"
@@ -1697,6 +1711,7 @@ def set_save_to_host(camera_ref: c_void_p) -> bool:
     logger.info(
         "CANON-HOST READY "
         f"save_to=Host available_shots={available_shots} "
+        f"readiness={readiness_basis} "
         f"duration_ms={(time.monotonic() - start) * 1000:.1f}"
     )
     return True

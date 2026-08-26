@@ -1,7 +1,9 @@
 # Canon-Hostbetrieb ohne SD-Karte
 
-**Status:** Von Christian am 26.08.2026 freigegeben  
-**Zielversion:** 2.4.62  
+**Status:** Implementiert und automatisch validiert; Hardware-Abnahme offen
+
+**Zielversion:** 2.4.62
+
 **Geltungsbereich:** interne FexoBooth V2, ausschließlich Canon-DSLR
 
 ## Ausgangslage

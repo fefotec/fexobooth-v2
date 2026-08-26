@@ -4,7 +4,7 @@
 
 **Zielversion:** 2.4.62
 
-**Status:** Zur Umsetzung freigegeben
+**Status:** Implementiert und automatisch validiert; Hardware-Abnahme offen
 
 **Grundlage:**
 `docs/superpowers/specs/2026-08-26-canon-no-sd-host-readiness-design.md`
@@ -64,7 +64,7 @@ wird nicht eingefuehrt.
    ```
 
    Fuer null ist `<basis>` gleich `save_to+capacity`; fuer einen positiven
-   Wert `available_shots`.
+   Wert `save_to+capacity+available_shots`.
 6. Nach jedem akzeptierten Readiness-Weg `letzter_fehler` auf `OK` setzen.
 
 Kein Capture-, Callback-, UI- oder Kamera-Manager-Code wird fuer diese
@@ -82,6 +82,12 @@ nachweist.
    `src/ui/screens/session.py` und der Canon-Shutter-/Blitzblock keinen Diff
    erhalten haben.
 7. Einen unabhaengigen Code-/Testreview gegen die freigegebene Spec einholen.
+
+**Ergebnis vom 26.08.2026:** 18/18 DSLR-Tests unter Windows bestanden,
+einschliesslich des isolierten Null-Readiness-Tests und der integrierten
+`AvailableShots=0 -> 6000x4000-JPEG`-Kette. `py_compile`,
+`git diff --check` und der Pfad-Diff fuer Webcam, Nikon, Canon-Manager und
+Session sind gruen. Die Hardware-Abnahme bleibt davon unersetzt.
 
 ## Schritt 4: Version und Dokumentation
 

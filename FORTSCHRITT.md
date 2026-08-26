@@ -4,6 +4,39 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-08-26 — Canon V2.4.62: Hostbetrieb ohne SD-Karte entblockt
+
+**Hardwarebefund:** Box 248 lief mit EOS 2000D, Wahlrad `P` und ohne
+SD-Karte. 2.4.61 fand die Kamera und oeffnete die Session bei jedem Versuch.
+`SaveTo=Host`, UI-Lock, `EdsSetCapacity(reset=1)`, UI-Unlock und
+`SaveTo`-Readback gelangen ebenfalls. Nur `AvailableShots` blieb bei null;
+der neue 2.4.60-Guard behandelte das faelschlich als fatal und verwarf die
+bereits verbundene Kamera.
+
+**Korrektur 2.4.62 (nur Canon):** Null bleibt fuer eine Sekunde ein
+Kaltstartsignal. Bleibt sie danach bestehen, gilt die Session auf Basis der
+bestaetigten Hostschritte als bereit und schreibt eine eindeutige Warnung plus
+`readiness=save_to+capacity`. Alle Pflichtfehler sowie andere unplausible
+Werte bleiben fail-closed. Es gibt kein Dummyfoto, keinen Retry und keinen
+Kartenfallback.
+
+**Vorherige Hardware-Abnahme:** Der 2.4.61-Lauf auf Box 245 war sauber: vier
+echte 6000-x-4000-JPEGs, erstes Foto vorhanden, pro Capture genau ein Press,
+Release, Blitz, Transfer und Foto. Der Blitz folgte Press-Return nach 60 bis
+65 ms. Dieser Ablauf wurde nicht veraendert.
+
+**Validierung:** `python tests/alle_tests.py` unter Windows **18/18 gruen**;
+isolierter Null-Readiness-Test und integrierter
+`AvailableShots=0 -> genau ein Host-JPEG`-Test gruen; `py_compile` und
+`git diff --check` gruen. `webcam.py`, `nikon.py`, `canon.py` und
+`session.py` ohne Diff.
+
+**Offen:** 2.4.62 auf Box 248 ohne SD-Karte im Dev-Modus bauen und eine
+vollstaendige Session fahren. Erst echte 6000-x-4000-JPEGs und die komplette
+Markerfolge schliessen den Flottennachweis ab.
+
+---
+
 ## 2026-08-26 — Canon V2.4.61: Softwareblitz an Press-Return gekoppelt
 
 **Hardwarebefund 2.4.60:** Box 245 lieferte mit EOS 2000D und eingesetzter

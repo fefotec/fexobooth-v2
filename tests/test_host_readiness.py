@@ -5,6 +5,8 @@ Aufruf:  python tests/test_host_readiness.py
 
 import ctypes
 import importlib.util
+import io
+import logging
 import sys
 import threading
 import time
@@ -248,16 +250,34 @@ assert dll.capacities == [(0x7FFFFFFF, 0x1000, 1)]
 assert edsdk.letzter_fehler == edsdk.EDS_ERR_OBJECT_NOTREADY
 
 
-# 0 freie Aufnahmen ist kein unbekannter Wert: Nach maximal rund einer Sekunde
-# muss der Aufbau scheitern, statt einen wahrscheinlich erfolglosen Shutter zu
-# erlauben.
+# Eine EOS 2000D ohne SD-Karte kann auch nach erfolgreichem SaveTo=Host und
+# SetCapacity dauerhaft 0 freie Aufnahmen melden. Die Schonfrist bleibt, aber
+# danach ist der bestaetigte Hostweg die Beweisgrundlage.
 dll = HostDLL(available_shots=[0])
+log_text = io.StringIO()
+log_handler = logging.StreamHandler(log_text)
+edsdk.logger.addHandler(log_handler)
+logger_level = edsdk.logger.level
+edsdk.logger.setLevel(logging.DEBUG)
 start = time.monotonic()
-im_owner(dll, expected=False)
-dauer = time.monotonic() - start
+try:
+    im_owner(dll)
+    dauer = time.monotonic() - start
+finally:
+    edsdk.logger.removeHandler(log_handler)
+    edsdk.logger.setLevel(logger_level)
 assert 0.9 <= dauer < 2.5, f"AvailableShots-Timeout falsch: {dauer:.3f}s"
 assert sum(name == "Capacity" for name, _, _ in dll.calls) == 1
 assert sum(name == "ReadAvailableShots" for name, _, _ in dll.calls) >= 10
+assert edsdk.letzter_fehler == edsdk.EDS_ERR_OK
+assert "AvailableShots bleibt 0" in log_text.getvalue()
+assert "readiness=save_to+capacity" in log_text.getvalue()
+
+
+# Die Lockerung gilt ausschliesslich fuer den auf Hardware belegten Nullwert.
+# Andere unplausible UInt32-Werte bleiben ein harter Readiness-Fehler.
+dll = HostDLL(available_shots=[0x80000000])
+im_owner(dll, expected=False)
 assert edsdk.letzter_fehler == edsdk.EDS_ERR_MEMORYSTATUS_NOTREADY
 
 
