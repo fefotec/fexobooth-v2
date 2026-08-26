@@ -1,7 +1,7 @@
 # DSLR-Baustelle — Stand und Übergabe
 
 > **Zweck dieser Datei:** Vollständige Übergabe an die nächste Sitzung.
-> Stand: **25.08.2026, Version 2.4.60**. Testgerät: **Box 245**, Canon EOS 2000D,
+> Stand: **26.08.2026, Version 2.4.61**. Testgerät: **Box 245**, Canon EOS 2000D,
 > Surface-Tablet.
 >
 > **Wer hier neu einsteigt, liest zuerst „Die wichtigste Regel" und
@@ -46,7 +46,8 @@ Zweite Regel, ebenso wichtig:
 | Kamera meldet Dateiname + Größe | Box-Log: `IMG_0001.JPG (820393 bytes)` |
 | 2.4.59-Host-Transfer funktioniert | Sieben echte JPEGs mit 6000 x 4000 Pixeln in Folge |
 | Owner/Event/Download sind hardwaretauglich | Keine Owner-Timeouts, Thread-Verstösse oder Downloadfehler im erfolgreichen Lauf |
-| Ein Kaltstart-Restfehler besteht | Erster Versuch: `TAKE_PICTURE_CARD_NG (0x8d07)`, danach funktionierte es |
+| 2.4.60-Kaltstart/Host-Readiness funktioniert | Vier von vier echte 6000-x-4000-JPEGs, kein `CARD_NG`, Retry oder Doppelbild |
+| Verbliebener Timingfehler in 2.4.60 | Softwareblitz lag 1.497 bis 1.569 ms vor Press-Return und dem hoerbaren Kameraklick |
 | Log-Versand ins Dashboard | Läuft, siehe „Werkzeuge" |
 
 ### Aktueller Reparaturstand
@@ -73,7 +74,8 @@ nach dem Kaltstart schlug noch mit `CARD_NG` fehl und wurde als
 - korrekte JPEG-Qualitäts- und Event-Konstanten aus `EDSDKTypes.h`,
 - korreliertes Dev-Logging für Owner, Capture, Event und Download.
 
-**2.4.60 beseitigt jetzt gezielt die verbliebenen Canon-Maengel:**
+**2.4.60 hat die damaligen Kaltstart- und Anzeigemaengel auf Hardware
+bestaetigt beseitigt:**
 
 - Host-Speicher nach `OpenSession` atomar scharfstellen: `SaveTo=Host`,
   `UILock`, Capacity genau einmal, garantiertes `UIUnlock` und begrenztes
@@ -91,9 +93,26 @@ Die auffaellige Belichtung im 2.4.59-Test war eine verstellte
 Belichtungskorrektur an der Kamera und ist dort behoben. FexoBooth setzt keine
 Belichtungswerte automatisch.
 
-> **2.4.60 ist der freigegebene Nachbesserungsstand; der Hardware-Retest ist
-> noch offen.** Zuerst muss direkt das erste Foto nach einem Kamera-Kaltstart
-> funktionieren. Der anschliessende Flottennachweis erfolgt ohne SD-Karte.
+**2.4.61 korrigiert den im 2.4.60-Retest sichtbar gewordenen Zeitpunkt des
+Softwareblitzes:**
+
+- Canon zeigt am Countdown-Ende noch keinen Blitz; Webcam und Nikon behalten
+  ihren bisherigen Einstieg,
+- der EDSDK-Owner liefert ein unveraenderliches Press-/Release-Ergebnis und
+  versucht `ShutterButton_OFF` nach begonnenem Press immer im `finally`,
+- nur `press_ok=True` fordert im Capture-Worker den 90-ms-Tk-Blitz an,
+- Capture-eigene Generation-Tokens verwerfen alte oder doppelte UI-Callbacks,
+- das echte Canon-PIL-Foto wird im Completion-Callback sofort angezeigt,
+- Dev-Marker korrelieren Press, Release, Flash, Transfer und Fotoanzeige.
+
+Canons API meldet keinen exakten physikalischen Verschlusszeitpunkt.
+Press-Return ist die beste verfuegbare Naeherung und muss deshalb mit der Pose
+auf dem echten Foto hardwareseitig abgenommen werden.
+
+> **2.4.61 ist lokal implementiert und automatisch validiert; der
+> Hardware-Retest auf Box 245 ist offen.** Zuerst mit eingesetzter SD-Karte den
+> neuen Blitz-/Pose-Zeitpunkt pruefen. Der anschliessende Flottennachweis
+> erfolgt separat ohne SD-Karte.
 
 ---
 
@@ -116,7 +135,8 @@ verdeckte damit, dass es mehrere Fehler waren.
 | 2.4.58 | **Aufrufstelle von `EdsGetLength` im Live-View übersehen** → kein Vorschaubild | behoben, mit 2.4.59 hardwarebestaetigt |
 | 2.4.59 | Webcam-Optimierung `841de6c` verschob Canon-Capture/Handler auf Fremdthreads; falsche Event-/JPEG-Konstanten; Download reentrant im Callback | behoben, sieben echte Hardware-JPEGs |
 | 2.4.59 | **Build legte Canon-DLLs nur unter `_internal` ab, Loader suchte dort nicht** → installierte EXE konnte Canon verlieren, obwohl der Quellbaum funktionierte | behoben, eigener Build-Pfad-Test |
-| 2.4.60 | Erster Kaltstart-Shutter kam trotz gesetztem Host-Ziel zu frueh (`CARD_NG`); schwarzer Canon-Wartebalken und unnoetige Farb-Rundreise | im Code behoben, **Hardware-Retest offen** |
+| 2.4.60 | Erster Kaltstart-Shutter kam trotz gesetztem Host-Ziel zu frueh (`CARD_NG`); schwarzer Canon-Wartebalken und unnoetige Farb-Rundreise | behoben, vier echte Hardware-JPEGs ohne `CARD_NG` |
+| 2.4.61 | Softwareblitz wurde vor Worker/Autofokus gezeigt und lag im Hardwaretest rund 1,5 s vor dem echten Fotomoment | im Code an Press-Return gekoppelt, **Pose-Hardwaretest offen** |
 
 ### Der rote Faden
 
@@ -211,13 +231,13 @@ ssh -i ~/.ssh/adminfexobox_claude c710394claude-code@admin.fexobox.de \
 
 ### 4. Logik-Tests ohne Hardware
 
-Die DSLR-Suite liegt dauerhaft unter `tests/`. 2.4.60 besteht **18/18 Tests
-unter Windows**. Die Regressionen pruefen Host-Reihenfolge und
-Unlock-Fehlerpfade, genau einen Capacity-Reset pro Session, den Shutter-Guard,
-die kameratypgenaue Warteanzeige, den Canon-PIL-Pfad sowie
-Belichtungszuordnungen und Diagnoselogging. `py_compile` ist gruen und
-`webcam.py` hat keinen semantischen Diff. Das ersetzt den Hardware-Retest
-nicht.
+Die DSLR-Suite liegt dauerhaft unter `tests/`. 2.4.61 besteht **18/18 Tests
+unter Windows**. Neben Host-Reihenfolge, Capacity, Owner und Transfer pruefen
+die Regressionen nun Press-/OFF-Exceptions, Owner-Timeout, das eingefrorene
+Shutter-Ergebnis, Callback-Thread und -Fehler, genau-einmal-Blitz, stale
+UI-Tokens, Canon-Sofortanzeige sowie die kameratypgenauen Grenzen.
+`py_compile` ist gruen; `webcam.py` und `nikon.py` haben keinen semantischen
+Diff. Das ersetzt den Hardware-Retest nicht.
 
 ---
 
@@ -231,11 +251,15 @@ nicht.
 | `CANON-HOST READY ... save_to=Host` | Host-Ziel, Capacity und Readback waren vor dem ersten Shutter bereit |
 | `CANON-HOST NOT-READY` / `SHUTTER-BLOCKED` | Readiness-Vertrag nicht erfuellt; die App loest bewusst nicht aus |
 | `CANON-CAPTURE ARMED capture=...` | Queue wurde unmittelbar vor genau diesem Auslöser gebunden |
+| `CANON-SHUTTER PRESS-START/RETURN` | Beginn und synchrone Rueckkehr des einen Press-Commands; noch keine physikalische Verschlussgarantie |
+| `CANON-SHUTTER RELEASE-RETURN` | `ShutterButton_OFF` wurde nach dem Press versucht und kam mit dem genannten Ergebnis zurueck |
+| `CANON-FLASH REQUEST/SHOWN` | Worker-Anforderung und tatsaechliche Tk-Widget-Konfiguration mit UI-Wartezeit |
+| `CANON-PHOTO SHOWN` | echtes Canon-Foto wurde im Tk-Hauptthread direkt konfiguriert |
 | `CANON-CAPTURE SHUTTER press=OK ... release=OK` | genau ein Capture angenommen und Auslöser sauber losgelassen |
 | `CANON-OWNER TIMEOUT` | genannter nativer Auftrag blockiert; nicht erneut probieren |
 | `CANON-EVENT QUEUED ... 0x00000208` | Canon hat ein Transferbild bereitgestellt |
 | `CANON-TRANSFER START/COMPLETE` | Dateiname/Format, angekündigte/empfangene Bytezahl und Dauer |
-| `CANON-STATE EVENT ... CaptureError/InternalError` | asynchroner Canon-Fehler mit Capture-ID und Zeit seit Shutter |
+| `CANON-STATE EVENT ... CaptureError/InternalError` | asynchroner Canon-Fehler mit Capture-ID und Zeit seit Capture-Armierung |
 | `STALE-EVENT-REJECTED` | verspäteter Transfer wurde bewusst gecancelt, nicht als neues Foto benutzt |
 | `CANON-CAPTURE TIMEOUT ... owner=...` | Event/Download fehlte; Owner-Zustand steht in derselben Zeile |
 | `CANON-THREAD-VERSTOSS` | harte Architekturverletzung; darf nie erscheinen |
@@ -252,31 +276,33 @@ nicht.
 
 ## Offene Punkte
 
-### 1. Funktioniert direkt das erste 2.4.60-Foto? (offen, höchste Priorität)
+### 1. Liegt der neue 2.4.61-Blitz am gespeicherten Fotomoment? (offen, höchste Priorität)
 
-Der Canon-Grundweg ist seit 2.4.59 hardwarebestaetigt. Offen ist nur die neue
-Kaltstart-Readiness aus 2.4.60.
+Host-Transfer und Kaltstart-Readiness sind mit 2.4.60 auf Box 245 fuer vier
+Fotos bestaetigt. Offen ist die Hardware-Abnahme der neuen Press-Return-
+Naeherung aus 2.4.61.
 
 **Prüfen:**
-- Kamera frisch verbinden bzw. kalt starten und direkt das erste Foto nehmen
-- Im Log: `CANON-HOST READY` vor `CANON-CAPTURE SHUTTER`
-- Kein `TAKE_PICTURE_CARD_NG`, kein schwarzer Wartebalken
-- Im Log: `=== ECHTES DSLR-FOTO: capture=... 6000x4000` statt `NOTLÖSUNG`?
-- Am Zeilenende: steigt `echt` in der Bilanz?
+- Vierer-Session im Dev-Modus mit eingesetzter SD-Karte aufnehmen
+- Bis zum neuen weissen Blitz stillhalten, direkt danach bewusst bewegen
+- Das JPEG muss noch die Pose am Blitzzeitpunkt zeigen
+- Pro Capture genau ein Press, Release, Flash und 6000-x-4000-JPEG
+- Kein `CARD_NG`, schwarzer Balken, Retry, Doppelbild oder `NOTLÖSUNG`
+- `PRESS-RETURN → FLASH-SHOWN` im Dashboard messen; EDSDK selbst garantiert
+  keinen physikalischen Verschlusszeitpunkt
 
 ### 2. Funktioniert der Direktweg ohne Karte? (offen, entscheidend für die Flotte)
 
-Der 2.4.59-Erfolg wurde mit eingesetzter Karte erzielt, aber laut Log ueber
-`SaveTo=Host`. Fuer den ersten direkten A/B-Vergleich darf die Karte in 2.4.60
-noch eingesetzt bleiben. Sobald Kaltstart und komplette Session sauber sind,
-muss mindestens ein Nachweis **ohne Karte** folgen; das ist der echte
-Flottenweg.
+Auch der erfolgreiche 2.4.60-Lauf erfolgte mit eingesetzter Karte, laut Log
+aber ueber `SaveTo=Host`. Fuer den 2.4.61-Timingvergleich darf die Karte noch
+eingesetzt bleiben. Danach muss mindestens ein Nachweis **ohne Karte** folgen;
+das ist der echte Flottenweg.
 
 ### 3. Standbild zeigt anderen Bildausschnitt als das finale Foto (offen)
 
 Christian mehrfach: *„liveview macht freeze und zeigt nicht das foto"*.
 Zwei Anteile:
-- **Zeitversatz** — schrumpft, sobald Fotos schnell ankommen
+- **Zeitversatz** — in 2.4.61 gezielt an Press-Return gekoppelt, Hardwaretest offen
 - **Unterschiedlicher Bildausschnitt** zwischen Vorschau und Aufnahme —
   eigenes Thema, noch nicht angefasst
 
@@ -343,16 +369,16 @@ Webcam-Capture folgt weiterhin seinem bisherigen Pfad.
 
 ---
 
-## Relevante Dateien in 2.4.60
+## Relevante Dateien in 2.4.61
 
 ```
-src/__init__.py              Version 2.4.60
+src/__init__.py              Version 2.4.61
 src/camera/edsdk.py          vollständiger Owner, Handler/Callback-Queue,
-                             Host-Readiness, Konstanten, Dev-Diagnose
+                             Host-Readiness, Shutter-Ergebnis, Dev-Diagnose
 src/camera/canon.py          Host-Flow, State-Handler, Capture-Korrelation,
-                             Host-Ready-Guard, EXIF-/Helligkeitsdiagnose
+                             Press-Callback, EXIF-/Helligkeitsdiagnose
 src/app.py                   Handle-Release über den Owner
-src/ui/screens/session.py    kein Canon-Wartebalken, direkter PIL-Bildpfad,
+src/ui/screens/session.py    Canon-Blitz-Token, sofortiger PIL-Bildpfad,
                              kein zweiter Canon-Capture im Webcam-Fallback
 src/main.py                  Dev-Logging auch bei --dslr-test
 src/tools/dslr_test.py       keine rohen DLL-Aufrufe mehr
@@ -365,15 +391,14 @@ CHANGELOG.md, ERKENNTNISSE.md, FORTSCHRITT.md, TODO.md
 ## Empfehlung für den Einstieg
 
 1. **`python tests/alle_tests.py`** — muss komplett sauber durchlaufen.
-2. **2.4.60 bauen und mit `--dev` auf Box 245 starten; dslrBooth schließen.**
-3. Kamera kalt starten und direkt genau ein Foto aufnehmen. Die Karte darf
-   fuer den ersten Vergleich eingesetzt bleiben; `SaveTo=Host` muss im Log
-   bestaetigt sein.
+2. **2.4.61 bauen und mit `--dev` auf Box 245 starten; dslrBooth schließen.**
+3. Mit eingesetzter Karte eine Vierer-Session fahren: bis zum neuen Blitz
+   stillhalten und unmittelbar danach bewusst bewegen.
 4. Log ins Dashboard senden. Entscheidend ist die Kette
-   `HANDLER READY → HOST READY → CAPTURE → EVENT 0x208 → TRANSFER COMPLETE →
-   ECHTES DSLR-FOTO`.
-5. Eine komplette Session fahren; danach denselben Nachweis mindestens einmal
-   ohne SD-Karte erbringen.
+   `PRESS-START → PRESS-RETURN → RELEASE-RETURN → FLASH REQUEST/SHOWN →
+   EVENT 0x208 → TRANSFER COMPLETE → PHOTO SHOWN` plus die Pose im JPEG.
+5. Nach bestandenem Timingtest denselben Host-Nachweis mindestens einmal ohne
+   SD-Karte erbringen.
 6. Bei `CARD_NG`, `CANON-OWNER TIMEOUT` oder fehlender Kette nichts auf
    Verdacht ändern; zuerst dieses eine Log auswerten. Optional danach
    `--dev --dslr-test`.
@@ -382,9 +407,10 @@ CHANGELOG.md, ERKENNTNISSE.md, FORTSCHRITT.md, TODO.md
 
 ## Ehrliche Einordnung
 
-2.4.59 hat nach dem ersten Kaltstartfehler sieben echte 6000-x-4000-JPEGs
-geliefert. Der Canon-Grundweg ist damit nicht mehr nur eine Theorie. 2.4.60
-schliesst gezielt das Readiness-Race, entfernt den schwarzen Canon-Balken und
-die unnoetige Bildkonvertierung und erweitert die Diagnose. Der ehrliche
-Status lautet: **Grundweg hardwarebestaetigt; 2.4.60-Kaltstart und Betrieb ohne
-SD-Karte noch abzunehmen.**
+2.4.60 hat auf Box 245 vier echte 6000-x-4000-JPEGs ohne Kaltstartfehler,
+schwarzen Balken oder Doppelbild geliefert. Der verbliebene, hardwarebelegte
+Fehler war der rund 1,5 Sekunden zu fruehe Softwareblitz. 2.4.61 koppelt ihn
+an die Rueckkehr des akzeptierten Press-Commands und zeigt das fertige Foto
+direkt. Der ehrliche Status lautet: **Grundweg und 2.4.60-Kaltstart mit Karte
+hardwarebestaetigt; 2.4.61-Pose-Timing und Betrieb ohne SD-Karte noch
+abzunehmen.**

@@ -40,11 +40,11 @@ TESTS = [
     ("Kamera-Faden", "test_kamera_faden.py",
      "alle getesteten EDSDK-Aufrufe im selben Owner"),
     ("Ausloeser-Vertrag", "test_ausloeser.py",
-     "genau ein Capture; Press- und OFF-Fehler bleiben sichtbar"),
+     "Outcome/Timeout; genau ein Press und garantiertes OFF"),
     ("Direktweg zum PC", "test_direktweg.py",
      "Foto kommt ohne Karte im Rechner an"),
     ("Canon-UI und PIL-Pfad", "test_session_canon_pfad.py",
-     "kein Canon-Balken; Nikon/Webcam und Farben bleiben stabil"),
+     "Press-Blitz, Token, Sofortfoto; Nikon/Webcam bleiben stabil"),
     ("Host-Capture integriert", "test_host_capture_integration.py",
      "Owner, 0x208, JPEG, Queue und atomarer Cleanup als Gesamtkette"),
 ]

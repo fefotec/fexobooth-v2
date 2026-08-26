@@ -244,7 +244,18 @@ try:
     assert dll.capacity_resets == [1]
 
     manager._live_view_active = True
-    foto = manager.capture_photo(timeout=3.0)
+    callback_payloads = []
+    callback_threads = []
+
+    def press_accepted(payload):
+        callback_payloads.append(payload)
+        callback_threads.append(threading.get_ident())
+        raise RuntimeError("UI-Rueckmeldung absichtlich defekt")
+
+    foto = manager.capture_photo(
+        timeout=3.0,
+        press_command_accepted=press_accepted,
+    )
 
     assert foto is not None
     assert foto.size == (6000, 4000)
@@ -256,6 +267,11 @@ try:
     assert dll.shutter.count(
         edsdk.kEdsCameraCommand_ShutterButton_Completely
     ) == 1
+    assert len(callback_payloads) == 1
+    assert callback_payloads[0].capture_id == "1.1"
+    assert callback_payloads[0].press_ok
+    assert callback_threads == [threading.get_ident()]
+    assert callback_threads[0] != edsdk._sdk_faden.ident
     # Capacity gehoert ausschliesslich zum Session-Aufbau. Der erste Capture
     # darf weder neu melden noch einen zweiten Shutter als Retry senden.
     assert dll.capacity_resets == [1]
@@ -266,7 +282,11 @@ try:
     for marker in (
         "CANON-DIAG event=CAPTURE-START",
         "CANON-CAPTURE ARMED",
+        "CANON-SHUTTER PRESS-START",
+        "CANON-SHUTTER PRESS-RETURN",
+        "CANON-SHUTTER RELEASE-RETURN",
         "CANON-CAPTURE SHUTTER press=OK",
+        "CANON-SHUTTER ACCEPTED-CALLBACK-ERROR",
         "CANON-CAPTURE EVENT",
         "event=0x00000208",
         "CANON-CAPTURE DOWNLOAD-QUEUED",

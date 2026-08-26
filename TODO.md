@@ -4,7 +4,7 @@ Aufgabenliste mit Prioritäten.
 
 ---
 
-## ➡️ NÄCHSTE SCHRITTE DSLR (Stand 2.4.60) 🔴
+## ➡️ NÄCHSTE SCHRITTE DSLR (Stand 2.4.61) 🔴
 
 > Vollständige Übergabe: **[DSLR-STAND.md](DSLR-STAND.md)** — dort erst lesen.
 
@@ -15,19 +15,32 @@ Aufgabenliste mit Prioritäten.
 - [x] 2.4.60-Nachbesserung umgesetzt: Host-Readiness einmal pro Session,
       kein Capacity-Reset pro Foto, kein Canon-Wartebalken, direkter PIL-Pfad
       und bessere Belichtungsdiagnose. Webcam-Verhalten bleibt unveraendert.
-- [x] Lokale Abschlusspruefung: **18/18 Windows-Tests**, `py_compile` gruen
-      und `webcam.py` ohne semantischen Diff.
-- [ ] **2.4.60 bauen und auf Box 245 mit `--dev` starten.** dslrBooth vorher
+- [x] **2.4.60 auf Box 245 getestet:** Vier von vier echte
+      6000-x-4000-JPEGs, LiveView aktiv, kein `CARD_NG`, schwarzer Balken,
+      Retry oder Doppelbild.
+- [x] Timingursache belegt: Der alte Softwareblitz lag 1.497 bis 1.569 ms vor
+      `ShutterButton_Completely`-Return; der hoerbare Klick und die echte Pose
+      kamen spaeter.
+- [x] 2.4.61 umgesetzt: Canon-Blitz erst nach `press_ok=True`, capture-eigener
+      Token/Einmal-Guard, `OFF` im `finally`, Canon-Foto sofort anzeigen und
+      korrelierte Press-/Flash-/Photo-Marker. Webcam und Nikon unveraendert.
+- [x] Lokale Abschlusspruefung: **18/18 Windows-Tests**, `py_compile` gruen;
+      `webcam.py` und `nikon.py` ohne semantischen Diff.
+- [ ] **2.4.61 bauen und auf Box 245 mit `--dev` starten.** dslrBooth vorher
       vollständig schließen (auch im Task-Manager), damit nur ein Programm die
       EOS besitzt.
 - [ ] Die eingesetzte SD-Karte darf fuer diesen Vergleich zunaechst bleiben;
       das Log muss trotzdem `SaveTo=Host` und bestaetigte Host-Bereitschaft
       zeigen.
-- [ ] Direkt nach Kamera-Kaltstart genau **ein** normales Foto aufnehmen.
-      Erwartung: kein `CARD_NG`, kein schwarzer Balken, genau ein Shutter und
-      `ECHTES DSLR-FOTO ... 6000x4000` statt Live-View-Notloesung.
-- [ ] Danach mindestens eine komplette Vierer-Session aufnehmen und die
-      sichtbare Wartezeit mit 2.4.59 vergleichen.
+- [ ] Eine komplette Vierer-Session aufnehmen: bis zum **neuen** weissen Blitz
+      stillhalten und direkt danach bewusst die Pose veraendern. Das
+      gespeicherte Foto muss noch die Pose am Blitzzeitpunkt zeigen.
+- [ ] Pro Foto im Log genau einmal `PRESS-START`, `PRESS-RETURN`,
+      `RELEASE-RETURN`, `CANON-FLASH REQUEST`, `CANON-FLASH SHOWN`, ein
+      passendes Transfer-JPEG und `CANON-PHOTO SHOWN` pruefen.
+- [ ] Erwartung: kein schwarzer Canon-Balken, `CARD_NG`, Retry, Doppelbild oder
+      Live-View-Notbild. `FLASH SHOWN` ist die Tk-Konfiguration, keine von
+      EDSDK garantierte physikalische Verschlusszeit.
 - [ ] Log im Service-Menü ans Dashboard senden und Codex Bescheid geben.
 - [ ] Wenn der Test mit Karte sauber ist, mindestens einen Flottennachweis
       **ohne SD-Karte** fahren. Der Produktionsweg muss ohne Karte bleiben.
@@ -440,7 +453,7 @@ Aufgabenliste mit Prioritäten.
 
 - [ ] Hotline-Prompt: `Druck-Korrektur` erst aufnehmen, wenn die Funktion offiziell ausgerollt und der Supportablauf bestätigt ist
 - [ ] Admin-Menü: "Buchung zurücksetzen" Button
-- [ ] Canon DSLR Live-View erst nach dem 2.4.60-Hardware-Retest und dem
+- [ ] Canon DSLR Live-View erst nach dem 2.4.61-Pose-Timingtest und dem
       Flottennachweis ohne Karte weiter optimieren
       (`0xa102` ist offiziell `OBJECT_NOTREADY`, nicht EVF_INTERNAL_ERROR)
 - [ ] Print-Queue Anzeige

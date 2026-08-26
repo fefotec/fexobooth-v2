@@ -74,10 +74,19 @@ release_call = dispose.index("EDSDK_DLL.EdsRelease(camera_ref)")
 callback_pop = dispose.index("_object_event_handlers.pop")
 assert close_call < release_call < callback_pop
 
-assert 'ist_canon = self.config.get("camera_type", "webcam") == "canon"' in session
+assert 'ist_canon = camera_type == "canon"' in session
 assert "if photo is None and not ist_canon:" in session
 assert "if self._zeigt_dslr_wartehinweis():" in session
 assert 'lower() == "nikon"' in session
 assert "_canon_foto_aufbereiten" in session
+assert 'if camera_type != "canon":' in session
+assert "press_command_accepted=press_command_accepted" in session
+assert "_show_shutter_flash(duration_ms=90)" in session
+assert "CAPTURE-COMPLETE STALE-DROPPED" in session
+assert 'if camera_type == "canon":' in session
+assert "elif flash_haltend:" in session
 
-print("BESTANDEN: Owner-Grenze, Host-Guard, Nikon-Hinweis und Canon-PIL-Pfad.")
+print(
+    "BESTANDEN: Owner-Grenze, Host-Guard, Nikon-Hinweis sowie Canon-Token-, "
+    "Blitz- und PIL-Pfad."
+)

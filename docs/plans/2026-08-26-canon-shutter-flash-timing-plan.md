@@ -4,6 +4,8 @@
 
 **Zielversion:** 2.4.61
 
+**Status:** Implementiert und automatisch validiert; Hardware-Abnahme offen
+
 **Grundlage:**
 `docs/superpowers/specs/2026-08-26-canon-shutter-flash-timing-design.md`
 

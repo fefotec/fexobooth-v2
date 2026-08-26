@@ -10,6 +10,7 @@ import customtkinter as ctk
 import tkinter as tk
 import cv2
 import numpy as np
+from dataclasses import dataclass, field
 from PIL import Image, ImageDraw, ImageFont
 from typing import TYPE_CHECKING, Optional
 import time
@@ -39,6 +40,37 @@ def _canon_foto_aufbereiten(
     return photo
 
 
+@dataclass(frozen=True)
+class _UICaptureContext:
+    """Capture-eigener UI-Vertrag fuer spaete Worker-Rueckmeldungen."""
+
+    token: int
+    camera_type: str
+    capture_started_at: float
+    flash_haltend: bool
+    guard: object = field(default_factory=threading.Lock, repr=False, compare=False)
+    flash_requested: threading.Event = field(
+        default_factory=threading.Event, repr=False, compare=False
+    )
+    flash_shown: threading.Event = field(
+        default_factory=threading.Event, repr=False, compare=False
+    )
+
+    def claim_flash_request(self) -> bool:
+        with self.guard:
+            if self.flash_requested.is_set():
+                return False
+            self.flash_requested.set()
+            return True
+
+    def claim_flash_show(self) -> bool:
+        with self.guard:
+            if self.flash_shown.is_set():
+                return False
+            self.flash_shown.set()
+            return True
+
+
 class SessionScreen(ctk.CTkFrame):
     """Session-Screen mit Vollbild-LiveView"""
 
@@ -60,6 +92,8 @@ class SessionScreen(ctk.CTkFrame):
         self._waiting_for_restore_countdown = False
         self._capture_visible_started_at = 0.0
         self._shutter_flash_overlay = None
+        self._capture_generation = 0
+        self._active_capture_context: Optional[_UICaptureContext] = None
         # Blitz haelt, bis das Foto auf dem Schirm ist (nur HD-Dauerbetrieb, 2.4.43)
         self._flash_haltend = False
 
@@ -298,6 +332,7 @@ class SessionScreen(ctk.CTkFrame):
 
     def on_hide(self):
         """Screen wird verlassen"""
+        self._invalidate_capture_context()
         self.is_live = False
         self.is_countdown_active = False
         # LiveView-Worker beenden (der Screen wird beim nächsten Show neu erstellt)
@@ -1208,16 +1243,36 @@ class SessionScreen(ctk.CTkFrame):
 
     def _capture_photo(self):
         """Erfasst das Foto (non-blocking via Background-Thread)"""
+        camera_type = str(self.config.get("camera_type", "webcam")).lower()
+        generation = getattr(self, "_capture_generation", 0) + 1
+        self._capture_generation = generation
+
+        # Der neue Context ersetzt und entwertet jede Rueckmeldung eines alten
+        # Captures. Kameraart und Betriebsart bleiben fuer den gesamten Ablauf
+        # eingefroren, selbst wenn die Config waehrenddessen neu geladen wird.
+        flash_haltend = (
+            False if camera_type == "canon" else self._dauerbetrieb_aktiv()
+        )
+        capture_context = _UICaptureContext(
+            token=generation,
+            camera_type=camera_type,
+            capture_started_at=time.monotonic(),
+            flash_haltend=flash_haltend,
+        )
+        self._active_capture_context = capture_context
+
         # Kamera-Zugriff für LiveView pausieren
         self._capture_in_progress = True
         self._capture_visible_started_at = time.perf_counter()
 
         # Betriebsart EINMAL pro Foto festhalten (der Blitz-Ausblendzeitpunkt
         # und die Logzeile am Ende müssen dieselbe Antwort benutzen).
-        self._flash_haltend = self._dauerbetrieb_aktiv()
+        self._flash_haltend = flash_haltend
 
-        # Kurzer echter Auslöse-Blitz: reines Tk-Overlay, keine Bildberechnung im LiveView.
-        self._show_shutter_flash()
+        # Webcam und Nikon behalten ihren bisherigen Blitz exakt hier. Canon
+        # fordert ihn erst nach erfolgreicher Rueckkehr des Press-Commands an.
+        if camera_type != "canon":
+            self._show_shutter_flash()
 
         # 2.4.55: Der Hinweis erscheint erst, WENN es wirklich dauert.
         #
@@ -1233,8 +1288,23 @@ class SessionScreen(ctk.CTkFrame):
             self._dslr_hinweis_timer = self.after(900, self._zeige_dslr_wartehinweis)
 
         # Capture in Background-Thread starten (blockiert nicht die UI)
-        thread = threading.Thread(target=self._capture_photo_worker, daemon=True)
+        thread = threading.Thread(
+            target=self._capture_photo_worker,
+            args=(capture_context,),
+            daemon=True,
+        )
         thread.start()
+
+    def _invalidate_capture_context(
+        self, expected: Optional[_UICaptureContext] = None
+    ) -> bool:
+        """Entwertet den aktiven UI-Capture, optional nur bei passendem Token."""
+        active = getattr(self, "_active_capture_context", None)
+        if expected is not None and active is not expected:
+            return False
+        self._active_capture_context = None
+        self._capture_generation = getattr(self, "_capture_generation", 0) + 1
+        return True
 
     def _ist_dslr(self) -> bool:
         """Läuft die Box mit einer Spiegelreflexkamera?"""
@@ -1317,7 +1387,7 @@ class SessionScreen(ctk.CTkFrame):
         except Exception:
             pass
 
-    def _show_shutter_flash(self):
+    def _show_shutter_flash(self, duration_ms: Optional[int] = None) -> bool:
         """Zeigt beim eigentlichen Capture einen sehr leichten White-Flash.
 
         AUSBLENDEN — zwei Fälle (2.4.43):
@@ -1353,9 +1423,16 @@ class SessionScreen(ctk.CTkFrame):
 
             self._shutter_flash_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
             self._shutter_flash_overlay.tkraise()
-            self.after(700 if self._flash_haltend else 90, self._hide_shutter_flash)
+            delay_ms = (
+                duration_ms
+                if duration_ms is not None
+                else (700 if self._flash_haltend else 90)
+            )
+            self.after(delay_ms, self._hide_shutter_flash)
+            return True
         except Exception as e:
             logger.debug(f"Shutter-Flash konnte nicht angezeigt werden: {e}")
+            return False
 
     def _hide_shutter_flash(self):
         try:
@@ -1364,17 +1441,134 @@ class SessionScreen(ctk.CTkFrame):
         except Exception:
             pass
 
-    def _capture_photo_worker(self):
+    def _capture_context_is_current(self, context: _UICaptureContext) -> bool:
+        return bool(
+            getattr(self, "_active_capture_context", None) is context
+            and getattr(self, "is_live", False)
+            and getattr(self, "_capture_in_progress", False)
+            and context.camera_type == "canon"
+        )
+
+    def _request_canon_shutter_flash(self, context, payload) -> None:
+        """Worker-Callback: reiht nur den Canon-Blitz im Tk-Hauptthread ein."""
+        if not self._capture_context_is_current(context):
+            logger.info(
+                "CANON-FLASH STALE-REQUEST-DROPPED "
+                f"capture={getattr(payload, 'capture_id', '-')} "
+                f"ui_capture={context.token}"
+            )
+            return
+        if not context.claim_flash_request():
+            logger.warning(
+                "CANON-FLASH DUPLICATE-REQUEST-DROPPED "
+                f"capture={getattr(payload, 'capture_id', '-')} "
+                f"ui_capture={context.token}"
+            )
+            return
+
+        requested_at = time.monotonic()
+        press_return_at = float(getattr(payload, "press_return_at", 0.0) or 0.0)
+        since_press_ms = (
+            (requested_at - press_return_at) * 1000 if press_return_at else -1.0
+        )
+        logger.info(
+            "CANON-FLASH REQUEST "
+            f"capture={getattr(payload, 'capture_id', '-')} "
+            f"ui_capture={context.token} "
+            f"since_press_return_ms={since_press_ms:.1f}"
+        )
+        try:
+            self.after(
+                0,
+                lambda c=context, p=payload, r=requested_at: (
+                    self._show_canon_flash_if_current(c, p, r)
+                ),
+            )
+        except Exception as e:
+            logger.exception(
+                "CANON-FLASH ENQUEUE-ERROR "
+                f"capture={getattr(payload, 'capture_id', '-')} "
+                f"ui_capture={context.token} error={type(e).__name__}: {e}"
+            )
+
+    def _show_canon_flash_if_current(
+        self, context, payload, requested_at: float
+    ) -> None:
+        """Tk-Callback: zeigt den 90-ms-Blitz nur fuer den aktiven Capture."""
+        if not self._capture_context_is_current(context):
+            logger.info(
+                "CANON-FLASH STALE-SHOW-DROPPED "
+                f"capture={getattr(payload, 'capture_id', '-')} "
+                f"ui_capture={context.token}"
+            )
+            return
+        if not context.claim_flash_show():
+            logger.warning(
+                "CANON-FLASH DUPLICATE-SHOW-DROPPED "
+                f"capture={getattr(payload, 'capture_id', '-')} "
+                f"ui_capture={context.token}"
+            )
+            return
+
+        try:
+            if not self._show_shutter_flash(duration_ms=90):
+                logger.error(
+                    "CANON-FLASH DISPLAY-ERROR "
+                    f"capture={getattr(payload, 'capture_id', '-')} "
+                    f"ui_capture={context.token}"
+                )
+                return
+            shown_at = time.monotonic()
+            press_return_at = float(
+                getattr(payload, "press_return_at", 0.0) or 0.0
+            )
+            since_press_ms = (
+                (shown_at - press_return_at) * 1000 if press_return_at else -1.0
+            )
+            logger.info(
+                "CANON-FLASH SHOWN "
+                f"capture={getattr(payload, 'capture_id', '-')} "
+                f"ui_capture={context.token} "
+                f"tk_wait_ms={(shown_at - requested_at) * 1000:.1f} "
+                f"since_press_return_ms={since_press_ms:.1f}"
+            )
+        except Exception as e:
+            logger.exception(
+                "CANON-FLASH DISPLAY-ERROR "
+                f"capture={getattr(payload, 'capture_id', '-')} "
+                f"ui_capture={context.token} error={type(e).__name__}: {e}"
+            )
+
+    def _capture_photo_worker(
+        self, capture_context: Optional[_UICaptureContext] = None
+    ):
         """Worker-Thread: Führt den blockierenden Kamera-Capture durch"""
         worker_started_at = time.perf_counter()
         photo = None
+        if capture_context is None:
+            capture_context = getattr(self, "_active_capture_context", None)
+        shutter_payload = [None]
+
+        def press_command_accepted(payload):
+            if shutter_payload[0] is None:
+                shutter_payload[0] = payload
+            if capture_context is not None:
+                self._request_canon_shutter_flash(capture_context, payload)
 
         # Exklusiver Kamera-Zugriff: der LiveView-Worker pausiert zwar über
         # _capture_in_progress, aber ein gerade laufender get_frame() muss
         # fertig sein, bevor die Auflösung umgeschaltet wird.
         try:
             with self._cam_access_lock:
-                photo = self._capture_photo_camera_calls()
+                photo = self._capture_photo_camera_calls(
+                    capture_context=capture_context,
+                    press_command_accepted=(
+                        press_command_accepted
+                        if capture_context is not None
+                        and capture_context.camera_type == "canon"
+                        else None
+                    ),
+                )
         except Exception as e:
             logger.error(f"Capture-Worker Fehler: {e}")
 
@@ -1385,18 +1579,40 @@ class SessionScreen(ctk.CTkFrame):
         )
 
         # Ergebnis zurück auf UI-Thread geben
-        self.after(0, lambda p=photo: self._on_capture_complete(p))
+        self.after(
+            0,
+            lambda p=photo, c=capture_context, s=shutter_payload[0]: (
+                self._on_capture_complete(p, c, s)
+            ),
+        )
 
-    def _capture_photo_camera_calls(self) -> Optional[Image.Image]:
+    def _capture_photo_camera_calls(
+        self,
+        capture_context: Optional[_UICaptureContext] = None,
+        press_command_accepted=None,
+    ) -> Optional[Image.Image]:
         """Die eigentlichen Kamera-Aufrufe des Captures (läuft unter _cam_access_lock)."""
         photo = None
-        ist_canon = self.config.get("camera_type", "webcam") == "canon"
+        camera_type = (
+            capture_context.camera_type
+            if capture_context is not None
+            else str(self.config.get("camera_type", "webcam")).lower()
+        )
+        ist_canon = camera_type == "canon"
 
         try:
             # Canon DSLR
             if hasattr(self.app.camera_manager, 'capture_photo'):
                 try:
-                    photo = self.app.camera_manager.capture_photo(timeout=10.0)
+                    if ist_canon and press_command_accepted is not None:
+                        photo = self.app.camera_manager.capture_photo(
+                            timeout=10.0,
+                            press_command_accepted=press_command_accepted,
+                        )
+                    else:
+                        # Nikon behaelt bewusst die bisherige Signatur ohne das
+                        # neue Canon-spezifische Callback-Keyword.
+                        photo = self.app.camera_manager.capture_photo(timeout=10.0)
                     if photo:
                         if ist_canon:
                             photo = _canon_foto_aufbereiten(
@@ -1461,8 +1677,45 @@ class SessionScreen(ctk.CTkFrame):
 
         return photo
 
-    def _on_capture_complete(self, photo: Optional[Image.Image]):
+    def _on_capture_complete(
+        self,
+        photo: Optional[Image.Image],
+        capture_context: Optional[_UICaptureContext] = None,
+        shutter_payload=None,
+    ):
         """Callback auf UI-Thread nach abgeschlossenem Capture"""
+        if (
+            capture_context is not None
+            and getattr(self, "_active_capture_context", None) is not capture_context
+        ):
+            logger.info(
+                "CAPTURE-COMPLETE STALE-DROPPED "
+                f"ui_capture={capture_context.token} "
+                f"camera={capture_context.camera_type}"
+            )
+            return
+
+        camera_type = (
+            capture_context.camera_type
+            if capture_context is not None
+            else str(self.config.get("camera_type", "webcam")).lower()
+        )
+        flash_haltend = (
+            capture_context.flash_haltend
+            if capture_context is not None
+            else self._flash_haltend
+        )
+        capture_started_at = (
+            capture_context.capture_started_at
+            if capture_context is not None
+            else 0.0
+        )
+
+        # Ab jetzt darf auch ein bereits eingereihter Canon-Blitz nicht mehr
+        # erscheinen. Ein alter Completion-Callback darf einen neuen Capture
+        # wegen des Guards oben weder beenden noch dessen Zustand veraendern.
+        if capture_context is not None:
+            self._invalidate_capture_context(expected=capture_context)
         self._capture_in_progress = False
         # 2.4.52: Wartehinweis weg — ab hier steht das Ergebnis (oder es kam
         # keins). Muss VOR jedem weiteren Schritt passieren, damit er nicht
@@ -1473,13 +1726,13 @@ class SessionScreen(ctk.CTkFrame):
         self._photo_display_key = None
         if self._capture_visible_started_at > 0:
             visible_ms = (time.perf_counter() - self._capture_visible_started_at) * 1000
-            # DAS ist die Zahl, an der Etappe 2 gemessen wird: vom Blitz bis
-            # zum Foto. Vorher auf der Box: 1842 ms. Im Dauerbetrieb sollen es
-            # ~150-300 ms sein. Betriebsart steht bewusst mit in der Zeile,
-            # sonst ist im Log nicht zu unterscheiden, ob der Schalter griff.
+            # Bei Canon beginnt diese Messung nun am UI-Capture-Start, nicht am
+            # spaeter gekoppelten Blitz. Die exakte Press-Return-Differenz steht
+            # separat im CANON-PHOTO-SHOWN-Marker.
             logger.info(
-                f"Sichtbare Capture-Wartezeit bis Fotoanzeige: {visible_ms:.0f}ms "
-                f"({'Dauerbetrieb HD' if self._flash_haltend else 'klassisch'})"
+                f"UI-Capture-Start bis Fotoergebnis: {visible_ms:.0f}ms "
+                f"camera={camera_type} "
+                f"({'Dauerbetrieb HD' if flash_haltend else 'klassisch'})"
             )
             self._capture_visible_started_at = 0.0
 
@@ -1488,12 +1741,39 @@ class SessionScreen(ctk.CTkFrame):
             self.app.statistics.record_photo()
             self.after(10, lambda: self._save_photo_async(photo, self.app.current_photo_index + 1))
 
-            # Dauerbetrieb: Foto SOFORT auf den Schirm bringen und erst dann den
-            # Blitz wegnehmen. Sonst käme das Foto erst mit dem nächsten Tick von
-            # _update_live_view (bis ~250 ms später) und dazwischen wäre wieder
-            # das eingefrorene Vorschaubild zu sehen. Klassisch bleibt alles wie
-            # bisher: der Blitz ist längst per Timer weg.
-            if self._flash_haltend:
+            # Canon zeigt das echte PIL-Foto ohne den naechsten UI-/LiveView-
+            # Takt sofort an. Der Webcam-HD-Sofortweg bleibt im exklusiven
+            # elif-Zweig unveraendert, damit es niemals einen Doppelaufruf gibt.
+            if camera_type == "canon":
+                try:
+                    self._display_photo_cached(photo)
+                    shown_at = time.monotonic()
+                    press_return_at = float(
+                        getattr(shutter_payload, "press_return_at", 0.0) or 0.0
+                    )
+                    since_press_ms = (
+                        (shown_at - press_return_at) * 1000
+                        if press_return_at else -1.0
+                    )
+                    since_capture_ms = (
+                        (shown_at - capture_started_at) * 1000
+                        if capture_started_at else -1.0
+                    )
+                    logger.info(
+                        "CANON-PHOTO SHOWN "
+                        f"capture={getattr(shutter_payload, 'capture_id', '-')} "
+                        f"ui_capture="
+                        f"{capture_context.token if capture_context else '-'} "
+                        f"since_press_return_ms={since_press_ms:.1f} "
+                        f"since_capture_start_ms={since_capture_ms:.1f}"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "CANON-PHOTO DISPLAY-ERROR "
+                        f"capture={getattr(shutter_payload, 'capture_id', '-')} "
+                        f"error={type(e).__name__}: {e}"
+                    )
+            elif flash_haltend:
                 try:
                     self._display_photo_cached(photo)
                 except Exception as e:

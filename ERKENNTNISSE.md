@@ -6,6 +6,17 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### Ein UI-Blitz braucht einen belegbaren Kamera-Meilenstein und einen Capture-Token (2.4.61)
+
+| | |
+|---|---|
+| **Hardwarebefund** | Beim 2.4.60-Test lag der am Countdown-Ende gezeigte Canon-Softwareblitz 1.497 bis 1.569 ms vor der Rueckkehr von `ShutterButton_Completely`. Der mechanische Klick kam hoerbar spaeter; eine Bewegung nach dem Blitz veraenderte deshalb noch das echte Foto. |
+| **API-Grenze** | EDSDK liefert kein exaktes Ereignis fuer den physikalischen Verschluss. Ein erfolgreicher synchroner Press-Return ist die beste verfuegbare Naeherung, aber noch kein Beweis fuer Verschluss, Transfer oder JPEG. Ein spaeterer `CaptureError`, Release-, Transfer- oder Decode-Fehler bleibt moeglich. |
+| **Loesung** | Der EDSDK-Owner gibt ein eingefrorenes Press-/Release-Ergebnis zurueck. Der Canon-Manager meldet `press_ok=True` erst im aufrufenden Capture-Worker; nur dieser reiht den 90-ms-Blitz per `after(0)` in Tk ein. Das echte Canon-Foto wird beim Completion sofort angezeigt. |
+| **Release-Vertrag** | Sobald der native Press begonnen hat, wird `ShutterButton_OFF` in einem `finally` genau einmal versucht, auch wenn Press eine Exception wirft. Press-Erfolg und Gesamterfolg bleiben getrennt: Press-OK darf den Blitz anfordern, ein OFF-Fehler laesst den Capture trotzdem scheitern. |
+| **Race-Vertrag** | `is_live` und `_capture_in_progress` reichen nicht. Ein alter Callback koennte sonst waehrend des naechsten Captures wieder gueltig aussehen. Kameraart, Generation-Token und Einmal-Guard gehoeren deshalb zum einzelnen Capture; Screen-Wechsel, neuer Capture und Completion entwerten ihn. |
+| **Merke** | Sichtbare Rueckmeldung nie an einen bequemen UI-Zeitpunkt koppeln. Den bestmoeglichen Hardware-Meilenstein ehrlich benennen, Threadgrenzen respektieren und jede spaete Rueckmeldung an eine unverwechselbare Operation binden. |
+
 ### Host-Bereitschaft ist ein Session-Vertrag, kein Capture-Ritual (2.4.60)
 
 | | |

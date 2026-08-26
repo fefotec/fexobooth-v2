@@ -6,9 +6,9 @@ Diese Datei enthält die Anforderungen und geplanten Features.
 
 ## Aktuelle Version
 
-**Status:** Produktiv im Einsatz; Canon-2.4.59-Grundweg hardwarebestaetigt; 2.4.60-Kaltstart-Nachtest offen
-**Version:** 2.4.60 (lokal, noch kein Hardware-/GitHub-Release)
-**Letzte Änderung:** 2026-08-25
+**Status:** Produktiv im Einsatz; Canon-2.4.60-Host/Kaltstart mit Karte hardwarebestaetigt; 2.4.61-Blitz/Pose-Nachtest offen
+**Version:** 2.4.61 (lokal, noch kein Hardware-/GitHub-Release)
+**Letzte Änderung:** 2026-08-26
 
 ---
 

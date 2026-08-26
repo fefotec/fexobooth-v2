@@ -4,6 +4,51 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-08-26 — Canon V2.4.61: Softwareblitz an Press-Return gekoppelt
+
+**Hardwarebefund 2.4.60:** Box 245 lieferte mit EOS 2000D und eingesetzter
+SD-Karte vier von vier echte 6000-x-4000-JPEGs per Host-Transfer. LiveView
+blieb aktiv; kein `CARD_NG`, schwarzer Canon-Balken, Retry oder Doppelbild.
+Der Softwareblitz lag aber 1.497 bis 1.569 ms vor der erfolgreichen Rueckkehr
+von `ShutterButton_Completely`. Der hoerbare Kameraklick und das echte Foto
+kamen spaeter, sodass eine Bewegung direkt nach dem Blitz noch auf dem Foto
+landete.
+
+**Umsetzung 2.4.61 (nur Canon):** Der Countdown startet den Worker ohne
+vorgezogenen Blitz. Der EDSDK-Owner erfasst Press- und Release-Rueckkehr mit
+monotonen Zeiten in einem eingefrorenen Ergebnis. Nach begonnenem Press wird
+`ShutterButton_OFF` auch bei einer Exception im `finally` genau einmal
+versucht. Der Canon-Manager ruft die optionale UI-Rueckmeldung nur im
+aufrufenden Capture-Worker und nur bei synchronem `press_ok=True` auf; ein
+Release- oder spaeterer Transferfehler bleibt ein Capture-Fehler.
+
+Der Worker reiht den 90-ms-Blitz per `after(0)` in den Tk-Hauptthread ein.
+Capture-eigene Generation-Tokens und Einmal-Guards verwerfen alte oder
+doppelte Rueckmeldungen auch dann, wenn bereits ein neuer Capture laeuft.
+Fehler beim Einreihen und Anzeigen sind nicht fatal. Das echte Canon-PIL-Foto
+wird im passenden Completion-Callback sofort und genau einmal angezeigt.
+
+**Abgrenzung:** Canons EDSDK meldet keinen exakten mechanischen
+Verschlusszeitpunkt. Press-Return ist die beste risikoarme Naeherung und muss
+auf Hardware gegen den hoerbaren Klick und die gespeicherte Pose bestaetigt
+werden. Webcam- und Nikon-Ablauf bleiben unveraendert.
+
+**Diagnose:** Neue korrelierte Marker sind `CANON-SHUTTER PRESS-START`,
+`PRESS-RETURN`, `RELEASE-RETURN`, `CANON-FLASH REQUEST`, `CANON-FLASH SHOWN`
+und `CANON-PHOTO SHOWN`. Die alten scheinbaren Shutter-Zeitfelder wurden als
+Zeit seit Capture-Armierung eindeutig benannt.
+
+**Validierung:** `python tests/alle_tests.py` unter Windows **18/18 gruen**;
+gezielte Tests fuer Exceptions, Owner-Timeout, Callback-Thread/-Fehler,
+Token-Races und Sofortanzeige gruen; `py_compile` gruen; `webcam.py` und
+`nikon.py` ohne semantischen Diff.
+
+**Offen:** 2.4.61 bauen und auf Box 245 mit eingesetzter SD-Karte im Dev-Modus
+testen. Bis zum neuen Blitz stillhalten, direkt danach bewusst bewegen und
+Bild/Marker vergleichen. Anschliessend separat ohne SD-Karte testen.
+
+---
+
 ## 2026-08-25 — Canon V2.4.60: erstes Foto abgesichert, Anzeige beschleunigt
 
 **Ausgangspunkt:** Der 2.4.59-Hardwaretest auf Box 245 war der Durchbruch:

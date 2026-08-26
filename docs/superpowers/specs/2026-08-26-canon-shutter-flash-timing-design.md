@@ -2,7 +2,7 @@
 
 **Datum:** 2026-08-26
 
-**Status:** Von Christian als Loesungsrichtung freigegeben
+**Status:** In 2.4.61 implementiert und automatisch validiert; Hardware-Abnahme offen
 
 **Zielversion:** 2.4.61
 

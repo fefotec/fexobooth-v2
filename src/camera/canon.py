@@ -45,7 +45,7 @@ class CanonCameraManager(CameraManager):
         self._session_id = next(_CANON_SESSION_IDS)
         self._capture_ids = itertools.count(1)
         self._aktueller_capture_id: Optional[str] = None
-        self._capture_gestartet: float = 0.0
+        self._capture_armed_at: float = 0.0
         self._letztes_event: float = 0.0
         self._is_initialized = False
         self._initializing = False  # True während initialize() läuft (Deadlock-Schutz)
@@ -890,7 +890,7 @@ class CanonCameraManager(CameraManager):
                 verworfen += 1
             except Empty:
                 break
-        self._capture_gestartet = time.monotonic()
+        self._capture_armed_at = time.monotonic()
         self._capture_accepting = True
         logger.info(
             "CANON-CAPTURE ARMED "
@@ -910,15 +910,15 @@ class CanonCameraManager(CameraManager):
             event_type, f"0x{event_type:08x}"
         )
         seit_capture_ms = (
-            (self._letztes_event - self._capture_gestartet) * 1000
-            if self._capture_gestartet else -1
+            (self._letztes_event - self._capture_armed_at) * 1000
+            if self._capture_armed_at else -1
         )
 
         logger.info(
             "CANON-CAPTURE EVENT "
             f"capture={self._aktueller_capture_id or '-'} "
             f"event=0x{event_type:08x} name={event_name} "
-            f"since_shutter_ms={seit_capture_ms:.1f} count={self._events_gesehen}"
+            f"since_capture_arm_ms={seit_capture_ms:.1f} count={self._events_gesehen}"
         )
 
         if event_type in (
@@ -965,8 +965,8 @@ class CanonCameraManager(CameraManager):
             event_type, f"0x{event_type:08x}"
         )
         seit_capture_ms = (
-            (time.monotonic() - self._capture_gestartet) * 1000
-            if self._capture_gestartet else -1
+            (time.monotonic() - self._capture_armed_at) * 1000
+            if self._capture_armed_at else -1
         )
         daten_name = edsdk.ERROR_NAMES.get(event_data, "-")
         logger.info(
@@ -974,7 +974,7 @@ class CanonCameraManager(CameraManager):
             f"capture={self._aktueller_capture_id or '-'} "
             f"event=0x{event_type:08x} name={event_name} "
             f"data=0x{event_data:08x} data_name={daten_name} "
-            f"since_shutter_ms={seit_capture_ms:.1f}"
+            f"since_capture_arm_ms={seit_capture_ms:.1f}"
         )
         if event_type == edsdk.kEdsStateEvent_Shutdown:
             logger.error("CANON-STATE Kamera-Shutdown erkannt")
@@ -1009,13 +1009,20 @@ class CanonCameraManager(CameraManager):
         )
         return erfolg
 
-    def capture_photo(self, timeout: float = 10.0) -> Optional[Image.Image]:
+    def capture_photo(
+        self,
+        timeout: float = 10.0,
+        press_command_accepted=None,
+    ) -> Optional[Image.Image]:
         """Nimmt genau ein Foto in voller DSLR-Aufloesung auf.
 
         Produktionsweg ist der direkte Host-Transfer ohne Speicherkarte.
 
         Args:
             timeout: Maximale Wartezeit in Sekunden
+            press_command_accepted: optionale Rueckmeldung an den aufrufenden
+                Capture-Worker, sobald der synchrone Press-Command akzeptiert
+                wurde. Der EDSDK-Owner fuehrt diesen Callback niemals aus.
 
         Returns:
             PIL Image in voller DSLR-Auflösung oder None bei Fehler
@@ -1059,7 +1066,7 @@ class CanonCameraManager(CameraManager):
         self._aktueller_capture_id = (
             f"{self._session_id}.{next(self._capture_ids)}"
         )
-        self._capture_gestartet = 0.0
+        self._capture_armed_at = 0.0
         self._capture_accepting = False
         self._diag(
             "CAPTURE-START",
@@ -1128,13 +1135,67 @@ class CanonCameraManager(CameraManager):
                 f"[3/5] Löse Kamera genau einmal aus "
                 f"(Capture {self._aktueller_capture_id})..."
             )
-            if not edsdk.take_picture(
+            shutter_outcome = edsdk.take_picture(
                 self._camera_ref,
                 self._live_view_active,
                 before_shutter=self._capture_scharfschalten,
-            ):
-                fehler = getattr(edsdk, "letzter_fehler", 0)
-                name = edsdk.ERROR_NAMES.get(fehler, "UNBEKANNT")
+                capture_id=self._aktueller_capture_id,
+                return_outcome=True,
+            )
+
+            # Der Detail-Callback laeuft bewusst erst hier im aufrufenden
+            # Capture-Worker, nie im EDSDK-Owner. Press-OK bleibt auch dann eine
+            # gueltige UI-Naeherung, wenn OFF oder ein spaeterer Transfer
+            # scheitert. Eine Callback-Exception darf den Capture nicht aendern.
+            if getattr(shutter_outcome, "press_ok", False):
+                logger.info(
+                    "CANON-SHUTTER PRESS-ACCEPTED "
+                    f"capture={self._aktueller_capture_id} "
+                    f"release_ok={getattr(shutter_outcome, 'release_ok', False)}"
+                )
+                if press_command_accepted is not None:
+                    try:
+                        press_command_accepted(shutter_outcome)
+                    except Exception as e:
+                        logger.exception(
+                            "CANON-SHUTTER ACCEPTED-CALLBACK-ERROR "
+                            f"capture={self._aktueller_capture_id} "
+                            f"error={type(e).__name__}: {e}"
+                        )
+
+            command_ok = bool(
+                getattr(shutter_outcome, "command_ok", shutter_outcome)
+            )
+            if not command_ok:
+                unexpected = getattr(edsdk, "EDS_ERR_UNEXPECTED_EXCEPTION", 0x08)
+                if shutter_outcome is None:
+                    # Der Owner-Dispatcher liefert bei Timeout/Abbruch None.
+                    # `letzter_fehler` kann dann zu einem alten Capture gehoeren
+                    # und darf keine Recovery-Entscheidung mehr steuern.
+                    fehler = unexpected
+                    name = "OWNER_TIMEOUT_ODER_ABBRUCH"
+                elif hasattr(shutter_outcome, "press_ok"):
+                    press_result = getattr(shutter_outcome, "press_result", None)
+                    release_result = getattr(shutter_outcome, "release_result", None)
+                    if not shutter_outcome.press_ok:
+                        fehler = (
+                            press_result
+                            if press_result not in (None, edsdk.EDS_ERR_OK)
+                            else unexpected
+                        )
+                    else:
+                        fehler = (
+                            release_result
+                            if release_result not in (None, edsdk.EDS_ERR_OK)
+                            else unexpected
+                        )
+                    name = edsdk.ERROR_NAMES.get(fehler, "UNBEKANNT")
+                else:
+                    # Rueckwaertskompatibilitaet fuer alte Test-/Adaptermodule,
+                    # die noch nur bool liefern. Der produktive Wrapper nutzt
+                    # immer das Detailobjekt oben.
+                    fehler = getattr(edsdk, "letzter_fehler", unexpected)
+                    name = edsdk.ERROR_NAMES.get(fehler, "UNBEKANNT")
                 logger.error(f"[3/5] ✗ Auslösen fehlgeschlagen! Kamera meldet: {name} ({hex(fehler)})")
 
                 # 2.4.46: Klartext statt Rätselraten. Die häufigsten Fälle mit
@@ -1177,7 +1238,8 @@ class CanonCameraManager(CameraManager):
 
             logger.info(
                 "[3/5] ✓ Kamera ausgelöst! "
-                f"command_ms={(time.monotonic() - self._capture_gestartet) * 1000:.1f}"
+                f"shutter_command_ms="
+                f"{(time.monotonic() - self._capture_armed_at) * 1000:.1f}"
             )
 
             # SCHRITT 4: Auf Bild warten (je nach Modus)
@@ -1216,8 +1278,8 @@ class CanonCameraManager(CameraManager):
                             logger.info(
                                 f"[4/5] ✓ Bild via Host-Download: "
                                 f"{len(image_data)} bytes, "
-                                f"shutter_to_queue_ms="
-                                f"{(time.monotonic() - self._capture_gestartet) * 1000:.1f}"
+                                f"capture_arm_to_queue_ms="
+                                f"{(time.monotonic() - self._capture_armed_at) * 1000:.1f}"
                             )
                             break
                     except Empty:
@@ -1306,7 +1368,7 @@ class CanonCameraManager(CameraManager):
             )
             self._capture_accepting = False
             self._aktueller_capture_id = None
-            self._capture_gestartet = 0.0
+            self._capture_armed_at = 0.0
 
     def _fallback_to_live_view(self, restart_live_view: bool) -> Optional[Image.Image]:
         """Notlösung: Vorschaubild statt DSLR-Foto, wenn die Aufnahme scheitert.

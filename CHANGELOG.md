@@ -6,6 +6,73 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.61] - 2026-08-26 - Canon-Softwareblitz an den Shutter angenaehert
+
+> Ausschliesslich der interne Canon-DSLR-Ablauf wurde veraendert. Webcam und
+> Nikon behalten ihren bisherigen Capture- und Blitzpfad.
+
+### Hardwarebefund aus 2.4.60
+
+Box 245 lieferte mit der Canon EOS 2000D und eingesetzter SD-Karte vier von
+vier echte JPEGs mit 6000 x 4000 Pixeln ueber den Host-Transfer. Es gab weder
+`CARD_NG` noch einen schwarzen Wartebalken, Retry oder ein Doppelbild; der
+LiveView blieb waehrend aller Aufnahmen aktiv.
+
+Der weisse Softwareblitz erschien jedoch 1.497 bis 1.569 ms vor der Rueckkehr
+des erfolgreichen `ShutterButton_Completely`-Aufrufs. Der mechanische Klick
+kam hoerbar spaeter. Wer sich direkt nach dem Softwareblitz bewegte, stand
+deshalb bereits anders auf dem echten Foto.
+
+### Canon-Blitz folgt dem akzeptierten Press-Command
+
+- Canon zeigt am Countdown-Ende keinen vorgezogenen Softwareblitz mehr.
+- Der EDSDK-Owner liefert ein eingefrorenes Ergebnis mit Capture-ID, Press-/
+  Release-Erfolg und monotonen Rueckkehrzeiten. Die bestehende boolesche API
+  bleibt fuer alle anderen Aufrufer erhalten.
+- Nach jedem begonnenen `ShutterButton_Completely` wird
+  `ShutterButton_OFF` in einem `finally` genau einmal versucht, auch bei einer
+  nativen Exception.
+- Nur wenn der synchrone Press-Aufruf `EDS_ERR_OK` liefert, fordert der
+  Canon-Manager im aufrufenden Capture-Worker genau einmal den UI-Blitz an.
+  Release-, Transfer- und Decode-Fehler bleiben davon getrennt sichtbar.
+- Der Tk-Hauptthread zeigt den bestehenden weissen Blitz fuer 90 ms. Ein
+  capture-eigener Generation-Token verwirft alte Rueckmeldungen nach
+  Screen-Wechsel, neuem Capture oder bereits abgeschlossenem Foto.
+- Fehler beim Tk-Einreihen oder Anzeigen sind nicht fatal und erzeugen weder
+  Retry noch einen zweiten Shutter.
+
+`press_ok` ist bewusst nur die beste verfuegbare EDSDK-Naeherung. Canon stellt
+kein Ereignis fuer den exakten physikalischen Verschlusszeitpunkt bereit.
+
+### Ergebnis schneller sichtbar
+
+Das bereits dekodierte Canon-PIL-Foto wird beim Eintreffen im Tk-Hauptthread
+sofort und genau einmal ueber den bestehenden Anzeigeweg konfiguriert. Es
+wartet nicht mehr bis zu einem weiteren LiveView-/UI-Takt. Der vorhandene
+Webcam-HD-Sofortweg liegt in einem getrennten Zweig; Nikon bleibt unveraendert.
+
+### Dev-Diagnose und Tests
+
+Korrelierte Marker zeigen `PRESS-START`, `PRESS-RETURN`, `RELEASE-RETURN`,
+`CANON-FLASH REQUEST`, `CANON-FLASH SHOWN` und `CANON-PHOTO SHOWN`. Alte
+Timingfelder heissen nun eindeutig `since_capture_arm_ms` beziehungsweise
+`capture_arm_to_queue_ms`; kein Marker behauptet einen physikalisch
+nachgewiesenen Verschlusszeitpunkt.
+
+`python tests/alle_tests.py`: **18/18 unter Windows bestanden**, ohne Kamera.
+Zusaetzlich geprueft sind Press-/OFF-Exceptions, Owner-Timeout, unveraenderliches
+Ergebnis, Callback-Thread und -Fehler, genau-einmal-Blitz, stale UI-Tokens,
+Canon-Sofortanzeige sowie die unveraenderten Nikon-/Webcam-Grenzen.
+`py_compile` ist gruen; `webcam.py` und `nikon.py` haben keinen semantischen
+Diff.
+
+**Offen:** 2.4.61 auf Box 245 im Dev-Modus mit eingesetzter SD-Karte testen:
+bis zum neuen weissen Blitz stillhalten, direkt danach bewusst bewegen und
+pruefen, dass das gespeicherte Bild noch die Pose am Blitzzeitpunkt zeigt.
+Danach folgt der separate Flottentest ohne SD-Karte.
+
+---
+
 ## [2.4.60] - 2026-08-25 - Canon-Kaltstart und Capture-Anzeige nachgebessert
 
 > Ausschliesslich der interne Canon-DSLR-Pfad wurde nachgebessert. Nikon

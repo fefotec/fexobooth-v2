@@ -6,6 +6,7 @@ Basiert auf EDSDK v13.20.10
 
 import ctypes
 from ctypes import c_uint, c_int, c_void_p, c_char_p, POINTER, byref, Structure, c_ubyte
+from dataclasses import dataclass
 from functools import wraps
 import itertools
 import os
@@ -14,7 +15,7 @@ import sys
 import threading
 import time
 import traceback
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Union
 from pathlib import Path
 
 from src.utils.logging import get_logger, is_developer_mode
@@ -107,6 +108,7 @@ def load_edsdk() -> bool:
 # ============================================================================
 
 EDS_ERR_OK = 0x00000000
+EDS_ERR_UNEXPECTED_EXCEPTION = 0x00000008
 EDS_ERR_DEVICE_NOT_FOUND = 0x00000080
 
 # 2.4.46 KORRIGIERT — beide Werte standen hier falsch (gegen EDSDKErrors.h geprüft):
@@ -123,6 +125,32 @@ EDS_ERR_TAKE_PICTURE_AF_NG = 0x00008D01
 EDS_ERR_TAKE_PICTURE_CARD_NG = 0x00008D07
 EDS_ERR_OBJECT_NOTREADY = 0x0000A102
 EDS_ERR_MEMORYSTATUS_NOTREADY = 0x0000A106
+
+
+@dataclass(frozen=True)
+class ShutterCommandOutcome:
+    """Unveraenderliches Ergebnis genau eines Canon-Shutter-Ablaufs.
+
+    ``press_ok`` bedeutet nur, dass der synchrone EDSDK-Press-Aufruf mit
+    ``EDS_ERR_OK`` zurueckkam. Das ist kein Beweis fuer den physikalischen
+    Verschluss oder einen spaeter erfolgreichen Bildtransfer.
+    """
+
+    capture_id: str
+    press_ok: bool
+    press_start_at: float
+    press_return_at: float
+    release_ok: bool
+    release_return_at: float
+    press_result: Optional[int] = None
+    release_result: Optional[int] = None
+    press_exception: Optional[str] = None
+    release_exception: Optional[str] = None
+
+    @property
+    def command_ok(self) -> bool:
+        """Gesamter synchroner Press-/Release-Vertrag war erfolgreich."""
+        return self.press_ok and self.release_ok
 
 # Error-Code Namen für besseres Logging
 #
@@ -1352,7 +1380,9 @@ def take_picture(
     camera_ref: c_void_p,
     live_view_aktiv: bool = False,
     before_shutter=None,
-) -> bool:
+    capture_id: str = "-",
+    return_outcome: bool = False,
+) -> Union[bool, ShutterCommandOutcome, None]:
     """Loest die Kamera aus — genau so, wie Canons eigenes Beispiel es tut.
 
     2.4.52 — ZURUECK AUF DEN REFERENZWEG.
@@ -1385,15 +1415,30 @@ def take_picture(
     Args:
         camera_ref: Kamera-Referenz
         live_view_aktiv: nur fuers Log — welcher Zustand herrschte?
+        capture_id: stabile Capture-ID fuer Diagnose und Ergebniszuordnung
+        return_outcome: liefert statt bool das detaillierte Shutter-Ergebnis
 
     Returns:
-        True wenn die Kamera den Ausloesebefehl angenommen hat
+        Standardmaessig True nur bei erfolgreichem Press UND Release. Im
+        Detailmodus ein unveraenderliches Ergebnisobjekt. Ein Owner-Timeout
+        kann weiterhin None liefern.
     """
     global letzter_fehler
 
+    def ergebnis_zurueck(outcome: ShutterCommandOutcome):
+        return outcome if return_outcome else outcome.command_ok
+
     if EDSDK_DLL is None:
         letzter_fehler = EDS_ERR_DEVICE_NOT_FOUND
-        return False
+        return ergebnis_zurueck(ShutterCommandOutcome(
+            capture_id=str(capture_id),
+            press_ok=False,
+            press_start_at=0.0,
+            press_return_at=0.0,
+            release_ok=False,
+            release_return_at=0.0,
+            press_result=EDS_ERR_DEVICE_NOT_FOUND,
+        ))
 
     PRESS = kEdsCameraCommand_PressShutterButton
 
@@ -1405,53 +1450,129 @@ def take_picture(
         try:
             before_shutter()
         except Exception as e:
-            letzter_fehler = 0x00000008  # UNEXPECTED_EXCEPTION
+            letzter_fehler = EDS_ERR_UNEXPECTED_EXCEPTION
             logger.exception(f"Capture konnte nicht scharfgeschaltet werden: {e}")
-            return False
+            return ergebnis_zurueck(ShutterCommandOutcome(
+                capture_id=str(capture_id),
+                press_ok=False,
+                press_start_at=0.0,
+                press_return_at=0.0,
+                release_ok=False,
+                release_return_at=0.0,
+                press_exception=type(e).__name__,
+            ))
 
-    err = EDSDK_DLL.EdsSendCommand(
-        camera_ref, PRESS, kEdsCameraCommand_ShutterButton_Completely
+    press_err = None
+    press_exception = None
+    press_start_at = time.monotonic()
+    press_return_at = press_start_at
+    release_err = None
+    release_exception = None
+    release_start_at = 0.0
+    release_return_at = 0.0
+
+    logger.info(
+        "CANON-SHUTTER PRESS-START "
+        f"capture={capture_id} live_view={'an' if live_view_aktiv else 'aus'}"
     )
 
-    # Ausloeser IMMER wieder freigeben — bleibt er gedrueckt, ignoriert die
-    # Kamera den naechsten Befehl.
-    release_err = None
+    # Sobald der native Press-Aufruf begonnen hat, wird OFF im finally genau
+    # einmal versucht. Das gilt auch dann, wenn ctypes beziehungsweise die DLL
+    # statt eines Fehlercodes eine Exception liefert.
     try:
-        release_err = EDSDK_DLL.EdsSendCommand(
-            camera_ref, PRESS, kEdsCameraCommand_ShutterButton_OFF
-        )
-    except Exception as e:
-        logger.exception(f"Ausloeser freigeben warf eine Exception: {e}")
+        try:
+            press_err = EDSDK_DLL.EdsSendCommand(
+                camera_ref, PRESS, kEdsCameraCommand_ShutterButton_Completely
+            )
+        except Exception as e:
+            press_exception = type(e).__name__
+            logger.exception(f"Canon-Ausloeser warf eine Exception: {e}")
+        finally:
+            press_return_at = time.monotonic()
+            press_name = (
+                ERROR_NAMES.get(press_err, "UNBEKANNT")
+                if press_err is not None else f"EXCEPTION:{press_exception or '?'}"
+            )
+            logger.info(
+                "CANON-SHUTTER PRESS-RETURN "
+                f"capture={capture_id} "
+                f"press_ms={(press_return_at - press_start_at) * 1000:.1f} "
+                f"result={press_name} "
+                f"code={hex(press_err) if press_err is not None else '-'}"
+            )
+    finally:
+        release_start_at = time.monotonic()
+        try:
+            release_err = EDSDK_DLL.EdsSendCommand(
+                camera_ref, PRESS, kEdsCameraCommand_ShutterButton_OFF
+            )
+        except Exception as e:
+            release_exception = type(e).__name__
+            logger.exception(f"Ausloeser freigeben warf eine Exception: {e}")
+        finally:
+            release_return_at = time.monotonic()
+            release_name = (
+                ERROR_NAMES.get(release_err, "UNBEKANNT")
+                if release_err is not None
+                else f"EXCEPTION:{release_exception or '?'}"
+            )
+            logger.info(
+                "CANON-SHUTTER RELEASE-RETURN "
+                f"capture={capture_id} "
+                f"release_ms={(release_return_at - release_start_at) * 1000:.1f} "
+                f"result={release_name} "
+                f"code={hex(release_err) if release_err is not None else '-'}"
+            )
+
+    outcome = ShutterCommandOutcome(
+        capture_id=str(capture_id),
+        press_ok=press_err == EDS_ERR_OK and press_exception is None,
+        press_start_at=press_start_at,
+        press_return_at=press_return_at,
+        release_ok=release_err == EDS_ERR_OK and release_exception is None,
+        release_return_at=release_return_at,
+        press_result=press_err,
+        release_result=release_err,
+        press_exception=press_exception,
+        release_exception=release_exception,
+    )
 
     logger.info(
         "CANON-CAPTURE SHUTTER "
-        f"press={ERROR_NAMES.get(err, 'UNBEKANNT')}({hex(err)}) "
+        f"press={ERROR_NAMES.get(press_err, 'EXCEPTION') if press_err is not None else 'EXCEPTION'}"
+        f"({hex(press_err) if press_err is not None else '-'}) "
         f"release={ERROR_NAMES.get(release_err, 'EXCEPTION') if release_err is not None else 'EXCEPTION'}"
         f"({hex(release_err) if release_err is not None else '-'}) "
+        f"capture={capture_id} "
         f"live_view={'an' if live_view_aktiv else 'aus'}"
     )
 
     # Kein stiller zweiter Ausloeseversuch bei AF_NG: Ein Aufruf dieser
     # Funktion bedeutet exakt einen Capture-Befehl. Sonst koennte ein spaet
     # eintreffendes erstes Bild zusammen mit dem Retry zwei Fotos erzeugen.
-    if err != EDS_ERR_OK:
+    if not outcome.press_ok:
+        # Press bleibt der primaere Fehler, auch wenn OFF zusaetzlich scheitert.
         if release_err not in (None, EDS_ERR_OK):
             check_error(release_err, "PressShutterButton OFF nach Capture-Fehler")
-        check_error(err, "PressShutterButton Completely")
-        if err == EDS_ERR_TAKE_PICTURE_AF_NG:
-            logger.error(
-                "Autofokus fand keinen Halt; kein automatischer Zweitausloeser"
-            )
-        return False
+        if press_err is not None:
+            check_error(press_err, "PressShutterButton Completely")
+            if press_err == EDS_ERR_TAKE_PICTURE_AF_NG:
+                logger.error(
+                    "Autofokus fand keinen Halt; kein automatischer Zweitausloeser"
+                )
+        else:
+            letzter_fehler = EDS_ERR_UNEXPECTED_EXCEPTION
+        return ergebnis_zurueck(outcome)
 
-    if release_err is None:
-        letzter_fehler = 0x00000008  # UNEXPECTED_EXCEPTION
-        return False
-    if not check_error(release_err, "PressShutterButton OFF"):
-        return False
+    if not outcome.release_ok:
+        if release_err is not None:
+            check_error(release_err, "PressShutterButton OFF")
+        else:
+            letzter_fehler = EDS_ERR_UNEXPECTED_EXCEPTION
+        return ergebnis_zurueck(outcome)
 
     letzter_fehler = EDS_ERR_OK
-    return True
+    return ergebnis_zurueck(outcome)
 
 
 @kamera_faden_aufruf(timeout=10.0)
