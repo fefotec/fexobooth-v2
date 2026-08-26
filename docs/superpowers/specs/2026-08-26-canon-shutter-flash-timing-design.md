@@ -1,4 +1,4 @@
-# Canon-Softwareblitz am echten Ausloesezeitpunkt
+# Canon-Softwareblitz an den Canon-Shutter-Command annaehern
 
 **Datum:** 2026-08-26
 
@@ -36,11 +36,13 @@ an den Gast.
 ## Technischer Befund
 
 FexoBooth beendet den Canon-LiveView fuer die Aufnahme nicht. Das Log bestaetigt
-bei allen vier Captures `live_view=an`. Die EOS verarbeitet den Autofokus und
-die mechanische Aufnahme innerhalb von
-`EdsSendCommand(..., ShutterButton_Completely)`. Die Belichtungszeiten betrugen
-nur 1/30 beziehungsweise 1/40 Sekunde; der rund 1,5 Sekunden lange Vorlauf ist
-damit kein Software-Umschalten zwischen LiveView und Fotomodus.
+bei allen vier Captures `live_view=an`. Die EOS verarbeitet Autofokus und ihren
+kamerainternen Aufnahmeablauf waehrend des blockierenden
+`EdsSendCommand(..., ShutterButton_Completely)`. Auf Box 245 lag der hoerbare
+mechanische Klick innerhalb dieses Zeitfensters; die API selbst nennt keinen
+exakten Verschlusszeitpunkt. Die Belichtungszeiten betrugen nur 1/30
+beziehungsweise 1/40 Sekunde; der rund 1,5 Sekunden lange Vorlauf ist damit
+kein Software-Umschalten zwischen LiveView und Fotomodus.
 
 Canons EDSDK stellt kein separates, exakt auf den mechanischen Verschluss
 zeitgestempeltes Ereignis bereit. Die sichere Transferanforderung
@@ -170,10 +172,12 @@ neuer Capture und `_on_capture_complete()` invalidieren den alten Token.
 - Der bestehende Shutter-Guard, `CARD_NG`-Recovery, die Capture-ID und der
   Vertrag "genau ein Ausloesebefehl" bleiben unveraendert.
 - Ein JPEG wird weiterhin nur nach passender Capture-ID akzeptiert.
-- Die am Capture-Start festgehaltene Kameraart steuert die Ergebnisanzeige.
-  Nur Canon ruft in `_on_capture_complete()` genau einmal
-  `_display_photo_cached(photo)` auf. Dieser Weg ist unabhaengig von
-  `_flash_haltend`; Nikon und Webcam behalten ihren bisherigen Anzeigeweg.
+- Die am Capture-Start festgehaltene Kameraart steuert die zusaetzliche
+  Canon-Ergebnisanzeige. Canon ruft in `_on_capture_complete()` unabhaengig von
+  `_flash_haltend` genau einmal `_display_photo_cached(photo)` auf. Der bereits
+  vorhandene `_flash_haltend`-Sofortweg der Webcam bleibt unveraendert. Eine
+  gemeinsame Einmal-Sperre beziehungsweise gegenseitig ausschliessende Zweige
+  verhindern einen Doppelaufruf; Nikon behaelt seinen bisherigen Anzeigeweg.
 
 ## Logging im Dev-Modus
 
@@ -211,7 +215,9 @@ Automatische Tests muessen ohne Kamera nachweisen:
 5. Canon sendet weiterhin genau einmal `Completely`; nach begonnenem Press wird
    `OFF` auch bei Exception oder Fehler genau einmal versucht.
 6. Das fertige Canon-Foto wird anhand der am Capture-Start festgehaltenen
-   Kameraart direkt und genau einmal angezeigt.
+   Kameraart zusaetzlich direkt und genau einmal angezeigt. Der vorhandene
+   Webcam-HD-Sofortweg bleibt unveraendert, und keine Kamera erhaelt einen
+   Doppelaufruf.
 7. Der Nikon-Wartehinweis und Nikon-Blitz bleiben unveraendert.
 8. Der Webcam-Farb-, Spiegel-, Capture- und Blitzpfad bleibt unveraendert.
 9. Veraltete beziehungsweise nach Screen-Wechsel eintreffende Canon-Callbacks
@@ -232,8 +238,10 @@ sowie ein unabhaengiges Abschlussreview ausgefuehrt.
    eingesetzt bleiben.
 3. Bei jedem Foto bis zum weissen Bildschirmblitz stillhalten und direkt danach
    bewusst die Pose veraendern.
-4. Das gespeicherte Foto muss die Pose vom Blitzzeitpunkt zeigen und darf nicht
-   erst die Bewegung danach aufnehmen.
+4. Die Abnahme auf der getesteten Box 245 gilt nur dann als bestanden, wenn das
+   gespeicherte Foto die Pose vom Blitzzeitpunkt zeigt und nicht erst die
+   Bewegung danach aufnimmt. Das ist ein Hardware-Abnahmekriterium und keine
+   aus EDSDK abgeleitete allgemeine Verschlussgarantie.
 5. Im Log muessen genau ein Press, ein Release, ein Flash und ein passendes
    6000-x-4000-JPEG je Capture stehen.
 6. Es darf weder einen schwarzen Canon-Wartebalken noch `CARD_NG`, Retry oder
