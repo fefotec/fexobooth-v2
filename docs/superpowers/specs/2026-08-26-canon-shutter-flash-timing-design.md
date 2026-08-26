@@ -58,10 +58,12 @@ waren langsamer beziehungsweise unzuverlaessiger.
 
 1. Der Canon-Softwareblitz liegt so nah wie mit dem vorhandenen EDSDK-Vertrag
    sicher moeglich am hoerbaren Kameraklick.
-2. Nach dem Blitz darf sich der Gast bewegen, ohne dass dadurch erst die
-   eigentliche Canon-Aufnahme entsteht.
+2. Der Hardwaretest muss bestaetigen, dass eine Bewegung direkt nach dem neuen
+   Blitz die aufgenommene Pose nicht mehr veraendert. EDSDK selbst liefert
+   dafuer keine physikalische Verschlussgarantie.
 3. Das fertige Canon-Foto wird ohne unnoetigen UI-Takt-Verzug angezeigt.
-4. Ein fehlgeschlagener Canon-Ausloeser erzeugt keinen irrefuehrenden Blitz.
+4. Ein vor oder waehrend `ShutterButton_Completely` synchron abgelehnter
+   Canon-Ausloeser erzeugt keinen irrefuehrenden Blitz.
 5. Webcam und Nikon bleiben funktional und semantisch unveraendert.
 6. Schwarzer Wartebalken, Vorfokus und feste Schaetzverzoegerungen kommen nicht
    zurueck.
@@ -83,16 +85,33 @@ waren langsamer beziehungsweise unzuverlaessiger.
 1. Der Countdown endet und der Capture-Worker startet. Es erscheint noch kein
    Softwareblitz.
 2. LiveView-Zugriff und Dev-Diagnose laufen wie bisher.
-3. Der EDSDK-Owner sendet genau einmal
-   `ShutterButton_Completely` und danach garantiert `ShutterButton_OFF`.
-4. Nur wenn `edsdk.take_picture()` erfolgreich zurueckkehrt, meldet der
-   Canon-Manager ueber einen optionalen Callback `shutter_accepted`.
-5. Der Capture-Worker stellt diese Meldung mit `after(0, ...)` in den
-   Tk-Hauptthread. Nur dort wird der weisse 90-ms-Blitz angezeigt.
-6. Host-Event, JPEG-Download und Dekodierung laufen unveraendert weiter.
-7. Sobald das echte PIL-Foto den Tk-Hauptthread erreicht, zeigt Canon es direkt
+3. Der EDSDK-Owner sendet genau einmal `ShutterButton_Completely`. Sobald der
+   native Aufruf zurueckkehrt, haelt er Ergebnis und monotone Zeit fest. Nach
+   begonnenem Press-Aufruf wird `ShutterButton_OFF` in einem `finally` immer
+   versucht; auch Press-Exception und Release-Fehler bleiben sichtbar.
+4. Der Owner liefert ausschliesslich ein unveraenderliches Ergebnisobjekt
+   zurueck. Er fuehrt niemals Tk-Code aus. Das Ergebnis trennt mindestens
+   `press_ok`, `press_start_at`, `press_return_at`, `release_ok` und
+   `release_return_at`.
+5. Ist `press_ok=True`, meldet der Canon-Manager im Capture-Worker ueber einen
+   optionalen Callback `press_command_accepted(payload)`. Ein Release-Fehler
+   bleibt ein Capture-Fehler, nimmt aber nicht die Tatsache zurueck, dass der
+   Press-Command bereits akzeptiert wurde.
+6. Der Capture-Worker stellt diese Meldung zusammen mit seinem UI-Capture-Token
+   per `after(0, ...)` in den Tk-Hauptthread. Nur dort wird bei weiterhin
+   gueltigem Token der weisse 90-ms-Blitz angezeigt.
+7. Host-Event, JPEG-Download und Dekodierung laufen unveraendert weiter.
+8. Sobald das echte PIL-Foto den Tk-Hauptthread erreicht, zeigt Canon es direkt
    ueber den bestehenden Anzeigeweg an. Es wartet nicht mehr auf den naechsten
    LiveView-/UI-Takt.
+
+`press_ok` bedeutet ausschliesslich, dass der synchrone
+`ShutterButton_Completely`-Aufruf mit `EDS_ERR_OK` zurueckkam. Laut Canon ist das
+keine Garantie, dass der mechanische Verschluss nachweislich betaetigt wurde.
+Ein spaeteres `kEdsStateEvent_CaptureError`, ein fehlender Transfer oder ein
+Decode-Fehler kann trotz bereits gezeigtem Blitz auftreten. Der Callback ist
+deshalb eine bewusst benannte UI-Naeherung und keine neue Erfolgswahrheit fuer
+den Capture.
 
 Der Callback ist reine Rueckmeldung. Eine Callback-Exception darf weder einen
 zweiten Shutter ausloesen noch den bereits laufenden Bildtransfer abbrechen.
@@ -104,18 +123,57 @@ weiterhin an der bisherigen Stelle. Nikon behaelt ausserdem seinen verzoegerten
 Wartehinweis. Die neue Callback-Signatur wird nur im expliziten Canon-Zweig
 verwendet.
 
+## Schnittstellen und Threadgrenzen
+
+Der Canon-Manager erweitert seinen internen Capture-Aufruf sinngemaess auf:
+
+```text
+capture_photo(timeout, press_command_accepted=None)
+```
+
+Der optionale Callback erhaelt ein unveraenderliches Payload mit:
+
+- `capture_id`
+- `press_ok`
+- `press_start_at`
+- `press_return_at`
+- `release_ok`
+- `release_return_at`
+
+Der EDSDK-Owner erzeugt die Daten und gibt sie an den blockierten
+Capture-Worker zurueck. Erst der Capture-Worker ruft
+`press_command_accepted(payload)` genau einmal auf, wenn `press_ok=True` ist.
+Die Callback-Exception wird dort abgefangen. Der Callback darf nur einen
+Tk-Auftrag einreihen und keine Kamera-API aufrufen.
+
+Der Session-Screen erzeugt fuer jeden UI-Capture einen monotonen
+Generation-Token. Kameraart, Token und Einmal-Guard werden am Capture-Start
+festgehalten und an Worker sowie UI-Callback weitergereicht. `on_hide()`, ein
+neuer Capture und `_on_capture_complete()` invalidieren den alten Token.
+
 ## Zustands- und Fehlervertrag
 
-- Pro Canon-Capture wird der Softwareblitz hoechstens einmal angefordert.
-- Ohne erfolgreichen Canon-Ausloesebefehl gibt es keinen Canon-Blitz.
-- Ist der Session-Screen beim Eintreffen der Rueckmeldung nicht mehr aktiv oder
-  der Capture bereits beendet, wird die Rueckmeldung verworfen.
+- Pro Canon-Capture wird der Softwareblitz hoechstens einmal angefordert und
+  hoechstens einmal im Tk-Hauptthread konfiguriert.
+- Bei einem synchronen Fehler vor oder im Press-Command gibt es keinen
+  Canon-Blitz. Nach `press_ok=True` darf ein spaeterer asynchroner CaptureError,
+  Transferfehler oder Decode-Fallback den bereits gezeigten Blitz nicht
+  nachtraeglich umdeuten.
+- Ist der Session-Screen beim Eintreffen der Rueckmeldung nicht mehr aktiv, der
+  Generation-Token veraltet oder der Capture bereits beendet, wird die
+  Rueckmeldung verworfen. `is_live` und `_capture_in_progress` allein reichen
+  dafuer nicht.
 - Ein nicht mehr vorhandenes Tk-Widget wird fehlertolerant behandelt.
-- Fehler beim Anzeigen des Softwareblitzes werden geloggt, aendern aber nicht
-  das Kameraergebnis.
+- Fehler beim Einreihen mit `after(0, ...)` und Fehler beim spaeteren Anzeigen
+  des Softwareblitzes werden getrennt geloggt, aendern aber nicht das
+  Kameraergebnis.
 - Der bestehende Shutter-Guard, `CARD_NG`-Recovery, die Capture-ID und der
   Vertrag "genau ein Ausloesebefehl" bleiben unveraendert.
 - Ein JPEG wird weiterhin nur nach passender Capture-ID akzeptiert.
+- Die am Capture-Start festgehaltene Kameraart steuert die Ergebnisanzeige.
+  Nur Canon ruft in `_on_capture_complete()` genau einmal
+  `_display_photo_cached(photo)` auf. Dieser Weg ist unabhaengig von
+  `_flash_haltend`; Nikon und Webcam behalten ihren bisherigen Anzeigeweg.
 
 ## Logging im Dev-Modus
 
@@ -129,6 +187,10 @@ Dafuer kommen korrelierte Marker mit Session-/Capture-ID hinzu:
 - `CANON-FLASH SHOWN` mit Wartezeit bis zum Tk-Hauptthread
 - `CANON-PHOTO SHOWN` mit Zeit seit Press-Return und Capture-Start
 
+`FLASH SHOWN` und `PHOTO SHOWN` bedeuten, dass das jeweilige Tk-Widget im
+Hauptthread konfiguriert wurde. Sie garantieren weder einen bereits erneuerten
+physischen Display-Pixel noch den mechanischen Verschlusszeitpunkt.
+
 Die bisherigen Bezeichnungen `since_shutter_ms` und `shutter_to_queue_ms`
 werden inhaltlich als "seit Shutter-Command-Start" klargestellt oder passend
 umbenannt. Das Logging veraendert keine Kameraeinstellung und schreibt keine
@@ -138,18 +200,26 @@ Bilddaten, Pointer oder Zugangsdaten.
 
 Automatische Tests muessen ohne Kamera nachweisen:
 
-1. Canon zeigt vor dem erfolgreichen Shutter-Callback keinen Blitz.
-2. Ein erfolgreicher Canon-Shutter fordert exakt einen Blitz im Tk-Hauptthread
-   an.
-3. Ein Canon-Fehler oder Fallback fordert keinen Blitz an.
+1. Canon zeigt vor `press_ok=True` keinen Blitz.
+2. Ein akzeptierter Canon-Press-Command fordert exakt einen Blitz im
+   Tk-Hauptthread an.
+3. Ein synchroner Fehler vor oder waehrend des Press-Commands fordert keinen
+   Blitz an. Transfer-/Decode-Fallback und asynchroner CaptureError nach
+   `press_ok=True` duerfen dagegen auf einen bereits angeforderten Blitz
+   treffen und muessen separat geloggt bleiben.
 4. Eine Callback-Exception verursacht weder Retry noch Capture-Abbruch.
-5. Canon sendet weiterhin genau einmal `Completely` und garantiert `OFF`.
-6. Das fertige Canon-Foto wird direkt angezeigt.
+5. Canon sendet weiterhin genau einmal `Completely`; nach begonnenem Press wird
+   `OFF` auch bei Exception oder Fehler genau einmal versucht.
+6. Das fertige Canon-Foto wird anhand der am Capture-Start festgehaltenen
+   Kameraart direkt und genau einmal angezeigt.
 7. Der Nikon-Wartehinweis und Nikon-Blitz bleiben unveraendert.
 8. Der Webcam-Farb-, Spiegel-, Capture- und Blitzpfad bleibt unveraendert.
 9. Veraltete beziehungsweise nach Screen-Wechsel eintreffende Canon-Callbacks
-   werden ignoriert.
-10. Die bestehenden 18 DSLR-Regressionstests bleiben gruen.
+   werden ueber den Generation-Token ignoriert, auch wenn bereits ein neuer
+   Capture laeuft.
+10. Fehler beim Tk-Einreihen und beim Tk-Anzeigen bleiben fuer den eigentlichen
+    Canon-Capture folgenlos.
+11. Die bestehenden 18 DSLR-Regressionstests bleiben gruen.
 
 Zusaetzlich werden `py_compile`, ein Scope-Diff fuer `webcam.py` und `nikon.py`
 sowie ein unabhaengiges Abschlussreview ausgefuehrt.
