@@ -132,7 +132,54 @@ unter `C:\ProgramData\FexoBox`, beispielsweise
 
 Die Datei darf veraltet sein; der Mutex bleibt die Wahrheit. PID,
 Erstellungszeit und EXE-Pfad muessen vor jedem harten Eingriff gegen ein bereits
-geoeffnetes Windows-Prozess-Handle geprueft werden.
+geoeffnetes Windows-Prozess-Handle geprueft werden. Zusaetzlich stehen die
+Windows-Session-ID und eine absolute Beenden-Frist in der Datei.
+
+#### Exakter Mutex-Vertrag
+
+Der erste Versuch verwendet `CreateMutexW(..., bInitialOwner=True, ...)`:
+
+- Neuer Mutex ohne `ERROR_ALREADY_EXISTS`: Der aufrufende Hauptthread besitzt
+  ihn und publiziert sofort `starting`.
+- Bestehender Mutex mit `ERROR_ALREADY_EXISTS`: Das zurueckgegebene Handle
+  bedeutet ausdruecklich **keinen** Besitz. Der Kandidat darf weder Metadaten
+  schreiben noch Kamera oder UI starten.
+- Ein Kandidat, der nur eine gesunde Instanz nach vorn holt, schliesst sein
+  Handle ohne `ReleaseMutex`.
+- Ein Kandidat, der auf die Altinstanz wartet, benutzt
+  `WaitForSingleObject`. Sowohl `WAIT_OBJECT_0` als auch `WAIT_ABANDONED`
+  uebertragen ihm den Besitz; `WAIT_TIMEOUT` nicht. Auf das Verschwinden des
+  benannten Objekts wird nie gewartet, weil offene Handles wartender Prozesse
+  das Objekt erhalten koennen.
+- Der Besitzer gibt den Mutex waehrend des normalen Betriebs niemals vorzeitig
+  frei. Bei einem kontrollierten Startabbruch vor Kamera/UI ruft derselbe
+  Hauptthread `ReleaseMutex` und `CloseHandle`; beim normalen oder harten
+  Prozessende schliesst Windows das Handle. Ein nach Prozessende gemeldetes
+  `WAIT_ABANDONED` ist deshalb ein erwarteter, zu protokollierender
+  Besitzwechsel.
+
+Mehrere gleichzeitig gestartete Wiederhersteller werden mit einem zweiten,
+kurzlebigen benannten Recovery-Mutex serialisiert. Nur dessen Besitzer darf
+eine Altinstanz beenden. Alle anderen Kandidaten warten ausschliesslich auf den
+Main-UI-Mutex und bewerten danach den inzwischen neu publizierten Besitzer.
+Vor jedem harten Eingriff validiert der Recovery-Besitzer Prozess-Handle,
+Erstellungszeit, EXE-Pfad, Session und Start-Token erneut.
+
+#### Verbindliche Besitzer-Zustaende
+
+`starting` wird vor dem Import von `PhotoboothApp` atomar publiziert. Scheitert
+bereits dieses erste Publishing, wird der Mutex kontrolliert freigegeben und
+der Prozess endet fail-closed, bevor Kamera oder UI importiert werden.
+
+Der Uebergang zu `running` geschieht erst aus einem mit `root.after(0, ...)`
+geplanten Callback, nachdem Tk seine Hauptschleife tatsaechlich verarbeitet.
+Scheitert dieses Update, leitet die App den abgesicherten Exit ein; sie darf
+nicht dauerhaft mit unzuverlaessigen Besitzdaten weiterlaufen.
+
+`shutdown_requested` enthaelt Grund und die gemeinsame absolute Wachhundfrist.
+Ein Prozess im Zustand `running`, der nach Ablauf der unten definierten
+Schonfrist kein auffindbares Fenster mehr besitzt, ist ein eigener
+Recovery-Fall und wird nicht mit einem jungen `starting`-Prozess verwechselt.
 
 ### 2. Reihenfolge im Hauptstart
 
@@ -152,9 +199,12 @@ dadurch weder CustomTkinter noch Kamera-SDKs.
 
 Das Bridge-Waisenaufraeumen darf erst nach erfolgreichem Hauptinstanz-Besitz
 laufen. Es darf nicht mehr als langsamer Hintergrund-`taskkill` spaeter mit
-einer inzwischen frisch gestarteten Bridge kollidieren. Vor der ersten
-Kamera-Initialisierung wird eine vorhandene verwaiste Bridge abgeschlossen
-beendet beziehungsweise deren Ende bestaetigt.
+einer inzwischen frisch gestarteten Bridge kollidieren. Eine Bridge gilt nur
+dann als verwaist, wenn ihr aufgezeichneter Parent-Prozess nach Pruefung von PID
+und Prozesserstellungszeiten nicht mehr lebt. Eine Bridge eines lebenden
+`--kamera-test`-, `--dslr-test`- oder anderen erlaubten Werkzeugprozesses bleibt
+unangetastet. Vor der ersten Kamera-Initialisierung wird die Beendigung echter
+Waisen synchron bestaetigt.
 
 ### 3. Verhalten bei einem zweiten normalen Start
 
@@ -179,8 +229,9 @@ Existiert noch kein Fenster und ist der Besitzer erst kurz aktiv, gilt eine
 Startschonzeit. Der zweite Prozess wartet in kurzen Intervallen und prueft
 erneut. Ein Doppelklick wie auf Box 027 darf den sechs Sekunden aelteren ersten
 Start niemals beenden. Die gesamte Schonzeit wird anhand echter Box-Startzeiten
-so gewaehlt, dass auch das langsame Miix-Tablet abgedeckt ist; der anfängliche
-Vertragswert betraegt 30 Sekunden.
+so gewaehlt, dass auch PyInstaller, Nikon-Initialisierung und das langsame
+Miix-Tablet abgedeckt sind. Der Produktionswert betraegt zunaechst 60 Sekunden
+und darf erst nach Feldmessungen reduziert werden.
 
 #### Besitzer wird gerade beendet
 
@@ -192,10 +243,20 @@ faehrt als neue Hauptinstanz fort.
 
 #### Besitzer reagiert nicht
 
-Ein einzelner langsamer UI-Takt reicht nicht fuer eine Zwangsbeendigung. Nach
-dem ersten fehlgeschlagenen Ping folgen mehrere Pruefungen ueber insgesamt
-mindestens zwoelf Sekunden. Das liegt deutlich ueber den auf Box 027 gemessenen
-normalen UI-Hitches von rund zwei Sekunden.
+Ein einzelner langsamer UI-Takt reicht nicht fuer eine Zwangsbeendigung. Nikon
+darf fuer Initialisierung bis zu 20 Sekunden und fuer einzelne Auftraege bis zu
+12 Sekunden benoetigen; auch diese legitimen Fristen duerfen keinen Auto-Kill
+ausloesen. Bei `running` folgen deshalb nach dem ersten fehlgeschlagenen Ping
+mehrere Pruefungen ueber insgesamt mindestens 45 Sekunden. Das liegt ueber den
+dokumentierten Kamera-Fristen und deutlich ueber den auf Box 027 gemessenen
+normalen UI-Hitches von rund zwei Sekunden. Gleiches gilt fuer einen aelteren
+`running`-Besitzer ohne auffindbares Fenster.
+
+Die Zehn-Sekunden-Frist gilt nur fuer einen ausdruecklich angeforderten Exit im
+Zustand `shutdown_requested`, nicht fuer die Diagnose eines unbekannten
+UI-Stillstands. Kamera-Initialisierung und Capture erhalten eigene Tests, die
+waehrend ihrer maximal erlaubten Laufzeit einen zweiten Start simulieren und
+beweisen, dass die aktive Instanz nicht beendet wird.
 
 Bleiben Fenster und UI waehrend der gesamten Frist nicht ansprechbar, startet
 der neue Prozess eine schlichte, tastaturfreie Anzeige:
@@ -209,36 +270,57 @@ Die Anzeige laeuft in einem isolierten Hilfsprozess und besitzt eine harte
 Eigenlaufzeitgrenze. Ihr Ausfall darf die Wiederherstellung nicht verhindern.
 
 Anschliessend wird nur das bereits verifizierte alte Prozess-Handle beendet.
-Vor dem Eingriff werden direkte `FexoNikonBridge.exe`-Kinder dieses Besitzers
-anhand von Parent-PID und Prozesszeit ermittelt; im Zwangsfall werden genau
-diese Kinder ebenfalls beendet. Nach dem signalisierten Prozessende und der
-Mutex-Freigabe erwirbt der angeforderte Desktop-Start selbst den Besitz,
-schliesst die Warteanzeige und startet normal. Es gibt kein Zeitfenster mit zwei
+Der Hauptprozess wird zuerst beendet, damit er garantiert keine neue Bridge
+mehr starten kann. Danach werden direkte `FexoNikonBridge.exe`-Kinder dieses
+Besitzers anhand von Parent-PID, EXE-Pfad und Prozesszeiten ermittelt und genau
+diese Kind-Handles beendet. Erst danach wartet der Recovery-Besitzer auf den
+Main-UI-Mutex. Der Kandidat, der ihn mit `WAIT_OBJECT_0` oder
+`WAIT_ABANDONED` erhaelt, fuehrt vor jeder Kamera-Initialisierung zusaetzlich
+die verifizierte synchrone Waisenpruefung aus. Es gibt kein Zeitfenster mit zwei
 Kamera-Eigentuemern.
 
 Kann der alte Besitzer nicht eindeutig verifiziert oder mangels Windows-Recht
 nicht beendet werden, wird fail-closed gehandelt: keine zweite Kamera-App.
-Stattdessen erscheint ein oberstes, per Touch bestaetigbares Fenster mit der
-klaren Anweisung, die Box neu zu starten. Ein unbekannter Prozess wird niemals
-auf Verdacht beendet.
+Stattdessen erscheint ein oberstes, per Touch bedienbares Fenster mit
+`Box neu starten` und `Abbrechen`. Auch ein Besitzer aus einer anderen
+Windows-Session wird niemals per Fenster-Ping als vermeintlich haengend
+eingestuft: Die Session-ID-Pruefung fuehrt in denselben fail-closed
+Touch-Dialog. Damit bleibt der Mutex bewusst `Global\\`, ohne vorzugeben, ein
+Fenster ueber Sitzungsgrenzen hinweg nach vorn holen zu koennen. Ein unbekannter
+oder fremdsitzender Prozess wird niemals auf Verdacht beendet.
 
 ### 4. Externer Beenden-Wachhund
 
-Beim expliziten Beenden wird zuerst der Instanzzustand atomar auf
-`shutdown_requested` gesetzt und danach ein unabhaengiger Hilfsprozess
-gestartet. Dies geschieht vor `grab_release()`, Dialog-`destroy()`,
-Kamera-Freigabe, Bridge-Kommandos und Logging-Shutdown.
+Beim expliziten Beenden wird zuerst eine absolute Frist von zehn Sekunden ab
+dem Benutzerklick mit dem sitzungsuebergreifenden `GetTickCount64` berechnet.
+Der Instanzzustand wird atomar auf `shutdown_requested` gesetzt und danach ein
+unabhaengiger Hilfsprozess gestartet. Dies geschieht vor `grab_release()`,
+Dialog-`destroy()`, Kamera-Freigabe, Bridge-Kommandos und Logging-Shutdown.
 
-Der Hilfsprozess erhaelt PID, Prozesserstellungszeit, EXE-Pfad und Start-Token.
-Er oeffnet sofort ein konkretes Windows-Prozess-Handle mit den minimal
-erforderlichen Rechten und verifiziert dessen Identitaet. Danach wartet er bis
-zu zehn Sekunden auf das Signal "Prozess beendet".
+Der Hilfsprozess erhaelt PID, Prozesserstellungszeit, EXE-Pfad, Start-Token,
+absolute Frist und den Namen eines zufaelligen Windows-Ready-Events. Er oeffnet
+sofort ein konkretes Windows-Prozess-Handle mit den minimal erforderlichen
+Rechten, verifiziert dessen Identitaet und signalisiert **erst danach** das
+Ready-Event. Der Elternprozess wartet vor jedem weiteren Beenden-Schritt
+begrenzt auf diese Bestaetigung.
+
+Schlagen Prozessstart, Argumentpruefung, `OpenProcess`, Identitaetspruefung oder
+Ready-Handschlag fehl, beginnt der Elternprozess kein moeglicherweise
+blockierendes Aufraeumen mehr, sondern ruft unmittelbar `os._exit(0)` auf.
+Windows gibt damit Hauptprozess und Kamera-Handles frei; eine eventuell
+uebriggebliebene Bridge wird beim naechsten, bereits durch den Main-Mutex
+geschuetzten Start als echte Waise synchron entfernt. So ist auch der
+Fehlerfall fuer einen Kunden ohne Task-Manager endlich.
+
+Nach dem Ready-Signal wartet der Hilfsprozess nur noch die **verbleibende** Zeit
+bis zur bereits beim Klick berechneten Frist. Seine eigene PyInstaller-
+Startzeit verlaengert die zehn Sekunden nicht.
 
 - Endet FexoBooth normal, schliesst der Wachhund sein Handle und beendet sich.
-- Lebt exakt dieses Prozessobjekt nach zehn Sekunden noch, schreibt der
-  Wachhund eine rohe, vom Hauptlogging unabhaengige Diagnosezeile, beendet
-  dessen verifizierte Bridge-Kinder und ruft `TerminateProcess` auf dem bereits
-  geoeffneten Hauptprozess-Handle auf.
+- Lebt exakt dieses Prozessobjekt an der absoluten Frist noch, schreibt der
+  Wachhund eine rohe, vom Hauptlogging unabhaengige Diagnosezeile, ruft zuerst
+  `TerminateProcess` auf dem bereits geoeffneten Hauptprozess-Handle auf und
+  beendet nach dessen Signal nur die anschliessend verifizierten Bridge-Kinder.
 - Der Zwangspfad versucht vor `TerminateProcess` weder Python-Logging-Shutdown
   noch Kamera- oder Bridge-Kommandos. Damit kann er nicht an denselben
   Python-Locks wie die Altinstanz haengen.
@@ -252,7 +334,23 @@ Insbesondere aktiviert der Service-Menue-Knopf den externen Wachhund, bevor er
 den modalen Admin-Dialog anfasst. Mehrere Klicks duerfen nur einen Wachhund
 erzeugen.
 
-### 5. Sichtbare und dauerhafte Diagnose
+### 5. Verbindliche Lifecycle-Matrix
+
+| Einstieg | Vertrag |
+|---|---|
+| Service-Menue `App beenden` | Externen Wachhund mit Ready-Handschlag als allererste Aktion sichern; danach Modal loesen und zentral aufraeumen. |
+| Ctrl+Shift+Q und `quit()` | Direkt durch denselben idempotenten zentralen Weg. |
+| `WM_DELETE_WINDOW` der Hauptoberflaeche | Auf denselben zentralen Weg binden; kein nacktes Tk-`destroy()`. |
+| Normales Ende von `mainloop()` ohne vorherigen Request | Vor finalem Bridge-/Logging-Aufraeumen externen Wachhund bestaetigt aktivieren. |
+| Exception bei Startup oder Mainloop | Crashbericht roh schreiben, externen Wachhund bestaetigen und dann begrenzt aufraeumen; bei fehlender Bestaetigung sofort `os._exit(1)` statt `sys.exit(1)`. |
+| App-OTA und Update-Dialog | Wachhund vor BAT-Start beziehungsweise spaetestens vor Logging-Shutdown bestaetigen; danach der bestehende harte Update-Exit. Der Wachhund trifft nur Hauptprozess und seine Bridge, nie das Update-BAT. |
+| `--kamera-test` / `--dslr-test` | Kein Main-UI-Mutex. Ihr bereits direkter Prozess-Exit bleibt ein eigener Werkzeugvertrag; sie duerfen nicht vom normalen Waisen-Cleanup getroffen werden. |
+| Interne Wachhund-/Recovery-Helfer | Kein Main-UI-Mutex, keine Kameraimporte, direktes begrenztes Prozessende. |
+
+Damit ist der bisherige `sys.exit(1)`-Sonderweg entfernt. Kein Lifecycle-Pfad
+darf sich darauf verlassen, dass non-daemon Threads von selbst verschwinden.
+
+### 6. Sichtbare und dauerhafte Diagnose
 
 Jeder normale Hauptprozess loggt PID, Start-Token und Instanzzustand. Relevante
 Marker sind sinngemaess:
@@ -284,16 +382,20 @@ geschrieben.
 - PID allein ist niemals ausreichender Beweis. Prozess-Handle,
   Erstellungszeit und EXE-Pfad muessen zusammenpassen.
 - Nach `TerminateProcess` wird auf das signalisierte Prozess-Handle und die
-  Mutex-Freigabe gewartet, bevor irgendeine Kamera initialisiert wird.
+  erfolgreiche Main-UI-Mutex-Besitzuebernahme gewartet, bevor irgendeine
+  Kamera initialisiert wird.
 - Ein gesunder vorhandener Prozess wird nicht beendet, sondern nach vorn
   geholt.
 - Ein Wiederherstellungs-Hilfsprozess erhaelt niemals den Main-UI-Mutex und
   importiert keine Kamera-Komponenten.
 - Nur der normale Hauptprozess darf das Besitzer-Metadokument auf `running`
   setzen.
-- Ein harter Exit beendet keine Kindprozesse automatisch. Bridge-Kinder werden
-  deshalb explizit ueber ihre Prozessbeziehung erfasst; das entspricht dem von
-  Microsoft dokumentierten Prozessverhalten.
+- Ein harter Exit beendet keine Kindprozesse automatisch. Der Hauptprozess wird
+  vor seinen verifizierten Bridge-Kindern beendet; beim naechsten Besitzwechsel
+  werden echte Waisen synchron vor der Kamera entfernt.
+- Ein Prozess aus einer anderen Windows-Session wird weder gepingt noch
+  beendet. Die Touch-Oberflaeche bietet stattdessen einen kontrollierten
+  Box-Neustart an.
 
 ## Automatisierte Tests
 
@@ -310,9 +412,10 @@ Mindestens folgende Faelle werden dauerhaft abgedeckt:
    den Main-UI-Mutex wie vorgesehen.
 4. Ein gesunder Besitzer wird nach vorn geholt und niemals beendet.
 5. Ein sechs Sekunden alter Besitzer ohne Fenster gilt als startend und wird
-   nicht beendet.
-6. Ein kurzfristig langsames Fenster erholt sich innerhalb der Ping-Frist und
-   wird nicht beendet.
+   nicht beendet; gleiches gilt waehrend der vollen 60-Sekunden-Startschonzeit.
+6. Ein kurzfristig langsames Fenster sowie simulierte Canon-/Nikon-
+   Initialisierung und Capture erholen sich innerhalb der 45-Sekunden-Frist und
+   werden nicht beendet.
 7. Ein ueber die gesamte Frist nicht reagierender, vollstaendig verifizierter
    Besitzer wird exakt einmal beendet; danach wird der Mutex uebernommen.
 8. PID-Wiederverwendung, anderer EXE-Pfad, andere Erstellungszeit und fehlende
@@ -331,6 +434,22 @@ Mindestens folgende Faelle werden dauerhaft abgedeckt:
 16. Bestehende Kamera-, Session- und DSLR-Regressionssuiten bleiben gruen;
     `src/camera/webcam.py`, Canon- und Nikon-Capturepfade erhalten keinen
     semantischen Diff.
+17. Echte konkurrierende Windows-Testprozesse beweisen `WAIT_OBJECT_0`,
+    `WAIT_ABANDONED`, genau einen Gewinner und mehrere passive Wiederhersteller.
+18. Ein lebender erlaubter Werkzeugprozess mit eigener Bridge bleibt beim Start
+    einer normalen UI unangetastet.
+19. Ein alter `running`-Besitzer ohne Fenster wird nach der Produktionsfrist
+    wiederhergestellt; ein Publishing-Fehler startet keine Kamera.
+20. Fehlender Watchdog-Ready-Handschlag fuehrt vor jedem Tk-/Kamera-Schritt zum
+    unmittelbaren Exit.
+21. Ein fremdsitzender Besitzer wird fail-closed behandelt und erhaelt nur den
+    Touch-Neustartweg.
+
+Zusaetzlich zu den Fake-Backend-Tests laufen Windows-only Integrationstests mit
+eindeutig benannten Wegwerf-Mutexen und ausschliesslich selbst gestarteten
+Dummy-Prozessen. Sie pruefen reale Handle-Signalisierung, Abandonment,
+gleichzeitige Starts, Ready-Event, sauberes Ende und `TerminateProcess`. Die
+Tests verwenden nie den Produktions-Mutex, fremde PIDs oder eine Kamera.
 
 ## Hardware-Abnahme
 
