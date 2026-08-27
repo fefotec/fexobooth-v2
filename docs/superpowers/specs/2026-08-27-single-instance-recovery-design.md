@@ -206,6 +206,18 @@ und Prozesserstellungszeiten nicht mehr lebt. Eine Bridge eines lebenden
 unangetastet. Vor der ersten Kamera-Initialisierung wird die Beendigung echter
 Waisen synchron bestaetigt.
 
+Jeder Prozess, der eine `FexoNikonBridge.exe` startet, legt sie unmittelbar
+nach `Popen` in ein eigenes Windows-Jobobjekt mit
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. Das Job-Handle bleibt ausschliesslich im
+startenden Haupt- beziehungsweise Werkzeugprozess. Die internen Watchdog- und
+Recovery-Helfer werden diesem Bridge-Job nie zugeordnet. Endet der Besitzer
+normal, per `os._exit()` oder per `TerminateProcess`, schliesst Windows dessen
+letztes Job-Handle und beendet die Bridge automatisch. Kann die frisch
+gestartete Bridge nicht sicher dem Job zugeordnet werden, wird sie sofort
+beendet und Nikon gilt als nicht initialisiert; eine ungebundene Bridge darf
+nicht in Betrieb gehen. Das verifizierte Startup-Waisenaufraeumen bleibt nur
+als Kompatibilitaetsnetz fuer Altversionen und fehlgeschlagene fruehere Laeufe.
+
 ### 3. Verhalten bei einem zweiten normalen Start
 
 Der zweite Prozess fasst zu keinem Zeitpunkt Taskleiste, Kamera, Bridge oder
@@ -225,13 +237,16 @@ zweite Oberflaeche.
 
 #### Besitzer startet noch
 
-Existiert noch kein Fenster und ist der Besitzer erst kurz aktiv, gilt eine
-Startschonzeit. Der zweite Prozess wartet in kurzen Intervallen und prueft
-erneut. Ein Doppelklick wie auf Box 027 darf den sechs Sekunden aelteren ersten
-Start niemals beenden. Die gesamte Schonzeit wird anhand echter Box-Startzeiten
-so gewaehlt, dass auch PyInstaller, Nikon-Initialisierung und das langsame
-Miix-Tablet abgedeckt sind. Der Produktionswert betraegt zunaechst 60 Sekunden
-und darf erst nach Feldmessungen reduziert werden.
+Jeder verifizierte Besitzer im Zustand `starting` erhaelt unabhaengig davon, ob
+Windows bereits ein Tk-Fenster findet, die volle Startschonzeit. Tk erzeugt das
+Fenster vor `mainloop()`; dessen blosse Existenz beweist daher noch keine
+laufende Nachrichtenverarbeitung. Der zweite Prozess wartet in kurzen
+Intervallen und prueft erneut. Ein Doppelklick wie auf Box 027 darf den sechs
+Sekunden aelteren ersten Start niemals beenden. Die gesamte Schonzeit wird
+anhand echter Box-Startzeiten so gewaehlt, dass auch PyInstaller, Nikon-
+Initialisierung und das langsame Miix-Tablet abgedeckt sind. Der
+Produktionswert betraegt zunaechst 60 Sekunden und darf erst nach Feldmessungen
+reduziert werden.
 
 #### Besitzer wird gerade beendet
 
@@ -243,14 +258,15 @@ faehrt als neue Hauptinstanz fort.
 
 #### Besitzer reagiert nicht
 
-Ein einzelner langsamer UI-Takt reicht nicht fuer eine Zwangsbeendigung. Nikon
-darf fuer Initialisierung bis zu 20 Sekunden und fuer einzelne Auftraege bis zu
-12 Sekunden benoetigen; auch diese legitimen Fristen duerfen keinen Auto-Kill
-ausloesen. Bei `running` folgen deshalb nach dem ersten fehlgeschlagenen Ping
-mehrere Pruefungen ueber insgesamt mindestens 45 Sekunden. Das liegt ueber den
-dokumentierten Kamera-Fristen und deutlich ueber den auf Box 027 gemessenen
-normalen UI-Hitches von rund zwei Sekunden. Gleiches gilt fuer einen aelteren
-`running`-Besitzer ohne auffindbares Fenster.
+Ein einzelner langsamer UI-Takt reicht nicht fuer eine Zwangsbeendigung. Beim
+Nikon-Kaltstart koennen Bridge-Ping, Kamera-Init, Live-View-Start und erste
+Frame-Wartezeit nacheinander rund 49 Sekunden beanspruchen; auch dieser
+zusammengesetzte legitime Pfad darf keinen Auto-Kill ausloesen. Bei `running`
+folgen deshalb nach dem ersten fehlgeschlagenen Ping mehrere Pruefungen ueber
+insgesamt mindestens 90 Sekunden. Das enthaelt deutliche Reserve ueber den
+dokumentierten Kamera-Fristen und den auf Box 027 gemessenen normalen UI-
+Hitches von rund zwei Sekunden. Gleiches gilt fuer einen aelteren `running`-
+Besitzer ohne auffindbares Fenster.
 
 Die Zehn-Sekunden-Frist gilt nur fuer einen ausdruecklich angeforderten Exit im
 Zustand `shutdown_requested`, nicht fuer die Diagnose eines unbekannten
@@ -267,7 +283,13 @@ Bitte kurz warten.
 ```
 
 Die Anzeige laeuft in einem isolierten Hilfsprozess und besitzt eine harte
-Eigenlaufzeitgrenze. Ihr Ausfall darf die Wiederherstellung nicht verhindern.
+Eigenlaufzeitgrenze. Der Recovery-Koordinator behaelt ihr Prozess-Handle und
+uebergibt ein zufaellig benanntes Close-Event. Bei erfolgreicher eigener
+Besitzuebernahme, beim Gewinn eines anderen wartenden Kandidaten, bei Fehler
+oder Abbruch signalisiert er das Event und wartet kurz auf das Anzeigenende;
+notfalls beendet er nur diesen eigenen Anzeigeprozess. Ihr Ausfall darf die
+Wiederherstellung nicht verhindern, und keine Anzeige darf nach einer
+abgeschlossenen Uebernahme vor der neuen App stehen bleiben.
 
 Anschliessend wird nur das bereits verifizierte alte Prozess-Handle beendet.
 Der Hauptprozess wird zuerst beendet, damit er garantiert keine neue Bridge
@@ -307,10 +329,10 @@ begrenzt auf diese Bestaetigung.
 Schlagen Prozessstart, Argumentpruefung, `OpenProcess`, Identitaetspruefung oder
 Ready-Handschlag fehl, beginnt der Elternprozess kein moeglicherweise
 blockierendes Aufraeumen mehr, sondern ruft unmittelbar `os._exit(0)` auf.
-Windows gibt damit Hauptprozess und Kamera-Handles frei; eine eventuell
-uebriggebliebene Bridge wird beim naechsten, bereits durch den Main-Mutex
-geschuetzten Start als echte Waise synchron entfernt. So ist auch der
-Fehlerfall fuer einen Kunden ohne Task-Manager endlich.
+Windows gibt damit Hauptprozess und Kamera-Handles frei; das verpflichtende
+Bridge-Jobobjekt beendet gleichzeitig jede Bridge dieses Prozesses. Das
+Startup-Waisennetz bleibt nur fuer Altversionen. So ist auch der Fehlerfall
+fuer einen Kunden ohne Task-Manager endlich.
 
 Nach dem Ready-Signal wartet der Hilfsprozess nur noch die **verbleibende** Zeit
 bis zur bereits beim Klick berechneten Frist. Seine eigene PyInstaller-
@@ -391,8 +413,10 @@ geschrieben.
 - Nur der normale Hauptprozess darf das Besitzer-Metadokument auf `running`
   setzen.
 - Ein harter Exit beendet keine Kindprozesse automatisch. Der Hauptprozess wird
-  vor seinen verifizierten Bridge-Kindern beendet; beim naechsten Besitzwechsel
-  werden echte Waisen synchron vor der Kamera entfernt.
+  deshalb nicht als alleinige Bridge-Garantie verwendet: Jede neue Bridge ist
+  verpflichtend an das Kill-on-close-Jobobjekt ihres Besitzers gebunden.
+  Verifizierte Waisen alter Versionen werden beim naechsten Besitzwechsel
+  synchron vor der Kamera entfernt.
 - Ein Prozess aus einer anderen Windows-Session wird weder gepingt noch
   beendet. Die Touch-Oberflaeche bietet stattdessen einen kontrollierten
   Box-Neustart an.
@@ -411,11 +435,12 @@ Mindestens folgende Faelle werden dauerhaft abgedeckt:
 3. `--kamera-test`, `--dslr-test`, Wachhund und Recovery-Anzeige umgehen nur
    den Main-UI-Mutex wie vorgesehen.
 4. Ein gesunder Besitzer wird nach vorn geholt und niemals beendet.
-5. Ein sechs Sekunden alter Besitzer ohne Fenster gilt als startend und wird
-   nicht beendet; gleiches gilt waehrend der vollen 60-Sekunden-Startschonzeit.
-6. Ein kurzfristig langsames Fenster sowie simulierte Canon-/Nikon-
-   Initialisierung und Capture erholen sich innerhalb der 45-Sekunden-Frist und
-   werden nicht beendet.
+5. Ein sechs Sekunden alter `starting`-Besitzer wird mit und ohne bereits
+   erzeugtem Tk-Fenster nicht beendet; gleiches gilt waehrend der vollen
+   60-Sekunden-Startschonzeit.
+6. Ein kurzfristig langsames Fenster sowie der zusammengesetzte simulierte
+   Nikon-Kaltstart, Canon-/Nikon-Initialisierung und Capture erholen sich
+   innerhalb der 90-Sekunden-Frist und werden nicht beendet.
 7. Ein ueber die gesamte Frist nicht reagierender, vollstaendig verifizierter
    Besitzer wird exakt einmal beendet; danach wird der Mutex uebernommen.
 8. PID-Wiederverwendung, anderer EXE-Pfad, andere Erstellungszeit und fehlende
@@ -444,6 +469,12 @@ Mindestens folgende Faelle werden dauerhaft abgedeckt:
     unmittelbaren Exit.
 21. Ein fremdsitzender Besitzer wird fail-closed behandelt und erhaelt nur den
     Touch-Neustartweg.
+22. Jede gestartete Nikon-Bridge wird erfolgreich einem Besitzer-Jobobjekt
+    zugeordnet oder sofort beendet; `os._exit()` und `TerminateProcess` des
+    Besitzers lassen keine Bridge zurueck.
+23. Bei mehreren wartenden Kandidaten wird jede gestartete Recovery-Anzeige
+    unmittelbar geschlossen, auch wenn ein anderer Kandidat den Main-Mutex
+    gewinnt.
 
 Zusaetzlich zu den Fake-Backend-Tests laufen Windows-only Integrationstests mit
 eindeutig benannten Wegwerf-Mutexen und ausschliesslich selbst gestarteten
