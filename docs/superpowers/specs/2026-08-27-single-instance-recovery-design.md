@@ -206,17 +206,30 @@ und Prozesserstellungszeiten nicht mehr lebt. Eine Bridge eines lebenden
 unangetastet. Vor der ersten Kamera-Initialisierung wird die Beendigung echter
 Waisen synchron bestaetigt.
 
-Jeder Prozess, der eine `FexoNikonBridge.exe` startet, legt sie unmittelbar
-nach `Popen` in ein eigenes Windows-Jobobjekt mit
-`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. Das Job-Handle bleibt ausschliesslich im
-startenden Haupt- beziehungsweise Werkzeugprozess. Die internen Watchdog- und
-Recovery-Helfer werden diesem Bridge-Job nie zugeordnet. Endet der Besitzer
-normal, per `os._exit()` oder per `TerminateProcess`, schliesst Windows dessen
-letztes Job-Handle und beendet die Bridge automatisch. Kann die frisch
-gestartete Bridge nicht sicher dem Job zugeordnet werden, wird sie sofort
-beendet und Nikon gilt als nicht initialisiert; eine ungebundene Bridge darf
-nicht in Betrieb gehen. Das verifizierte Startup-Waisenaufraeumen bleibt nur
-als Kompatibilitaetsnetz fuer Altversionen und fehlgeschlagene fruehere Laeufe.
+Jeder Prozess, der eine `FexoNikonBridge.exe` starten koennte, erstellt zuerst
+ein eigenes Windows-Jobobjekt mit `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` und
+`JOB_OBJECT_LIMIT_BREAKAWAY_OK` und ordnet **sich selbst vor dem Bridge-Start**
+diesem Job zu. Erst nach bestaetigter eigener Job-Mitgliedschaft darf `Popen`
+die Bridge erzeugen. Ein normal erzeugtes Kind erbt die Job-Mitgliedschaft
+damit atomar bereits in `CreateProcess`; es existiert kein Fenster zwischen
+laufendem Bridge-Prozess und nachtraeglicher Zuordnung.
+
+Das Job-Handle bleibt ausschliesslich im startenden Haupt- beziehungsweise
+Werkzeugprozess und ist nicht vererbbar. Endet der Besitzer normal, per
+`os._exit()` oder per `TerminateProcess`, schliesst Windows dessen letztes
+Job-Handle und beendet die Bridge automatisch. Kann Job-Erzeugung oder die
+Zuordnung des Besitzers nicht bestaetigt werden, startet die Bridge ueberhaupt
+nicht und Nikon gilt als nicht initialisiert; eine ungebundene Bridge darf
+nicht in Betrieb gehen.
+
+Hilfsprozesse, die den Besitzer absichtlich ueberleben muessen, werden explizit
+mit `CREATE_BREAKAWAY_FROM_JOB` gestartet. Das gilt insbesondere fuer das
+Update-BAT. Der externe Shutdown-Wachhund darf im Besitzer-Job bleiben: Er
+arbeitet, solange der Besitzer lebt; sobald er den Besitzer beendet hat,
+erledigt `KILL_ON_JOB_CLOSE` gleichzeitig Bridge und Wachhund. Recovery-
+Anzeigen eines zweiten Startprozesses gehoeren ohnehin nicht zum Job der
+Altinstanz. Das verifizierte Startup-Waisenaufraeumen bleibt nur als
+Kompatibilitaetsnetz fuer Altversionen und fehlgeschlagene fruehere Laeufe.
 
 ### 3. Verhalten bei einem zweiten normalen Start
 
@@ -365,7 +378,7 @@ erzeugen.
 | `WM_DELETE_WINDOW` der Hauptoberflaeche | Auf denselben zentralen Weg binden; kein nacktes Tk-`destroy()`. |
 | Normales Ende von `mainloop()` ohne vorherigen Request | Vor finalem Bridge-/Logging-Aufraeumen externen Wachhund bestaetigt aktivieren. |
 | Exception bei Startup oder Mainloop | Crashbericht roh schreiben, externen Wachhund bestaetigen und dann begrenzt aufraeumen; bei fehlender Bestaetigung sofort `os._exit(1)` statt `sys.exit(1)`. |
-| App-OTA und Update-Dialog | Wachhund vor BAT-Start beziehungsweise spaetestens vor Logging-Shutdown bestaetigen; danach der bestehende harte Update-Exit. Der Wachhund trifft nur Hauptprozess und seine Bridge, nie das Update-BAT. |
+| App-OTA und Update-Dialog | Update-BAT bestaetigt mit `CREATE_BREAKAWAY_FROM_JOB` starten, Wachhund spaetestens vor Logging-Shutdown bestaetigen und danach den bestehenden harten Update-Exit ausfuehren. Der Besitzer-Job trifft Hauptprozess und Bridge, nie das ausgebrochene Update-BAT. |
 | `--kamera-test` / `--dslr-test` | Kein Main-UI-Mutex. Ihr bereits direkter Prozess-Exit bleibt ein eigener Werkzeugvertrag; sie duerfen nicht vom normalen Waisen-Cleanup getroffen werden. |
 | Interne Wachhund-/Recovery-Helfer | Kein Main-UI-Mutex, keine Kameraimporte, direktes begrenztes Prozessende. |
 
@@ -469,12 +482,18 @@ Mindestens folgende Faelle werden dauerhaft abgedeckt:
     unmittelbaren Exit.
 21. Ein fremdsitzender Besitzer wird fail-closed behandelt und erhaelt nur den
     Touch-Neustartweg.
-22. Jede gestartete Nikon-Bridge wird erfolgreich einem Besitzer-Jobobjekt
-    zugeordnet oder sofort beendet; `os._exit()` und `TerminateProcess` des
-    Besitzers lassen keine Bridge zurueck.
+22. Vor jedem Nikon-Bridge-Start ist der Besitzer bestaetigtes Job-Mitglied;
+    jede Bridge wird dadurch atomar im Besitzer-Job erzeugt oder gar nicht
+    gestartet. `os._exit()` und `TerminateProcess` des Besitzers lassen keine
+    Bridge zurueck.
 23. Bei mehreren wartenden Kandidaten wird jede gestartete Recovery-Anzeige
     unmittelbar geschlossen, auch wenn ein anderer Kandidat den Main-Mutex
     gewinnt.
+24. Ein Windows-Integrationstest beendet den Besitzer gezielt waehrend des
+    Bridge-Starts. Da der Besitzer bereits vor `CreateProcess` Job-Mitglied ist,
+    darf weder eine laufende noch eine suspendierte Bridge uebrig bleiben.
+25. Das Update-BAT bricht erfolgreich aus dem Besitzer-Job aus und arbeitet
+    nach `os._exit()` der App weiter; die Bridge bleibt dagegen gebunden.
 
 Zusaetzlich zu den Fake-Backend-Tests laufen Windows-only Integrationstests mit
 eindeutig benannten Wegwerf-Mutexen und ausschliesslich selbst gestarteten
@@ -543,3 +562,7 @@ Vergleichs-PID mit aehnlichem Namen darf unangetastet bleiben.
   https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject
 - Microsoft: Prozessende und getrennt weiterlebende Kindprozesse
   https://learn.microsoft.com/en-us/windows/win32/procthread/terminating-a-process
+- Microsoft: Jobobjekte, vererbte Prozesszuordnung und Kill-on-close
+  https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
+- Microsoft: `CREATE_BREAKAWAY_FROM_JOB`
+  https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags
