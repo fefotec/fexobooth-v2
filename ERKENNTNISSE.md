@@ -6,6 +6,17 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### Ein lebender Bridge-Prozess beweist keine USB-/WPD-Kameraerkennung (2.4.63)
+
+| | |
+|---|---|
+| **Befund** | Auf Box 252 startete `FexoNikonBridge.exe`, beantwortete `ping` und blieb aktiv. Trotzdem enthielt `ConnectedDevices` keine D3300 und `init` endete vor Live View/Capture. Der Admin-Platzhalter sah fuer den Nutzer wie eine gefundene Kamera aus, war aber kein Hardwarebeleg. |
+| **Verlorene Ursache** | `CameraControl.Devices` faengt zentrale WPD-/WIA-Ausnahmen intern ab und meldet sie ueber eigene Log-Events. Die Bridge hatte `Console.Out` zum Schutz des JSON-/JPEG-Protokolls komplett verworfen; Prozessstatus und generischer Fehlertext konnten Windows-Sicht, Library-Verwerfung und Lock-Belegung deshalb nicht trennen. |
+| **Loesung** | Fremdausgaben bleiben strikt vom Roh-stdout getrennt, landen aber in einem begrenzten, never-throw Ringpuffer. Ein read-only `diag` liefert nur bereits vorhandenen Scan-/Geraete-/Fehlerzustand. App-seitig kommen Aufruf-Timings, Bridge-Dateihashes sowie ein asynchroner Windows-PnP-/Prozess-Snapshot hinzu. |
+| **Beweisgrenze** | Ein laufender Konkurrenzprozess ist nur ein Indiz. Erst zusammen mit einem passenden Busy-/Access-/Sharing-Fehler darf eine wahrscheinliche Belegung angenommen werden. `diag` selbst darf keinen Scan starten, weil Beobachtung sonst den zu untersuchenden Zustand veraendert. |
+| **Build-Lektion** | Der lokale Installer kopierte zuvor eine vorhandene Bridge-Binaerdatei, ohne `Program.cs` neu zu bauen. Quellcode- und App-Versionsaenderung beweisen daher keinen neuen Hardwareadapter. Der Builder muss native/externe Teilprogramme frisch bauen und ihren Protokollstand vor dem Verpacken pruefen. |
+| **Merke** | Bei einem mehrprozessigen Hardwarepfad braucht jede Grenze einen eigenen Nachweis: App-Version, tatsaechliche Bridge-Binaerdatei, Pipe/Lock, Bibliotheks-Scan und Windows-PnP. `Prozess lebt` ist nur einer davon. |
+
 ### `AvailableShots` ist ohne Karte kein Host-Readiness-Beweis (2.4.62)
 
 | | |

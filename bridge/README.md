@@ -38,6 +38,7 @@ Rohbytes direkt nach der Header-Zeile.
 | Kommando   | Antwort |
 |------------|---------|
 | `ping`     | `{"ok":true,"bridge":"FexoNikonBridge","version":"..."}` |
+| `diag`     | `{"ok":true,"diagnostics":{...}}` (read-only, kein Scan) |
 | `list`     | `{"ok":true,"cameras":[{"name":"...","serial":"..."}]}` |
 | `init`     | `{"ok":true,"camera":"Nikon D3300"}` (verbindet Kamera, CaptureInSdRam) |
 | `lv_start` | `{"ok":true}` |
@@ -49,14 +50,22 @@ Rohbytes direkt nach der Header-Zeile.
 
 Fehler: `{"ok":false,"error":"..."}` (ohne `len`, ohne Binärdaten).
 
+FexoBooth startet Bridge 0.2.0 im Developer Mode zusaetzlich mit
+`--developer-diagnostics`. Nur dann werden interne Library-Events,
+Konsolenausgaben und Scan-Messwerte begrenzt gepuffert. Im normalen Betrieb
+bleibt der bisherige Pfad aktiv und verwirft Fremdausgaben weiterhin. `diag`
+liest ausschliesslich vorhandenen Zustand und erzeugt keinen DeviceManager.
+
 ## Bauen
 
-Auf diesem Entwicklungsrechner ist kein .NET-SDK installiert — der Build läuft
-über **GitHub Actions** (`.github/workflows/build-release.yml`, Schritt
-„FexoNikonBridge bauen“). Lokal (falls SDK vorhanden):
+Der lokale `build_installer.bat` und **GitHub Actions** bauen die Bridge vor
+jedem Installer frisch und fuehren danach den Protokolltest aus. Ein alter
+Build unter `bin/Release` wird nicht mehr unbemerkt verpackt. Der lokale
+Installer setzt deshalb das .NET SDK 8 voraus. Manueller Build:
 
 ```
-dotnet build bridge/FexoNikonBridge/FexoNikonBridge.csproj -c Release
+dotnet build bridge/FexoNikonBridge/FexoNikonBridge.csproj -c Release --no-incremental
+python tools/nikon_bridge_protocol_test.py
 ```
 
 Output: `bridge/FexoNikonBridge/bin/Release/net48/` (EXE + abhängige DLLs —
@@ -68,8 +77,12 @@ Output: `bridge/FexoNikonBridge/bin/Release/net48/` (EXE + abhängige DLLs —
 - [x] Protokoll + Python-Client (`src/camera/nikon.py`) fertig
 - [x] Erster Build erfolgreich (lokal, .NET SDK 8, 2026-07-02, 0 Fehler) —
   ping/list/init/quit gegen echte EXE verifiziert, Python-Client 8/8 OK
-- [x] Library-stdout-Banner (`EDSDK.dll is missing`, Canon-Teil) entdeckt und
-  stummgeschaltet (`Console.SetOut(TextWriter.Null)`)
-- [ ] Hardware-Test mit echter D3300 (LiveView + Capture End-to-End)
-- [ ] Falls im Hardware-Test Library-Probleme auftauchen: auf Source-Build aus
-  dukus/digiCamControl umstellen (Solution `CameraControlDevices.sln`)
+- [x] Hardware-Test mit echter D3300: LiveView + 6000x4000-Capture; spaeterer
+  Langlauf mit 470 von 470 Aufnahmen erfolgreich (Juli 2026)
+- [x] Bridge 0.2.0: read-only `diag`, begrenzte interne WPD-/WIA-/Console-
+  Diagnose und Protokolltest fuer Developer- und Produktionspfad; Sammlung
+  nur im Developer Mode aktiviert
+- [ ] Aktuellen Regressionstest auf Box 252 mit 2.4.63 auswerten: Windows-PnP,
+  Library-Ausnahme, Scanstatus und Bridge-Dateihashes
+- [ ] Erst bei belegtem Library-Problem einen Source-Build aus
+  dukus/digiCamControl pruefen (Solution `CameraControlDevices.sln`)

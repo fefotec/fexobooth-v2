@@ -4,6 +4,44 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-09-01 — Nikon V2.4.63: Ursache vor dem Folgefix sichtbar machen
+
+**Befund Box 252:** Dieselbe Nikon D3300 und dieselbe Bridge-Architektur, die
+am 03.07.2026 noch 470 von 470 Aufnahmen lieferte, wird nach der spaeteren
+Neuinstallation nicht mehr als Kamera erkannt. 2.4.62 belegt nur: Bridge lebt,
+Admin-Liste bleibt leer und `init` endet nach rund 15 Sekunden mit
+`Keine Nikon-Kamera gefunden`. dslrBooth war geschlossen; der bisherige Log
+verlor jedoch die intern abgefangenen WPD-/WIA-Fehler.
+
+**Umsetzung 2.4.63 (nur Diagnose):** Bridge 0.2.0 sammelt interne Library-
+Events und Konsolenausgaben begrenzt, misst die unveraenderten Scan-Aufrufe und
+liefert den vorhandenen Zustand ueber ein read-only `diag`. Der Python-Client
+schreibt Bridge-Call-Timings, Snapshot, verwendete EXE/DLL-Hashes und nach
+Init-Fehlern gedrosselt Windows-PnP-/Prozessdaten ins Developer-Cloud-Log.
+Fremde generische WPD-IDs werden redigiert. Diagnosefehler bleiben Best-Effort.
+
+**Build-Falle behoben:** `build_installer.bat` hatte `Program.cs` nie gebaut,
+sondern eine vorhandene Bridge vom 3. Juli kopiert. Der lokale Builder baut
+jetzt zwingend frisch und prueft `ping/diag/unknown/quit`; GitHub Actions nutzt
+denselben Test. App-Version und Workflow-Default sind 2.4.63.
+
+**Abgrenzung:** Keine Aenderung an Nikon-Erkennung, Timeouts, Warmup,
+Admin-Platzhalter, Live View oder Capture. Canon-/Webcam-Laufzeitdateien sind
+unangetastet.
+
+**Validierung:** Bridge-Release-Build unter Windows mit 0 Warnungen/0 Fehlern;
+Developer- und Produktions-Protokollpfad gruen; Nikon-Diagnose **11/11** und
+gesamte DSLR-Suite **20/20 Testgruppen** gruen. Ein echter 15-Sekunden-Init
+ohne Kamera endete kontrolliert und hinterliess keine Canon-Banner-Flutung im
+Ringpuffer. `py_compile` und der statische Nikon-Smoke-Test sind ebenfalls
+gruen. Fremde WPD-/Image-Geraete-IDs werden redigiert, relevante
+Busy-/Access-/HRESULT-Texte bleiben sichtbar.
+
+**Offen:** Hardwarelauf auf Box 252 im Dev-Modus, Admin-Suche plus normaler
+Session-Start und anschliessende Dashboard-Auswertung.
+
+---
+
 ## 2026-08-26 — Canon V2.4.62: Hostbetrieb ohne SD-Karte entblockt
 
 **Hardwarebefund:** Box 248 lief mit EOS 2000D, Wahlrad `P` und ohne

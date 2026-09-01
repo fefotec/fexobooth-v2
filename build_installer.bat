@@ -9,6 +9,7 @@ REM
 REM Voraussetzungen:
 REM   - Python 3.10+ installiert
 REM   - pip install -r requirements.txt
+REM   - .NET SDK 8 installiert (fuer die Nikon-Bridge)
 REM   - VLC Media Player installiert
 REM
 REM Ergebnis: installer_output\fexobooth.zip
@@ -36,6 +37,18 @@ if %errorlevel% neq 0 (
 )
 
 echo [OK] Python gefunden
+
+REM .NET SDK frueh pruefen, bevor PyInstaller und andere teure Schritte laufen.
+where dotnet >nul 2>&1
+if %errorlevel% neq 0 (
+    echo FEHLER: .NET SDK nicht gefunden - Nikon-Bridge kann nicht frisch gebaut werden.
+    echo Ein alter Bridge-Build wird aus Sicherheitsgruenden NICHT verpackt.
+    echo Bitte .NET SDK 8 installieren oder den GitHub-Actions-Build verwenden.
+    pause
+    exit /b 1
+)
+
+echo [OK] .NET SDK gefunden
 
 REM ─────────────────────────────────────────────
 REM Schritt 2: PyInstaller pruefen
@@ -185,21 +198,36 @@ echo start "" fexobooth.exe
 echo [OK] START.bat erstellt
 
 REM ─────────────────────────────────────────────
-REM Schritt 8: FexoNikonBridge fuer Nikon beilegen (falls gebaut)
+REM Schritt 8: FexoNikonBridge frisch bauen und fuer Nikon beilegen
 REM ─────────────────────────────────────────────
 
 echo.
-echo Pruefe FexoNikonBridge fuer Nikon...
+echo Baue FexoNikonBridge fuer Nikon frisch...
+
+dotnet build "bridge\FexoNikonBridge\FexoNikonBridge.csproj" -c Release --nologo --no-incremental
+if %errorlevel% neq 0 (
+    echo FEHLER: FexoNikonBridge-Build fehlgeschlagen.
+    echo Der Installer wird nicht mit einer alten oder fehlenden Nikon-Bridge erstellt.
+    echo Falls Dateien gesperrt sind: FexoBooth und FexoNikonBridge vollstaendig schliessen.
+    pause
+    exit /b 1
+)
+
+python "tools\nikon_bridge_protocol_test.py"
+if %errorlevel% neq 0 (
+    echo FEHLER: FexoNikonBridge-Protokolltest fehlgeschlagen.
+    pause
+    exit /b 1
+)
 
 set "BRIDGE_BIN=bridge\FexoNikonBridge\bin\Release\net48"
 if exist "%BRIDGE_BIN%\FexoNikonBridge.exe" (
     xcopy /E /I /Y "%BRIDGE_BIN%" "installer_output\fexobooth\bridge\" >nul
-    echo [OK] FexoNikonBridge wird mitinstalliert ^(unsichtbarer Nikon-Prozess^)
+    echo [OK] Frische FexoNikonBridge wird mitinstalliert ^(unsichtbarer Nikon-Prozess^)
 ) else (
-    echo HINWEIS: FexoNikonBridge nicht gebaut ^(%BRIDGE_BIN%\FexoNikonBridge.exe fehlt^).
-    echo Nikon-Support fehlt in diesem lokalen Build. Bauen mit .NET SDK:
-    echo   dotnet build bridge\FexoNikonBridge\FexoNikonBridge.csproj -c Release
-    echo Der GitHub-Actions-Build baut die Bridge automatisch mit.
+    echo FEHLER: Bridge-Build meldete Erfolg, aber FexoNikonBridge.exe fehlt.
+    pause
+    exit /b 1
 )
 
 REM ─────────────────────────────────────────────
@@ -244,8 +272,10 @@ for /f "tokens=2 delims== " %%V in ('findstr /B "__version__" src\__init__.py') 
 REM Anfuehrungszeichen entfernen falls vorhanden
 set APP_VERSION=%APP_VERSION:"=%
 if "%APP_VERSION%"=="" (
-    echo WARNUNG: App-Version nicht gefunden, fallback auf 2.1
-    set APP_VERSION=2.1
+    echo FEHLER: App-Version konnte nicht aus src\__init__.py gelesen werden.
+    echo Der Installer wird nicht mit einem falschen Versionsnamen erstellt.
+    pause
+    exit /b 1
 )
 echo App-Version: %APP_VERSION%
 

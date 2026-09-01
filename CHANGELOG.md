@@ -6,6 +6,66 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.63] - 2026-09-01 - Nikon-Erkennungsdiagnose erweitert
+
+> Dieser Build veraendert weder Nikon-Erkennung noch Kamera-Timeouts,
+> Live View oder Capture. Canon und Webcam bleiben funktional unveraendert.
+> Ziel ist ein belastbarer Cloud-Log vom D3300-Ausfall auf Box 252.
+
+### Bridge-Zustand statt generischer Nullmeldung
+
+- Die `FexoNikonBridge` 0.2.0 besitzt das read-only Kommando `diag`. Es startet
+  keinen Scan, sondern liefert PID, Manager-/Init-Zustand, letzten Scan mit
+  Anlass und Dauer, alle bereits bekannten Geraete sowie die letzte Ausnahme.
+- Interne `CameraControl.Devices`-Events fuer WPD/WIA-Fehler werden jetzt in
+  einem threadsicheren, begrenzten Speicherpuffer festgehalten. Auch fremde
+  `Console.Out`-/`Console.Error`-Ausgaben bleiben vom JSON-/JPEG-Protokoll
+  getrennt und sind begrenzt im Snapshot sichtbar.
+- Das Protokoll bleibt rueckwaertskompatibel. Eine alte Bridge ohne `diag`
+  wird als solche geloggt und veraendert das Kameraergebnis nicht.
+
+### Developer-Cloud-Log
+
+- Jeder Bridge-Aufruf nennt Kommando, Request-ID, Thread, Lock-Wartezeit,
+  Kommandodauer, Gesamtdauer und Ergebnis. Damit wird eine belegte Pipe von
+  `null Kameras` getrennt.
+- Nach Bridge-Start, fehlgeschlagenem Warmup/Init und gedrosselt nach leerer
+  Admin-Liste wird der Bridge-Snapshot asynchron ins normale Dev-Log geholt.
+- Nach Init-Fehlern folgt hoechstens einmal pro Minute ein read-only
+  Windows-Snapshot: relevante PnP-Geraete, Status/Service/Fehlercode und nur
+  Namen/PIDs moeglicher Konkurrenzprozesse. Generische fremde WPD-IDs werden
+  redigiert; eine Prozessliste allein wird nicht als Besitzbeweis bezeichnet.
+- Einmal pro App-Start werden EXE/DLLs im tatsaechlich verwendeten
+  Bridge-Ordner mit Groesse, SHA-256 und verfuegbarer Dateiversion geloggt.
+
+### Build-Sicherheit
+
+Der lokale Installer baut die Bridge nun zwingend frisch und fuehrt danach
+denselben Protokolltest wie GitHub Actions aus. Er prueft den Developer-Pfad
+mit `ping -> diag -> unbekannt -> quit` und separat den normalen Start ohne
+Diagnoseflag. Eine alte Bridge-Binaerdatei kann damit nicht mehr unbemerkt in
+einen neuen Installer geraten. App-Version und Builder-Default stehen auf
+2.4.63.
+
+### Validierung
+
+- Windows-Bridge-Build: **0 Warnungen, 0 Fehler**; Protokolltest fuer
+  Developer- und Produktionspfad bestanden.
+- Nikon-Diagnosetests unter Windows: **11/11**; gesamte DSLR-Suite ohne
+  Hardware: **20/20 Testgruppen** bestanden.
+- Echter 15-Sekunden-Init ohne Kamera bestaetigt: sauberer Timeout,
+  vollstaendiger Scanstatus und keine Flutung durch die bekannten
+  Canon-EDSDK-Banner.
+- `py_compile`, Nikon-Smoke-Test und die semantischen Canon-/Webcam-Diffchecks
+  sind gruen. Fremde WPD-/Scanner-IDs werden redigiert, waehrend
+  Busy-/Access-denied-/HRESULT-Informationen erhalten bleiben.
+
+**Offen:** 2.4.63 auf Box 252 mit der Nikon D3300 im Developer Mode starten,
+einmal Admin-Suche und einmal Session-Start ausfuehren und den Log ans
+Dashboard senden. Erst dieser Lauf bestimmt den eigentlichen Folgefix.
+
+---
+
 ## [2.4.62] - 2026-08-26 - Canon-Host-Readiness ohne SD-Karte korrigiert
 
 > Ausschliesslich der interne Canon-Host-Readiness-Vertrag wurde korrigiert.

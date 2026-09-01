@@ -69,8 +69,10 @@ def main() -> int:
     for needle in [
         'BRIDGE_EXE_NAME = "FexoNikonBridge.exe"',
         "CREATE_NO_WINDOW",           # unsichtbarer Prozess, kein Fenster im Kiosk
+        "--developer-diagnostics",    # Bridge-Ringpuffer nur im Developer Mode
         '"cmd": cmd',                 # JSON-Kommandos über stdin
         '"ping"',
+        '"diag"',
         '"init"',
         '"lv_start"',
         '"lv_stop"',
@@ -100,6 +102,15 @@ def main() -> int:
     ]:
         _check_contains(nikon, method, f"nikon.py: Methode {method!r} vorhanden", errors)
     _check_contains(nikon, "NIKON-DIAGNOSE", "nikon.py: Developer-Mode-Diagnose-Logging vorhanden", errors)
+    _check_contains(nikon, "NIKON-BRIDGE-CALL END", "nikon.py: Bridge-Aufruf-Timings vorhanden", errors)
+    _check_contains(nikon, "schedule_windows_snapshot", "nikon.py: Windows-Diagnose an Init-Fehler gebunden", errors)
+
+    diagnostics = _read_text("src/camera/nikon_diagnostics.py")
+    _check_contains(diagnostics, "developer_diagnostics_enabled", "nikon_diagnostics.py: Developer-Gate", errors)
+    _check_contains(diagnostics, "Win32_PnPEntity", "nikon_diagnostics.py: Windows-PnP-Snapshot", errors)
+    _check_contains(diagnostics, "process_iter", "nikon_diagnostics.py: Prozess-Snapshot", errors)
+    _check_contains(diagnostics, "sha256", "nikon_diagnostics.py: Bridge-Dateihashes", errors)
+    _check_contains(diagnostics, "<redacted-non-camera-wpd>", "nikon_diagnostics.py: fremde WPD-ID redigiert", errors)
     # Verworfener digiCamControl-Ansatz darf nicht zurückkommen:
     _check_not_contains(nikon, "CameraControl.exe", "nikon.py: kein CameraControl.exe-Autostart mehr", errors)
     _check_not_contains(nikon, "5513", "nikon.py: kein digiCamControl-Webserver-Port mehr", errors)
@@ -137,9 +148,16 @@ def main() -> int:
     ci = _read_text(".github/workflows/build-release.yml")
     _check_not_contains(installer, "digiCamControlsetup", "installer.iss: digiCamControl-Installer entfernt", errors)
     _check_not_contains(installer, "ShouldInstallDigiCamControl", "installer.iss: DCC-Install-Logik entfernt", errors)
-    _check_contains(build_script, "FexoNikonBridge", "build_installer.bat: Bridge wird beigelegt (falls gebaut)", errors)
+    _check_contains(build_script, "dotnet build", "build_installer.bat: Bridge wird frisch gebaut", errors)
+    _check_contains(build_script, "--no-incremental", "build_installer.bat: kein alter inkrementeller Bridge-Build", errors)
+    _check_contains(build_script, "nikon_bridge_protocol_test.py", "build_installer.bat: Bridge-Protokolltest", errors)
+    _check_contains(build_script, 'findstr /B "__version__"', "build_installer.bat: App-Version aus Quelle", errors)
+    _check_not_contains(build_script, "set APP_VERSION=2.1", "build_installer.bat: kein falscher Versionsfallback", errors)
     _check_not_contains(build_script, "digicamcontrol", "build_installer.bat: DCC-Download entfernt", errors)
     _check_contains(ci, "FexoNikonBridge", "build-release.yml: CI baut die Bridge", errors)
+    _check_contains(ci, "--no-incremental", "build-release.yml: CI baut Bridge nicht inkrementell", errors)
+    _check_contains(ci, "nikon_bridge_protocol_test.py", "build-release.yml: CI prüft Bridge-Protokoll", errors)
+    _check_contains(ci, "default: '2.4.63'", "build-release.yml: Diagnosebuild 2.4.63 als Default", errors)
     _check_not_contains(ci, "digiCamControlsetup", "build-release.yml: DCC-Download entfernt", errors)
 
     # --- OTA-Update-Pfade liefern bridge/ mit aus (sonst erreicht Nikon nie bestehende Boxen) ---
@@ -155,11 +173,39 @@ def main() -> int:
     program = _read_text("bridge/FexoNikonBridge/Program.cs")
     _check_contains(csproj, "CameraControl.Devices", "csproj: CameraControl.Devices (MIT) als Motor", errors)
     _check_contains(csproj, "<TargetFramework>net48</TargetFramework>", "csproj: net48 (auf Win10/11 vorinstalliert)", errors)
-    for needle in ['"ping"', '"list"', '"init"', '"lv_start"', '"lv_stop"', '"frame"', '"capture"', '"release"', '"quit"']:
+    _check_contains(csproj, "<Version>0.2.0</Version>", "csproj: Bridge-Version 0.2.0", errors)
+    _check_contains(program, 'BridgeVersion = "0.2.0"', "Program.cs: Protokollversion 0.2.0", errors)
+    for needle in ['"ping"', '"diag"', '"list"', '"init"', '"lv_start"', '"lv_stop"', '"frame"', '"capture"', '"release"', '"quit"']:
         _check_contains(program, needle, f"Program.cs: Kommando {needle} implementiert", errors)
+    _check_contains(program, "HandleDiagnostics", "Program.cs: read-only Diagnosehandler", errors)
+    _check_contains(program, "BoundedLineTextWriter", "Program.cs: begrenzter Konsolen-Ringpuffer", errors)
+    _check_contains(program, "LibraryErrors", "Program.cs: separater Fehler-Ringpuffer", errors)
+    _check_contains(program, '"library_errors"', "Program.cs: Fehler-Ring im Diagnoseprotokoll", errors)
+    _check_contains(program, "Log.LogError", "Program.cs: interne Library-Fehler erfasst", errors)
+    _check_contains(program, "RunScan", "Program.cs: Scan-Messung vorhanden", errors)
+    _check_contains(program, "_diagnosticsEnabled", "Program.cs: Diagnose ist Developer-gesteuert", errors)
+    diagnostics_body = program.split("private static void HandleDiagnostics", 1)[1].split(
+        "private static JArray BuildDeviceSnapshot", 1
+    )[0]
+    _check_not_contains(
+        diagnostics_body,
+        "EnsureDeviceManager();",
+        "Program.cs: diag erzeugt keinen DeviceManager",
+        errors,
+    )
+    _check_not_contains(
+        diagnostics_body,
+        "_deviceManager.ConnectToCamera",
+        "Program.cs: diag startet keinen Kamerascan",
+        errors,
+    )
     _check_contains(program, "GetLiveViewImage", "Program.cs: LiveView über CameraControl.Devices", errors)
     _check_contains(program, "CaptureInSdRam", "Program.cs: Capture in den RAM (keine SD-Karte nötig)", errors)
     _check_contains(program, "TransferFile", "Program.cs: Vollbild-Transfer implementiert", errors)
+
+    app_version = _read_text("src/__init__.py")
+    _check_contains(app_version, '__version__ = "2.4.63"', "src/__init__.py: App-Version 2.4.63", errors)
+    _check_contains(installer, "FexoBooth_Setup_2.4.63.exe", "installer.iss: Versionsbeispiel 2.4.63", errors)
 
     # --- Booking: Reload springt nicht hart auf Canon zurück ---
     booking = _read_text("src/storage/booking.py")

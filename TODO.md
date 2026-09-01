@@ -4,9 +4,36 @@ Aufgabenliste mit Prioritäten.
 
 ---
 
-## ➡️ NÄCHSTE SCHRITTE DSLR (Stand 2.4.62) 🔴
+## ➡️ NÄCHSTE SCHRITTE DSLR (Stand 2.4.63) 🔴
 
 > Vollständige Übergabe: **[DSLR-STAND.md](DSLR-STAND.md)** — dort erst lesen.
+
+### Nikon D3300 auf Box 252
+
+- [x] 2.4.62-Log ausgewertet: Bridge startet und antwortet, Admin-Liste ist
+      wirklich leer, `init` endet nach rund 15 Sekunden vor Live View/Capture.
+      Der UI-Eintrag `[0] Nikon via FexoNikonBridge` ist nur ein Platzhalter.
+- [x] 2.4.63 als reinen Diagnosebuild umgesetzt: Bridge-`diag`, interne
+      WPD-/WIA-Librarymeldungen, Scanstatus, Request-/Lock-Timings,
+      Windows-PnP/Prozesse und Bridge-Dateihashes. Keine Erkennungs- oder
+      Capture-Semantik geaendert.
+- [x] Lokalen und GitHub-Builder gegen alte Bridge-Binaerdateien abgesichert:
+      Bridge wird frisch gebaut; Developer- und normaler Produktionspfad
+      werden per Protokolltest geprueft.
+- [x] Lokale Abschlusspruefung: Bridge 0 Warnungen/0 Fehler, Nikon-Diagnose
+      **11/11**, gesamte DSLR-Suite **20/20 Testgruppen**, echter kontrollierter
+      15-Sekunden-Init ohne Kamera sowie `py_compile` und Nikon-Smoke-Test gruen.
+- [ ] **2.4.63 frisch bauen und auf Box 252 im Developer Mode installieren.**
+      Im Startlog muessen App `2.4.63` und Bridge `0.2.0` erscheinen.
+- [ ] D3300 direkt per USB einschalten, einmal Admin-Kamerasuche und einmal
+      normalen Session-Start ausfuehren. Keine Parallelsoftware oeffnen.
+- [ ] Log im Service-Menue ans Dashboard senden. Gemeinsam Windows-Geraetesicht,
+      `last_scan`, `connected_devices`, `library_output`, `library_errors`,
+      `last_exception`, Prozesse und Dateihashes auswerten.
+- [ ] Erst danach den belegten Folgefix waehlen: Windows/USB,
+      Konkurrenzprozess, Library-Modellerkennung oder abweichendes Bridge-Paket.
+
+### Canon EOS 2000D auf Box 248
 
 - [x] **2.4.61 auf Box 245 getestet:** Vier echte 6000-x-4000-JPEGs,
       einschliesslich des ersten Fotos; Press, Release, Blitz, Transfer und

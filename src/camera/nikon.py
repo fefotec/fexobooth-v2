@@ -19,7 +19,7 @@ Protokoll (eine Anfrage gleichzeitig):
     <- {"id": 1, "ok": true, "bridge": "FexoNikonBridge", "version": "..."}\n
     -> {"id": 2, "cmd": "frame"}\n
     <- {"id": 2, "ok": true, "len": 45123}\n + 45123 Bytes JPEG
-Kommandos: ping, list, init, lv_start, lv_stop, frame, capture, release, quit
+Kommandos: ping, diag, list, init, lv_start, lv_stop, frame, capture, release, quit
 """
 
 from __future__ import annotations
@@ -40,6 +40,12 @@ import numpy as np
 from PIL import Image
 
 from .base import CameraManager
+from .nikon_diagnostics import (
+    developer_diagnostics_enabled,
+    schedule_bridge_diagnostics,
+    schedule_bridge_inventory,
+    schedule_windows_snapshot,
+)
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -62,6 +68,9 @@ class _NikonBridgeClient:
         self._reader_thread: Optional[threading.Thread] = None
         self._request_id = 0
         self._io_lock = threading.RLock()
+
+    def _dev_logging_enabled(self) -> bool:
+        return developer_diagnostics_enabled(self._config)
 
     def update_config(self, config: Dict[str, Any]) -> None:
         self._config = config or {}
@@ -96,8 +105,11 @@ class _NikonBridgeClient:
                 if os.name == "nt":
                     # Kein Konsolenfenster, kein sichtbares Fremdfenster im Kiosk.
                     creationflags = subprocess.CREATE_NO_WINDOW
+                bridge_command = [str(exe)]
+                if self._dev_logging_enabled():
+                    bridge_command.append("--developer-diagnostics")
                 self._process = subprocess.Popen(
-                    [str(exe)],
+                    bridge_command,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
@@ -122,10 +134,18 @@ class _NikonBridgeClient:
             )
             self._reader_thread.start()
             logger.info(f"FexoNikonBridge gestartet (unsichtbar): {exe}")
+            if self._dev_logging_enabled():
+                schedule_bridge_inventory(exe, self._config)
 
             # Handshake: Bridge muss auf ping antworten.
             try:
                 self.request("ping", timeout=self._settings().get("init_timeout_seconds", 20))
+                if self._dev_logging_enabled():
+                    schedule_bridge_diagnostics(
+                        self,
+                        self._config,
+                        "bridge_start_after_ping",
+                    )
                 return True
             except Exception as exc:
                 logger.error(f"FexoNikonBridge antwortet nicht auf ping: {exc}")
@@ -164,11 +184,41 @@ class _NikonBridgeClient:
         Warten auf den Lock ab — sonst hängt z.B. der UI-Status-Check hinter
         einem laufenden 12s-Capture eines anderen Threads.
         """
+        timing_enabled = self._dev_logging_enabled()
+        started_monotonic = time.monotonic()
+        thread = threading.current_thread()
+        request_id: Optional[int] = None
+        lock_acquired_monotonic: Optional[float] = None
+        outcome = "error"
+
+        if timing_enabled and cmd in {"init", "list", "capture", "diag"}:
+            try:
+                logger.debug(
+                    "NIKON-BRIDGE-CALL QUEUED cmd=%s request_id=- thread=%s/%s timeout_s=%s",
+                    cmd,
+                    thread.name,
+                    thread.ident,
+                    timeout,
+                )
+            except Exception:
+                pass
+
         end_time = time.time() + timeout
         if not self._io_lock.acquire(timeout=timeout):
+            if timing_enabled:
+                self._log_request_timing(
+                    cmd,
+                    request_id,
+                    thread,
+                    started_monotonic,
+                    None,
+                    "lock_timeout",
+                )
             raise TimeoutError(f"FexoNikonBridge: beschäftigt bei '{cmd}' ({timeout}s)")
+        lock_acquired_monotonic = time.monotonic()
         try:
             if not self.is_running():
+                outcome = "bridge_not_running"
                 raise RuntimeError("FexoNikonBridge läuft nicht")
 
             self._request_id += 1
@@ -180,17 +230,21 @@ class _NikonBridgeClient:
                 self._process.stdin.write(data)
                 self._process.stdin.flush()
             except Exception as exc:
+                outcome = "stdin_error"
                 raise RuntimeError(f"FexoNikonBridge stdin nicht schreibbar: {exc}") from exc
 
             while True:
                 remaining = end_time - time.time()
                 if remaining <= 0:
+                    outcome = "timeout"
                     raise TimeoutError(f"FexoNikonBridge: Timeout bei '{cmd}' ({timeout}s)")
                 try:
                     item = self._responses.get(timeout=remaining)
                 except queue.Empty:
+                    outcome = "timeout"
                     raise TimeoutError(f"FexoNikonBridge: Timeout bei '{cmd}' ({timeout}s)")
                 if item is None:
+                    outcome = "bridge_eof"
                     raise RuntimeError("FexoNikonBridge wurde beendet (EOF)")
                 header, payload = item
                 if header.get("id") != request_id:
@@ -198,12 +252,57 @@ class _NikonBridgeClient:
                     # Anfrage — überspringen, auf unsere Antwort warten.
                     continue
                 if not header.get("ok"):
+                    outcome = "bridge_error"
                     raise RuntimeError(
                         f"FexoNikonBridge '{cmd}' fehlgeschlagen: {header.get('error', 'unbekannt')}"
                     )
+                outcome = "ok"
                 return header, payload
         finally:
             self._io_lock.release()
+            if timing_enabled:
+                self._log_request_timing(
+                    cmd,
+                    request_id,
+                    thread,
+                    started_monotonic,
+                    lock_acquired_monotonic,
+                    outcome,
+                )
+
+    @staticmethod
+    def _log_request_timing(
+        cmd: str,
+        request_id: Optional[int],
+        thread: threading.Thread,
+        started_monotonic: float,
+        lock_acquired_monotonic: Optional[float],
+        outcome: str,
+    ) -> None:
+        """Never-throw-Timingmarker; wird erst nach Freigabe des IO-Locks geloggt."""
+        try:
+            finished = time.monotonic()
+            if lock_acquired_monotonic is None:
+                wait_ms = max(0.0, (finished - started_monotonic) * 1000.0)
+                command_ms = 0.0
+            else:
+                wait_ms = max(0.0, (lock_acquired_monotonic - started_monotonic) * 1000.0)
+                command_ms = max(0.0, (finished - lock_acquired_monotonic) * 1000.0)
+            total_ms = max(0.0, (finished - started_monotonic) * 1000.0)
+            logger.debug(
+                "NIKON-BRIDGE-CALL END cmd=%s request_id=%s thread=%s/%s "
+                "lock_wait_ms=%.1f command_ms=%.1f total_ms=%.1f result=%s",
+                cmd,
+                request_id if request_id is not None else "-",
+                thread.name,
+                thread.ident,
+                wait_ms,
+                command_ms,
+                total_ms,
+                outcome,
+            )
+        except Exception:
+            pass
 
     def _reader_loop(self, process: subprocess.Popen, responses: "queue.Queue") -> None:
         if process is None or process.stdout is None:
@@ -348,7 +447,6 @@ class NikonCameraManager(CameraManager):
         self._max_stale_frame_seconds = 1.5
         self._camera_index = 0
         self._camera_name = "Nikon via FexoNikonBridge"
-        self._last_diagnostics_log_time: float = 0
         self._lock = threading.RLock()
 
     def update_config(self, config: Dict[str, Any]) -> None:
@@ -379,6 +477,13 @@ class NikonCameraManager(CameraManager):
             header, _ = client.request("list", timeout=2.0)
         except Exception as exc:
             logger.debug(f"FexoNikonBridge Kamera-Liste nicht abrufbar: {exc}")
+            schedule_bridge_diagnostics(
+                client,
+                config,
+                "admin_list_failed",
+                minimum_interval_seconds=60.0,
+                throttle_key="admin_list",
+            )
             return []
 
         cameras: List[Dict[str, Any]] = []
@@ -388,6 +493,14 @@ class NikonCameraManager(CameraManager):
                 continue
             serial = cam.get("serial", name) if isinstance(cam, dict) else name
             cameras.append({"index": idx, "name": name, "serial": serial})
+        if not cameras:
+            schedule_bridge_diagnostics(
+                client,
+                config,
+                "admin_list_empty",
+                minimum_interval_seconds=60.0,
+                throttle_key="admin_list",
+            )
         return cameras
 
     # ------------------------------------------------------------------
@@ -422,6 +535,12 @@ class NikonCameraManager(CameraManager):
                 logger.info("Nikon-Bridge-Warmup: Kamera vorverbunden")
             except Exception as exc:
                 logger.debug(f"Nikon-Bridge-Warmup: Kamera-Vorverbindung offen ({exc})")
+                if self._dev_logging_enabled():
+                    self._log_bridge_diagnostics(
+                        "warmup: init-Kommando fehlgeschlagen",
+                        str(exc),
+                        include_windows_snapshot=True,
+                    )
         return True
 
     def initialize(self, camera_index: int = 0, width: int = 0, height: int = 0) -> bool:
@@ -456,7 +575,11 @@ class NikonCameraManager(CameraManager):
             except Exception as exc:
                 logger.error(f"Nikon init fehlgeschlagen: {exc}")
                 if self._dev_logging_enabled():
-                    self._log_bridge_diagnostics("initialize: init-Kommando fehlgeschlagen", str(exc))
+                    self._log_bridge_diagnostics(
+                        "initialize: init-Kommando fehlgeschlagen",
+                        str(exc),
+                        include_windows_snapshot=True,
+                    )
                 return False
 
             self._is_initialized = True
@@ -672,12 +795,16 @@ class NikonCameraManager(CameraManager):
     def _dev_logging_enabled(self) -> bool:
         return bool(self._config.get("developer_mode"))
 
-    def _log_bridge_diagnostics(self, context: str, detail: str = "") -> None:
+    def _log_bridge_diagnostics(
+        self,
+        context: str,
+        detail: str = "",
+        *,
+        include_windows_snapshot: bool = False,
+    ) -> None:
         """Schreibt im Developer Mode eine kompakte Bridge-Fehlerdiagnose ins Log."""
-        current_time = time.time()
-        if current_time - self._last_diagnostics_log_time < 3:
+        if not self._dev_logging_enabled():
             return
-        self._last_diagnostics_log_time = current_time
 
         settings = self._settings()
         client = _get_client(self._config)
@@ -710,6 +837,14 @@ class NikonCameraManager(CameraManager):
             logger.info("NIKON-DIAGNOSE: Bridge-EXE-Kandidaten:\n" + "\n".join(candidate_lines))
         else:
             logger.info("NIKON-DIAGNOSE: Keine Bridge-EXE-Kandidaten erzeugt")
+
+        schedule_bridge_diagnostics(
+            client,
+            self._config,
+            context,
+        )
+        if include_windows_snapshot:
+            schedule_windows_snapshot(self._config, context)
 
     @staticmethod
     def _decode_jpeg_to_bgr(data: bytes) -> Optional[np.ndarray]:

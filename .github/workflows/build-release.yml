@@ -17,7 +17,7 @@ on:
       version:
         description: 'Version X.Y.Z (nur für Dateiname/Anzeige; kein Release)'
         required: true
-        default: '2.4.11'
+        default: '2.4.63'
         type: string
       allow_no_bridge:
         description: 'Build auch OHNE FexoNikonBridge zulassen (Nikon-Support fehlt dann)'
@@ -95,8 +95,10 @@ jobs:
         run: |
           # Kleiner .NET-Framework-4.8-Prozess (kein Fenster), Motor: CameraControl.Devices
           # (MIT). Ersetzt den frueheren sichtbaren digiCamControl-Ansatz komplett.
-          dotnet build bridge/FexoNikonBridge/FexoNikonBridge.csproj -c Release
+          dotnet build bridge/FexoNikonBridge/FexoNikonBridge.csproj -c Release --no-incremental
           if ($LASTEXITCODE -ne 0) { throw 'FexoNikonBridge-Build fehlgeschlagen' }
+          python tools/nikon_bridge_protocol_test.py
+          if ($LASTEXITCODE -ne 0) { throw 'FexoNikonBridge-Protokolltest fehlgeschlagen' }
           New-Item -ItemType Directory -Force -Path 'installer_output/fexobooth/bridge' | Out-Null
           Copy-Item 'bridge/FexoNikonBridge/bin/Release/net48/*' 'installer_output/fexobooth/bridge/' -Recurse -Force
           Write-Host 'FexoNikonBridge gebaut und nach installer_output/fexobooth/bridge/ kopiert.'

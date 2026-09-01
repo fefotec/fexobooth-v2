@@ -6,9 +6,9 @@ Diese Datei enthält die Anforderungen und geplanten Features.
 
 ## Aktuelle Version
 
-**Status:** Produktiv im Einsatz; Canon-2.4.61-Blitz/Pose mit Karte hardwarebestaetigt; 2.4.62-Hostbetrieb ohne SD-Karte lokal fertig, Box-248-Nachtest offen
-**Version:** 2.4.62 (lokal, noch kein Hardware-/GitHub-Release)
-**Letzte Änderung:** 2026-08-26
+**Status:** Produktiv im Einsatz; Nikon-2.4.63-Diagnose lokal fertig, Ursachenlauf auf Box 252 offen; Canon-2.4.62-Nachtest ohne SD-Karte ebenfalls offen
+**Version:** 2.4.63 (lokal, noch kein Hardware-/GitHub-Release)
+**Letzte Änderung:** 2026-09-01
 
 ---
 
@@ -38,14 +38,14 @@ Diese Datei enthält die Anforderungen und geplanten Features.
 > Autostart + Webserver `127.0.0.1:5513` antwortet ohne manuelle Einmal-Aktivierung nie.
 > Das offizielle Nikon-SDK ist keine Option (kein Modul für die gesamte D3xxx-Serie).
 
-**Technischer Vertrag (implementiert, Bridge-Build offen):**
+**Technischer Vertrag (implementiert und hardwareerprobt):**
 - `camera_type = "nikon"`, optional `dslr_camera_type = "nikon"` (überlebt Booking-/Event-Reload)
 - Eigener unsichtbarer Hintergrundprozess `bridge\FexoNikonBridge.exe` (C#/.NET Framework 4.8,
   auf Win10/11 vorinstalliert; gestartet mit `CREATE_NO_WINDOW`). Motor: MIT-Bibliothek
   `CameraControl.Devices` (digiCamControl-Kern) — rohes PTP/MTP über die Windows-WPD-API,
   D3300 dort explizit unterstützt (LiveView + Vollauflösungs-Capture in den RAM).
 - Kommunikation über stdin/stdout: JSON-Zeilen + längenpräfixierte JPEG-Binärdaten
-  (`ping/list/init/lv_start/frame/capture/lv_stop/release/quit`) — keine Ports, keine
+  (`ping/diag/list/init/lv_start/frame/capture/lv_stop/release/quit`) — keine Ports, keine
   Firewall-Dialoge, kein Konfigurationsschritt in Fremdsoftware.
 - Die App startet die Bridge beim Programmstart automatisch unsichtbar vor (Warmup) und
   bei Bedarf in `initialize()` neu. Konfiguration unter `nikon_bridge` (exe_path + Timeouts).
@@ -56,7 +56,13 @@ Diese Datei enthält die Anforderungen und geplanten Features.
 Bridge-Warmup in ~1,4 s, LiveView 640×424 im Session-Screen, 4 Captures in voller
 6000×4000-Auflösung, kein Fremdfenster. Performance-Fixes danach in 2.4.12
 (Overlay-/Fotoanzeige-Cache, Filter-Arbeitskopien, Final-Rendern im Hintergrund).
-**Offen:** Nachtest 2.4.12 + Capture-Feintuning (~4,1 s, kameraseitig). Siehe [TODO.md](TODO.md).
+
+**Aktueller Regressionsbefund (Box 252, 2.4.62):** Dieselbe D3300 wird vor
+Live View/Capture nicht mehr in `ConnectedDevices` gefunden, obwohl Bridge und
+Protokoll laufen. 2.4.63 erweitert deshalb ausschliesslich den Developer-Log
+um internen WPD-/WIA-Zustand, Windows-PnP/Prozesse und Bridge-Dateihashes.
+**Offen:** 2.4.63-Hardwarelog aus Admin-Suche plus Session-Start auswerten;
+danach den engsten belegten Folgefix umsetzen. Siehe [TODO.md](TODO.md).
 
 ---
 
