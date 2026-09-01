@@ -29,7 +29,10 @@ unveraendert.
 Der naechste Hardware-Log muss eindeutig unterscheiden koennen zwischen:
 
 1. Windows sieht die D3300 ueberhaupt nicht als USB-/WPD-/Bildgeraet.
-2. Windows sieht sie, aber ein anderer Prozess haelt oder beansprucht sie.
+2. Windows sieht sie und gleichzeitig laufen moegliche Konkurrenzprozesse;
+   zusammen mit einem von WPD gemeldeten Busy-/Zugriffsfehler entsteht daraus
+   ein belastbarer Beleg fuer eine wahrscheinliche Prozessbelegung. Eine reine
+   Prozessliste allein gilt ausdruecklich nicht als Besitznachweis.
 3. Die Bridge sieht einen Kandidaten, verwirft ihn jedoch wegen Modell,
    Verbindungsstatus oder eines internen Fehlers.
 4. Eine Bridge-Abhaengigkeit fehlt oder unterscheidet sich vom funktionierenden
@@ -67,6 +70,13 @@ vorhandenen Zustand:
 - letzte interne Bibliotheksmeldungen als begrenzter Ringpuffer,
 - letzte Bridge-interne Ausnahme mit Typ, Meldung und Windows-Fehlercode,
 - aktueller Kamerastatus und Zeitpunkt des letzten erfolgreichen `init`.
+
+Die Antwort bleibt eine normale Protokollantwort mit `id`, `ok=true` und einem
+Objekt `diagnostics`. Zeitpunkte werden als UTC-ISO-8601-Text, Dauern als ganze
+Millisekunden, Zaehler als Ganzzahlen und fehlende Werte als `null` geliefert.
+Ausnahmen enthalten nur `type`, `message` und – sofern vorhanden – einen
+numerischen Windows-Fehlercode. Damit kann der Python-Client die Felder stabil
+loggen, ohne menschenlesbaren Text parsen zu muessen.
 
 `Console.Out` bleibt vom echten stdout-Protokoll getrennt. Statt die fremden
 Bibliotheksausgaben komplett nach `TextWriter.Null` zu schicken, sammelt ein
@@ -113,6 +123,12 @@ weder Tk noch die Bridge und protokolliert:
 - relevante Prozesse mit PID: FexoBooth, FexoNikonBridge, dslrBooth,
   digiCamControl/CameraControl und bekannte Nikon-Hilfsprogramme,
 - Anzahl aller gleichzeitig laufenden FexoBooth- und Bridge-Prozesse.
+
+Die Prozessliste ist ein Indiz, kein alleiniger Beweis fuer Geraetebesitz. Als
+wahrscheinliche Prozessbelegung darf der Logbefund nur bezeichnet werden, wenn
+Windows beziehungsweise die Bridge zusaetzlich einen passenden Busy-,
+Access-Denied- oder Sharing-Fehler liefert. Ohne solches Signal lautet das
+Urteil lediglich `moeglicher Konkurrenzprozess aktiv`.
 
 Fehlt PowerShell/CIM oder laeuft eine Abfrage ins Zeitlimit, wird genau dieser
 Diagnosefehler geloggt. Der Kameraablauf selbst bleibt davon unberuehrt.
@@ -185,7 +201,9 @@ Auf Box 252:
 - Der Builder erzeugt und meldet eindeutig 2.4.63.
 - Der Cloud-Log zeigt bei einem Nikon-Fehler die Windows-Geraetesicht, relevante
   Prozesse, Bridge-Dateien, Bridge-Scanstatus und interne Bibliotheksmeldungen.
-- Aus dem Log ist `Bridge beschaeftigt` von `Windows sieht kein Geraet` und
-  `Bridge verwirft Geraet` unterscheidbar.
+- Aus dem Log ist `Bridge beschaeftigt` von `Windows sieht kein Geraet`,
+  `Bridge verwirft Geraet` und `moeglicher Konkurrenzprozess aktiv`
+  unterscheidbar. Eine Prozessbelegung wird nur zusammen mit einem passenden
+  Windows-/WPD-Fehlersignal als wahrscheinlich ausgewiesen.
 - Keine neue UI-, Kamera- oder Capture-Semantik.
 - Webcam und Canon bleiben funktional unveraendert.
