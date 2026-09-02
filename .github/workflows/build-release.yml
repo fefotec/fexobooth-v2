@@ -17,7 +17,7 @@ on:
       version:
         description: 'Version X.Y.Z (nur für Dateiname/Anzeige; kein Release)'
         required: true
-        default: '2.4.63'
+        default: '2.4.64'
         type: string
       allow_no_bridge:
         description: 'Build auch OHNE FexoNikonBridge zulassen (Nikon-Support fehlt dann)'
@@ -55,6 +55,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install "pyinstaller>=6.0.0"
+
+      - name: Kamera- und Video-Regressionstests
+        shell: pwsh
+        run: python tests/alle_tests.py
 
       - name: Version in src/__init__.py + installer.iss setzen (nur lokal im Build)
         shell: pwsh

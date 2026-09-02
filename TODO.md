@@ -4,7 +4,23 @@ Aufgabenliste mit Prioritäten.
 
 ---
 
-## ➡️ NÄCHSTE SCHRITTE DSLR (Stand 2.4.63) 🔴
+## ➡️ NÄCHSTER TEST: VLC-LANGZEITLAUF (Stand 2.4.64) 🔴
+
+- [x] Box-155-Log ausgewertet: 608 Videos, 548/548 Webcam-Aufnahmen, aber
+      34 offene VLC-Cleanups und spaeter starker RAM-/CPU-Anstieg samt
+      LiveView-FPS-Abfall.
+- [x] 2.4.64 umgesetzt: ein persistenter VLC-Player, 608/608 explizite
+      Media-Freigaben, maximal ein Fehler-Cleanup, sichere Playback-Timer,
+      getrennter OpenCV-Fallback und `VLC-LIFECYCLE`-Diagnose. Keine Aenderung
+      in `src/camera/webcam.py` oder an DSLR-Capturepfaden.
+- [ ] **2.4.64 frisch bauen und auf Box 155 im Developer Mode installieren.**
+      Im Startlog muss App `2.4.64` erscheinen.
+- [ ] Stress-Test mindestens bis 608 Videos und 548 Aufnahmen laufen lassen.
+      Erwartung: 548/548 Fotos, `creations=1`, `cleanup_pending=0`, kein
+      anhaltender RAM-/CPU-Anstieg und kein spaeter LiveView-FPS-Einbruch.
+- [ ] Log im Service-Menue ans Dashboard senden und gemeinsam auswerten.
+
+## DSLR-Nachweise (Stand 2.4.64) 🟡
 
 > Vollständige Übergabe: **[DSLR-STAND.md](DSLR-STAND.md)** — dort erst lesen.
 
@@ -23,15 +39,11 @@ Aufgabenliste mit Prioritäten.
 - [x] Lokale Abschlusspruefung: Bridge 0 Warnungen/0 Fehler, Nikon-Diagnose
       **11/11**, gesamte DSLR-Suite **20/20 Testgruppen**, echter kontrollierter
       15-Sekunden-Init ohne Kamera sowie `py_compile` und Nikon-Smoke-Test gruen.
-- [ ] **2.4.63 frisch bauen und auf Box 252 im Developer Mode installieren.**
-      Im Startlog muessen App `2.4.63` und Bridge `0.2.0` erscheinen.
-- [ ] D3300 direkt per USB einschalten, einmal Admin-Kamerasuche und einmal
-      normalen Session-Start ausfuehren. Keine Parallelsoftware oeffnen.
-- [ ] Log im Service-Menue ans Dashboard senden. Gemeinsam Windows-Geraetesicht,
-      `last_scan`, `connected_devices`, `library_output`, `library_errors`,
-      `last_exception`, Prozesse und Dateihashes auswerten.
-- [ ] Erst danach den belegten Folgefix waehlen: Windows/USB,
-      Konkurrenzprozess, Library-Modellerkennung oder abweichendes Bridge-Paket.
+- [x] Hardwareursache bestaetigt: Es war das USB-Kabel. Kein Nikon-Codefix aus
+      diesem Ausfall erforderlich; die 2.4.63-Diagnose bleibt erhalten.
+- [ ] Bei Gelegenheit mit 2.4.64 einen kurzen Nikon-Smoke-Lauf machen, weil
+      derselbe gemeinsame Build ausgeliefert wird. Erwartung: Erkennung,
+      LiveView und Vollbild-Capture unveraendert.
 
 ### Canon EOS 2000D auf Box 248
 

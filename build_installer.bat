@@ -50,6 +50,16 @@ if %errorlevel% neq 0 (
 
 echo [OK] .NET SDK gefunden
 
+REM Bekannte Kamera-/Video-Fehler vor dem teuren Paketbau ausschliessen.
+python "tests\alle_tests.py"
+if %errorlevel% neq 0 (
+    echo FEHLER: Regressionstests fehlgeschlagen - Build wird nicht erstellt.
+    pause
+    exit /b 1
+)
+
+echo [OK] Kamera- und Video-Regressionstests bestanden
+
 REM ─────────────────────────────────────────────
 REM Schritt 2: PyInstaller pruefen
 REM ─────────────────────────────────────────────

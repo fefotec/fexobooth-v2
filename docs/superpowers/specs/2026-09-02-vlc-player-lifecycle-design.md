@@ -63,9 +63,12 @@ stabil. Das Videoverhalten für den Gast ändert sich nicht.
 
 ### 2. Ein Besitzer für VLC
 
-`VideoScreen` besitzt während des App-Laufs höchstens eine aktive
-VLC-Instanz und einen VLC-Player. Beim nächsten Clip wird ein neues VLC-Medium
-an denselben Player gebunden und die Wiedergabe erneut gestartet.
+Ein appweiter, thread-sicherer VLC-Besitzer existiert unabhängig vom
+`VideoScreen`. Er besitzt während des App-Laufs höchstens eine aktive
+VLC-Instanz und einen VLC-Player. Deshalb gehören auch Warmup vor dem ersten
+Video, Wiedergabe und Shutdown sicher demselben Besitzer. Beim nächsten Clip
+wird ein neues VLC-Medium an denselben Player gebunden und die Wiedergabe
+erneut gestartet.
 
 Bei einem normalen Videoende werden Player und Instanz nicht freigegeben. Der
 Player wechselt nur in den Zustand "bereit". Die endgültige Freigabe erfolgt
@@ -73,30 +76,80 @@ bestmöglich beim wirklichen Beenden beziehungsweise beim Zerstören des
 Video-Screens.
 
 Die bestehende VLC-Aufwärmung bleibt erhalten. Sie dient weiterhin nur dazu,
-den Plugin-Cache vor dem ersten sichtbaren Video zu laden.
+den Plugin-Cache vor dem ersten sichtbaren Video zu laden. Die dabei erzeugte
+Instanz wird nicht mehr sofort wieder freigegeben, sondern direkt zum einen
+persistenten Player des App-Laufs. Damit besitzt auch die Aufwärmung keinen
+zweiten, unkontrollierten Freigabeweg.
+
+Hängt bereits die native VLC-Erstellung, wartet die Bedienoberfläche nicht
+unbegrenzt: Nach 120 Sekunden wird VLC für diesen App-Lauf deaktiviert und der
+OpenCV-Fallback freigegeben. Der eine bereits laufende Aufwärm-Thread darf
+auslaufen, erzeugt aber keine weiteren Instanzen. Kommt er verspätet zurück,
+wird sein Paar nur über denselben begrenzten Aufräumweg entsorgt. Das gilt auch,
+wenn gleichzeitig das Zeitlimit oder der App-Shutdown eintritt; die
+Veröffentlichung des Paars wird atomar gegen `disabled` und `closed` geprüft.
 
 ### 3. Begrenzte Fehlerbehandlung
 
 Meldet VLC einen echten Fehler oder scheitert der Start, wird das fehlerhafte
-Paar aus dem aktiven Weg genommen. Es darf zu jedem Zeitpunkt höchstens eine
-asynchrone VLC-Freigabe laufen.
+Paar unter einem kurzen Lock aus dem aktiven Weg genommen. Der Zustandsautomat
+trennt Wiedergabe (`ready`/`playing`/`fallback`) und Freigabe
+(`none`/`running`/`succeeded`/`failed`). Es darf im gesamten App-Lauf zu jedem
+Zeitpunkt höchstens ein ausgemustertes Paar und ein asynchroner
+VLC-Freigabe-Thread existieren.
 
 Solange diese Freigabe noch läuft, wird keine weitere VLC-Instanz erzeugt. Ein
 nachfolgendes Video nutzt in diesem Ausnahmefall den vorhandenen OpenCV-Fallback.
-Nach erfolgreicher Freigabe darf VLC bei einem späteren Video genau einmal neu
-aufgebaut werden. Bleibt die Freigabe hängen, bleibt der Rückstand trotzdem auf
-ein Paar und einen Thread begrenzt.
+Nur wenn `stop()`, `player.release()` und `instance.release()` alle ohne
+Ausnahme zurückkehren, gilt die Freigabe als bestätigt. Dann darf VLC bei einem
+späteren Video insgesamt genau einmal neu aufgebaut werden. Hängt ein Aufruf
+oder wirft er eine Ausnahme, bleibt der Rückstand bei einem Paar und VLC für den
+Rest des Prozesses gesperrt. Eine Ausnahme aus dem Caller-eigenen
+`media.release()` sperrt VLC ebenfalls dauerhaft.
 
 Ein fehlerhaftes Video darf den Fotoablauf nicht blockieren. Der bestehende
 Wechsel zum nächsten Screen bleibt erhalten.
 
 ### 4. Rückrufe und Medienreferenzen
 
+Jeder Aufruf von `media_new()` erzeugt eine eigene native Referenz. Direkt nach
+`set_media()` wird diese vom Aufrufer gehaltene Referenz deshalb in einem
+`finally`-Block mit exakt einem `media.release()` freigegeben. Der Player hält
+seine eigene Referenz bis zum nächsten `set_media()` beziehungsweise bis zu
+seiner endgültigen Freigabe. Das wird mit einem Zähler-Fake getestet.
+
 Nach einem Videoende werden der Abschluss-Rückruf und nicht mehr benötigte
-Medienreferenzen gelöst. Damit hält der persistente Video-Screen keine alte
+Python-Referenzen gelöst. Damit hält der persistente Video-Screen keine alte
 Session unnötig fest. Doppelte End-Rückrufe bleiben wie bisher verhindert.
 
-### 5. Developer-Diagnose
+Alle verzögerten Tk-Aufrufe (Aufwärmen, Einbetten, Statusprüfung, Fehlerhinweis
+und OpenCV-Bildanzeige) tragen die Nummer der zugehörigen Wiedergabe. Nach einem
+Screenwechsel oder einem neuen `play()` darf ein alter Rückruf nichts mehr
+starten, beenden oder navigieren.
+
+VLC und OpenCV erhalten getrennte, ein- und ausblendbare Ausgabeflächen. Jeder
+OpenCV-Lauf besitzt außerdem sein eigenes Stop-Event, Capture-Objekt und seine
+eigene Frame-Queue. Ein verspätet endender Reader kann deshalb weder auf die
+Ressourcen des nächsten Clips zugreifen noch dessen Bilder beeinflussen.
+
+Ein natürliches `Ended` setzt den Besitzer vor der Navigation auf `ready`.
+Das anschließende `on_hide()` sieht keine laufende Wiedergabe und behält das
+Paar. Ein vorzeitiges Hide entwertet dagegen zuerst alle Timer und Rückrufe und
+mustert ein noch spielendes VLC-Paar genau einmal aus. Weil der aktive Pfad
+selbst nie `stop()` aufruft, gilt auch ein beobachtetes `Stopped` als Fehler und
+das Paar wird nicht wiederverwendet. Startfehler versuchen den aktuellen Clip
+über OpenCV; ein später Laufzeitfehler setzt den Fotoablauf ohne Wiederholung
+des Clips fort.
+
+### 5. Geordnetes Beenden
+
+`PhotoboothApp.shutdown()` ruft vor dem Zerstören des Hauptfensters einen
+expliziten Video-Close-Hook auf. Der Hook blockiert den Tk-Hauptfaden nicht:
+Er trennt das höchstens eine VLC-Paar ab und übergibt es dem einzigen erlaubten
+Aufräum-Thread. Der bereits vorhandene Notausstiegs-Wachhund bleibt das letzte
+Sicherheitsnetz.
+
+### 6. Developer-Diagnose
 
 Im Developer Mode protokolliert der Video-Code kompakte
 `VLC-LIFECYCLE`-Zeilen mit:
@@ -111,6 +164,11 @@ Im Developer Mode protokolliert der Video-Code kompakte
 
 Die Diagnose ist fehlertolerant. Kann eine Kennzahl nicht gelesen werden,
 beeinflusst das weder Video noch Kamera.
+
+Der belegte Fehler und die Zusage dieses Umbaus beziehen sich auf blockierende
+Freigaben. Die bereits vorhandenen synchronen LibVLC-Aufrufe `set_media()`,
+`set_hwnd()`, `play()` und `get_state()` bleiben zunächst unverändert; ein dort
+auftretender harter nativer Hang wäre ein gesonderter Befund.
 
 ## Bewusst nicht enthalten
 
@@ -127,22 +185,30 @@ Automatisierte Tests verwenden eine künstliche VLC-Bibliothek und prüfen:
 
 1. Mehrere hundert Videos erzeugen genau eine normale VLC-Instanz und einen
    Player.
-2. Ein normales Videoende startet keinen Aufräum-Thread.
-3. Bei einem simulierten VLC-Fehler gibt es höchstens eine ausstehende
+2. Jede Caller-Referenz aus `media_new()` wird nach `set_media()` auch bei einer
+   Ausnahme genau einmal freigegeben.
+3. Ein normales Videoende startet keinen Aufräum-Thread.
+4. Bei einem simulierten VLC-Fehler gibt es höchstens eine ausstehende
    Freigabe und keine neue VLC-Instanz, solange diese hängt.
-4. Während der begrenzten Freigabe funktioniert der OpenCV-Fallback.
-5. Ein erfolgreicher kontrollierter Wiederaufbau erhöht die Player-Generation
+5. Während der begrenzten Freigabe funktioniert der OpenCV-Fallback.
+6. Ein erfolgreicher kontrollierter Wiederaufbau erhöht die Player-Generation
    genau einmal.
-6. Abschluss-Rückrufe laufen genau einmal und halten keine alte Session fest.
-7. `show_screen("video")` verwendet denselben Video-Screen erneut; andere
+7. Verspätete Rückrufe einer alten Wiedergabe werden wirkungslos.
+8. Abschluss-Rückrufe laufen genau einmal und halten keine alte Session fest.
+9. `show_screen("video")` verwendet denselben Video-Screen erneut; andere
    dynamische Screens werden weiterhin frisch aufgebaut.
-8. Versionsquellen und Builder melden einheitlich 2.4.64.
-9. Bestehende Webcam-, Canon-, Nikon-, Shutdown- und Video-Regressionstests
+10. Warmup-Zeitlimit und expliziter Shutdown-Hook sind abgedeckt.
+11. Versionsquellen und Builder melden einheitlich 2.4.64.
+12. Bestehende Webcam-, Canon-, Nikon-, Shutdown- und Video-Regressionstests
    bleiben grün.
 
-Auf echter Tablet-Hardware folgt ein mehrstündiger Developer-Belastungstest.
-Erfolg bedeutet: konstante Player-Anzahl, kein wachsender VLC-Cleanup-Rückstand,
-kein fortlaufender RAM-Anstieg durch VLC und weiterhin erfolgreiche Fotos.
+Auf echter Tablet-Hardware folgt mindestens der belegte Umfang von 608 Videos
+und 548 Aufnahmen. Erfolg bedeutet: 548/548 erfolgreiche Aufnahmen, genau eine
+Player-Erstellung im Normalpfad, `cleanup_pending=0`, kein monotoner
+RSS-/System-RAM-Anstieg über die letzten 100 Videos und kein erneuter Einbruch
+der LiveView-FPS beziehungsweise Anstieg der Prozess-/System-CPU wie im
+Box-155-Fehlerlauf. Die `VLC-LIFECYCLE`-Zeilen werden dafür zusammen mit den
+bereits vorhandenen Kamera- und Systemlastzeilen ausgewertet.
 
 ## Auslieferung
 

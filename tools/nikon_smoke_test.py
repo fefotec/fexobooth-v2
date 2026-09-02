@@ -151,13 +151,15 @@ def main() -> int:
     _check_contains(build_script, "dotnet build", "build_installer.bat: Bridge wird frisch gebaut", errors)
     _check_contains(build_script, "--no-incremental", "build_installer.bat: kein alter inkrementeller Bridge-Build", errors)
     _check_contains(build_script, "nikon_bridge_protocol_test.py", "build_installer.bat: Bridge-Protokolltest", errors)
+    _check_contains(build_script, "tests\\alle_tests.py", "build_installer.bat: Kamera-/Video-Regressionen", errors)
     _check_contains(build_script, 'findstr /B "__version__"', "build_installer.bat: App-Version aus Quelle", errors)
     _check_not_contains(build_script, "set APP_VERSION=2.1", "build_installer.bat: kein falscher Versionsfallback", errors)
     _check_not_contains(build_script, "digicamcontrol", "build_installer.bat: DCC-Download entfernt", errors)
     _check_contains(ci, "FexoNikonBridge", "build-release.yml: CI baut die Bridge", errors)
     _check_contains(ci, "--no-incremental", "build-release.yml: CI baut Bridge nicht inkrementell", errors)
     _check_contains(ci, "nikon_bridge_protocol_test.py", "build-release.yml: CI prüft Bridge-Protokoll", errors)
-    _check_contains(ci, "default: '2.4.63'", "build-release.yml: Diagnosebuild 2.4.63 als Default", errors)
+    _check_contains(ci, "tests/alle_tests.py", "build-release.yml: Kamera-/Video-Regressionen", errors)
+    _check_contains(ci, "default: '2.4.64'", "build-release.yml: aktueller Build 2.4.64 als Default", errors)
     _check_not_contains(ci, "digiCamControlsetup", "build-release.yml: DCC-Download entfernt", errors)
 
     # --- OTA-Update-Pfade liefern bridge/ mit aus (sonst erreicht Nikon nie bestehende Boxen) ---
@@ -204,8 +206,8 @@ def main() -> int:
     _check_contains(program, "TransferFile", "Program.cs: Vollbild-Transfer implementiert", errors)
 
     app_version = _read_text("src/__init__.py")
-    _check_contains(app_version, '__version__ = "2.4.63"', "src/__init__.py: App-Version 2.4.63", errors)
-    _check_contains(installer, "FexoBooth_Setup_2.4.63.exe", "installer.iss: Versionsbeispiel 2.4.63", errors)
+    _check_contains(app_version, '__version__ = "2.4.64"', "src/__init__.py: App-Version 2.4.64", errors)
+    _check_contains(installer, "FexoBooth_Setup_2.4.64.exe", "installer.iss: Versionsbeispiel 2.4.64", errors)
 
     # --- Booking: Reload springt nicht hart auf Canon zurück ---
     booking = _read_text("src/storage/booking.py")

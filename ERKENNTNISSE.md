@@ -6,6 +6,17 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### Native Player pro Clip zu zerlegen erzeugt unter Last eine Ressourcenlawine (2.4.64)
+
+| | |
+|---|---|
+| **Feldbeleg** | Box 155 nahm 548/548 Webcam-Fotos auf. Erst nach rund 110 Sitzungen stiegen RAM/CPU und LiveView wurde langsam. Von 608 VLC-Paaren waren 34 Cleanup-Threads noch offen; Freigaben blockierten bis ueber 300 Sekunden. |
+| **Zweite Leckstelle** | `media_new()` liefert eine Caller-eigene native Referenz. `set_media()` behaelt intern eine weitere, aber python-vlc besitzt fuer die Caller-Referenz keinen automatischen Destruktor. Ohne ausdrueckliches `media.release()` bleibt pro Clip eine Referenz offen. |
+| **Loesung** | Warmup und alle Videos teilen appweit genau eine Instanz und einen Player. Nur das Medium wechselt und seine Caller-Referenz wird im `finally` exakt einmal freigegeben. Ein normales Clip-Ende fuehrt keinen nativen Teardown aus. |
+| **Fehlergrenze** | Ein defektes Paar wird atomar ausgemustert. Solange sein einziger Cleanup nicht vollstaendig bestaetigt ist, entsteht kein neues VLC. Nach Erfolg ist genau eine zweite Generation erlaubt; bei Haenger oder Ausnahme bleibt VLC dauerhaft im OpenCV-Fallback. |
+| **UI-Lektion** | Ein persistent gewordener Screen braucht Wiedergabe-Generationen fuer jeden `after()`-Callback und muss gebundene Session-Callbacks vor deren Aufruf loesen. OpenCV-Worker brauchen pro Clip eigene Event-/Capture-/Queue-Objekte; ihr EOF-Sentinel muss auch bei voller Queue garantiert zugestellt werden. |
+| **Merke** | Bei nativen Bibliotheken ist „asynchron freigeben“ allein keine Begrenzung. Erzeugungsrate, Besitz jeder nativen Referenz und maximale Zahl gleichzeitig ausgemusterter Objekte muessen explizit sein und per Langzeittest geprueft werden. |
+
 ### Ein lebender Bridge-Prozess beweist keine USB-/WPD-Kameraerkennung (2.4.63)
 
 | | |

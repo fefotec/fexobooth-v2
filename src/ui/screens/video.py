@@ -15,7 +15,8 @@ from PIL import Image
 from typing import TYPE_CHECKING, Optional, Callable
 
 from src.ui.theme import COLORS, FONTS
-from src.utils.logging import get_logger
+from src.ui.vlc_player import PersistentVlcPlayer
+from src.utils.logging import get_logger, is_developer_mode
 
 if TYPE_CHECKING:
     from src.app import PhotoboothApp
@@ -65,9 +66,26 @@ except Exception as e:
     logger.warning(f"VLC konnte nicht geladen werden: {e} - Fallback auf OpenCV")
 
 
+_VLC_ARGS = [
+    "--no-xlib",
+    "--quiet",
+    "--no-video-title-show",
+    "--no-snapshot-preview",
+    "--avcodec-hw=dxva2",
+]
+_VLC_WARMUP_TIMEOUT_SECONDS = 120.0
+_vlc_owner = (
+    PersistentVlcPlayer(_vlc, logger, _VLC_ARGS, max_generations=2)
+    if _vlc_available
+    else None
+)
+
 # VLC Warmup (verhindert 57s Freeze beim ersten Video auf schwacher Hardware)
 _vlc_warm = not _vlc_available  # Wenn VLC nicht verfügbar, ist "warm" irrelevant
 _vlc_warmup_thread = None
+_vlc_warmup_started_at = None
+_vlc_warmup_timed_out = False
+_vlc_metrics_process = None
 
 
 def warmup_vlc():
@@ -76,7 +94,7 @@ def warmup_vlc():
     Auf schwacher Hardware dauert die erste VLC-Instance-Erstellung ~57s.
     Durch Vorwärmen beim App-Start ist das erste Video sofort abspielbar.
     """
-    global _vlc_warm, _vlc_warmup_thread
+    global _vlc_warm, _vlc_warmup_thread, _vlc_warmup_started_at
 
     if not _vlc_available or _vlc_warm:
         return
@@ -89,25 +107,47 @@ def warmup_vlc():
         try:
             logger.info("VLC-Warmup: Lade Plugin-Cache...")
             start = time.time()
-            instance = _vlc.Instance(["--no-xlib", "--quiet"])
-            player = instance.media_player_new()
-            player.release()
-            instance.release()
+            ready = _vlc_owner.prepare()
             elapsed = time.time() - start
-            logger.info(f"VLC-Warmup: Fertig in {elapsed:.1f}s")
+            if ready:
+                logger.info(f"VLC-Warmup: Persistenter Player bereit in {elapsed:.1f}s")
+            else:
+                logger.warning(f"VLC-Warmup: Kein Player nach {elapsed:.1f}s - OpenCV bleibt verfügbar")
         except Exception as e:
             logger.warning(f"VLC-Warmup fehlgeschlagen: {e}")
         _vlc_warm = True
         _vlc_warmup_thread = None
 
+    _vlc_warmup_started_at = time.monotonic()
     _vlc_warmup_thread = threading.Thread(target=_do_warmup, daemon=True, name="VLC-Warmup")
     _vlc_warmup_thread.start()
     logger.info("VLC-Warmup: Gestartet im Hintergrund")
 
 
 def is_vlc_warm() -> bool:
-    """Prüft ob VLC-Plugin-Cache geladen ist"""
+    """Prüft ob VLC bereit ist oder nach endlicher Wartezeit ausweicht."""
+    global _vlc_warm, _vlc_warmup_timed_out
+
+    if (
+        not _vlc_warm
+        and _vlc_warmup_started_at is not None
+        and time.monotonic() - _vlc_warmup_started_at >= _VLC_WARMUP_TIMEOUT_SECONDS
+    ):
+        _vlc_warmup_timed_out = True
+        _vlc_warm = True
+        if _vlc_owner is not None:
+            _vlc_owner.disable("warmup_timeout")
+        logger.error(
+            "VLC-LIFECYCLE warmup_timeout seconds=%.0f fallback=opencv",
+            _VLC_WARMUP_TIMEOUT_SECONDS,
+        )
     return _vlc_warm
+
+
+def shutdown_vlc():
+    """Gibt das eine VLC-Paar beim App-Ende bestmoeglich und ohne Warten frei."""
+    if _vlc_owner is not None:
+        _vlc_owner.close()
 
 
 class VideoScreen(ctk.CTkFrame):
@@ -128,10 +168,11 @@ class VideoScreen(ctk.CTkFrame):
         self.is_playing = False
         self._end_called = False
         self._stop_event = threading.Event()
+        self._playback_generation = 0
+        self._scheduled_ids = set()
+        self._backend = None
 
         # VLC-spezifisch
-        self._vlc_instance = None
-        self._vlc_player = None
         self._vlc_check_id = None
 
         # OpenCV-Fallback
@@ -153,7 +194,15 @@ class VideoScreen(ctk.CTkFrame):
         )
         self.video_frame.pack(fill="both", expand=True)
 
-        # Video-Label für Frames (OpenCV-Modus) / Hintergrund (VLC-Modus)
+        # Getrennte Ausgabeflaechen: Ein im nativen Abbau haengender VLC-
+        # Ausgang darf den sichtbaren OpenCV-Fallback nicht ueberdecken.
+        self.vlc_surface = ctk.CTkFrame(
+            self.video_frame,
+            fg_color="#000000",
+            corner_radius=0,
+        )
+
+        # Video-Label für Frames (OpenCV-Modus)
         self.video_label = ctk.CTkLabel(
             self.video_frame,
             text="",
@@ -161,7 +210,7 @@ class VideoScreen(ctk.CTkFrame):
             text_color=COLORS["text_secondary"],
             fg_color="#000000"
         )
-        self.video_label.pack(expand=True, fill="both")
+        self.video_label.pack_forget()
 
 
     # ─────────────────────────────────────────────
@@ -170,67 +219,71 @@ class VideoScreen(ctk.CTkFrame):
 
     def play(self, video_path: str, next_screen: str = "start", on_complete: Optional[Callable] = None):
         """Spielt ein Video ab"""
+        self._stop_playback("new_play")
+
         self.video_path = video_path
         self.next_screen = next_screen
         self.on_complete = on_complete
 
-        # Vorherige Wiedergabe stoppen
-        self._stop_playback()
-
         # Reset
-        self._stop_event.clear()
+        self._stop_event = threading.Event()
+        self._frame_queue = queue.Queue(maxsize=3)
         self._end_called = False
+        token = self._playback_generation
 
         # Prüfen ob Video existiert
         if not video_path or not os.path.exists(video_path):
             logger.warning(f"Video nicht gefunden: {video_path}")
-            self.after(100, self._on_video_end)
+            self._schedule(100, lambda: self._on_video_end(token), token)
             return
 
         logger.info(f"Starte Video: {video_path}")
 
         # Label leeren (schwarzer Screen während Video lädt)
+        self._hide_video_surfaces()
         self.video_label.configure(text="", image=None)
         self.update_idletasks()
 
         # VLC bevorzugen, OpenCV als Fallback
         if _vlc_available and sys.platform == "win32":
-            if not _vlc_warm:
+            if not is_vlc_warm():
                 # Warmup noch nicht fertig - warten mit Ladeanimation
-                self._wait_for_vlc_warmup(video_path)
+                self._wait_for_vlc_warmup(video_path, token)
                 return
-            success = self._play_vlc(video_path)
+            success = self._play_vlc(video_path, token)
             if success:
                 return
             logger.warning("VLC-Wiedergabe fehlgeschlagen, Fallback auf OpenCV")
 
-        self._play_opencv(video_path)
+        self._play_opencv(video_path, token)
 
     def on_hide(self):
         """Screen wird verlassen"""
-        self._stop_playback()
+        self._stop_playback("screen_hidden")
 
     def on_show(self):
         """Screen wird angezeigt"""
-        self._end_called = False
-        self._stop_event.clear()
+        # Der komplette Wiedergabe-Reset passiert ausschliesslich in play().
+        pass
 
-    def _wait_for_vlc_warmup(self, video_path: str):
+    def _wait_for_vlc_warmup(self, video_path: str, token: int):
         """Wartet auf VLC-Warmup mit subtiler Ladeanimation"""
+        warmup_vlc()
         self._warmup_counter = 0
+        self._show_opencv_surface()
         logger.info("VLC-Warmup noch nicht fertig - warte...")
 
         def _check():
-            if self._end_called or self._stop_event.is_set():
+            if not self._is_current(token):
                 return
 
-            if _vlc_warm:
+            if is_vlc_warm():
                 self.video_label.configure(text="")
-                success = self._play_vlc(video_path)
+                success = self._play_vlc(video_path, token)
                 if success:
                     return
                 logger.warning("VLC nach Warmup fehlgeschlagen, Fallback auf OpenCV")
-                self._play_opencv(video_path)
+                self._play_opencv(video_path, token)
             else:
                 # Subtile Ladeanimation (pulsierende Punkte)
                 self._warmup_counter += 1
@@ -240,7 +293,7 @@ class VideoScreen(ctk.CTkFrame):
                     font=("Segoe UI", 24),
                     text_color="#303040"
                 )
-                self.after(500, _check)
+                self._schedule(500, _check, token)
 
         _check()
 
@@ -248,195 +301,149 @@ class VideoScreen(ctk.CTkFrame):
     # VLC-Wiedergabe (Hardware-beschleunigt)
     # ─────────────────────────────────────────────
 
-    def _play_vlc(self, video_path: str) -> bool:
-        """Spielt Video mit VLC ab (Hardware-Decoding)
-
-        Returns:
-            True wenn erfolgreich gestartet, False bei Fehler
-        """
+    def _play_vlc(self, video_path: str, token: int) -> bool:
+        """Plant die Wiedergabe auf dem appweit persistenten VLC-Player."""
         try:
-            # Absoluten Pfad sicherstellen
+            if not self._is_current(token) or _vlc_owner is None:
+                return False
+
             abs_path = os.path.abspath(video_path)
             logger.info(f"VLC: Öffne {abs_path}")
 
-            # VLC-Instanz mit Hardware-Decoding
-            args = [
-                "--no-xlib",
-                "--quiet",
-                "--no-video-title-show",
-                "--no-snapshot-preview",
-                "--avcodec-hw=dxva2",  # DirectX Video Acceleration
-            ]
-            self._vlc_instance = _vlc.Instance(args)
-            self._vlc_player = self._vlc_instance.media_player_new()
+            status = _vlc_owner.snapshot()
+            if not status["has_player"]:
+                # Ein Wiederaufbau findet nie im Tk-Hauptfaden statt. Der
+                # aktuelle Clip nutzt sofort OpenCV.
+                _vlc_owner.prepare_async()
+                self._log_vlc_lifecycle("fallback_no_player")
+                return False
 
-            # Media erstellen
-            media = self._vlc_instance.media_new(abs_path)
-            media.add_option("no-video-title-show")
-            self._vlc_player.set_media(media)
-
-            # Warten bis das Fenster sichtbar und bereit ist
             self.update_idletasks()
-            self.after(50, lambda: self._vlc_embed_and_play(abs_path))
-
+            self._backend = "vlc"
+            self._schedule(
+                50,
+                lambda: self._vlc_embed_and_play(abs_path, token),
+                token,
+            )
             return True
 
         except Exception as e:
             logger.error(f"VLC-Initialisierung fehlgeschlagen: {e}")
-            self._cleanup_vlc()
+            if _vlc_owner is not None:
+                _vlc_owner.retire_async("initialization_exception")
             return False
 
-    def _vlc_embed_and_play(self, video_path: str):
-        """Bettet VLC in das Tkinter-Fenster ein und startet Wiedergabe"""
+    def _vlc_embed_and_play(self, video_path: str, token: int):
+        """Bettet VLC in die stabile VLC-Flaeche ein und startet Wiedergabe."""
         try:
-            if self._vlc_player is None:
+            if not self._is_current(token) or _vlc_owner is None:
                 return
 
-            # Window-Handle des video_frame holen
-            hwnd = self.video_label.winfo_id()
+            # VLC braucht unter Windows eine wirklich gemappte Flaeche mit der
+            # aktuellen Groesse; ein nur erzeugtes, aber noch nie gepacktes
+            # Tk-Widget liefert sonst haeufig nur ein 1x1-Ausgabefenster.
+            self._show_vlc_surface()
+            self.update_idletasks()
+            hwnd = self.vlc_surface.winfo_id()
             if not hwnd:
                 logger.error("VLC: Kein Window-Handle verfügbar")
-                self._cleanup_vlc()
-                self._play_opencv(video_path)
+                _vlc_owner.retire_async("missing_hwnd")
+                self._play_opencv(video_path, token)
                 return
 
             logger.info(f"VLC: Einbetten in HWND {hwnd}")
-            self._vlc_player.set_hwnd(hwnd)
-
-            # Text ausblenden
-            self.video_label.configure(text="")
-
-            # Wiedergabe starten
-            result = self._vlc_player.play()
-            if result == -1:
-                logger.error("VLC: play() fehlgeschlagen")
-                self._cleanup_vlc()
-                self._play_opencv(video_path)
+            if not _vlc_owner.start(video_path, hwnd):
+                logger.error("VLC: Start fehlgeschlagen")
+                self._play_opencv(video_path, token)
                 return
 
+            if not self._is_current(token):
+                _vlc_owner.retire_async("stale_start")
+                return
+
+            self._show_vlc_surface()
             self.is_playing = True
             logger.info("VLC: Wiedergabe gestartet")
+            self._log_vlc_lifecycle("started")
 
-            # Regelmäßig prüfen ob Video zu Ende
-            self._vlc_check_id = self.after(200, self._vlc_check_status)
+            self._vlc_check_id = self._schedule(
+                200,
+                lambda: self._vlc_check_status(token),
+                token,
+            )
 
         except Exception as e:
             logger.error(f"VLC-Embed fehlgeschlagen: {e}")
-            self._cleanup_vlc()
-            self._play_opencv(video_path)
+            if _vlc_owner is not None:
+                _vlc_owner.retire_async("embed_exception")
+            self._play_opencv(video_path, token)
 
-    def _vlc_check_status(self):
-        """Prüft ob VLC-Wiedergabe noch läuft"""
-        if not self.is_playing or self._stop_event.is_set():
+    def _vlc_check_status(self, token: int):
+        """Prüft ob VLC-Wiedergabe noch läuft."""
+        if not self._is_current(token) or not self.is_playing:
             return
 
-        if self._vlc_player is None:
-            self._cleanup_and_end()
+        if _vlc_owner is None:
+            self._cleanup_and_end(token)
             return
 
         try:
-            state = self._vlc_player.get_state()
+            state = _vlc_owner.get_state()
+
+            if state is None:
+                logger.error("VLC: Player waehrend Wiedergabe nicht mehr verfuegbar")
+                self._cleanup_and_end(token)
+                return
 
             if state == _vlc.State.Ended:
                 logger.info("VLC: Video zu Ende")
-                self._cleanup_and_end()
+                _vlc_owner.mark_ended()
+                self._cleanup_and_end(token)
                 return
-            elif state == _vlc.State.Error:
+            if state == _vlc.State.Error:
                 logger.error("VLC: Wiedergabe-Fehler")
-                self._cleanup_and_end()
+                _vlc_owner.retire_async("runtime_error")
+                # Wie bisher bei einem spaeten Laufzeitfehler nicht von vorn
+                # wiederholen; der Fotoablauf geht direkt weiter.
+                self._cleanup_and_end(token)
                 return
-            elif state == _vlc.State.Stopped:
-                logger.info("VLC: Wiedergabe gestoppt")
-                self._cleanup_and_end()
+            if state == _vlc.State.Stopped:
+                logger.error("VLC: Unerwartet gestoppt")
+                _vlc_owner.retire_async("unexpected_stopped")
+                self._cleanup_and_end(token)
                 return
 
-            # Weiter prüfen
-            self._vlc_check_id = self.after(200, self._vlc_check_status)
+            self._vlc_check_id = self._schedule(
+                200,
+                lambda: self._vlc_check_status(token),
+                token,
+            )
 
         except Exception as e:
             logger.error(f"VLC Status-Check Fehler: {e}")
-            self._cleanup_and_end()
-
-    def _cleanup_vlc(self):
-        """VLC-Ressourcen aufräumen"""
-        if self._vlc_check_id is not None:
-            try:
-                self.after_cancel(self._vlc_check_id)
-            except:
-                pass
-            self._vlc_check_id = None
-
-        # VLC-Cleanup in Thread - stop()/release() können blockieren
-        player = self._vlc_player
-        instance = self._vlc_instance
-        self._vlc_player = None
-        self._vlc_instance = None
-
-        if player or instance:
-            def _release():
-                if player is not None:
-                    try:
-                        # 2.4.45: KEIN get_state() mehr davor. Der Statusabruf
-                        # im Oberflaechen-Thread (_vlc_check_status) haengt an
-                        # derselben Player-Sperre; hier daran zu ziehen hat den
-                        # Stillstand nur verschaerft. stop() auf einem bereits
-                        # gestoppten Player ist harmlos.
-                        player.stop()
-                    except:
-                        pass
-                    try:
-                        player.release()
-                    except:
-                        pass
-                if instance is not None:
-                    try:
-                        instance.release()
-                    except:
-                        pass
-                logger.debug("VLC-Ressourcen freigegeben")
-
-            cleanup_thread = threading.Thread(target=_release, daemon=True)
-            cleanup_thread.start()
-
-            # 2.4.45: HIER STAND EIN join(timeout=1.0) — ES WAR SELBST DIE BREMSE.
-            #
-            # Absicht war: nach einem Zwischen-Video warten, bis VLC die
-            # Grafikeinheit freigegeben hat, bevor die Kamera wieder startet.
-            # Tatsaechlich braucht `player.release()` aber genau DIESEN Thread,
-            # um das VLC-Kindfenster im Tk-Fenster abzubauen — der Aufraeum-
-            # Thread wartet also darauf, dass der Oberflaechen-Thread wieder
-            # Nachrichten verarbeitet, waehrend der Oberflaechen-Thread im
-            # join() auf den Aufraeum-Thread wartet.
-            #
-            # Belegt aus dem Feld-Log Box 101 vom 20.08.2026:
-            #   41.196  Video zu Ende
-            #   42.211  "VLC-Cleanup dauert >1s"     <- exakt 1,015 s = das
-            #                                          Zeitlimit selbst, nicht VLC
-            #   43.051  "VLC-Ressourcen freigegeben" <- erst 73 ms NACHDEM der
-            #                                          Thread wieder lief
-            # Das Warten hat die Verzoegerung also VERURSACHT und danach ohnehin
-            # aufgegeben — es gab nie eine echte Zusicherung, nur eine
-            # garantierte Sekunde Stillstand nach JEDEM Zwischen-Video.
-            #
-            # Jetzt: nicht warten. Der Abbau laeuft weiter, sobald die
-            # Nachrichtenschleife dran ist — im Log waren das ~70 ms.
-            # (self.update() waere hier falsch: Das betritt die Ereignisschleife
-            # erneut und kann Rueckrufe doppelt ausloesen.)
+            _vlc_owner.retire_async("status_exception")
+            self._cleanup_and_end(token)
 
     # ─────────────────────────────────────────────
     # OpenCV-Fallback
     # ─────────────────────────────────────────────
 
-    def _play_opencv(self, video_path: str):
+    def _play_opencv(self, video_path: str, token: int):
         """Spielt Video mit OpenCV ab (Software-Decoding, Fallback)"""
         import cv2
+
+        if not self._is_current(token):
+            return
+
+        self._show_opencv_surface()
+        self._backend = "opencv"
 
         self.cap = self._try_open_video(video_path)
 
         if self.cap is None:
             logger.error(f"OpenCV: Konnte Video nicht öffnen: {video_path}")
             self.video_label.configure(text="Video konnte nicht geladen werden")
-            self.after(2000, self._on_video_end)
+            self._schedule(2000, lambda: self._on_video_end(token), token)
             return
 
         # FPS aus Video lesen
@@ -453,13 +460,23 @@ class VideoScreen(ctk.CTkFrame):
         logger.info(f"OpenCV: {self.target_fps:.0f} FPS, {total_frames} Frames, {duration:.1f}s")
 
         self.is_playing = True
+        stop_event = self._stop_event
+        frame_queue = self._frame_queue
+        cap = self.cap
+        target_fps = self.target_fps
+        self._log_vlc_lifecycle("opencv")
 
         # Video-Reader-Thread starten
-        self._video_thread = threading.Thread(target=self._video_reader_thread, daemon=True)
+        self._video_thread = threading.Thread(
+            target=self._video_reader_thread,
+            args=(cap, stop_event, frame_queue, target_fps),
+            daemon=True,
+            name=f"Video-OpenCV-{token}",
+        )
         self._video_thread.start()
 
         # Frame-Display im Main-Thread starten
-        self.after(10, self._display_next_frame)
+        self._schedule(10, lambda: self._display_next_frame(token), token)
 
     def _try_open_video(self, video_path: str):
         """Versucht das Video mit verschiedenen Backends zu öffnen"""
@@ -493,17 +510,16 @@ class VideoScreen(ctk.CTkFrame):
 
         return None
 
-    def _video_reader_thread(self):
+    def _video_reader_thread(self, cap, stop_event, frame_queue, target_fps):
         """Liest Frames in separatem Thread (OpenCV)"""
-        import cv2
-        frame_time = 1.0 / self.target_fps
+        frame_time = 1.0 / target_fps
         frames_read = 0
 
-        while not self._stop_event.is_set() and self.cap is not None:
+        while not stop_event.is_set():
             start_time = time.time()
 
             try:
-                ret, frame = self.cap.read()
+                ret, frame = cap.read()
 
                 if not ret or frame is None:
                     logger.info(f"OpenCV: Video Ende nach {frames_read} Frames")
@@ -512,7 +528,7 @@ class VideoScreen(ctk.CTkFrame):
                 frames_read += 1
 
                 try:
-                    self._frame_queue.put_nowait(frame)
+                    frame_queue.put_nowait(frame)
                 except queue.Full:
                     pass
 
@@ -524,22 +540,31 @@ class VideoScreen(ctk.CTkFrame):
                 logger.error(f"OpenCV: Reader-Fehler: {e}")
                 break
 
-        if not self._stop_event.is_set():
-            try:
-                self._frame_queue.put(None, timeout=0.5)
-            except:
-                pass
+        if not stop_event.is_set():
+            # Das Ende-Signal darf auf einem schwachen/kurz blockierten
+            # UI-Faden nicht hinter drei alten Frames verloren gehen. Falls
+            # die kleine Queue voll ist, ist der aelteste Frame entbehrlich;
+            # der Abschluss des Fotoablaufs ist es nicht.
+            while not stop_event.is_set():
+                try:
+                    frame_queue.put_nowait(None)
+                    break
+                except queue.Full:
+                    try:
+                        frame_queue.get_nowait()
+                    except queue.Empty:
+                        pass
 
-    def _display_next_frame(self):
+    def _display_next_frame(self, token: int):
         """Zeigt den nächsten Frame an (Main-Thread, OpenCV)"""
-        if not self.is_playing or self._stop_event.is_set():
+        if not self._is_current(token) or not self.is_playing:
             return
 
         try:
             frame = self._frame_queue.get_nowait()
 
             if frame is None:
-                self._cleanup_and_end()
+                self._cleanup_and_end(token)
                 return
 
             self._show_frame(frame)
@@ -547,8 +572,12 @@ class VideoScreen(ctk.CTkFrame):
         except queue.Empty:
             pass
 
-        if self.is_playing and not self._stop_event.is_set():
-            self.after(self.frame_delay_ms, self._display_next_frame)
+        if self._is_current(token) and self.is_playing:
+            self._schedule(
+                self.frame_delay_ms,
+                lambda: self._display_next_frame(token),
+                token,
+            )
 
     def _show_frame(self, frame):
         """Zeigt einen Frame an (OpenCV)"""
@@ -588,15 +617,55 @@ class VideoScreen(ctk.CTkFrame):
     # Gemeinsame Methoden
     # ─────────────────────────────────────────────
 
-    def _stop_playback(self):
-        """Stoppt die Wiedergabe (VLC oder OpenCV)"""
-        self._stop_event.set()
-        self.is_playing = False
+    def _schedule(self, delay_ms: int, callback: Callable, token: int):
+        """Plant einen generationsgebundenen Tk-Rueckruf."""
+        holder = {}
 
-        # VLC aufräumen
-        self._cleanup_vlc()
+        def guarded():
+            after_id = holder.get("id")
+            if after_id is not None:
+                self._scheduled_ids.discard(after_id)
+            if self._is_current(token):
+                callback()
 
-        # OpenCV aufräumen
+        after_id = self.after(delay_ms, guarded)
+        holder["id"] = after_id
+        self._scheduled_ids.add(after_id)
+        return after_id
+
+    def _cancel_scheduled(self):
+        for after_id in tuple(self._scheduled_ids):
+            try:
+                self.after_cancel(after_id)
+            except Exception:
+                pass
+        self._scheduled_ids.clear()
+        self._vlc_check_id = None
+
+    def _is_current(self, token: int) -> bool:
+        return (
+            token == self._playback_generation
+            and not self._end_called
+            and not self._stop_event.is_set()
+        )
+
+    def _hide_video_surfaces(self):
+        for widget in (self.vlc_surface, self.video_label):
+            try:
+                widget.pack_forget()
+            except Exception:
+                pass
+
+    def _show_vlc_surface(self):
+        self.video_label.pack_forget()
+        self.vlc_surface.pack(fill="both", expand=True)
+
+    def _show_opencv_surface(self):
+        self.vlc_surface.pack_forget()
+        self.video_label.pack(fill="both", expand=True)
+
+    def _cleanup_opencv(self):
+        """Stoppt nur die Ressourcen der aktuellen OpenCV-Wiedergabe."""
         if self._video_thread and self._video_thread.is_alive():
             self._video_thread.join(timeout=0.3)
         self._video_thread = None
@@ -604,47 +673,134 @@ class VideoScreen(ctk.CTkFrame):
         while not self._frame_queue.empty():
             try:
                 self._frame_queue.get_nowait()
-            except:
+            except Exception:
                 break
 
         if self.cap:
             try:
                 self.cap.release()
-            except:
+            except Exception:
                 pass
             self.cap = None
 
-    def _cleanup_and_end(self):
-        """Aufräumen und beenden"""
-        if self._end_called:
+    def _stop_playback(self, reason: str):
+        """Entwertet den aktuellen Lauf; nur ein echter Abbruch mustert VLC aus."""
+        was_active_vlc = self._backend == "vlc" and self.is_playing
+        self._playback_generation += 1
+        self._stop_event.set()
+        self._cancel_scheduled()
+        self.is_playing = False
+
+        if was_active_vlc and _vlc_owner is not None:
+            _vlc_owner.retire_async(f"aborted_{reason}")
+
+        self._cleanup_opencv()
+        self._backend = None
+        self._hide_video_surfaces()
+        self.on_complete = None
+        self.video_path = None
+        self.next_screen = "start"
+
+    def _cleanup_and_end(self, token: int):
+        """Beendet genau den aktuellen Clip ohne normales VLC-Teardown."""
+        if not self._is_current(token):
             return
 
-        self._stop_playback()
+        self.is_playing = False
+        self._cancel_scheduled()
+        if self._backend == "vlc" and _vlc_owner is not None:
+            _vlc_owner.mark_ended()
+        elif self._backend == "opencv":
+            self._cleanup_opencv()
+        self._backend = None
+        self._hide_video_surfaces()
 
         try:
             self.video_label.configure(image=None, text="")
-        except:
+        except Exception:
             pass
 
-        # Direkt aufrufen statt self.after() - vermeidet Probleme mit zerstörten Widgets
-        self._on_video_end()
+        self._log_vlc_lifecycle("ended")
+        self._on_video_end(token)
 
-    def _on_video_end(self):
-        """Video beendet"""
-        if self._end_called:
+    def _on_video_end(self, token: int):
+        """Loest Referenzen vor dem einmaligen Abschluss-Rueckruf."""
+        if not self._is_current(token):
             return
         self._end_called = True
 
-        logger.info(f"Video beendet -> {self.next_screen}")
+        callback = self.on_complete
+        next_screen = self.next_screen
+        self.on_complete = None
+        self.video_path = None
+        self.next_screen = "start"
 
-        if self.on_complete:
-            # Callback übernimmt Navigation (z.B. _continue_after_video -> show_screen)
+        logger.info(f"Video beendet -> {next_screen}")
+
+        if callback:
             try:
-                self.on_complete()
+                callback()
             except Exception as e:
                 logger.error(f"Callback-Fehler: {e}")
-                # Fallback bei Fehler: normaler Screen-Wechsel
-                self.app.show_screen(self.next_screen)
+                # Nur der weiterhin aktuelle Lauf darf nach einem Callback-
+                # Fehler noch navigieren. Ein reentranter neuer Clip gewinnt.
+                if token == self._playback_generation:
+                    self.app.show_screen(next_screen)
         else:
-            # Kein Callback -> normaler Screen-Wechsel (z.B. video_start -> session)
-            self.app.show_screen(self.next_screen)
+            self.app.show_screen(next_screen)
+
+    def _log_vlc_lifecycle(self, event: str):
+        """Kompakte Ressourcenwerte nur im Developer Mode protokollieren."""
+        global _vlc_metrics_process
+        if not is_developer_mode():
+            return
+
+        status = _vlc_owner.snapshot() if _vlc_owner is not None else {
+            "state": "unavailable",
+            "generation": 0,
+            "creations": 0,
+            "videos": 0,
+            "cleanup_pending": 0,
+            "cleanup_result": "none",
+            "preparing": 0,
+        }
+        rss_mb = -1.0
+        system_ram = -1.0
+        process_cpu = -1.0
+        system_cpu = -1.0
+        try:
+            import psutil
+            if _vlc_metrics_process is None:
+                _vlc_metrics_process = psutil.Process(os.getpid())
+            rss_mb = _vlc_metrics_process.memory_info().rss / (1024 * 1024)
+            process_cpu = _vlc_metrics_process.cpu_percent(interval=None)
+            system_ram = psutil.virtual_memory().percent
+            system_cpu = psutil.cpu_percent(interval=None)
+        except Exception:
+            pass
+
+        logger.info(
+            "VLC-LIFECYCLE event=%s playback=%s backend=%s state=%s "
+            "generation=%s creations=%s videos=%s cleanup_pending=%s "
+            "cleanup_result=%s preparing=%s rss_mb=%.1f process_cpu_pct=%.1f "
+            "system_ram_pct=%.1f system_cpu_pct=%.1f threads=%s",
+            event,
+            self._playback_generation,
+            self._backend or "none",
+            status["state"],
+            status["generation"],
+            status["creations"],
+            status["videos"],
+            status["cleanup_pending"],
+            status["cleanup_result"],
+            status["preparing"],
+            rss_mb,
+            process_cpu,
+            system_ram,
+            system_cpu,
+            threading.active_count(),
+        )
+
+    def close_video(self):
+        """Idempotenter UI-Close-Hook; wartet nicht auf native Freigaben."""
+        self._stop_playback("app_shutdown")

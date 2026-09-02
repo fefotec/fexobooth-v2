@@ -82,7 +82,7 @@ Output: `bridge/FexoNikonBridge/bin/Release/net48/` (EXE + abhängige DLLs —
 - [x] Bridge 0.2.0: read-only `diag`, begrenzte interne WPD-/WIA-/Console-
   Diagnose und Protokolltest fuer Developer- und Produktionspfad; Sammlung
   nur im Developer Mode aktiviert
-- [ ] Aktuellen Regressionstest auf Box 252 mit 2.4.63 auswerten: Windows-PnP,
-  Library-Ausnahme, Scanstatus und Bridge-Dateihashes
+- [x] Regression auf Box 252 ausgewertet: Ursache war das USB-Kabel; kein
+  Bridge-Codefix erforderlich. Diagnose aus 2.4.63 bleibt erhalten.
 - [ ] Erst bei belegtem Library-Problem einen Source-Build aus
   dukus/digiCamControl pruefen (Solution `CameraControlDevices.sln`)

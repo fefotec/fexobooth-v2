@@ -4,6 +4,40 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-09-02 — Video V2.4.64: VLC-Lawine nach langen Webcam-Laeufen beseitigt
+
+**Befund Box 155:** 121 vollstaendige Sitzungen, 608 Video-Wiedergaben und
+548/548 erfolgreiche Webcam-Aufnahmen. Ab etwa Sitzung 110 stiegen RAM und CPU
+stark, gleichzeitig fiel LiveView von rund 7,6 auf 3,4 bis 4,8 FPS. 34 pro Clip
+erzeugte VLC-Cleanup-Threads waren am Logende noch offen; einige Freigaben
+brauchten 90 bis ueber 300 Sekunden. Der Capture-Weg war nicht die Ursache.
+
+**Umsetzung 2.4.64:** Ein appweiter Owner uebernimmt das im Warmup erzeugte
+VLC-Paar und verwendet es fuer alle Clips. Ein normales Ende behaelt Player und
+Instanz; jedes `media_new()` erhaelt dagegen genau ein Caller-`release()` nach
+`set_media()`. Der Fehlerpfad kann nur ein Paar und einen Cleanup-Thread
+ausmustern. Wiederaufbau ist einmalig und nur nach vollstaendig bestaetigtem
+Cleanup erlaubt; ansonsten bleibt OpenCV aktiv.
+
+**Lebenszyklus gehaertet:** Der Video-Screen bleibt ueber Navigationen erhalten.
+Generationsnummern und erfasste `after()`-IDs entwerten alte Tk-Rueckrufe.
+Abschluss-Callbacks werden vor ihrem Aufruf geloest. VLC-/OpenCV-Ausgabe ist
+getrennt, und jeder OpenCV-Reader besitzt Event, Capture und Queue seines Clips.
+Warmup wartet maximal 120 Sekunden; Shutdown entwertet Video und startet
+bestenfalls den einen nicht blockierenden Cleanup.
+
+**Diagnose/Validierung:** `VLC-LIFECYCLE` schreibt Generation, Erstellungen,
+Videos, Cleanup-Ergebnis, Prozess-RSS/-CPU, System-RAM/-CPU und Threadzahl. Der
+Fake-VLC-Test bildet 608 Clips und alle begrenzten Fehler-/Race-Pfade ab. Der
+Webcam-Capture-Code wurde nicht veraendert. Lokaler Builder und GitHub Actions
+haben die gesamte Kamera-/Video-Suite jetzt als Pflicht-Gate vor dem Paketbau.
+Unter Windows bestanden **21/21 Testgruppen**, Nikon-Smoke und `compileall`.
+
+**Offen:** Realer Developer-Langlauf auf Box 155 mit mindestens 608 Videos und
+548/548 Aufnahmen; danach Cloud-Log gegen den alten Ressourcenanstieg pruefen.
+
+---
+
 ## 2026-09-01 — Nikon V2.4.63: Ursache vor dem Folgefix sichtbar machen
 
 **Befund Box 252:** Dieselbe Nikon D3300 und dieselbe Bridge-Architektur, die

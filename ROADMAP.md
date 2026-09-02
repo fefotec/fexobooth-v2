@@ -6,9 +6,9 @@ Diese Datei enthält die Anforderungen und geplanten Features.
 
 ## Aktuelle Version
 
-**Status:** Produktiv im Einsatz; Nikon-2.4.63-Diagnose lokal fertig, Ursachenlauf auf Box 252 offen; Canon-2.4.62-Nachtest ohne SD-Karte ebenfalls offen
-**Version:** 2.4.63 (lokal, noch kein Hardware-/GitHub-Release)
-**Letzte Änderung:** 2026-09-01
+**Status:** Produktiv im Einsatz; VLC-2.4.64-Langzeittest auf Box 155 offen; Nikon-Ausfall auf Box 252 war das USB-Kabel; Canon-2.4.62-Nachtest ohne SD-Karte ebenfalls offen
+**Version:** 2.4.64 (lokal, noch kein Hardware-/GitHub-Release)
+**Letzte Änderung:** 2026-09-02
 
 ---
 
@@ -24,7 +24,7 @@ Diese Datei enthält die Anforderungen und geplanten Features.
 - [x] Persistenz (Template + Buchung nach Neustart)
 - [x] Offline-USB-Sync
 - [x] Admin-Menü
-- [x] Video-Wiedergabe (MSMF Backend)
+- [x] Video-Wiedergabe (persistenter VLC-Player, OpenCV-Fallback)
 - [x] Offline-Hotspot Setup
 
 ---
@@ -57,12 +57,25 @@ Bridge-Warmup in ~1,4 s, LiveView 640×424 im Session-Screen, 4 Captures in voll
 6000×4000-Auflösung, kein Fremdfenster. Performance-Fixes danach in 2.4.12
 (Overlay-/Fotoanzeige-Cache, Filter-Arbeitskopien, Final-Rendern im Hintergrund).
 
-**Aktueller Regressionsbefund (Box 252, 2.4.62):** Dieselbe D3300 wird vor
-Live View/Capture nicht mehr in `ConnectedDevices` gefunden, obwohl Bridge und
-Protokoll laufen. 2.4.63 erweitert deshalb ausschliesslich den Developer-Log
-um internen WPD-/WIA-Zustand, Windows-PnP/Prozesse und Bridge-Dateihashes.
-**Offen:** 2.4.63-Hardwarelog aus Admin-Suche plus Session-Start auswerten;
-danach den engsten belegten Folgefix umsetzen. Siehe [TODO.md](TODO.md).
+**Regressionsbefund Box 252 abgeschlossen:** Die D3300 wurde vor Live View und
+Capture nicht in `ConnectedDevices` gefunden, obwohl Bridge und Protokoll
+liefen. 2.4.63 machte den USB-/WPD-Pfad detailliert sichtbar; Christian
+bestaetigte danach das Kabel als Ursache. Es ist kein weiterer Nikon-Codefix
+aus diesem Fehler abzuleiten. Die Diagnose bleibt fuer kuenftige Hardwarefaelle
+erhalten. Siehe [TODO.md](TODO.md).
+
+---
+
+## Video-Langzeitstabilitaet (2.4.64) 🎬
+
+Box 155 belegte nach 608 Videos einen wachsenden Rueckstand nativer
+VLC-Freigaben bei weiterhin 548/548 erfolgreichen Webcam-Aufnahmen. 2.4.64
+verwendet deshalb Warmup, Instanz und Player appweit wieder, gibt jede
+Caller-Media-Referenz explizit frei und begrenzt den Fehlerpfad auf genau ein
+ausgemustertes Paar. Der Webcam-Code bleibt unveraendert.
+
+**Offen:** Mindestens denselben Umfang auf Box 155 im Developer Mode fahren
+und `VLC-LIFECYCLE`, Systemlast, LiveView-FPS sowie 548/548 Aufnahmen belegen.
 
 ---
 

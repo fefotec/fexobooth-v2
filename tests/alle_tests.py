@@ -23,6 +23,8 @@ TESTS = [
      "SaveTo, UI-Lock, Capacity und Readback sind atomar"),
     ("Dev-Mode-Logging", "test_dev_logging.py",
      "Owner, Queue, Thread und Laufzeiten im Diagnose-Log"),
+    ("Video-/VLC-Lebenszyklus", "test_video_lifecycle.py",
+     "608 Clips; ein Player, begrenztes Cleanup und sichere Rueckrufe"),
     ("Nikon-Developerdiagnose", "test_nikon_diagnostics.py",
      "Dev-Gate, diag, Drosselung, PnP-Datenschutz und Inventar"),
     ("Nikon-Bridge-Vertrag", "../tools/nikon_smoke_test.py",

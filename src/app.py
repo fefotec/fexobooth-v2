@@ -62,6 +62,7 @@ class PhotoboothApp:
     
     def __init__(self, config: Dict[str, Any]):
         self.config = config
+        self._shutdown_started = False
         apply_locale_to_config(self.config)
 
         # Windows-Leistung sicherstellen (2.4.16): Prozess-Priorität anheben
@@ -2998,7 +2999,7 @@ class PhotoboothApp:
         }
         
         # Screen erstellen falls nicht vorhanden oder neu erstellen für frischen State
-        if screen_name in ["session", "filter", "final", "video"]:
+        if screen_name in ["session", "filter", "final"]:
             # Diese Screens immer neu erstellen
             if screen_name in self.screens:
                 self.screens[screen_name].destroy()
@@ -3825,6 +3826,11 @@ class PhotoboothApp:
         Args:
             grund: Klartext fuer das Log (wer hat das Beenden ausgeloest)
         """
+        if getattr(self, "_shutdown_started", False):
+            logger.debug(f"Beenden bereits gestartet - ignoriere zweiten Aufruf ({grund})")
+            return
+        self._shutdown_started = True
+
         logger.warning(f"App wird beendet (Grund: {grund})")
 
         # Netz zuerst spannen: Ab hier verschwindet der Prozess garantiert,
@@ -3834,6 +3840,21 @@ class PhotoboothApp:
             notausstieg_scharf_machen(sekunden=8.0, grund=grund)
         except Exception:
             pass
+
+        # Wiedergabe und alte Session-Callbacks vor root.destroy() entwerten.
+        # Native VLC-Freigaben laufen ueber genau einen Daemon-Thread; hier
+        # wird bewusst nicht auf sie gewartet.
+        try:
+            video_screen = getattr(self, "screens", {}).get("video")
+            if video_screen is not None and hasattr(video_screen, "close_video"):
+                video_screen.close_video()
+        except Exception as e:
+            logger.warning(f"Beenden — Video-Screen schliessen fehlgeschlagen: {e}")
+        try:
+            from src.ui.screens.video import shutdown_vlc
+            shutdown_vlc()
+        except Exception as e:
+            logger.warning(f"Beenden — VLC freigeben fehlgeschlagen: {e}")
 
         for schritt, aktion in (
             ("Taskleiste einblenden", self._show_taskbar),

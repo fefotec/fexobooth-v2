@@ -6,6 +6,62 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.64] - 2026-09-02 - VLC-Ressourcenstau der Webcam-Boxen begrenzt
+
+> Der Webcam-Capture, Live View sowie Canon- und Nikon-Aufnahmewege bleiben
+> unveraendert. Der Fix betrifft ausschliesslich die Wiedergabe der
+> Start-/Zwischenvideos und deren Developer-Diagnose.
+
+### Befund Box 155
+
+- 121 Sitzungen mit 608 Videos und 548/548 erfolgreichen Webcam-Aufnahmen
+  liefen zunaechst korrekt. Spaeter stiegen RAM und CPU stark, waehrend die
+  LiveView-FPS einbrachen.
+- Pro Clip wurden eine neue VLC-Instanz, ein neuer Player und ein eigener
+  Cleanup-Thread erzeugt. 34 native Freigaben standen am Logende gleichzeitig
+  aus; einzelne liefen bereits mehrere Minuten.
+- Zusaetzlich blieb die Caller-Referenz jedes `media_new()` ohne explizites
+  `media.release()`. `python-vlc` besitzt dafuer keinen automatischen Destruktor.
+
+### Korrektur
+
+- Warmup und alle Videos eines App-Laufs verwenden jetzt dieselbe persistente
+  VLC-Instanz und denselben Player. Am normalen Videoende gibt es weder
+  `stop()` noch `release()` oder einen Cleanup-Thread.
+- Jede kurzlebige Media-Referenz wird direkt nach `set_media()` in einem
+  `finally` exakt einmal freigegeben.
+- Ein echtes VLC-Fehlerpaar wird atomar ausgemustert. Es existiert hoechstens
+  ein Cleanup-Thread; waehrenddessen spielt OpenCV. Nur eine vollstaendig
+  bestaetigte Freigabe erlaubt genau einen Wiederaufbau. Bei Haenger oder
+  Release-Ausnahme bleibt VLC fuer den Prozess gesperrt.
+- Der Video-Screen bleibt bestehen. Wiedergabe-Generationen entwerten alte
+  Tk-Timer und Abschluss-Rueckrufe. OpenCV besitzt pro Clip eigenes Event,
+  Capture und Queue; VLC und OpenCV verwenden getrennte Ausgabeflaechen. Das
+  OpenCV-Endsignal verdraengt bei voller Queue einen alten Frame, statt nach
+  einem kurzen UI-Stau verloren zu gehen.
+- Nach 120 Sekunden Warmup ohne Ergebnis wird die Bedienung mit OpenCV
+  freigegeben. Der App-Shutdown besitzt einen expliziten, nicht blockierenden
+  Video-Close-Hook.
+
+### Developer-Diagnose und Tests
+
+- `VLC-LIFECYCLE` meldet Wiedergabe-/Cleanup-Zustand, Generation,
+  Player-Erstellungen, Videoanzahl, RSS, Prozess-/System-CPU, System-RAM und
+  Threadzahl.
+- Der neue headless Regressionstest simuliert 608 Clips: genau eine Instanz,
+  ein Player, 608 Starts und 608 explizite Media-Freigaben, ohne normalen
+  Cleanup-Thread. Fehlerstau, zweite Generation, Release-Ausnahmen, Warmup-
+  Timeout, Shutdown, alte Timer und Callback-Freigabe sind ebenfalls abgedeckt.
+- Lokaler Builder und GitHub-Actions-Build fuehren die Kamera-/Video-Suite vor
+  dem Paketbau aus und brechen bei einer Regression ab.
+- Windows-Python-Validierung: **21/21 Testgruppen bestanden**; Nikon-Smoke-Test
+  und `compileall` ebenfalls gruen.
+
+**Offen:** Build auf Box 155 im Developer Mode mindestens bis 608 Videos und
+548/548 Aufnahmen laufen lassen und den Cloud-Log auswerten.
+
+---
+
 ## [2.4.63] - 2026-09-01 - Nikon-Erkennungsdiagnose erweitert
 
 > Dieser Build veraendert weder Nikon-Erkennung noch Kamera-Timeouts,

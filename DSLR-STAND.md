@@ -1,7 +1,7 @@
 # DSLR-Baustelle — Stand und Übergabe
 
 > **Zweck dieser Datei:** Vollständige Übergabe an die nächste Sitzung.
-> Stand: **01.09.2026, Version 2.4.63**. Testgeräte: **Box 245, Box 248 und
+> Stand: **02.09.2026, Version 2.4.64**. Testgeräte: **Box 155, Box 245, Box 248 und
 > Box 252**, Canon EOS 2000D sowie Nikon D3300, Surface-/Lenovo-Tablets.
 >
 > **Wer hier neu einsteigt, liest zuerst „Die wichtigste Regel" und
@@ -36,7 +36,7 @@ Zweite Regel, ebenso wichtig:
 
 ## Wo wir stehen
 
-### Nikon D3300: funktionierte bereits, aktuelle Erkennung vor Capture defekt
+### Nikon D3300: funktionierte bereits, Regressionsursache war das USB-Kabel
 
 Die Nikon-Arbeit beginnt **nicht von vorne**: Am 02./03.07.2026 liefen
 FexoNikonBridge, Live View und Vollbild-Capture auf echter Box-Hardware. Der
@@ -44,7 +44,7 @@ Langlauf lieferte 470 von 470 Aufnahmen. `CameraControl.Devices` mappt die
 D3300 explizit auf den Nikon-PTP-Pfad; die eigene Bridge laeuft unsichtbar und
 uebertraegt in den RAM, eine SD-Karte ist nicht erforderlich.
 
-Der aktuelle 2.4.62-Befund auf Box 252 liegt frueher im Ablauf:
+Der 2.4.62-Befund auf Box 252 lag frueher im Ablauf:
 
 - Bridge-Prozess startet, bleibt aktiv und antwortet auf `ping`.
 - Admin liefert wirklich null erkannte Nikon-Geraete. Der sichtbare Eintrag
@@ -55,16 +55,17 @@ Der aktuelle 2.4.62-Befund auf Box 252 liegt frueher im Ablauf:
   Kamerabesitz; der bisherige Log enthielt weder Windows-PnP noch die intern
   abgefangene WPD-/WIA-Ausnahme.
 
-2.4.63 ist deshalb bewusst ein **reiner Diagnosebuild**. Bridge 0.2.0 liefert
+2.4.63 war deshalb bewusst ein **reiner Diagnosebuild**. Bridge 0.2.0 liefert
 ueber `diag` nur vorhandenen Manager-/Scan-/Geraete-/Fehlerzustand und sammelt
 interne Librarymeldungen begrenzt ausserhalb des stdout-Protokolls. Die App
 ergaenzt Lock-/Request-Timings, tatsaechliche Bridge-Dateihashes und nach
 Init-Fehlern gedrosselt Windows-PnP-/Prozessdaten. Erkennung, Timeouts,
 Warmup, Admin-Platzhalter, Live View und Capture sind unveraendert.
 
-**Naechster zwingender Schritt:** 2.4.63 auf Box 252 im Developer Mode,
-einmal Admin-Suche plus einmal normaler Session-Start, danach Dashboard-Log
-auswerten. Erst dann folgt ein enger Ursachenfix.
+**Abschluss:** Christian bestaetigte danach das USB-Kabel als Ursache. Aus
+diesem Ausfall folgt kein Nikon-Codefix. Beim gemeinsamen 2.4.64-Build bleibt
+nur ein kurzer Hardware-Smoke-Test sinnvoll; Erkennung, Live View und Capture
+wurden durch den VLC-Umbau nicht geaendert.
 
 ### Canon: Was die bisherigen Hardware-Logs nachweisen
 
