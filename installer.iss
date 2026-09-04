@@ -2,9 +2,9 @@
 ; Erstellt einen professionellen Windows-Installer
 
 #define MyAppName "FexoBooth"
-; MyAppVersion kann beim ISCC-Aufruf via /DMyAppVersion=2.4.64 ueberschrieben
+; MyAppVersion kann beim ISCC-Aufruf via /DMyAppVersion=2.4.65 ueberschrieben
 ; werden. build_installer.bat liest die echte App-Version aus src/__init__.py
-; und uebergibt sie als Parameter — dann heisst die EXE z.B. FexoBooth_Setup_2.4.64.exe.
+; und uebergibt sie als Parameter — dann heisst die EXE z.B. FexoBooth_Setup_2.4.65.exe.
 ; Default fuer manuelle ISCC-Aufrufe ohne Parameter:
 #ifndef MyAppVersion
   #define MyAppVersion "0.0.0"
@@ -135,6 +135,12 @@ Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Fil
 ; Windows Icon-Cache per PowerShell löschen (erzwingt Rebuild beim nächsten Explorer-Start)
 ; ie4uinit.exe existiert nicht auf allen Geräten (z.B. Lenovo Miix 310), daher nur PowerShell
 Filename: "powershell.exe"; Parameters: "-NoProfile -Command ""Remove-Item -Path $env:LOCALAPPDATA\IconCache.db -Force -ErrorAction SilentlyContinue; Remove-Item -Path $env:LOCALAPPDATA\Microsoft\Windows\Explorer\iconcache_*.db -Force -ErrorAction SilentlyContinue"""; Flags: runhidden nowait; StatusMsg: "Aktualisiere Icon-Cache..."
+; Hotspot-Leerlauf-Abschaltung von Windows deaktivieren (Pflicht-Schritt, still, 2.4.65).
+; Windows schaltet den mobilen Hotspot nach 5 Minuten ohne Geraet ab - mitten in
+; der Feier. Das Script setzt die zwei Dienst-Schalter (icssvc) dauerhaft auf AUS.
+; Braucht Admin (der Installer hat sie). Log: {app}\logs\hotspot_keepalive.log
+; BEWUSST kein "postinstall"-Haekchen: solche Optionen werden nie angeklickt.
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\setup\hotspot_keepalive.ps1"" -InstallDir ""{app}"""; Flags: runhidden waituntilterminated; StatusMsg: "Hotspot-Abschaltung von Windows wird deaktiviert..."
 ; Firmen-WLAN einrichten (Pflicht-Schritt, still): Profil mit Klartext-Schlüssel
 ; frisch anlegen (auto-connect an, MAC-Randomisierung aus) + verbinden.
 ; Kein Neustart nötig. Behebt die "Box bucht sich nicht ins WLAN ein"-Fälle.

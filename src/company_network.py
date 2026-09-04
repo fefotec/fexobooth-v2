@@ -548,6 +548,19 @@ def _log_verdict(config, ssid, heartbeat_ok: bool, context: str = "Firmen-WLAN")
         except Exception as e:
             extra["Hotspot-Konfl."] = f"unbekannt ({e})"
 
+        # 2.4.65: Beides kostet nichts (Registrierung lesen + Zaehler) und
+        # zeigt im Feld sofort, ob der Installer-Schritt gegriffen hat und ob
+        # der Waechter eingreifen musste.
+        try:
+            from src.gallery.hotspot_watchdog import (
+                describe_windows_idle_shutdown,
+                watchdog_status_line,
+            )
+            extra["Leerlauf-Aus"] = describe_windows_idle_shutdown()
+            extra["Hotspot-Waecht."] = watchdog_status_line()
+        except Exception as e:
+            extra["Hotspot-Waecht."] = f"unbekannt ({e})"
+
         endpoint = str(config.get("monitoring_endpoint", "")).strip()
         host = "admin.fexobox.de"
         if endpoint.startswith("http"):

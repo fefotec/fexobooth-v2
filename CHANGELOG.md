@@ -6,6 +6,77 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.65] - 2026-09-04 - Gaeste-Hotspot haelt die ganze Feier durch
+
+> Anlass: Seit Ende August melden Kunden „QR-Code geht nicht" und die
+> App-Nutzung sank (Dashboard App-Statistik). Kundenfall NX-142048 (29.08.,
+> Box 106): Das Handy der Kundin war 14:57–15:06 an der Box und brachte 9
+> Fotos in die Cloud — danach kam bis zum Ende der Feier kein Handy mehr an
+> die Box, 65 von 74 Fotos hat nie jemand gesehen. Werkstatt-Test 03.09. mit
+> derselben Box: „Verbindungsprobleme, auf zwei Handys". Die Logs von Box 155
+> (`D:\logs`, 01.09. + 04.09.) haben dann drei Ursachen sichtbar gemacht.
+
+### Befund (Box 155, 2.4.45)
+
+1. **Der Hotspot geht von selbst aus.** 10:04 Uhr „Eig. Hotspot: AN", 11:26
+   Uhr aus — ohne dass die Software ihn angefasst hat. Windows deaktiviert
+   den mobilen Hotspot nach 5 Minuten ohne verbundenes Geraet (und bei
+   geteilter Verbindung ohne Internet). Auf einer Feier heisst das: Gaeste
+   holen am Anfang Fotos, dann Ruhe, danach kommt niemand mehr rein.
+2. **„AN", aber ohne Adresse.** 01.09. 13:16–13:51: Windows meldete Tethering
+   „On", die Box hatte aber nur eine Notfalladresse (`169.254.14.101`) und
+   keine `192.168.137.1`. Handys kamen ins WLAN, erreichten die Box nicht.
+   `start_hotspot()` sah nur „war bereits aktiv" und reparierte nichts.
+3. **QR-Code mit falscher Adresse.** 04.09. 11:26:06 QR erzeugt (`a=http://
+   192.168.2.159`, Firmen-WLAN), 11:26:16 Hotspot gestartet. Der falsche QR
+   stand 55 Minuten. Der App-Komplett-Test um 12:43 scheiterte dreimal mit
+   „Could not connect to the server".
+
+### Geaendert
+
+- **Hotspot-Waechter** (`src/gallery/hotspot_watchdog.py`, neu): prueft alle
+  45 s ohne PowerShell nur die IP-Liste. Fehlt `192.168.137.x` zweimal in
+  Folge: Hotspot stoppen (falls Windows ihn fuer „an" haelt) und neu starten,
+  dann 3 Minuten Ruhe. Werkstatt-Regel aus 2.4.27 bleibt (Hotspot-Konflikt
+  mit Firmen-WLAN → keine Reparatur). Jede Reparatur steht in `netzwerk.log`,
+  also auch ohne Developer-Mode. Start in `app.py` direkt nach dem ersten
+  Hotspot-Start, Stopp beim Beenden.
+- **QR-Code nur noch mit Hotspot-Adresse** (`server.py: choose_gallery_ip`):
+  Gibt es `192.168.137.x`, wird sie genommen; sonst steht `192.168.137.1`
+  im QR. Nie mehr Firmen-WLAN- oder `169.254`-Adresse. Die App verbindet
+  das Handy ohnehin immer mit dem Box-Hotspot.
+- **Windows-Leerlauf-Abschaltung dauerhaft aus** (`setup/hotspot_keepalive.ps1`,
+  neu): setzt `PeerlessTimeoutEnabled=0` und `PublicConnectionTimeoutEnabled=0`
+  im Dienst „Mobiler Hotspot" (icssvc) und startet den Dienst bei Aenderung
+  neu. Laeuft als **Pflicht-Schritt im Installer** (kein Haekchen, der
+  Installer ist Admin) und zusaetzlich in der Boot-/Login-Aufgabe „Windows
+  Update Lockdown" (SYSTEM). Log: `logs\hotspot_keepalive.log`. Exit-Code
+  immer 0 — der Installer darf daran nie scheitern.
+- **NETZ-BILANZ** zeigt zwei neue Zeilen: `Leerlauf-Aus` (haben die
+  Registrierungswerte gegriffen?) und `Hotspot-Waecht.` (Pruefungen,
+  Reparaturen, letztes Ergebnis).
+- `start_hotspot`/`stop_hotspot` laufen jetzt unter einem Lock — App-Start,
+  Admin-Speichern und Waechter koennen sich nicht mehr gleichzeitig in
+  PowerShell verhaken.
+
+### Tests
+
+- Neu `tests/test_hotspot_watchdog.py` (in `alle_tests.py` eingetragen):
+  QR-Adresse fuer die drei Feld-IP-Lagen, Entscheidungslogik
+  (warten/reparieren/ruhen), Waechter-Ablauf mit gefaelschter IP-Liste,
+  statische Verdrahtung von Installer, Boot-Aufgabe und App.
+- `python tests/alle_tests.py`: **22/22 bestanden.** PowerShell-Syntax beider
+  Skripte per `PSParser` geprueft: 0 Fehler.
+
+### Nicht geaendert
+
+- Kamera-, Video- und DSLR-Pfade bleiben exakt auf dem Stand 2.4.64.
+
+**Offen:** Feldtest auf Box 155/248 (siehe TODO), danach gestaffelt auf
+Ruecklaeufer mit Live-Upgrade.
+
+---
+
 ## [2.4.64] - 2026-09-02 - VLC-Ressourcenstau der Webcam-Boxen begrenzt
 
 > Der Webcam-Capture, Live View sowie Canon- und Nikon-Aufnahmewege bleiben

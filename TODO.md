@@ -4,6 +4,38 @@ Aufgabenliste mit Prioritäten.
 
 ---
 
+## ➡️ NÄCHSTER TEST: HOTSPOT HÄLT DURCH (Stand 2.4.65) 🔴
+
+Anlass: Kunden „QR-Code geht nicht" seit Ende August, Kundenfall NX-142048,
+Box-155-Logs vom 01./04.09. (Details CHANGELOG 2.4.65). Boxen werden manuell
+per Installer aktualisiert — erst Werkstatt-Boxen, dann Rückläufer mit
+Live-Upgrade, dann Rest.
+
+- [x] 2.4.65 umgesetzt: Hotspot-Wächter, QR nur mit Hotspot-Adresse,
+      Windows-Leerlauf-Aus per Installer + Boot-Aufgabe. `alle_tests.py` 22/22.
+- [ ] **Installer 2.4.65 bauen** (GitHub Action `build-release.yml`, Version
+      `2.4.65`) und auf **Box 155** installieren (Installer = Admin, läuft still
+      durch). Danach `C:\FexoBooth\logs\hotspot_keepalive.log` öffnen: beide
+      Zeilen müssen `= 0` melden.
+- [ ] **Box im Dev-Mode starten** (`start_dev.bat`). Im Log muss stehen:
+      `Hotspot-Waechter gestartet … Windows-Leerlauf-Abschaltung: AUS`.
+- [ ] **Leerlauf-Test:** Handy per QR verbinden, Fotos ansehen, Handy-WLAN aus.
+      **30 Minuten warten** (nichts an der Box tun). Dann Handy erneut per QR
+      verbinden → Galerie muss sofort laden. (Vorher: nach ~5 Min war das WLAN
+      „fexobox-gallery" weg.)
+- [ ] **QR-Test in der Werkstatt:** Box neu starten, SOFORT den QR scannen
+      (bevor der Hotspot steht). Die App darf jetzt nicht mehr „Could not
+      connect" bringen, sondern kurz warten und dann laden. Im Log:
+      `QR-Adresse: Hotspot-Adresse fehlt noch … nehme Standard 192.168.137.1`.
+- [ ] **Reparatur-Test:** Bei laufender Box in Windows den mobilen Hotspot von
+      Hand ausschalten (Einstellungen → Netzwerk → Mobiler Hotspot). Nach
+      spätestens 2 Minuten muss er von selbst wieder an sein; in
+      `netzwerk.log` steht ein Block `HOTSPOT-WAECHTER: Reparatur … HOTSPOT
+      WIEDER DA`.
+- [ ] Dev-Mode-Log + `netzwerk.log` + `hotspot_keepalive.log` an Claude.
+- [ ] Danach: gleicher Ablauf auf Box 248, dann die nächsten 5 Rückläufer mit
+      Live-Upgrade fürs kommende Wochenende.
+
 ## ➡️ NÄCHSTER TEST: VLC-LANGZEITLAUF (Stand 2.4.64) 🔴
 
 - [x] Box-155-Log ausgewertet: 608 Videos, 548/548 Webcam-Aufnahmen, aber

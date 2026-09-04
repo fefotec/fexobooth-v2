@@ -6,6 +6,25 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### Ein Hotspot, der einmal gestartet wird, laeuft nicht die ganze Feier (2.4.65)
+
+| | |
+|---|---|
+| **Feldbefund** | Box 155, 04.09.2026: 10:04 Uhr `Eig. Hotspot: AN`, 11:26 Uhr aus — kein Stop im Log. Box 248, 26./27.08.: 14:22 an, 03:16 aus, ebenfalls ohne Zutun. Windows deaktiviert den mobilen Hotspot nach 5 Minuten ohne verbundenes Geraet (`PeerlessTimeout`) und bei geteilter Verbindung ohne Internet (`PublicConnectionTimeout`). Beim Kunden gibt es kein Internet und lange Pausen — beides trifft. Bis 2.4.26 fiel das nicht auf, weil `start_hotspot()` wegen des `{{ }}`-Bugs ohnehin nichts tat und der Hotspot aus der Einmal-Einrichtung stammte. |
+| **Zweiter Befund** | 01.09., Box 155: Tethering meldete „On", die Box hatte aber nur `169.254.14.101` und keine `192.168.137.1`. Handys kamen ins WLAN und erreichten die Box nicht. „An" ist also kein Beweis — die **Adresse** ist der Beweis. |
+| **Entscheidung** | Zwei Ebenen: (1) `setup/hotspot_keepalive.ps1` setzt beide Timeout-Schalter des Dienstes `icssvc` auf 0 — mit Admin-Rechten ueber den Installer (Pflicht-Schritt) und die bestehende SYSTEM-Boot-Aufgabe. (2) Ein Waechter in der App prueft alle 45 s die IP-Liste (kein PowerShell, 0 Last) und repariert bei fehlender `192.168.137.x` nach zwei Fehlpruefungen: Stop (falls Windows „an" sagt) + Start, dann 3 Minuten Ruhe. |
+| **Alternativen** | Nur Registrierung (deckt „an ohne Adresse" nicht ab). Nur Waechter (Hotspot faellt trotzdem alle 5 Minuten um, Waechter repariert im Dauerlauf). PowerShell-Statusabfrage im Takt (mehrere Sekunden pro Aufruf, hat am 18.08. die Kamera-Erkennung in Timeouts getrieben). |
+| **Merke** | Zustand ueber die Adresse pruefen, nicht ueber die Aussage des Systems. Admin-Aenderungen gehoeren in die Stellen, die ohnehin Admin sind (Installer, SYSTEM-Aufgabe) — nicht in die Kiosk-App. Postinstall-Optionen mit Haekchen werden nie geklickt; Pflicht-Schritte sind `[Run]`-Eintraege ohne `Tasks:`. |
+
+### Der QR-Code darf nur die Hotspot-Adresse kennen (2.4.65)
+
+| | |
+|---|---|
+| **Feldbefund** | Box 155, 04.09.: QR um 11:26:06 mit `a=http://192.168.2.159` (Firmen-WLAN) erzeugt, Hotspot erst 11:26:16 gestartet. Der falsche QR stand bis zum naechsten Startbildschirm-Aufbau um 12:20. App-Komplett-Test um 12:43 (Handy im Hotspot): dreimal „Could not connect to the server". Beim Kunden waere im selben Rennen eine `169.254`-Adresse moeglich. |
+| **Ursache** | `get_gallery_url()` suchte „irgendeine" Adresse mit absteigender Prioritaet (Hotspot → 192.168.x → 10.x → Socket-Trick). Sinnvoll fuer die alte Browser-Galerie im selben Netz, falsch fuer die App: Die verbindet das Handy IMMER mit dem Box-Hotspot (SSID+Passwort stecken im QR). |
+| **Entscheidung** | `choose_gallery_ip()`: `192.168.137.x` wenn vorhanden, sonst fest `192.168.137.1`. Kein Fallback auf andere Netze. Damit ist der QR auch vor dem Hotspot-Start richtig — die App wartet dann einfach, statt gegen die falsche Tuer zu laufen. |
+| **Merke** | Wenn der Client den Weg vorgibt (Hotspot), darf der Server keinen anderen anbieten. Ein Rennen zwischen zwei Startvorgaengen loest man am sichersten, indem das Ergebnis nicht vom Zeitpunkt abhaengt. |
+
 ### Native Player pro Clip zu zerlegen erzeugt unter Last eine Ressourcenlawine (2.4.64)
 
 | | |

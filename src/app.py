@@ -1004,6 +1004,24 @@ class PhotoboothApp:
                     start_hotspot(ssid=hs_ssid, password=hs_password)
                 except Exception as e:
                     logger.warning(f"Hotspot-Start fehlgeschlagen: {e}")
+
+                # 2.4.65 — Hotspot-Waechter: Bisher wurde der Hotspot genau
+                # einmal hier angestossen und danach nie wieder angeschaut.
+                # Im Feld ging er mitten in der Feier aus (Windows-Leerlauf-
+                # Abschaltung) oder lief "an" ohne Adresse (Befund 01.09.).
+                # Der Waechter prueft alle 45 s die Hotspot-Adresse und
+                # repariert bei Bedarf (Details: gallery/hotspot_watchdog.py).
+                try:
+                    from src.gallery import start_hotspot_watchdog
+
+                    start_hotspot_watchdog(
+                        hs_ssid,
+                        hs_password,
+                        box_id_provider=lambda: str(self.config.get("box_id", "") or ""),
+                        company_ssids=list(self.config.get("company_wifi_ssids", []) or []),
+                    )
+                except Exception as e:
+                    logger.warning(f"Hotspot-Waechter konnte nicht starten: {e}")
             threading.Thread(target=_start_hs, daemon=True, name="Hotspot-Start").start()
 
             # Galerie-Pfad = immer lokaler Speicher (damit Löschen sofort wirkt)
@@ -3832,6 +3850,14 @@ class PhotoboothApp:
         self._shutdown_started = True
 
         logger.warning(f"App wird beendet (Grund: {grund})")
+
+        # Hotspot-Waechter anhalten, damit er nicht mitten im Beenden noch
+        # PowerShell startet (Daemon-Thread, blockiert nichts).
+        try:
+            from src.gallery import stop_hotspot_watchdog
+            stop_hotspot_watchdog()
+        except Exception:
+            pass
 
         # Netz zuerst spannen: Ab hier verschwindet der Prozess garantiert,
         # egal was in den folgenden Schritten oder in Tk noch schiefgeht.

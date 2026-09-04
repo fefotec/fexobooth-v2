@@ -10,12 +10,18 @@ Methoden (in Prioritätsreihenfolge):
 
 import subprocess
 import sys
+import threading
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 # Welche Methode beim letzten Start verwendet wurde
 _active_method: str = ""  # "tethering" oder "hostednetwork"
+
+# 2.4.65: Start/Stop laufen aus mehreren Threads (App-Start, Admin-Speichern,
+# Hotspot-Waechter). Zwei PowerShell-Tethering-Aufrufe gleichzeitig wuerden
+# sich gegenseitig in die Quere kommen — deshalb immer nur einer.
+_hotspot_lock = threading.RLock()
 
 # Standard SSID/Passwort (werden von start_hotspot überschrieben)
 _DEFAULT_SSID = "fexobox-gallery"
@@ -431,6 +437,11 @@ def start_hotspot(ssid: str = "", password: str = "") -> bool:
     Returns:
         True wenn erfolgreich oder bereits aktiv
     """
+    with _hotspot_lock:
+        return _start_hotspot_locked(ssid, password)
+
+
+def _start_hotspot_locked(ssid: str, password: str) -> bool:
     global _active_method
 
     ssid = ssid or _DEFAULT_SSID
@@ -545,6 +556,11 @@ def stop_hotspot() -> bool:
     Returns:
         True wenn erfolgreich oder bereits aus
     """
+    with _hotspot_lock:
+        return _stop_hotspot_locked()
+
+
+def _stop_hotspot_locked() -> bool:
     global _active_method
     stopped = False
 

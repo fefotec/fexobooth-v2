@@ -248,6 +248,21 @@ foreach ($taskName in $scheduledTasks) {
 
 Register-ReassertTask
 
+# 2.4.65: Hotspot-Leerlauf-Abschaltung von Windows deaktivieren - im selben
+# Admin-/SYSTEM-Kontext wie dieser Lockdown, also auch bei jedem Boot/Login
+# ueber die Re-Assert-Aufgabe. Eigenes Log: logs\hotspot_keepalive.log
+$keepaliveScript = Join-Path $InstallDir "setup\hotspot_keepalive.ps1"
+if (Test-Path $keepaliveScript) {
+    try {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $keepaliveScript -InstallDir $InstallDir | Out-Null
+        Write-LockdownLog "Hotspot-Keepalive ausgefuehrt (Details: hotspot_keepalive.log)"
+    } catch {
+        Write-LockdownLog "Hotspot-Keepalive fehlgeschlagen: $($_.Exception.Message)" "WARN"
+    }
+} else {
+    Write-LockdownLog "Hotspot-Keepalive-Script nicht gefunden: $keepaliveScript" "WARN"
+}
+
 try {
     $wuStart = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\wuauserv" -Name "Start" -ErrorAction SilentlyContinue).Start
     $noAuto = (Get-ItemProperty -Path $auPolicyPath -Name "NoAutoUpdate" -ErrorAction SilentlyContinue).NoAutoUpdate

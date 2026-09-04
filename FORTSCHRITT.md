@@ -4,6 +4,65 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-09-04 — 2.4.65: Hotspot-Waechter, QR nur ueber Hotspot-Adresse, Windows-Leerlauf-Aus per Installer
+
+**Ausgangslage (Christian):** App-Nutzung laut Dashboard seit Ende August
+deutlich runter, Kunden melden Verbindungsprobleme. Server- und Cloud-Logs
+waren sauber (keine API-Fehler, keine 5xx). Zwei Updates fielen ins selbe
+Fenster: App 1.4.4 (Play ~22.08., Apple 26.08.) und Box-Software 2.4.45 (ab
+21.08. auf 219 Boxen). Per Log nicht trennbar — bis die Box-Logs kamen.
+
+**Kundenfall NX-142048 (Wenke Seegets, 29.08., Box 106):** Handy der Kundin
+14:57–15:06 an der Box, 9 Fotos relayed, danach nie wieder ein Handy an der
+Box. 74 Fotos/18 Prints laut Werkstatt, 65 hat niemand gesehen. Werkstatt
+03.09.: „QR funktionierte hier, aber Bilder konnten nicht einzeln angeschaut
+werden, Verbindungsprobleme auf zwei Handys". Erstattung empfohlen.
+
+**Werkstatt-Test 04.09. (Box 155, Logs in D:\logs) — drei Befunde:**
+
+| Zeit | Befund | Bedeutung |
+|---|---|---|
+| 04.09. 10:04 → 11:26 | `Eig. Hotspot: AN` → aus, kein App-Stop im Log | Windows schaltet den Hotspot bei Leerlauf ab |
+| 01.09. 13:16–13:51 | Tethering „On", IPs nur `192.168.2.149` + `169.254.14.101` | Hotspot ohne Adresse: Handys kommen rein, erreichen die Box nicht |
+| 04.09. 11:26:06 / 11:26:16 | QR mit `a=http://192.168.2.159` erzeugt, Hotspot 10 s spaeter gestartet, QR bis 12:20 falsch | App-Komplett-Test 12:43: 3× „Could not connect" |
+
+**Umgesetzt (2.4.65):**
+
+1. `src/gallery/hotspot_watchdog.py` (neu) — Waechter-Thread, 45-s-Takt,
+   Pruefung nur ueber IP-Liste (0 Last), Reparatur nach 2 Fehlpruefungen
+   (Stop falls „an ohne Adresse", dann Start), 3 Minuten Ruhe, Werkstatt-
+   Konflikt-Regel, Reparaturbericht in `netzwerk.log`. Liest zusaetzlich die
+   Windows-Leerlauf-Schalter aus der Registrierung (nur lesen) und loggt sie.
+2. `src/gallery/server.py` — `choose_gallery_ip()` + `get_gallery_url()`: QR
+   bekommt IMMER die Hotspot-Adresse (`192.168.137.x`, sonst `192.168.137.1`).
+   Firmen-WLAN-/APIPA-/Socket-Fallbacks entfernt.
+3. `setup/hotspot_keepalive.ps1` (neu) — Registrierung `icssvc\Settings`:
+   `PeerlessTimeoutEnabled=0`, `PublicConnectionTimeoutEnabled=0`, Dienst-
+   Neustart nur bei Aenderung, Log `hotspot_keepalive.log`, Exit immer 0.
+4. `installer.iss` — Pflicht-[Run]-Schritt fuer das Keepalive-Script (kein
+   `postinstall`-Haekchen, kein `Tasks:`), vor der Firmen-WLAN-Einrichtung.
+5. `setup/disable_windows_update.ps1` — ruft das Keepalive-Script am Ende mit
+   auf → greift damit auch bei jedem Boot/Login ueber die SYSTEM-Aufgabe.
+6. `src/app.py` — Waechter-Start im Hotspot-Start-Thread (nach dem ersten
+   `start_hotspot`), Waechter-Stopp in `shutdown()`.
+7. `src/gallery/hotspot.py` — RLock um Start/Stop.
+8. `src/company_network.py` — NETZ-BILANZ-Zeilen `Leerlauf-Aus` und
+   `Hotspot-Waecht.`.
+9. Version 2.4.65 in `src/__init__.py`, `build-release.yml`, `installer.iss`,
+   `tools/nikon_smoke_test.py`.
+
+**Tests:** `tests/test_hotspot_watchdog.py` neu (in `alle_tests.py`);
+`python tests/alle_tests.py` 22/22 bestanden; beide PowerShell-Skripte per
+`PSParser` syntaxgeprueft (0 Fehler). Kein Box-Test — der steht in TODO.
+
+**Warum die Registrierung ueber Installer + Boot-Aufgabe und nicht die App:**
+Die App laeuft im Kiosk-Konto und darf `HKLM` nicht schreiben. Der Installer
+laeuft als Admin, die Lockdown-Aufgabe als SYSTEM — beide gibt es auf jeder
+Box schon. Die Boxen werden manuell per Installer aktualisiert (kein Cloud-
+Update, Download zu langsam), der Schritt kommt also mit jeder Installation.
+
+---
+
 ## 2026-09-02 — Video V2.4.64: VLC-Lawine nach langen Webcam-Laeufen beseitigt
 
 **Befund Box 155:** 121 vollstaendige Sitzungen, 608 Video-Wiedergaben und

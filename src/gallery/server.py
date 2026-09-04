@@ -1585,52 +1585,64 @@ def is_running() -> bool:
     return _is_running
 
 
-def get_gallery_url(port: int = DEFAULT_PORT) -> str:
-    """Gibt die Galerie-URL zurück (für QR-Code)
+# Feste Adresse des Windows Mobile Hotspots (ICS vergibt sie immer so).
+HOTSPOT_DEFAULT_IP = "192.168.137.1"
+HOTSPOT_PREFIX = "192.168.137."
 
-    Versucht die beste IP für den Hotspot zu finden:
-    1. Windows Mobile Hotspot (192.168.137.x Netzwerk)
-    2. Andere private Netzwerke (192.168.x.x, 10.x.x.x)
-    3. Fallback: Standard Hotspot-IP
+
+def choose_gallery_ip(local_ips) -> tuple[str, str]:
+    """Waehlt die Adresse fuer den QR-Code — IMMER die des eigenen Hotspots.
+
+    Returns:
+        (ip, grund) — grund ist Klartext fuers Log.
+
+    WARUM NUR DER HOTSPOT (2.4.65, Feld-Befund 04.09.2026, Box 155):
+    Die App verbindet das Handy grundsaetzlich mit dem Box-Hotspot
+    ("fexobox-gallery", SSID+Passwort stecken im QR). Deshalb muss die
+    API-Adresse im QR die Hotspot-Adresse sein — und keine andere.
+
+    Bis 2.4.64 nahm diese Funktion "irgendeine" Adresse der Box, wenn die
+    Hotspot-Adresse gerade fehlte: in der Werkstatt die Firmen-WLAN-Adresse
+    (192.168.2.x), im Notfall sogar eine Windows-Notfalladresse (169.254.x).
+    Beim App-Start ist das der Normalfall, weil der QR-Code 2 Sekunden VOR dem
+    Hotspot erzeugt wird. Ergebnis am 04.09.: QR zeigte 192.168.2.159, das
+    Handy im Hotspot bekam dreimal "Could not connect to the server", und der
+    falsche QR blieb 55 Minuten stehen (bis zum naechsten Startbildschirm).
+
+    Jetzt: Gibt es eine 192.168.137.x-Adresse, wird sie genommen. Gibt es
+    (noch) keine, steht trotzdem 192.168.137.1 im QR — sobald der Hotspot da
+    ist, passt es, und die App wartet einfach, statt gegen die falsche Tuer
+    zu laufen.
     """
-    import socket
+    for ip in local_ips:
+        if ip.startswith(HOTSPOT_PREFIX):
+            return ip, "Hotspot-Adresse erkannt"
+    if local_ips:
+        return HOTSPOT_DEFAULT_IP, (
+            f"Hotspot-Adresse fehlt noch (vorhanden: {', '.join(local_ips)}) — "
+            f"nehme Standard {HOTSPOT_DEFAULT_IP}, Hotspot-Waechter bringt sie"
+        )
+    return HOTSPOT_DEFAULT_IP, f"keine Adresse gefunden — nehme Standard {HOTSPOT_DEFAULT_IP}"
 
+
+def get_gallery_url(port: int = DEFAULT_PORT) -> str:
+    """Gibt die Galerie-URL zurück (für QR-Code) — immer über den eigenen Hotspot.
+
+    Siehe choose_gallery_ip(): Der QR-Code enthaelt seit 2.4.65 NIE mehr eine
+    Firmen-WLAN- oder Notfalladresse.
+    """
     scheme = "https" if _is_https else "http"
 
     try:
-        # Alle IP-Adressen des Systems sammeln
-        hostname = socket.gethostname()
-        all_ips = socket.getaddrinfo(hostname, None, socket.AF_INET)
-        local_ips = list(set([ip[4][0] for ip in all_ips if not ip[4][0].startswith('127.')]))
-
+        from src.utils.network_diag import get_local_ipv4s
+        local_ips = get_local_ipv4s()
         logger.debug(f"Gefundene IPs: {local_ips}")
-
-        # Priorität 1: Windows Mobile Hotspot (192.168.137.x)
-        for ip in local_ips:
-            if ip.startswith("192.168.137."):
-                logger.info(f"🌐 Hotspot-IP erkannt: {ip}")
-                return f"{scheme}://{ip}:{port}"
-
-        # Priorität 2: Andere 192.168.x.x (häufig Hotspot/WLAN)
-        for ip in local_ips:
-            if ip.startswith("192.168."):
-                logger.info(f"🌐 Lokale IP: {ip}")
-                return f"{scheme}://{ip}:{port}"
-
-        # Priorität 3: 10.x.x.x Netzwerke
-        for ip in local_ips:
-            if ip.startswith("10."):
-                logger.info(f"🌐 Private IP: {ip}")
-                return f"{scheme}://{ip}:{port}"
-
-        # Fallback: Socket-Trick
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        local_ip = s.getsockname()[0]
-        s.close()
-        logger.info(f"🌐 Fallback-IP: {local_ip}")
-        return f"{scheme}://{local_ip}:{port}"
-
+        ip, grund = choose_gallery_ip(local_ips)
+        if grund.startswith("Hotspot-Adresse erkannt"):
+            logger.info(f"🌐 Hotspot-IP erkannt: {ip}")
+        else:
+            logger.warning(f"🌐 QR-Adresse: {grund}")
+        return f"{scheme}://{ip}:{port}"
     except Exception as e:
-        logger.warning(f"IP-Erkennung fehlgeschlagen: {e}")
-        return f"{scheme}://192.168.137.1:{port}"
+        logger.warning(f"IP-Erkennung fehlgeschlagen: {e} — nehme Standard {HOTSPOT_DEFAULT_IP}")
+        return f"{scheme}://{HOTSPOT_DEFAULT_IP}:{port}"

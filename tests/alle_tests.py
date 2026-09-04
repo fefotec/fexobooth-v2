@@ -53,6 +53,8 @@ TESTS = [
      "Press-Blitz, Token, Sofortfoto; Nikon/Webcam bleiben stabil"),
     ("Host-Capture integriert", "test_host_capture_integration.py",
      "Owner, 0x208, JPEG, Queue und atomarer Cleanup als Gesamtkette"),
+    ("Hotspot-Waechter + QR-Adresse", "test_hotspot_watchdog.py",
+     "QR nur ueber 192.168.137.x; Waechter wartet/repariert/ruht; Installer verdrahtet"),
 ]
 
 def main() -> int:
