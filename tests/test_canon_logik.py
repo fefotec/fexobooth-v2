@@ -1,8 +1,11 @@
 """Prueft die 2.4.46-Fixes ohne angeschlossene Kamera."""
 import sys, types, time
+from pathlib import Path
 import numpy as np
 
-sys.path.insert(0, r"C:\Git-Projects\fexobooth-v2")
+# Repo-Wurzel relativ zur Testdatei — ein fester Pfad bricht auf dem
+# GitHub-Runner (Build 05.09.2026: ModuleNotFoundError 'src').
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # --- edsdk faelschen, damit canon.py ohne DLL importierbar ist -------------
 fake = types.ModuleType("src.camera.edsdk")

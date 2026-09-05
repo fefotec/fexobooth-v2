@@ -4,6 +4,48 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-09-05 — 2.4.66: Weisses Print-Bild bei schnellem Session-Ende beseitigt + CI-Build repariert
+
+**Testaufbau Christian (Box 101, 2.4.65):** Hotspot-Test komplett gruen —
+Keepalive setzte beide Windows-Schalter auf 0 (`PublicConnectionTimeoutEnabled`
+war vorher gar nicht vorhanden = Abschaltung aktiv), Waechter lief, Hotspot
+hielt 12:00–18:14 ohne eine einzige Reparatur durch, QR durchgehend mit
+`192.168.137.1`. ABER: 9 von 30 Print-Dateien komplett weiss (34.527 Bytes,
+byte-identisch, MD5 geprueft) — die App zeigte sie nur an, gespeichert hat
+sie die Box.
+
+**Ursache (Log-Muster in allen 9 Faellen):** „Session beendet" VOR „Print
+gespeichert". Der Hintergrund-Renderer (seit 2.4.12) las die lebenden
+Session-Felder; `reset_session()` leerte Fotos/Boxen/Overlay mitten im
+Rendern → Renderer speicherte die leere weisse 1800x1200-Vorlage. Im Test
+loeste es der Stress-Test aus; ein echter Gast loest es mit „Fertig" waehrend
+„Dein Bild wird erstellt…" (2–8 s Fenster) genauso aus. **2.4.45 im Feld ist
+betroffen.** Einzelfotos sind nie betroffen, nur die Collage.
+
+**Umgesetzt (2.4.66):**
+
+1. `src/ui/screens/final.py` — `on_show` erstellt eine Momentaufnahme
+   (Fotos, Filter, Vorlagen-Felder, Overlay als Kopien) VOR dem Thread-Start;
+   `_render_final_worker` und `_render_final_image` arbeiten nur noch damit.
+   Schutznetz: leere Momentaufnahme wird nicht gespeichert.
+2. `tests/test_canon_logik.py` + `tests/test_direktweg.py` — fester Pfad
+   `C:\Git-Projects\fexobooth-v2` durch Repo-Wurzel relativ zur Testdatei
+   ersetzt. Das war der Grund, warum der GitHub-Build am 05.09. um 09:41
+   scheiterte („No module named 'src'", 2 Tests rot).
+3. `tests/test_final_render_race.py` neu (in `alle_tests.py`): Verhalten
+   (weisse Flaeche bei leeren Boxen, Momentaufnahme uebersteht Session-Ende)
+   + statischer Vertrag (AST: Worker/Renderfunktion greifen nie auf
+   `self.app.photos_taken`/`template_boxes`/`overlay_image`/`current_filter` zu).
+4. Version 2.4.66 in `src/__init__.py`, `build-release.yml`, `installer.iss`,
+   `tools/nikon_smoke_test.py`.
+
+**Tests:** Lokal (macOS) 22/23 — nur Belichtungsdiagnose rot, weil sie
+Windows-`ctypes.WINFUNCTYPE` braucht; auf dem Windows-CI-Runner war genau
+dieser Test am 05.09. gruen. Verifikation der vollen Suite uebernimmt der
+CI-Build.
+
+---
+
 ## 2026-09-04 — 2.4.65: Hotspot-Waechter, QR nur ueber Hotspot-Adresse, Windows-Leerlauf-Aus per Installer
 
 **Ausgangslage (Christian):** App-Nutzung laut Dashboard seit Ende August

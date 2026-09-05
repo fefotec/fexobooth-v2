@@ -6,6 +6,15 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### Ein Hintergrund-Worker darf keine lebenden Session-Daten lesen (2.4.66)
+
+| | |
+|---|---|
+| **Feldbefund** | Dauerlauf 05.09.2026, Box 101: 9 von 30 Print-Dateien komplett weiss, alle byte-identisch (34.527 Bytes). Log-Muster in jedem Fall: „Session beendet" VOR „Print gespeichert". Der Final-Renderer laeuft seit 2.4.12 im Hintergrund; `reset_session()` leerte Fotos, Vorlagen-Felder und Overlay, waehrend der Worker noch las — der Renderer bekam leere Boxen und speicherte die weisse Vorlage. Ausloeser im Test: Stress-Test-Auto-Ende; im Feld genuegt ein Gast, der „Fertig" drueckt, waehrend „Dein Bild wird erstellt…" laeuft (2–8 s). |
+| **Entscheidung** | Momentaufnahme: `on_show` kopiert Fotos, Filter, Boxen und Overlay vor dem Thread-Start und uebergibt sie als Argumente. Der Worker fasst die App-Session nie mehr an. Zusaetzlich statischer Test (AST), der jeden neuen Zugriff des Workers auf lebende Session-Felder sofort rot macht. |
+| **Alternativen** | Session-Ende blockieren bis Render fertig (Gast wartet grundlos). Speichern ueberspringen, wenn Session schon beendet (Foto der Gaeste ginge verloren — die Momentaufnahme rettet es stattdessen). |
+| **Merke** | Sobald Arbeit in einen Thread wandert, gehoeren ihre Eingaben ihm ALLEIN — als Kopie beim Start. Byte-identische Ausgabedateien sind ein Fingerabdruck: gleicher MD5 = gleicher (leerer) Eingabezustand, nicht Zufall. |
+
 ### Ein Hotspot, der einmal gestartet wird, laeuft nicht die ganze Feier (2.4.65)
 
 | | |

@@ -127,10 +127,17 @@ class FinalScreen(ctk.CTkFrame):
         self.preview_label = ctk.CTkLabel(self.image_frame, text="", fg_color="transparent")
         self.preview_label.pack(expand=True, fill="both")
 
-    def _render_final_image(self) -> Image.Image:
-        """Rendert das finale Bild"""
-        logger.info(f"Rendere finales Bild: {len(self.app.photos_taken)} Fotos, "
-                     f"Filter '{self.app.current_filter}'")
+    def _render_final_image(self, photos, filter_name, boxes, overlay) -> Image.Image:
+        """Rendert das finale Bild aus der übergebenen Momentaufnahme.
+
+        Bewusst KEIN Zugriff auf self.app.photos_taken/template_boxes/
+        overlay_image: Der Worker läuft weiter, wenn der Gast die Session
+        schon beendet hat — reset_session() leert dann genau diese Felder
+        und der Renderer würde eine leere weiße Vorlage speichern
+        (Dauerlauf 05.09.2026: 9 von 30 Prints byte-identisch weiß).
+        """
+        logger.info(f"Rendere finales Bild: {len(photos)} Fotos, "
+                     f"Filter '{filter_name}'")
 
         # Fotos vorab auf den Druckbedarf verkleinern: Das Template ist 1800x1200
         # (Boxen ~900x600) — 2000px lange Kante bleibt >2x überabgetastet, also
@@ -138,7 +145,7 @@ class FinalScreen(ctk.CTkFrame):
         # sättigten die 2 Atom-Kerne so, dass trotz Worker-Thread die UI ~3s
         # stand (Messung Dauerlauf 2026-07-02: UI-HITCH ~3,3s an jedem Final).
         prepared = []
-        for photo in self.app.photos_taken:
+        for photo in photos:
             scale = min(1.0, 2000 / max(photo.width, photo.height))
             if scale < 1.0:
                 prepared.append(photo.resize(
@@ -149,14 +156,14 @@ class FinalScreen(ctk.CTkFrame):
                 prepared.append(photo)
 
         filtered_photos = [
-            self.app.filter_manager.apply(photo, self.app.current_filter)
+            self.app.filter_manager.apply(photo, filter_name)
             for photo in prepared
         ]
 
         return self.app.renderer.render(
             filtered_photos,
-            self.app.template_boxes,
-            self.app.overlay_image
+            boxes,
+            overlay
         )
 
     def _update_countdown(self):
@@ -792,9 +799,19 @@ class FinalScreen(ctk.CTkFrame):
         if container_h < 100:
             container_h = 500
 
+        # Session-Daten JETZT kopieren, nicht erst im Worker: Drückt der Gast
+        # „Fertig", während noch gerendert wird, leert reset_session() Fotos,
+        # Vorlagen-Felder und Overlay — mit der Momentaufnahme rendert der
+        # Worker trotzdem das echte Bild zu Ende und speichert es.
+        session_snapshot = (
+            list(self.app.photos_taken),
+            self.app.current_filter,
+            list(self.app.template_boxes),
+            self.app.overlay_image,
+        )
         threading.Thread(
             target=self._render_final_worker,
-            args=(container_w, container_h),
+            args=(container_w, container_h, session_snapshot),
             daemon=True,
         ).start()
 
@@ -823,13 +840,19 @@ class FinalScreen(ctk.CTkFrame):
         )
         self.preview_label.image = self._blank_ctk
 
-    def _render_final_worker(self, container_w: int, container_h: int):
+    def _render_final_worker(self, container_w: int, container_h: int, session_snapshot):
         """Worker-Thread: finales Bild rendern, speichern, Vorschau vorbereiten."""
         started = time.perf_counter()
+        photos, filter_name, boxes, overlay = session_snapshot
         final_image = None
         preview = None
+        if not photos:
+            # Ohne Fotos gäbe es nur eine leere weiße Vorlage — nicht speichern.
+            logger.warning("Final-Rendern übersprungen: keine Fotos in der Momentaufnahme")
+            self.after(0, lambda: self._on_final_ready(None))
+            return
         try:
-            final_image = self._render_final_image()
+            final_image = self._render_final_image(photos, filter_name, boxes, overlay)
         except Exception as e:
             logger.error(f"Final-Rendern fehlgeschlagen: {e}")
 

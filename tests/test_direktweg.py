@@ -1,7 +1,11 @@
 """Prueft den kompletten Direktweg: Kamera -> Rechner, ohne Karte."""
 import sys, types, time, threading
+from pathlib import Path
 import numpy as np
-sys.path.insert(0, r"C:\Git-Projects\fexobooth-v2")
+
+# Repo-Wurzel relativ zur Testdatei — ein fester Pfad bricht auf dem
+# GitHub-Runner (Build 05.09.2026: ModuleNotFoundError 'src').
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 PROTOKOLL = []
 

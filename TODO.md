@@ -4,37 +4,29 @@ Aufgabenliste mit Prioritäten.
 
 ---
 
-## ➡️ NÄCHSTER TEST: HOTSPOT HÄLT DURCH (Stand 2.4.65) 🔴
+## ➡️ NÄCHSTER SCHRITT: 2.4.66 BAUEN, KURZ TESTEN, DANN ROLLOUT 🔴
 
-Anlass: Kunden „QR-Code geht nicht" seit Ende August, Kundenfall NX-142048,
-Box-155-Logs vom 01./04.09. (Details CHANGELOG 2.4.65). Boxen werden manuell
-per Installer aktualisiert — erst Werkstatt-Boxen, dann Rückläufer mit
-Live-Upgrade, dann Rest.
+Stand 05.09.2026: Hotspot-Test auf Box 101 GRÜN (Details FORTSCHRITT.md),
+aber dabei neuen Bug gefunden: weiße Print-Dateien bei schnellem
+Session-Ende (in 2.4.45 im Feld enthalten!). Fix ist 2.4.66.
 
-- [x] 2.4.65 umgesetzt: Hotspot-Wächter, QR nur mit Hotspot-Adresse,
-      Windows-Leerlauf-Aus per Installer + Boot-Aufgabe. `alle_tests.py` 22/22.
-- [ ] **Installer 2.4.65 bauen** (GitHub Action `build-release.yml`, Version
-      `2.4.65`) und auf **Box 155** installieren (Installer = Admin, läuft still
-      durch). Danach `C:\FexoBooth\logs\hotspot_keepalive.log` öffnen: beide
-      Zeilen müssen `= 0` melden.
-- [ ] **Box im Dev-Mode starten** (`start_dev.bat`). Im Log muss stehen:
-      `Hotspot-Waechter gestartet … Windows-Leerlauf-Abschaltung: AUS`.
-- [ ] **Leerlauf-Test:** Handy per QR verbinden, Fotos ansehen, Handy-WLAN aus.
-      **30 Minuten warten** (nichts an der Box tun). Dann Handy erneut per QR
-      verbinden → Galerie muss sofort laden. (Vorher: nach ~5 Min war das WLAN
-      „fexobox-gallery" weg.)
-- [ ] **QR-Test in der Werkstatt:** Box neu starten, SOFORT den QR scannen
-      (bevor der Hotspot steht). Die App darf jetzt nicht mehr „Could not
-      connect" bringen, sondern kurz warten und dann laden. Im Log:
-      `QR-Adresse: Hotspot-Adresse fehlt noch … nehme Standard 192.168.137.1`.
-- [ ] **Reparatur-Test:** Bei laufender Box in Windows den mobilen Hotspot von
-      Hand ausschalten (Einstellungen → Netzwerk → Mobiler Hotspot). Nach
-      spätestens 2 Minuten muss er von selbst wieder an sein; in
-      `netzwerk.log` steht ein Block `HOTSPOT-WAECHTER: Reparatur … HOTSPOT
-      WIEDER DA`.
-- [ ] Dev-Mode-Log + `netzwerk.log` + `hotspot_keepalive.log` an Claude.
-- [ ] Danach: gleicher Ablauf auf Box 248, dann die nächsten 5 Rückläufer mit
-      Live-Upgrade fürs kommende Wochenende.
+- [x] Hotspot-Test Box 101 (05.09.): Keepalive beide Schalter = 0, Wächter
+      lief, Hotspot hielt 12:00–18:14 ohne eine Reparatur, QR durchgehend
+      `192.168.137.1`. Leerlauf >5 h überstanden.
+- [x] Weiße-Print-Ursache gefunden + 2.4.66 umgesetzt (Momentaufnahme für
+      den Final-Renderer, CI-Pfad-Fix, neuer Test `test_final_render_race.py`).
+- [ ] **Installer 2.4.66 bauen** (GitHub Action, muss jetzt durchlaufen —
+      der 09:41-Fehlschlag war der feste `C:\Git-Projects`-Pfad in 2 Tests).
+- [ ] **Kurztest auf Box 101:** 2.4.66 installieren, Dev-Mode, Stress-Test
+      ~10 Sessions laufen lassen → auf dem Stick darf KEINE Print-Datei mit
+      34.527 Bytes mehr auftauchen (weiße Vorlage). Gegenprobe: „Fertig"
+      von Hand drücken, solange „Dein Bild wird erstellt…" steht.
+- [ ] **Noch offen aus dem 2.4.65-Plan:** Reparatur-Test (Hotspot in Windows
+      von Hand ausschalten → nach ≤2 Min von selbst wieder an, Block in
+      `netzwerk.log`) und QR-Sofort-Scan direkt nach Box-Neustart.
+- [ ] Danach Rollout: Box 248, dann die nächsten 5 Rückläufer mit
+      Live-Upgrade fürs kommende Wochenende, dann Rest. 2.4.66 ersetzt
+      2.4.65 komplett (enthält alle Hotspot-Fixes).
 
 ## ➡️ NÄCHSTER TEST: VLC-LANGZEITLAUF (Stand 2.4.64) 🔴
 

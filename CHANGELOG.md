@@ -6,6 +6,49 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.66] - 2026-09-05 - Kein weisses Print-Bild mehr bei schnellem Session-Ende
+
+> Anlass: Testaufbau 05.09.2026 (Box 101, 2.4.65-Dauerlauf mit Stress-Test):
+> 9 von 30 Print-Dateien auf dem Stick waren komplett weiss — alle exakt
+> 34.527 Bytes, byte-identisch. Die App zeigte diese weissen Bilder korrekt
+> an (kein App-Fehler). Betroffen ist jede Version seit 2.4.12, also auch
+> 2.4.45 im Feld.
+
+### Befund (Box 101, Dev-Log 05.09.)
+
+Das finale Bild wird seit 2.4.12 im Hintergrund gerendert, damit der
+Final-Screen sofort erscheint. Beendet der Gast die Session, waehrend noch
+„Dein Bild wird erstellt…" laeuft (Fenster 2–8 s), leert `reset_session()`
+Fotos, Vorlagen-Felder und Overlay. Der Renderer griff auf genau diese
+lebenden Felder zu, fand leere Vorlagen-Felder vor und speicherte eine leere
+weisse Vorlage. Log-Muster in allen 9 Faellen: „Session beendet" VOR „Print
+gespeichert" (z. B. 17:36:00.060 Ende, 17:36:00.375 weisse Datei,
+17:36:01.544 Render „ok"). Die Einzelfotos waren nie betroffen.
+
+### Geaendert
+
+- **Momentaufnahme statt lebender Session-Daten** (`src/ui/screens/final.py`):
+  `on_show` kopiert Fotos, Filter, Vorlagen-Felder und Overlay VOR dem
+  Thread-Start und uebergibt sie dem Render-Worker. Ein fruehes Session-Ende
+  kann dem laufenden Rendern nichts mehr wegnehmen — gespeichert wird immer
+  das echte Bild.
+- **Schutznetz:** Ohne Fotos in der Momentaufnahme wird gar nicht gespeichert
+  (statt einer weissen Vorlage).
+- **CI-Build repariert:** `test_canon_logik.py` und `test_direktweg.py`
+  hatten den Entwicklungs-Pfad `C:\Git-Projects\fexobooth-v2` fest verdrahtet
+  — auf dem GitHub-Runner brach der Build mit „No module named 'src'" ab
+  (Run 05.09. 09:41). Beide nutzen jetzt die Repo-Wurzel relativ zur
+  Testdatei.
+
+### Tests
+
+- `tests/test_final_render_race.py` (neu, in `alle_tests.py`): belegt den
+  Fehler-Mechanismus (leere Boxen = weisse Flaeche), prueft dass die
+  Momentaufnahme ein gleichzeitiges Session-Ende uebersteht, und verbietet
+  statisch jeden Zugriff des Workers auf lebende Session-Felder.
+
+---
+
 ## [2.4.65] - 2026-09-04 - Gaeste-Hotspot haelt die ganze Feier durch
 
 > Anlass: Seit Ende August melden Kunden „QR-Code geht nicht" und die
