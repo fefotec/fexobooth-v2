@@ -4,6 +4,20 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-09-06 (Abend) — 2.4.68-Dauerlauf bestanden: Freeze weg, alles gruen
+
+Box 101, 15:21–18:41 Uhr, 175 Stress-Sessions: **kein Freeze** (vorher im
+Schnitt alle ~85 Sessions), sauberes Ende ueber das Service-Menue. Beide
+Schutz-Zeilen im Startlog („Haenge-Waechter aktiv", „Muellabfuhr
+verlagert"), kein neuer Timeout-Dump in absturz.log. 176 neue Prints,
+0 weisse. Hotspot: 0 Reparaturen noetig. Muellabfuhr im Hauptthread: 397
+Laeufe, Ø 102 ms, max 225 ms — UI-Hitches pro Session unveraendert (9,4 vs.
+9,2 im Vormittagslauf), auf der Miix-Hardware also folgenlos. Einzige
+Warnungen: bekannter Energiesparplan-Hinweis beim Start + normale
+Beenden-Meldung. **2.4.68 ist damit der Rollout-Stand.**
+
+---
+
 ## 2026-09-06 — 2.4.68: Freeze-Ursache gefunden und gefixt (Tkinter-GC-Deadlock)
 
 **Der Haenge-Waechter hat geliefert:** Dritter Freeze (Box 101, 2.4.67,

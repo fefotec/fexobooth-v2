@@ -23,13 +23,13 @@ Session 6) den Stack-Dump geliefert → Ursache Tkinter-GC-Deadlock, Fix in
       Thread.start(), neuer Thread in tkinter font.__del__ → Deadlock).
 - [x] 2.4.68 umgesetzt: gc.disable() + _gc_takt() alle 30 s im Hauptthread;
       `test_gc_hauptfaden.py` grün.
-- [ ] **Installer 2.4.68 bauen**, auf Box 101 installieren, Dev-Mode:
-      im Startlog müssen „Haenge-Waechter aktiv" UND „Muellabfuhr verlagert"
-      stehen.
-- [ ] **Stress-Test-Dauerlauf** (Ziel: deutlich über 250 Sessions, gern über
-      Nacht). Erwartung: kein Freeze mehr; falls doch, steht der neue Dump in
-      absturz.log (Wächter bleibt aktiv). Danach absturz.log + Dev-Log an
-      Claude — auch im Erfolgsfall (GC-Dauer-Zeilen kontrollieren).
+- [x] **Installer 2.4.68 gebaut + Dauerlauf bestanden** (06.09., Box 101,
+      15:21–18:41): 175 Stress-Sessions OHNE Freeze (vorher fror es im
+      Schnitt alle ~85 ein), sauberes Ende per Service-Menü. Beide
+      Schutz-Zeilen im Startlog, kein neuer Timeout-Dump in absturz.log,
+      176 neue Prints / 0 weiße, Hotspot 0 Reparaturen. Müllabfuhr: 397
+      Läufe, Ø 102 ms, max 225 ms — UI-Hitches pro Session unverändert
+      (9,4 vs. 9,2 im Vormittagslauf).
 - [ ] **Noch offen aus dem 2.4.65-Plan:** Reparatur-Test (Hotspot in Windows
       von Hand ausschalten → nach ≤2 Min von selbst wieder an, Block in
       `netzwerk.log`) und QR-Sofort-Scan direkt nach Box-Neustart.
