@@ -3806,10 +3806,45 @@ class PhotoboothApp:
         logger.info("Starte Hauptschleife")
         self._mainloop_started = True
         self._starte_canon_event_takt()
+        self._haenge_letzter_takt = 0.0
+        self.root.after(1000, self._haenge_waechter_takt)
+        logger.info("🧊 Haenge-Waechter aktiv: steht die Hauptschleife >30 s, "
+                    "schreibt faulthandler alle Thread-Stacks nach absturz.log")
         try:
             self.root.mainloop()
         finally:
             self._mainloop_started = False
+
+    def _haenge_waechter_takt(self):
+        """Herzschlag der Tk-Hauptschleife fuer den Haenge-Waechter (alle 5 s).
+
+        Jeder Takt setzt den C-Level-Timer von faulthandler zurueck. Bleibt
+        die Hauptschleife >30 s stehen (die beiden Freezes vom 06.09.2026),
+        dumpt der Waechter alle Thread-Stacks nach absturz.log — auch bei
+        einer GIL-Verklemmung, denn er braucht die Python-Ebene nicht.
+        """
+        if self._shutdown_started:
+            return
+        try:
+            import time as _time
+            from src.utils.crashlog import arm_hang_watchdog
+            jetzt = _time.monotonic()
+            if self._haenge_letzter_takt and jetzt - self._haenge_letzter_takt > 30.0:
+                # Hauptschleife stand lange, lebt aber wieder: Der Dump ist
+                # bereits geschrieben — hier nur der Wegweiser dorthin.
+                logger.warning(
+                    f"Hauptschleife war ~{jetzt - self._haenge_letzter_takt:.0f}s "
+                    "blockiert und laeuft wieder — Thread-Stacks vom Stillstand "
+                    "stehen in absturz.log (Haenge-Waechter)"
+                )
+            self._haenge_letzter_takt = jetzt
+            arm_hang_watchdog(30.0)
+        except Exception as e:
+            logger.debug(f"Haenge-Waechter-Takt uebersprungen: {e}")
+        try:
+            self.root.after(5000, self._haenge_waechter_takt)
+        except Exception:
+            pass
     
     def _root_lebt(self) -> bool:
         """Existiert das Hauptfenster noch?
@@ -3856,6 +3891,14 @@ class PhotoboothApp:
         try:
             from src.gallery import stop_hotspot_watchdog
             stop_hotspot_watchdog()
+        except Exception:
+            pass
+
+        # Haenge-Waechter entschaerfen: Das Beenden darf laenger als 30 s
+        # dauern (Kamera/Drucker), ohne einen Fehlalarm-Dump zu erzeugen.
+        try:
+            from src.utils.crashlog import cancel_hang_watchdog
+            cancel_hang_watchdog()
         except Exception:
             pass
 

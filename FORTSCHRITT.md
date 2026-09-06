@@ -4,6 +4,39 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-09-06 — 2.4.67: Haenge-Waechter gegen die Stress-Test-Freezes
+
+**Befund (Box 101, 2.4.66):** Zwei UI-Freezes — Session 1 des Morgen-Stress-
+Tests (08:45:00) und spaeter erneut nach 166 Durchgaengen. Log endet beide
+Male kommentarlos beim Session-Wiedereinstieg zwischen „Template-Overlay
+Cache" und „LiveView-Worker gestartet" (normal 5 ms Abstand), danach Stille
+von ALLEN Threads. Kein Windows-Crash, kein Dump (App hing nur und wurde von
+Hand beendet). Der Nachtlauf davor war makellos: 85 Sessions, 875 Video-
+Wiedergaben, 0 Fehler, RAM 381→483 MB. Ein alter AppHang vom 02.09. (2.4.4x)
+zeigt: Haenger gab es vereinzelt schon vorher. Verdacht: Stillstand der
+kompletten Python-Ebene (native Verklemmung, VLC endete 0,4 s vorher) — aus
+dem Log nicht beweisbar.
+
+**Entscheidung:** Nicht raten, sondern Beweis beschaffen. 2.4.67 =
+Diagnose-Release ohne Verhaltensaenderung.
+
+**Umgesetzt:**
+
+1. `src/utils/crashlog.py` — `arm_hang_watchdog()` / `cancel_hang_watchdog()`
+   auf Basis `faulthandler.dump_traceback_later` (C-Ebene, braucht kein GIL):
+   Timeout 30 s, exit=False, Dump nach `absturz.log`, Thread-Legende
+   (ID → Name) bei Aenderung.
+2. `src/app.py` — Herzschlag `_haenge_waechter_takt()` alle 5 s aus der
+   Tk-Hauptschleife (Start in `run()`), Erholungs-Hinweis im Dev-Log,
+   Entschaerfen in `shutdown()`.
+3. `tests/test_haenge_waechter.py` neu (in `alle_tests.py`).
+4. Version 2.4.67.
+
+**Auswertung 2.4.66 nebenbei bestaetigt:** Seit 19:11 (85 Stress-Sessions)
+KEINE neue weisse Print-Datei — alle 9 weissen stammen aus der 2.4.65-Zeit.
+
+---
+
 ## 2026-09-05 — 2.4.66: Weisses Print-Bild bei schnellem Session-Ende beseitigt + CI-Build repariert
 
 **Testaufbau Christian (Box 101, 2.4.65):** Hotspot-Test komplett gruen —

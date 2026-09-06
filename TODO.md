@@ -13,33 +13,39 @@ Aufgabenliste mit Prioritäten.
 
 ---
 
-## ➡️ NÄCHSTER SCHRITT: 2.4.66 KURZ TESTEN, DANN ROLLOUT 🔴
+## ➡️ NÄCHSTER TEST: FREEZE MIT 2.4.67 EINFANGEN, DANN ROLLOUT 🔴
 
-Stand 05.09.2026: Hotspot-Test auf Box 101 GRÜN (Details FORTSCHRITT.md),
-aber dabei neuen Bug gefunden: weiße Print-Dateien bei schnellem
-Session-Ende (in 2.4.45 im Feld enthalten!). Fix ist 2.4.66.
-(Stand 06.09.: Installer liegt als Artefakt vor, KEIN Release, keine Box im
-Feld auf 2.4.66. Laut FORTSCHRITT 04.09. werden Boxen manuell per Installer
-aktualisiert, weil das Cloud-Update zu langsam ist.)
+Stand 06.09.2026: 2.4.66 hat Hotspot- UND Weiße-Print-Problem nachweislich
+gelöst (Dauerlauf Box 101: 85 Sessions, 0 neue weiße Prints). ABER zwei
+UI-Freezes im Stress-Test (Session 1 bzw. Durchgang 166), beide exakt beim
+Session-Wiedereinstieg, kein Windows-Crash, kein Dump. 2.4.67 =
+Diagnose-Release: Hänge-Wächter schreibt bei >30 s Stillstand der
+Hauptschleife die Stacks ALLER Threads nach absturz.log.
 
 - [x] Hotspot-Test Box 101 (05.09.): Keepalive beide Schalter = 0, Wächter
       lief, Hotspot hielt 12:00–18:14 ohne eine Reparatur, QR durchgehend
       `192.168.137.1`. Leerlauf >5 h überstanden.
-- [x] Weiße-Print-Ursache gefunden + 2.4.66 umgesetzt (Momentaufnahme für
-      den Final-Renderer, CI-Pfad-Fix, neuer Test `test_final_render_race.py`).
-- [x] **Installer 2.4.66 gebaut** – erledigt 05.09.2026 16:34 UTC, GitHub-Action-Run
-      33978302086 grün, Artefakt `FexoBooth-2.4.66` (182 MB). Kein Release erstellt.
-- [ ] **Kurztest auf Box 101:** 2.4.66 installieren, Dev-Mode, Stress-Test
-      ~10 Sessions laufen lassen → auf dem Stick darf KEINE Print-Datei mit
-      34.527 Bytes mehr auftauchen (weiße Vorlage). Gegenprobe: „Fertig"
-      von Hand drücken, solange „Dein Bild wird erstellt…" steht.
+- [x] Weiße-Print-Fix 2.4.66 im Dauerlauf bestätigt (0 neue weiße Dateien in
+      85 Sessions; alle 9 weißen stammen aus der 2.4.65-Zeit).
+- [x] Freeze-Analyse: Log endet beide Male zwischen „Template-Overlay Cache"
+      und „LiveView-Worker gestartet" (normal 5 ms Abstand). Hänge-Wächter
+      als 2.4.67 umgesetzt (`test_haenge_waechter.py` grün).
+- [ ] **Installer 2.4.67 bauen** und auf Box 101 installieren.
+- [ ] **Stress-Test im Dev-Mode bis zum nächsten Freeze.** Beim Freeze:
+      NICHT sofort beenden — mindestens 1 Minute warten (Wächter braucht bis
+      zu 30 s + Schreibzeit), dann beenden und `absturz.log` + Dev-Mode-Log
+      an Claude. Im absturz.log muss ein Block ab „Timeout" mit
+      „Thread 0x…"-Stacks stehen.
+- [ ] Freeze-Ursache mit dem Stack-Dump fixen (→ 2.4.68).
 - [ ] **Noch offen aus dem 2.4.65-Plan:** Reparatur-Test (Hotspot in Windows
       von Hand ausschalten → nach ≤2 Min von selbst wieder an, Block in
       `netzwerk.log`) und QR-Sofort-Scan direkt nach Box-Neustart.
 - [ ] Danach Rollout: Box 248 (meldet aktuell 2.4.62), dann die nächsten 5
       Rückläufer mit Live-Upgrade fürs kommende Wochenende, dann Rest
-      (221 Boxen laufen auf 2.4.45 mit dem Weiß-Print-Bug). 2.4.66 ersetzt
-      2.4.65 komplett (enthält alle Hotspot-Fixes).
+      (221 Boxen laufen auf 2.4.45 mit dem Weiß-Print-Bug). Rollout-Stand
+      ist 2.4.67+ (enthält alle Hotspot- und Print-Fixes). Abwägen: Freeze
+      trat 2× in ~250 Sessions auf — fürs Wochenende ggf. erst 2.4.68 mit
+      Freeze-Fix abwarten.
 - [ ] 🟡 Nachzügler beim Rollout mitnehmen: **001/029/117 (2.4.14)** und
       **237 (2.4.25)**. Achtung bei 001/029/117: das alte Update-BAT der 2.4.14
       löscht noch `_internal\BILDER` → vorher Bilder ziehen (BILDER-Migration

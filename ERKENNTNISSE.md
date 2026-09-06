@@ -6,6 +6,15 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### Einen Freeze ohne Beweisfoto fixt man nicht — man faengt erst das Foto (2.4.67)
+
+| | |
+|---|---|
+| **Feldbefund** | Box 101, 06.09.2026: Zwei UI-Freezes im Stress-Test (Session 1 bzw. Durchgang 166). Log endet beide Male kommentarlos an derselben Stelle (Session-Wiedereinstieg), kein Windows-Crash, kein Dump — „Anwendung reagiert nicht", von Hand beendet. `faulthandler.enable` (seit 2.4.30) half nicht: Es feuert nur bei Absturz-Signalen, ein Stillstand ist kein Signal. |
+| **Entscheidung** | `faulthandler.dump_traceback_later` als Haenge-Waechter: Die Tk-Hauptschleife armiert alle 5 s neu (Timeout 30 s, exit=False). Der Waechter-Thread laeuft auf C-Ebene ohne GIL — er schreibt die Stacks ALLER Threads nach absturz.log selbst dann, wenn die komplette Python-Ebene verklemmt ist. Dazu eine Thread-Legende (faulthandler kennt nur IDs, keine Namen). |
+| **Alternativen** | Sofort einen vermuteten Fix bauen (1 Ereignis in 13,5 h — jeder Fix waere geraten und unpruefbar). Externer Prozess mit py-spy (zusaetzliche Abhaengigkeit auf 219 Boxen, Installer-Aufwand). Windows-WER-Haenge-Dumps (greifen nur bei „echten" AppHangs ueber die Shell, nicht zuverlaessig im Kiosk). |
+| **Merke** | Ein Haenger ist kein Absturz: `faulthandler.enable` sieht ihn nicht, WER meldet oft nichts, und beim Hand-Beenden entsteht kein Dump. Fuer Haenger braucht es einen Timer-Waechter, der die Python-Ebene NICHT braucht. exit=False nicht vergessen — der Waechter soll dokumentieren, nicht die Box abschiessen. |
+
 ### Ein Hintergrund-Worker darf keine lebenden Session-Daten lesen (2.4.66)
 
 | | |

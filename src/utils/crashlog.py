@@ -182,3 +182,70 @@ def install_tk_exception_handler(root, logger=None) -> bool:
         return True
     except Exception:
         return False
+
+
+# ─────────────────────────────────────────────
+# Haenge-Waechter (2.4.67): Freeze ohne Absturz sichtbar machen
+# ─────────────────────────────────────────────
+# Befund Testaufbau 06.09.2026 (Box 101, 2.4.66): Zwei UI-Freezes im
+# Stress-Test (nach 1 bzw. 166 Durchgaengen). Log endet mitten im Session-
+# Wiedereinstieg, KEIN Windows-Crash, KEIN Dump — die App hing nur
+# („Anwendung reagiert nicht") und wurde von Hand beendet. faulthandler.enable
+# oben greift da nicht: Es feuert nur bei Absturz-Signalen, nicht bei einem
+# Stillstand.
+#
+# `faulthandler.dump_traceback_later` ist genau dafuer gebaut: Ein Waechter-
+# Thread auf C-Ebene, der OHNE die Python-Ebene auskommt (kein GIL noetig).
+# Die Tk-Hauptschleife armiert ihn zyklisch neu (jeder Aufruf setzt den Timer
+# zurueck). Steht die Hauptschleife laenger als das Timeout — auch bei einer
+# kompletten GIL-Verklemmung mit VLC/OpenCV —, schreibt der Waechter die
+# Python-Stacks ALLER Threads nach absturz.log. Beim naechsten Freeze steht
+# dort auf die Zeile genau, wer wo klemmt.
+
+_hang_last_legend = None
+
+
+def arm_hang_watchdog(timeout_s: float = 30.0) -> bool:
+    """(Re-)armiert den Haenge-Waechter — zyklisch aus der Tk-Hauptschleife rufen.
+
+    exit=False: Die App wird nicht abgeschossen, wir wollen nur das
+    Beweisfoto. repeat=False: Ein Stillstand erzeugt genau EINEN Dump; neu
+    armiert wird erst, wenn die Hauptschleife wieder lebt.
+    """
+    global _hang_last_legend
+    if _fault_file is None and not install_faulthandler():
+        return False
+
+    import faulthandler
+    import threading
+
+    try:
+        # faulthandler druckt nur Thread-IDs — die Legende macht daraus Namen.
+        # Nur bei Aenderung schreiben, sonst waechst absturz.log im 5-s-Takt.
+        legende = sorted(
+            (t.ident, t.name) for t in threading.enumerate() if t.ident is not None
+        )
+        if legende != _hang_last_legend:
+            _fault_file.write(
+                f"----- {time.strftime('%Y-%m-%d %H:%M:%S')} | Haenge-Waechter "
+                "Thread-Legende: "
+                + ", ".join(f"0x{ident:x}={name}" for ident, name in legende)
+                + " -----\n"
+            )
+            _hang_last_legend = legende
+
+        faulthandler.dump_traceback_later(
+            timeout_s, repeat=False, file=_fault_file, exit=False
+        )
+        return True
+    except Exception:
+        return False
+
+
+def cancel_hang_watchdog() -> None:
+    """Waechter abschalten (geordnetes Beenden — sonst Dump beim Herunterfahren)."""
+    try:
+        import faulthandler
+        faulthandler.cancel_dump_traceback_later()
+    except Exception:
+        pass

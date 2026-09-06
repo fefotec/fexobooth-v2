@@ -6,6 +6,39 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.67] - 2026-09-06 - Haenge-Waechter: Freezes hinterlassen jetzt Beweise
+
+> Anlass: Zwei UI-Freezes im Stress-Test auf Box 101 (06.09., 2.4.66) — einer
+> in Session 1, einer nach 166 Durchgaengen. Beide Male: Log endet
+> kommentarlos mitten im Session-Wiedereinstieg (letzte Zeile
+> „Template-Overlay Cache", die 5 ms spaeter faellige Zeile „LiveView-Worker
+> gestartet" fehlt), „Anwendung reagiert nicht", KEIN Windows-Crash, KEIN
+> Dump. Verdacht: kompletter Stillstand der Python-Ebene (Verklemmung mit
+> einer nativen Komponente — VLC endete 0,4 s vorher, Kamera im
+> HD-Dauerbetrieb). Aus dem Log allein nicht beweisbar — es fehlt ein Foto
+> vom Moment des Haengens.
+
+### Geaendert
+
+- **Haenge-Waechter** (`src/utils/crashlog.py` + `src/app.py`): Die
+  Tk-Hauptschleife armiert alle 5 s `faulthandler.dump_traceback_later`
+  (Timeout 30 s, exit=False). Der Waechter laeuft auf C-Ebene OHNE die
+  Python-Ebene — steht die Hauptschleife laenger als 30 s (auch bei einer
+  GIL-Verklemmung), schreibt er die Python-Stacks ALLER Threads nach
+  `absturz.log`. Dazu eine Thread-Legende (ID → Name), damit die Stacks
+  lesbar sind. Erholt sich die Hauptschleife wieder, steht im Dev-Log ein
+  Wegweiser („Hauptschleife war ~Xs blockiert"). `shutdown()` entschaerft
+  den Waechter, damit langsames Beenden keinen Fehlalarm-Dump erzeugt.
+
+### Tests
+
+- `tests/test_haenge_waechter.py` (neu, in `alle_tests.py`): belegt im
+  Subprozess, dass Re-Arm innerhalb des Timeouts NICHT feuert
+  (Herzschlag-Prinzip), der Ablauf des Timeouts die Stacks aller Threads
+  schreibt und cancel entwaffnet; plus statischer Verdrahtungs-Vertrag.
+
+---
+
 ## [2.4.66] - 2026-09-05 - Kein weisses Print-Bild mehr bei schnellem Session-Ende
 
 > Anlass: Testaufbau 05.09.2026 (Box 101, 2.4.65-Dauerlauf mit Stress-Test):

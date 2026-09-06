@@ -57,6 +57,8 @@ TESTS = [
      "QR nur ueber 192.168.137.x; Waechter wartet/repariert/ruht; Installer verdrahtet"),
     ("Weisse-Print-Race", "test_final_render_race.py",
      "Session-Ende waehrend Rendern speichert nie mehr eine weisse Vorlage"),
+    ("Haenge-Waechter", "test_haenge_waechter.py",
+     "Freeze >30 s schreibt alle Thread-Stacks nach absturz.log"),
 ]
 
 def main() -> int:
