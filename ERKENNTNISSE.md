@@ -6,6 +6,15 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### Tkinter + Threads + automatischer GC = Deadlock-Lotterie (2.4.68)
+
+| | |
+|---|---|
+| **Feldbefund** | Box 101, 06.09.2026, dritter Freeze — Stack-Dump des Haenge-Waechters: MainThread wartet in `Thread.start()` (LiveView-Worker-Geburt beim Session-Wiedereinstieg), der neue Thread haengt in `tkinter\font.py __del__`, ausgeloest vom automatischen Zyklen-Sammler mitten in `threading._set_tstate_lock`. Tk nimmt Befehle aus fremden Threads nur an, wenn der Hauptthread im Tcl-Event-Loop steht — der wartete aber auf den neuen Thread. Beide fuer immer. |
+| **Entscheidung** | `gc.disable()` beim Start der Hauptschleife; `_gc_takt()` sammelt alle 30 s per `gc.collect()` im Tk-Hauptthread. Tkinter-Finalizer laufen damit garantiert nur noch dort, wo Tcl-Aufrufe erlaubt sind. Dauer wird im Dev-Log ueberwacht (>100 ms auffaellig). |
+| **Alternativen** | Font-Churn reduzieren/cachen (lindert nur die Wahrscheinlichkeit — customtkinter erzeugt intern selbst Fonts). `Thread.start()` aus dem after()-Kontext verlegen (verschiebt das Fenster nur). tkinter-Objekte nie zyklisch referenzieren (nicht durchsetzbar, Fremdcode). |
+| **Merke** | Der Zyklen-Sammler laeuft in DEM Thread, der zufaellig die Allokations-Schwelle reisst — auch in einem halb geborenen. Jedes Tk-Objekt mit `__del__` (Font, Variable, PhotoImage) ist dann eine Mine. In jeder Tk-App mit Threads: Auto-GC aus, Sammeln in den Hauptthread-Takt. Und: Der Haenge-Waechter (2.4.67) hat sich beim ERSTEN Einsatz bezahlt gemacht — Diagnose-Werkzeuge vor Rate-Fixes. |
+
 ### Einen Freeze ohne Beweisfoto fixt man nicht — man faengt erst das Foto (2.4.67)
 
 | | |

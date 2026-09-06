@@ -13,39 +13,36 @@ Aufgabenliste mit Prioritäten.
 
 ---
 
-## ➡️ NÄCHSTER TEST: FREEZE MIT 2.4.67 EINFANGEN, DANN ROLLOUT 🔴
+## ➡️ NÄCHSTER TEST: 2.4.68 DAUERLAUF, DANN ROLLOUT 🔴
 
-Stand 06.09.2026: 2.4.66 hat Hotspot- UND Weiße-Print-Problem nachweislich
-gelöst (Dauerlauf Box 101: 85 Sessions, 0 neue weiße Prints). ABER zwei
-UI-Freezes im Stress-Test (Session 1 bzw. Durchgang 166), beide exakt beim
-Session-Wiedereinstieg, kein Windows-Crash, kein Dump. 2.4.67 =
-Diagnose-Release: Hänge-Wächter schreibt bei >30 s Stillstand der
-Hauptschleife die Stacks ALLER Threads nach absturz.log.
+Stand 06.09. nachmittags: Der Hänge-Wächter hat beim dritten Freeze (14:17,
+Session 6) den Stack-Dump geliefert → Ursache Tkinter-GC-Deadlock, Fix in
+2.4.68 (Müllabfuhr in den Hauptthread verlagert; Details CHANGELOG).
 
-- [x] Hotspot-Test Box 101 (05.09.): Keepalive beide Schalter = 0, Wächter
-      lief, Hotspot hielt 12:00–18:14 ohne eine Reparatur, QR durchgehend
-      `192.168.137.1`. Leerlauf >5 h überstanden.
-- [x] Weiße-Print-Fix 2.4.66 im Dauerlauf bestätigt (0 neue weiße Dateien in
-      85 Sessions; alle 9 weißen stammen aus der 2.4.65-Zeit).
-- [x] Freeze-Analyse: Log endet beide Male zwischen „Template-Overlay Cache"
-      und „LiveView-Worker gestartet" (normal 5 ms Abstand). Hänge-Wächter
-      als 2.4.67 umgesetzt (`test_haenge_waechter.py` grün).
-- [ ] **Installer 2.4.67 bauen** und auf Box 101 installieren.
-- [ ] **Stress-Test im Dev-Mode bis zum nächsten Freeze.** Beim Freeze:
-      NICHT sofort beenden — mindestens 1 Minute warten (Wächter braucht bis
-      zu 30 s + Schreibzeit), dann beenden und `absturz.log` + Dev-Mode-Log
-      an Claude. Im absturz.log muss ein Block ab „Timeout" mit
-      „Thread 0x…"-Stacks stehen.
-- [ ] Freeze-Ursache mit dem Stack-Dump fixen (→ 2.4.68).
+- [x] Freeze eingefangen: Stack-Dump in absturz.log (MainThread in
+      Thread.start(), neuer Thread in tkinter font.__del__ → Deadlock).
+- [x] 2.4.68 umgesetzt: gc.disable() + _gc_takt() alle 30 s im Hauptthread;
+      `test_gc_hauptfaden.py` grün.
+- [ ] **Installer 2.4.68 bauen**, auf Box 101 installieren, Dev-Mode:
+      im Startlog müssen „Haenge-Waechter aktiv" UND „Muellabfuhr verlagert"
+      stehen.
+- [ ] **Stress-Test-Dauerlauf** (Ziel: deutlich über 250 Sessions, gern über
+      Nacht). Erwartung: kein Freeze mehr; falls doch, steht der neue Dump in
+      absturz.log (Wächter bleibt aktiv). Danach absturz.log + Dev-Log an
+      Claude — auch im Erfolgsfall (GC-Dauer-Zeilen kontrollieren).
 - [ ] **Noch offen aus dem 2.4.65-Plan:** Reparatur-Test (Hotspot in Windows
       von Hand ausschalten → nach ≤2 Min von selbst wieder an, Block in
       `netzwerk.log`) und QR-Sofort-Scan direkt nach Box-Neustart.
-- [ ] Danach Rollout: Box 248 (meldet aktuell 2.4.62), dann die nächsten 5
+- [ ] Rollout: Box 248 (meldet aktuell 2.4.62), dann die nächsten 5
       Rückläufer mit Live-Upgrade fürs kommende Wochenende, dann Rest
       (221 Boxen laufen auf 2.4.45 mit dem Weiß-Print-Bug). Rollout-Stand
-      ist 2.4.67+ (enthält alle Hotspot- und Print-Fixes). Abwägen: Freeze
-      trat 2× in ~250 Sessions auf — fürs Wochenende ggf. erst 2.4.68 mit
-      Freeze-Fix abwarten.
+      ist 2.4.68 (enthält Hotspot-, Print- und Freeze-Fix + Hänge-Wächter).
+
+Erledigt auf dem Weg hierher (Details FORTSCHRITT.md): Hotspot-Test 05.09.
+grün; Weiße-Print-Fix 2.4.66 im Dauerlauf bestätigt (85 Sessions, 0 weiße);
+Hänge-Wächter 2.4.67 hat beim dritten Freeze den entscheidenden Stack-Dump
+geliefert.
+
 - [ ] 🟡 Nachzügler beim Rollout mitnehmen: **001/029/117 (2.4.14)** und
       **237 (2.4.25)**. Achtung bei 001/029/117: das alte Update-BAT der 2.4.14
       löscht noch `_internal\BILDER` → vorher Bilder ziehen (BILDER-Migration

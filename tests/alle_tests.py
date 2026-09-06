@@ -59,6 +59,8 @@ TESTS = [
      "Session-Ende waehrend Rendern speichert nie mehr eine weisse Vorlage"),
     ("Haenge-Waechter", "test_haenge_waechter.py",
      "Freeze >30 s schreibt alle Thread-Stacks nach absturz.log"),
+    ("Tkinter-GC-Deadlock-Schutz", "test_gc_hauptfaden.py",
+     "Zyklen-Sammler nur im Hauptthread; kein Font.__del__ im fremden Thread"),
 ]
 
 def main() -> int:

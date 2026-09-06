@@ -4,6 +4,30 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-09-06 — 2.4.68: Freeze-Ursache gefunden und gefixt (Tkinter-GC-Deadlock)
+
+**Der Haenge-Waechter hat geliefert:** Dritter Freeze (Box 101, 2.4.67,
+14:17 Uhr, Stress-Test Session 6) — diesmal mit Stack-Dump in absturz.log.
+
+**Diagnose:** MainThread wartet in `Thread.start()` auf den frisch
+gestarteten LiveView-Thread (`session.py:479`). Der neue Thread haengt in
+seiner eigenen Geburt: `threading._set_tstate_lock` loeste den automatischen
+Zyklen-Sammler aus, der ein `tkinter.font.Font` wegraeumte — dessen
+`__del__` schickt einen Tcl-Befehl aus dem fremden Thread, Tk wartet auf den
+Hauptthread, der Hauptthread wartet auf den neuen Thread. Deadlock.
+Erklaert Ort (Session-Wiedereinstieg = einzige Thread-Geburt mitten im
+Betrieb), Seltenheit (GC-Schwelle muss exakt im Geburts-Fenster reissen)
+und die Stille aller Threads.
+
+**Fix (2.4.68):** `gc.disable()` beim Start der Hauptschleife +
+`_gc_takt()` sammelt alle 30 s im Tk-Hauptthread (dort sind Tcl-Aufrufe
+erlaubt), Dauer-Ueberwachung im Dev-Log. Refcount-Freigaben unveraendert.
+Neuer Test `tests/test_gc_hauptfaden.py` (in `alle_tests.py`): Zyklus mit
+Finalizer stirbt nachweislich NICHT mehr im fremden Thread. Haenge-Waechter
+bleibt aktiv — sollte je etwas anderes klemmen, gibt es wieder ein Beweisfoto.
+
+---
+
 ## 2026-09-06 — 2.4.67: Haenge-Waechter gegen die Stress-Test-Freezes
 
 **Befund (Box 101, 2.4.66):** Zwei UI-Freezes — Session 1 des Morgen-Stress-

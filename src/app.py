@@ -3810,10 +3810,55 @@ class PhotoboothApp:
         self.root.after(1000, self._haenge_waechter_takt)
         logger.info("🧊 Haenge-Waechter aktiv: steht die Hauptschleife >30 s, "
                     "schreibt faulthandler alle Thread-Stacks nach absturz.log")
+        # Automatische Zyklen-Muellabfuhr AUS (2.4.68): Sie darf in JEDEM
+        # Thread anspringen — auch mitten in der Geburt eines neuen Threads.
+        # Raeumt sie dabei ein Tkinter-Objekt weg (z.B. tkinter.font.Font),
+        # schickt dessen __del__ einen Tcl-Befehl aus einem fremden Thread.
+        # Tk wartet dann auf den Hauptthread — der gerade in Thread.start()
+        # auf den neuen Thread wartet: Deadlock. Genau so eingefroren am
+        # 06.09.2026 (3x, Stack-Dump in absturz.log: MainThread in
+        # session.py _start_liveview_worker, neuer Thread in font.py __del__).
+        # Stattdessen raeumt _gc_takt unten alle 30 s im Hauptthread auf —
+        # dort sind Tcl-Aufrufe erlaubt. Refcount-Freigaben laufen normal
+        # weiter, nur der ZYKLEN-Sammler wird verlagert.
+        import gc
+        gc.disable()
+        self.root.after(30000, self._gc_takt)
+        logger.info("🗑️ Muellabfuhr verlagert: automatischer Zyklen-Sammler AUS, "
+                    "Hauptthread sammelt alle 30 s (Tkinter-GC-Deadlock-Schutz)")
         try:
             self.root.mainloop()
         finally:
             self._mainloop_started = False
+
+    def _gc_takt(self):
+        """Zyklen-Muellabfuhr im 30-s-Takt — NUR im Tk-Hauptthread (2.4.68).
+
+        Ersatz fuer den abgeschalteten automatischen Sammler (siehe run()).
+        Hier duerfen Tkinter-Finalizer (Font.__del__ & Co.) gefahrlos ihre
+        Tcl-Befehle absetzen. Dauer wird im Dev-Mode ueberwacht, damit ein
+        wachsender Objektberg auf der schwachen Hardware auffaellt.
+        """
+        if self._shutdown_started:
+            return
+        try:
+            import gc
+            import time as _time
+            t0 = _time.perf_counter()
+            eingesammelt = gc.collect()
+            dauer_ms = (_time.perf_counter() - t0) * 1000
+            if dauer_ms > 100:
+                logger.info(f"Muellabfuhr (Hauptthread): {eingesammelt} Objekte "
+                            f"in {dauer_ms:.0f}ms — auffaellig lang")
+            else:
+                logger.debug(f"Muellabfuhr (Hauptthread): {eingesammelt} Objekte "
+                             f"in {dauer_ms:.0f}ms")
+        except Exception as e:
+            logger.debug(f"Muellabfuhr-Takt uebersprungen: {e}")
+        try:
+            self.root.after(30000, self._gc_takt)
+        except Exception:
+            pass
 
     def _haenge_waechter_takt(self):
         """Herzschlag der Tk-Hauptschleife fuer den Haenge-Waechter (alle 5 s).

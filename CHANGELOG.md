@@ -6,6 +6,48 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.68] - 2026-09-06 - Freeze-Ursache gefixt: Tkinter-GC-Deadlock
+
+> Anlass: Dritter Freeze im Stress-Test (Box 101, 2.4.67, 14:17 Uhr) — und
+> diesmal MIT Beweisfoto: Der Haenge-Waechter aus 2.4.67 hat den Stack-Dump
+> nach absturz.log geschrieben.
+
+### Befund (Stack-Dump, auf die Zeile genau)
+
+- **MainThread**: `session.py:479 _start_liveview_worker` →
+  `threading.py:969 start` — wartet, dass der frisch gestartete
+  LiveView-Thread „bereit" meldet.
+- **Der neue Thread**: `threading.py:1020 _set_tstate_lock` →
+  `tkinter\font.py:121 __del__` — mitten in seiner Geburt sprang der
+  automatische Zyklen-Sammler an und raeumte ein tkinter.font.Font-Objekt
+  weg. Dessen `__del__` schickt einen Tcl-Befehl — aus einem fremden Thread.
+  Tk reicht den an den Hauptthread weiter und wartet. Der Hauptthread wartet
+  aber auf den neuen Thread: **Deadlock, beide fuer immer.**
+
+Erklaert alle drei Freezes (Session-Wiedereinstieg = einzige Stelle, an der
+mitten im Betrieb regelmaessig ein Thread geboren wird, direkt nach
+UI-lastigen Screens voller Font-/Widget-Garbage) und die Seltenheit (der
+Sammler muss die Schwelle exakt im Geburts-Fenster reissen). Bekanntes
+CPython/Tkinter-Problem (Finalizer von Tk-Objekten in fremden Threads).
+
+### Geaendert
+
+- **Zyklen-Muellabfuhr verlagert** (`src/app.py`): `gc.disable()` beim Start
+  der Hauptschleife — der automatische Sammler darf nie wieder in einem
+  fremden Thread anspringen. Stattdessen sammelt `_gc_takt()` alle 30 s im
+  Tk-Hauptthread (dort sind Tcl-Aufrufe erlaubt), mit Dauer-Ueberwachung im
+  Dev-Log (>100 ms = auffaellig). Refcount-Freigaben laufen unveraendert —
+  nur der ZYKLEN-Sammler wird verlagert, Speicherverhalten bleibt gleich.
+
+### Tests
+
+- `tests/test_gc_hauptfaden.py` (neu, in `alle_tests.py`): belegt, dass ein
+  Referenzzyklus mit Finalizer bei abgeschaltetem Auto-Sammler NICHT im
+  fremden Thread stirbt und `gc.collect()` ihn im Hauptthread aufraeumt;
+  plus statischer Verdrahtungs-Vertrag.
+
+---
+
 ## [2.4.67] - 2026-09-06 - Haenge-Waechter: Freezes hinterlassen jetzt Beweise
 
 > Anlass: Zwei UI-Freezes im Stress-Test auf Box 101 (06.09., 2.4.66) — einer
