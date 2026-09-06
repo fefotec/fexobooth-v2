@@ -1,22 +1,34 @@
 # TODO - Fexobooth V2
 
+> Letzter Abgleich mit Ist-Stand: 06.09.2026 (Code, Git, Doku, Live-Systeme)
+
 Aufgabenliste mit Prioritäten.
+
+> **Flottenstand 06.09.2026** (280 Boxen, 239 melden sich): **221× 2.4.45**, 9× 2.4.33,
+> Nachzügler **001/029/117 auf 2.4.14**, **237 auf 2.4.25**; Testbuilds: 245 = 2.4.61,
+> 248 + 027 = 2.4.62, 252 = 2.4.63, 167 = 2.4.64. **Box 073 stumm seit 19.08.**
+> Code steht auf **2.4.66**: Artefakt gebaut (Action-Run 33978302086, 05.09.), aber
+> **kein GitHub-Release und keine Box im Feld** (keine 2.4.65/2.4.66 gemeldet).
+> Latest Release = v2.4.45 (20.08.), Auto-Update zeigt darauf. 41 Boxen ohne Software-Meldung.
 
 ---
 
-## ➡️ NÄCHSTER SCHRITT: 2.4.66 BAUEN, KURZ TESTEN, DANN ROLLOUT 🔴
+## ➡️ NÄCHSTER SCHRITT: 2.4.66 KURZ TESTEN, DANN ROLLOUT 🔴
 
 Stand 05.09.2026: Hotspot-Test auf Box 101 GRÜN (Details FORTSCHRITT.md),
 aber dabei neuen Bug gefunden: weiße Print-Dateien bei schnellem
 Session-Ende (in 2.4.45 im Feld enthalten!). Fix ist 2.4.66.
+(Stand 06.09.: Installer liegt als Artefakt vor, KEIN Release, keine Box im
+Feld auf 2.4.66. Laut FORTSCHRITT 04.09. werden Boxen manuell per Installer
+aktualisiert, weil das Cloud-Update zu langsam ist.)
 
 - [x] Hotspot-Test Box 101 (05.09.): Keepalive beide Schalter = 0, Wächter
       lief, Hotspot hielt 12:00–18:14 ohne eine Reparatur, QR durchgehend
       `192.168.137.1`. Leerlauf >5 h überstanden.
 - [x] Weiße-Print-Ursache gefunden + 2.4.66 umgesetzt (Momentaufnahme für
       den Final-Renderer, CI-Pfad-Fix, neuer Test `test_final_render_race.py`).
-- [ ] **Installer 2.4.66 bauen** (GitHub Action, muss jetzt durchlaufen —
-      der 09:41-Fehlschlag war der feste `C:\Git-Projects`-Pfad in 2 Tests).
+- [x] **Installer 2.4.66 gebaut** – erledigt 05.09.2026 16:34 UTC, GitHub-Action-Run
+      33978302086 grün, Artefakt `FexoBooth-2.4.66` (182 MB). Kein Release erstellt.
 - [ ] **Kurztest auf Box 101:** 2.4.66 installieren, Dev-Mode, Stress-Test
       ~10 Sessions laufen lassen → auf dem Stick darf KEINE Print-Datei mit
       34.527 Bytes mehr auftauchen (weiße Vorlage). Gegenprobe: „Fertig"
@@ -24,29 +36,37 @@ Session-Ende (in 2.4.45 im Feld enthalten!). Fix ist 2.4.66.
 - [ ] **Noch offen aus dem 2.4.65-Plan:** Reparatur-Test (Hotspot in Windows
       von Hand ausschalten → nach ≤2 Min von selbst wieder an, Block in
       `netzwerk.log`) und QR-Sofort-Scan direkt nach Box-Neustart.
-- [ ] Danach Rollout: Box 248, dann die nächsten 5 Rückläufer mit
-      Live-Upgrade fürs kommende Wochenende, dann Rest. 2.4.66 ersetzt
+- [ ] Danach Rollout: Box 248 (meldet aktuell 2.4.62), dann die nächsten 5
+      Rückläufer mit Live-Upgrade fürs kommende Wochenende, dann Rest
+      (221 Boxen laufen auf 2.4.45 mit dem Weiß-Print-Bug). 2.4.66 ersetzt
       2.4.65 komplett (enthält alle Hotspot-Fixes).
+- [ ] 🟡 Nachzügler beim Rollout mitnehmen: **001/029/117 (2.4.14)** und
+      **237 (2.4.25)**. Achtung bei 001/029/117: das alte Update-BAT der 2.4.14
+      löscht noch `_internal\BILDER` → vorher Bilder ziehen (BILDER-Migration
+      kommt erst ab 2.4.19), am besten per Installer statt OTA.
 
-## ➡️ NÄCHSTER TEST: VLC-LANGZEITLAUF (Stand 2.4.64) 🔴
+## ➡️ NÄCHSTER TEST: VLC-LANGZEITLAUF (Stand 2.4.64, läuft auf Box 167) 🔴
 
-- [x] Box-155-Log ausgewertet: 608 Videos, 548/548 Webcam-Aufnahmen, aber
+- [x] Box-167-Log ausgewertet: 608 Videos, 548/548 Webcam-Aufnahmen, aber
       34 offene VLC-Cleanups und spaeter starker RAM-/CPU-Anstieg samt
       LiveView-FPS-Abfall.
 - [x] 2.4.64 umgesetzt: ein persistenter VLC-Player, 608/608 explizite
       Media-Freigaben, maximal ein Fehler-Cleanup, sichere Playback-Timer,
       getrennter OpenCV-Fallback und `VLC-LIFECYCLE`-Diagnose. Keine Aenderung
       in `src/camera/webcam.py` oder an DSLR-Capturepfaden.
-- [ ] **2.4.64 frisch bauen und auf Box 155 im Developer Mode installieren.**
-      Im Startlog muss App `2.4.64` erscheinen.
+- [x] 2.4.64 gebaut und installiert – Stand 06.09.: **Box 167** meldet 2.4.64
+      (hier stand vorher fälschlich Box 155).
 - [ ] Stress-Test mindestens bis 608 Videos und 548 Aufnahmen laufen lassen.
       Erwartung: 548/548 Fotos, `creations=1`, `cleanup_pending=0`, kein
       anhaltender RAM-/CPU-Anstieg und kein spaeter LiveView-FPS-Einbruch.
+      **Hinweis:** kann direkt mit 2.4.66 laufen (enthält 2.4.64 komplett),
+      dann spart man sich den Extra-Build.
 - [ ] Log im Service-Menue ans Dashboard senden und gemeinsam auswerten.
 
 ## DSLR-Nachweise (Stand 2.4.64) 🟡
 
 > Vollständige Übergabe: **[DSLR-STAND.md](DSLR-STAND.md)** — dort erst lesen.
+> (Stand 06.09.: laut DSLR-STAND.md ist die Hardware-Abnahme auf Box 248 noch offen.)
 
 ### Nikon D3300 auf Box 252
 
@@ -65,9 +85,10 @@ Session-Ende (in 2.4.45 im Feld enthalten!). Fix ist 2.4.66.
       15-Sekunden-Init ohne Kamera sowie `py_compile` und Nikon-Smoke-Test gruen.
 - [x] Hardwareursache bestaetigt: Es war das USB-Kabel. Kein Nikon-Codefix aus
       diesem Ausfall erforderlich; die 2.4.63-Diagnose bleibt erhalten.
-- [ ] Bei Gelegenheit mit 2.4.64 einen kurzen Nikon-Smoke-Lauf machen, weil
-      derselbe gemeinsame Build ausgeliefert wird. Erwartung: Erkennung,
-      LiveView und Vollbild-Capture unveraendert.
+- [ ] Bei Gelegenheit einen kurzen Nikon-Smoke-Lauf machen, weil derselbe
+      gemeinsame Build ausgeliefert wird. Erwartung: Erkennung, LiveView und
+      Vollbild-Capture unveraendert. (Stand 06.09.: Box 252 meldet 2.4.63;
+      Smoke-Lauf kann direkt mit 2.4.66 erfolgen.)
 
 ### Canon EOS 2000D auf Box 248
 
@@ -85,12 +106,13 @@ Session-Ende (in 2.4.45 im Feld enthalten!). Fix ist 2.4.66.
 - [x] Lokale Abschlusspruefung: **18/18 Windows-Tests**, integrierter
       Null-Hosttransfer, `py_compile` und `git diff --check` gruen;
       `webcam.py`, `nikon.py`, `canon.py` und `session.py` ohne Diff.
-- [ ] **2.4.62 bauen und auf Box 248 ohne SD-Karte mit `--dev` starten.**
-      dslrBooth vorher vollstaendig schliessen, damit nur FexoBooth die EOS
-      besitzt. Wahlrad auf `P` lassen.
+- [x] **2.4.62 gebaut und auf Box 248 installiert** – Stand 06.09.: Box 248
+      meldet 2.4.62. (Beim Test: dslrBooth vorher vollstaendig schliessen,
+      damit nur FexoBooth die EOS besitzt; ohne SD-Karte, `--dev`, Wahlrad `P`.)
 - [ ] Im Startlog die Kette `EOS 2000D gefunden -> Session geoeffnet ->
       SaveTo=Host -> Capacity ok -> AvailableShots bleibt 0 -> CANON-HOST READY
       ... readiness=save_to+capacity` pruefen. LiveView muss erscheinen.
+      (Stand 06.09.: Auswertung steht aus, Hardware-Abnahme laut DSLR-STAND offen.)
 - [ ] Eine vollstaendige Session aufnehmen. Pro Foto genau einmal
       `PRESS-START`, `PRESS-RETURN`, `RELEASE-RETURN`, `CANON-FLASH REQUEST`,
       `CANON-FLASH SHOWN`, Transfer-JPEG und `CANON-PHOTO SHOWN`.
@@ -99,15 +121,32 @@ Session-Ende (in 2.4.45 im Feld enthalten!). Fix ist 2.4.66.
 - [ ] Log im Service-Menue ans Dashboard senden und Codex Bescheid geben.
 - [ ] Bei `CARD_NG`, `CANON-OWNER TIMEOUT`, `CAPTURE TIMEOUT` oder fehlender
       Transferkette keinen Umbau auf Verdacht starten; zuerst genau dieses
-      eine Dev-Log auswerten.
+      eine Dev-Log auswerten. (06.09.: nicht am Code prüfbar – braucht das
+      Dev-Log der Box.)
 - [ ] Nur falls der normale Host-Capture nicht eindeutig ist: danach einmal
       `fexobooth.exe --dev --dslr-test` fahren und dessen Log ebenfalls senden.
+
+## Flotte: Nachzügler, stumme Boxen, Uhrzeit 🟡
+
+> Neu aufgenommen beim Abgleich 06.09.2026 (Quelle: Dashboard-Meldungen + zentrale TODO).
+
+- [ ] 🟡 **Box 027 (Normalbox) meldet den DSLR-Testbuild 2.4.62** – prüfen, wie
+      der Build dort hinkam (versehentlich installiert?); beim 2.4.66-Rollout
+      auf den regulären Stand bringen.
+- [ ] 🟡 **Uhrzeit-Sync Box 202/036** (Punkt aus der zentralen TODO
+      `fexobox-next/TODO.md`, hier bisher nicht geführt) – aus der DB nicht
+      ableitbar, nur Build-seitig lösbar (Zeitabgleich in der Box-Software).
+- [ ] **Box 073 stumm seit 19.08.** (letzte Meldung 2.4.33) – in der Werkstatt
+      mit 2.4.66 durchtesten. (116/016 melden sich wieder.)
+- [ ] 🟢 **41 Boxen (von 280) ohne Software-Meldung** im Dashboard – bei
+      Rückläufern in der Werkstatt mit abgleichen.
 
 ## Offen: Standbild zeigt anderen Bildausschnitt als das finale Foto 🟡
 
 > Mehrfach gemeldet. Zwei Anteile: Zeitversatz (schrumpft, sobald Fotos
 > schnell ankommen) und unterschiedlicher Bildausschnitt zwischen Vorschau
 > und Aufnahme. Letzteres ist ein eigenes Thema, noch nicht angefasst.
+> (Stand 06.09.: nur noch für DSLR-Boxen relevant.)
 
 - [ ] Erst angehen, wenn die Aufnahme steht — vorher nicht sinnvoll messbar
 
@@ -118,6 +157,7 @@ Session-Ende (in 2.4.45 im Feld enthalten!). Fix ist 2.4.66.
 > Ueberbelichtung kam von der verstellten Belichtungskorrektur und ist behoben.
 > 2.4.60 warnt beim Verbinden vor einem Wert ungleich null und schreibt im
 > Dev-Modus EDSDK-, EXIF- und Helligkeitswerte, ohne die Kamera zu verstellen.
+> (Stand 06.09.: Box 245 meldet 2.4.61, Testlauf steht aus.)
 
 - [ ] Nach dem nächsten Testlauf Belichtungszeit, Blende, ISO,
       Belichtungskorrektur und Helligkeitsdiagnose auswerten
@@ -130,6 +170,7 @@ Session-Ende (in 2.4.45 im Feld enthalten!). Fix ist 2.4.66.
 > Die Kamera ist weg. Auf den Lenovo Miix mit Webcam gab es das nie.
 > Die Software fängt den Fall jetzt ab (Neuaufbau statt Endlosschleife) —
 > die Ursache ist damit aber nicht beseitigt.
+> (06.09.: nicht am Code prüfbar – braucht Hardware-/Log-Befund von der Box.)
 
 - [ ] Nur bei `COMM_DISCONNECTED`/USB-Bus-Fehler: USB-Energiesparen (USB
       Selective Suspend) im
@@ -144,34 +185,12 @@ Session-Ende (in 2.4.45 im Feld enthalten!). Fix ist 2.4.66.
 > Das neue Logging schreibt vor jedem Auslösen Akkustand, Programmwahlrad und
 > Fokus-Art ins Log. Steht der Fokus auf Autofokus, kann die Kamera im dunklen
 > Box-Inneren das Auslösen verweigern, ohne dass die Software etwas falsch macht.
+> (06.09.: nicht am Code prüfbar – braucht ein Test-Log von der DSLR-Box.)
 
 - [ ] Nach dem nächsten Test die Zeile `[3/5] Kamera-Zustand:` auswerten
 - [ ] Autofokus **aktiv lassen**. Bei `TAKE_PICTURE_AF_NG` Beleuchtung,
       Motivabstand und AF-Hilfslicht prüfen; die Software löst bewusst kein
       zweites Foto ohne Fokus-Zwang aus.
-
-## 2.4.43 Dauerbetrieb HD auf EINER Testbox prüfen 🔴
-
-> Etappe 2 von 2. Der Schalter ist überall aus — er muss auf genau einer Box
-> von Hand angeschaltet werden: **3198 → Tab Kamera → „Kamera dauerhaft in
-> Full HD (nur Testbox)" → Speichern.**
-
-- [ ] **Erst mit Schalter AUS eine Session machen.** Alles muss sein wie immer.
-      Das ist die Gegenprobe, dass die Flotte nichts abbekommen hat.
-- [ ] Schalter AN, speichern, Session starten: Nach dem Blitz muss das Foto
-      **fast sofort** da sein (heute rund 2 Sekunden Pause) — und es muss die
-      Pose zeigen, die beim Blitz zu sehen war.
-- [ ] **Bildausschnitt:** Die Vorschau ist jetzt links/rechts enger und
-      oben/unten weiter. **Das ist so gewollt** — sie zeigt genau das, was
-      später gedruckt wird.
-- [ ] **In einem dunklen Raum fotografieren**, Schalter an und aus im
-      Vergleich. Die Aufnahme fällt jetzt in den Blitz hinein; falls die Fotos
-      dunkler oder heller werden als vorher, unbedingt melden.
-- [ ] Ein Foto **drucken** und mit dem Vorschaubild vergleichen — Ausschnitt
-      und Qualität müssen unverändert gut sein.
-- [ ] **Dev-Mode-Log an Claude.** Darin stehen drei Zeilen, die alles klären:
-      „Dauerbetrieb HD: warm geöffnet …", „High-Res Capture Timing: …
-      Betriebsart=…" und „Sichtbare Capture-Wartezeit bis Fotoanzeige: …".
 
 ---
 
@@ -180,6 +199,7 @@ Session-Ende (in 2.4.45 im Feld enthalten!). Fix ist 2.4.66.
 > Steht seit 2.4.27 unabgehakt. Der Knopf ist die einzige per Fingertipp
 > erreichbare Stelle, die `netsh int ip reset` / `winsock reset` ausfuehrt —
 > aber es gibt bis heute keinen Beleg, dass er je etwas geheilt hat.
+> (Stand 06.09.: weiterhin ungetestet – reiner Hardware-Test in der Werkstatt.)
 
 - [ ] In der Werkstatt (fexon WLAN in Reichweite): 3198 → Allgemein →
       1. Tippen zeigt „Prüfe Firmen-WLAN...", dann Warnung; 10 s warten →
@@ -192,215 +212,54 @@ Session-Ende (in 2.4.45 im Feld enthalten!). Fix ist 2.4.66.
 
 ---
 
-## Version 2.4.36 auf einer echten Box gegenpruefen 🔴
+## Beenden-Knopf (3198): Restpunkte aus der 2.4.36-Gegenpruefung 🟡
 
-- [ ] **Kamera-Messung-Knopf:** Admin-Menue → Tab Kamera → Messung starten.
-      Die Oberflaeche muss BEDIENBAR bleiben (Laufzeit zaehlt sichtbar hoch).
-- [ ] **Abbrechen** waehrend die Messung laeuft → Dialog reagiert sofort,
-      danach startet eine normale Foto-Session wieder.
-- [ ] Messung durchlaufen lassen → `kamera-messung.txt` mitschicken. Erst damit
-      ist die 1080p-/Backend-Frage entscheidbar.
+> 06.09.: Die Kamera-Messungs-Gegenpruefung (bedienbar, Abbrechen, Messung
+> durchlaufen) ist durch 2.4.37/2.4.39 ersetzt und die Messung ist gelaufen
+> (→ Erledigt). Der 2.4.35-Beenden-Knopf ist auf der Box bestaetigt. Uebrig
+> bleiben zwei Punkte, die nur auf einer Box pruefbar sind.
+
 - [ ] Nach der Messung Task-Manager pruefen: kein zweites `fexobooth.exe` uebrig.
-
-- [x] ✅ **2.4.35 Beenden-Knopf (3198) — auf der Box bestaetigt** (Log 20.08.,
-      09:08:52): sauber beendet in 0,3 s inkl. Kamera-Freigabe.
+      (06.09.: nicht am Code prüfbar – Box-Test.)
 - [ ] **Nikon-Box:** Nach dem Beenden pruefen, ob `FexoNikonBridge.exe` wirklich
       verschwindet (bisher nur auf einer Webcam-Box getestet).
+      (06.09.: nicht am Code prüfbar – nur auf Box 252 testbar.)
 
 ---
 
-## ROUTER pruefen — Boxen bekommen keine IP-Adresse 🔴🔴
+## Abstuerze im Normalbetrieb (2.4.30) — Restpunkt 🟡
 
-> Belegt durch `netzwerk.log` von Box 019 (19.08. 12:31) und Box 038 (18.08. 15:40), beide 2.4.32:
-> nur `169.254.x.x`, **eigener Hotspot AUS**, Reparatur erfolglos. Die Box ist entlastet.
-> Auffaellig: Arbeitende Boxen bekamen `192.168.2.207 / .208 / .224 / .235` — alles im oberen
-> Bereich. Bei 200+ Boxen liegt ein zu kleiner DHCP-Bereich sehr nahe.
+> Kurzfassung (06.09.): Ursache gefunden (zwei Threads oeffneten dieselbe
+> DirectShow-Kamera → Heap-Zerstoerung, Code `0xc0000374`), gefixt in 2.4.31 mit
+> gemeinsamer Kamera-Sperre; Nachtest Box 044 bestanden; CPU-Fehlalarm beim
+> Testdruck in 2.4.32 gefixt. WER-Dumps und die Dashboard-Ausloeser-Pruefung
+> sind damit ueberholt (→ Erledigt). `absturz.log` + `faulthandler` bleiben aktiv.
 
-- [x] ✅ **ERLEDIGT 19.08.2026 — Ursache war der Router.** DHCP-Pool war zu 100 % voll
-      (51 Adressen fuer 200+ Boxen + PCs + Telefone + Access Points + Smart-Home).
-      Geaendert: Pool `192.168.2.200-.250` → **`192.168.2.130-.250`** (51 → 121 Adressen),
-      Lease Time **120 → 30 Minuten**. Details + Klickpfad in ERKENNTNISSE.md.
-- [ ] Gegentest: Box 19 oder 38 einschalten, 2 Min. laufen lassen, `netzwerk.log` muss
-      `ALLES GRÜN` zeigen
-- [ ] ~~Am Router pruefen~~ (erledigt, siehe oben):
-      1. Wie gross ist der DHCP-Adressbereich? Reicht er fuer alle Boxen, die durch die
-         Werkstatt laufen? (Arbeitende Boxen liegen bei .207-.235!)
-      2. Wie lang ist die Lease-Dauer? Zu lang = alte Boxen blockieren Adressen wochenlang.
-      3. MAC-Sperre / Zugangsliste aktiv?
-      4. Limit fuer gleichzeitige WLAN-Geraete erreicht?
-- [ ] Lease-Liste mit den MAC-Adressen der stummen Boxen abgleichen
-      (Box 019 laut Foto: `CC-79-CF-A7-4B-3E`, Realtek RTL8723BS)
-- [ ] Gegenprobe: Eine stumme Box am Router eine feste IP-Adresse zuweisen (Reservierung).
-      Meldet sie sich dann → DHCP-Bereich/Lease ist die Ursache, endgueltig bewiesen.
-
-## Boxen 19/31/38 melden sich nicht (offen) 🔴
-
-> Werkstatt 19.08. Alle drei mit 2.4.31, **kein Absturz mehr** (absturz.log nur Start-Zeilen),
-> WLAN-Setup laut Installer-Log erfolgreich verbunden — aber **keine netzwerk.log**.
-
-- [x] Ursache fuer die fehlende netzwerk.log gefunden: Boxen liefen nur 2,5-3 Min, die Bilanz
-      kam aber erst nach der Wiederholkette (~4 Min). Gefixt in 2.4.32 (Bilanz sofort).
-- [x] Gegengeprueft: `netzwerk.log` entsteht auch OHNE Dev-Mode (Test mit
-      `setup_logging(developer_mode=False)`). Zweites Loch dabei gefunden und geschlossen:
-      bei `not_visible` (Firmen-WLAN nicht in Reichweite) wurde vorher GAR NICHTS geschrieben —
-      ununterscheidbar von einem fehlgeschlagenen WLAN-Scan.
-- [ ] ⚠️ **WARUM sie sich nicht melden, wissen wir weiterhin NICHT** — es gibt schlicht keine
-      Daten. Mit 2.4.32 nochmal starten, diesmal reichen ~2 Minuten.
-- [ ] Danach `netzwerk.log` auswerten: Zeile `URTEIL` sagt, ob IP, Router, DNS oder das
-      Dashboard das Problem ist.
-
-## Abstuerze im Normalbetrieb (2.4.30) 🔴
-
-> Werkstatt 18.08.: 2 Boxen stuerzen beim Hochfahren ab, andere beim Anstecken des USB-Sticks —
-> im Developer-Mode NICHT reproduzierbar. Die Dev-Logs liefen beide sauber durch.
-
-- [x] `absturz.log` gebaut: jeder unbehandelte Fehler wird ab jetzt IMMER protokolliert
-      (Hauptthread, Threads, Tk-Callbacks) — unabhaengig vom Developer-Mode
-- [x] Tk-Fehler-Handler gesetzt (fehlte komplett) — Fehler in Callbacks reissen die App
-      nicht mehr mit
-- [x] **Ereignisprotokoll ausgewertet** (Mitarbeiter, 18.08. 14:13:45):
-      `fexobooth.exe` / fehlerhaftes Modul `ntdll.dll` / Ausnahmecode `0xc0000005`
-      = Speicherzugriffsfehler in nativem Code. **Damit ist der Tk-Handler als Ursache
-      widerlegt** — bei so einem Absturz laeuft kein Python-Code mehr.
-- [x] `faulthandler` eingebaut: schreibt bei genau diesem Absturztyp den Python-Stack aller
-      Threads nach `absturz.log` (mit echter Access Violation im Worker-Thread getestet ✓)
-- [ ] **Naechster Schritt auf einer abstuerzenden Box:** Absturz-Speicherabbild aktivieren
-      (WER LocalDumps, Registry-Befehl siehe unten) ODER vorhandene WER-Berichte einsammeln:
-      `C:\ProgramData\Microsoft\Windows\WER\ReportArchive\*fexobooth*`
-- [x] **Signatur bestaetigt** (Box 044, 2 Abstuerze am 18.08. mit identischen Werten:
-      `ntdll.dll` / `0xc0000005` / Offset `0x649e6`) → reproduzierbarer Heap-Fehler.
-      Box 087 taugt NICHT als Vergleich: laeuft noch die Version vom 11.08., keine Abstuerze.
-- [x] **Korrektur:** Der Absturz auf Box 044 war NICHT beim Start — laut `netzwerk.log`
-      Start um 14:47, Absturz um 15:16 (29 Min. Laufzeit).
-- [x] ✅ **URSACHE GEFUNDEN** (absturz.log Box 044, 19.08. 08:44, Code `0xc0000374`):
-      Zwei Threads oeffneten gleichzeitig dieselbe DirectShow-Kamera
-      (`_camera_status_probe` + `list_cameras`/`_auto_select_webcam`) → Heap-Zerstoerung.
-      Gefixt in 2.4.31 mit gemeinsamer Kamera-Sperre (Test: max. 1 statt 2 parallele Zugriffe).
-      Die Vermutung „haengt mit der Dashboard-Meldung zusammen" war FALSCH.
-- [ ] Nachtest 2.4.31 auf Box 044: mind. 35 Min. laufen lassen, `absturz.log` muss danach nur
-      noch Start-Zeilen enthalten (keine `fatal exception`)
-- [ ] Pruefen, ob der Absturz mit der wiederkehrenden Dashboard-Meldung (alle 900 s ± 120 s)
-      zusammenhaengt — das Zeitfenster passt. Beweis liefert der Python-Stack aus 2.4.30.
 - [ ] Verdaechtige bei `ntdll` + `0xc0000005` eingrenzen: Kamera (OpenCV/DirectShow), VLC,
-      Druckertreiber. Die 2.4.29-Aenderungen sind reines Python + Subprozesse und koennen
-      so einen Absturz nicht direkt ausloesen — sie haben aber das Timing veraendert
-      (Hotspot-Start jetzt im Hintergrund-Thread), was einen latenten Fehler sichtbar machen kann.
-- [ ] Zweiter Befund pruefen: „Fehlermeldung bei Testdruck: zu hohe CPU-Hintergrundauslastung"
-      (Box 044) — Netz-Bilanz dort komplett gruen, also kein Netzproblem; vermutlich der
-      Selbsttest-Schwellwert. Separat ansehen.
-
-## Vor dem Flotten-Rollout von 2.4.29 🔴
-
-- [x] **Ursache bewiesen** (Box 056, 18.08.): Hotspot aus → IP-Adresse da → Meldung im Dashboard
-      angekommen (serverseitig gegengeprueft)
-- [ ] ⚠️ **Hotspot-Rueckkehr beim Kunden testen** — bis 2.4.26 waren Start UND Stopp wirkungslos,
-      der Hotspot lief einfach immer. Seit 2.4.29 schalten wir ihn in der Werkstatt WIRKLICH ab.
-      Damit haengt der Gast-Betrieb erstmals daran, dass das EINSCHALTEN funktioniert — ein Pfad,
-      der im Feld noch nie echt gelaufen ist. Test: Box aus der Werkstatt nehmen, ausserhalb des
-      Firmen-WLAN starten, pruefen ob `fexobox-gallery` wieder auftaucht.
-- [ ] GitHub-Release veroeffentlichen, falls die Flotte 2.4.29 per Auto-Update bekommen soll
-      (Box meldet aktuell: „Neuestes Release: v2.4.25" → Auto-Update verteilt NICHTS)
-- [ ] Danach: restliche stumme Boxen (073/116/016) mit 2.4.29 durchtesten
-
-## Firmen-WLAN 2.4.27 auf echter Hardware prüfen 🔴
-
-> Gebaut 2026-08-18 nach dem Feld-Log von Box 200. Alles ist am PC getestet (Logik, Scripts,
-> Bilanz), aber der entscheidende Beweis geht nur auf einer betroffenen Box.
-
-- [ ] Build 2.4.27 auf einer Box installieren, die sich bisher NICHT im Dashboard meldet,
-      in der Werkstatt einschalten und ~5 Minuten laufen lassen
-- [ ] Dev-Mode-Log auswerten: Block `NETZ-BILANZ [Firmen-WLAN]` suchen → Zeile `URTEIL`
-      sagt direkt, woran es liegt
-- [ ] Falls `URTEIL: KEINE IP-ADRESSE` UND `Hotspot-Konfl.: nein` → der Hotspot ist NICHT die
-      Ursache: DHCP-Bereich/Lease-Liste im Firmen-Router prüfen (bei 200+ Boxen realistisch,
-      dass der Adressbereich zu klein ist)
-- [ ] Falls `Hotspot-Konfl.: JA` → betroffene Boxen sammeln und prüfen, ob es an einem
-      bestimmten WLAN-Chip/Treiber hängt (dann Treiber-Update statt Software-Workaround)
-- [ ] Nachziehen: `setup/setup_hotspot.ps1` und `setup/diagnose_hotspot.ps1` nutzen noch die
-      alte „erstes Profil"-Logik ohne Firmen-WLAN-Ausschluss (nur Werkstatt-Skripte, laufen
-      nicht im Kundenbetrieb — aber irgendwann angleichen)
-- [x] Erster Feldtest auf Box 200 gelaufen (18.08., Log `fexobooth_20260818_112955.log`):
-      Reihenfolge greift, Meldung kam beim ERSTEN Versuch durch, NETZ-BILANZ „ALLES GRÜN" —
-      *aber der Fehlerfall selbst trat dort nicht auf, die Box hatte eine gültige IP*
-- [ ] ⚠️ Der Anker-Tausch (neutrales Profil statt Firmen-WLAN) wirkt auf WLAN-only-Boxen NICHT —
-      Windows liefert gespeicherte Profile nicht als Connection Profile (Details in ERKENNTNISSE).
-      Falls sich der Hotspot doch als echter Störer bestätigt: Gegenmittel ist dann das gezielte
-      Abschalten (Stufe 3 der Reparatur), nicht der Anker
+      Druckertreiber. (Stand 06.09.: Ursache war der Kamera-Doppelzugriff; Punkt nur noch
+      relevant, falls auf 2.4.45+ neue `ntdll`-Abstuerze in `absturz.log` auftauchen.)
 
 ## Galerie-Server: Thumbnail-Cache 🟡 (Etappe 2 des App-Plans „Offline-Galerie + Cloud-Relay", 2026-07-03)
 
 > Detailplan: [../fexobox-app/docs/PLAN-OFFLINE-GALERIE-CLOUD-RELAY.md](../fexobox-app/docs/PLAN-OFFLINE-GALERIE-CLOUD-RELAY.md) §5.
-> Hintergrund: `server.py` rechnet jedes Thumbnail bei JEDEM Abruf neu (Pillow/LANCZOS, kein Cache) –
-> bei mehreren verbundenen Smartphones der größte Lastfaktor auf der schwachen Box-Hardware.
+> Hintergrund: `server.py` rechnete jedes Thumbnail bei JEDEM Abruf neu — der Cache
+> `BILDER/.thumbs/` ist seit 2026-07-03 gebaut und mit der Flotte ausgeliefert (→ Erledigt).
 
-- [x] Thumbnail-Cache `BILDER/.thumbs/{folder}/{filename}`: beim ersten Abruf einmal rechnen + speichern,
-  danach nur noch `send_file` (Routen `/thumb/...` UND `/api/v1/thumb/...` auf denselben Cache) —
-  *gebaut 2026-07-03, gemeinsamer Kern `_serve_thumbnail()` in `server.py`, atomares Schreiben,
-  Invalidierung wenn Quelle neuer; 5 automatisierte Tests bestanden (HIT/MISS/Invalidierung/403/Reset)*
-- [x] Aufräumen: `.thumbs` folgt dem BILDER-Lebenszyklus — *`delete_all_images()` (Event-Wechsel) löscht
-  `.thumbs` mit; `_collect_photos` listet nur Prints/Single und sieht den Cache nie*
 - [ ] Optional: Thumb direkt beim Foto-Speichern erzeugen (kein Gast zahlt die Erst-Wartezeit)
-- [ ] Eigener Build-Kandidat mit kurzer Test-Checkliste (Live-Flotte, getrennt von anderen Änderungen) —
-  ⚠️ Arbeitsbaum enthält parallel laufende 2.4.14-Arbeit (Nikon/Webcam) → Build-Kandidat erst
-  schnüren, wenn die parallele Session committet hat; Checkliste liegt bereit (FORTSCHRITT.md)
 
-## Performance vor Release 🏎️ (Analyse-Lauf 2026-07-02 ausgewertet, Fixes in 2.4.12)
+## Performance vor Release 🏎️ — Restpunkte (Analyse-Lauf 2026-07-02, Fixes in 2.4.12)
 
 > Log `fexobooth_20260702_114253.log` (Nikon-Session): 4 Bremsen identifiziert und gefixt —
 > Overlay-Foto-Skalierung pro Frame, Fotoanzeige-Refresh (380 ms/Tick), Filter auf 24-MP-Originalen,
-> Final-Rendern im UI-Thread. Details in FORTSCHRITT.md.
+> Final-Rendern im UI-Thread. Nachtests 2.4.12–2.4.22 sind durch (→ Erledigt), Details FORTSCHRITT.md.
 
-- [x] **Nachtest 2.4.12 bestanden** (Dauerläufe 2026-07-02: Nikon 647 Captures + Webcam/SELPHY
-  17 h über Nacht, 0 Fehler): LiveView konstant ~7,5 fps, Fotoanzeige 1×/Foto, Bildgröße M aktiv
-  (Capture 3,65 s statt 4,06 s), Filter < 2,2 s, Final im Worker.
-- [x] **Nachtest 2.4.13 (Webcam-Box) ausgewertet:** Final-Hänger weg ✓, Fotoanzeige-Cache ✓,
-  kein Doppel-Rendern ✓, Overlay nur ~45 ms (Box-Region-Composite lohnt nicht) ✓ —
-  aber MJPG griff nicht (falsche Reihenfolge, DirectShow verhandelte zurück) → in 2.4.14 korrigiert.
-- [ ] **Nachtest 2.4.14 (Webcam-Box, kurz):** Eine Session reicht. Im Log muss stehen:
-  „Webcam-Codec: MJPG aktiv" und im `High-Res Capture Timing` `fourcc=MJPG` mit `set`+`read`
-  deutlich unter den bisherigen ~1300+700 ms. Falls stattdessen „Kamera lehnt MJPG ab" →
-  Kamera-Modell notieren; dann bleibt YUY2, aber ohne Zusatzkosten (Latch).
-- [x] Tk-Anzeigepfad (~110 ms/Frame, größter LiveView-Posten laut Overlay-Split) —
-  *erledigt 2.4.16 (2026-08-07): komplette Aufbereitung im LiveView-Worker-Thread, Frames auf
-  CTkImage-Zielgröße vorskaliert (PIL-Copy-Fastpath), Countdown-Font gecacht; Details FORTSCHRITT.md*
-- [x] **Nachtest 2.4.16 (Miix, Webcam-Box):** bestanden 2026-08-07 — 8,5 fps (vorher 2,5–5),
-  Anzeige 56 ms, Session-Hitches weg. *Neue Funde (Kamera-Check-Freezes, Priorität, Regler)
-  → gefixt in 2.4.17, siehe FORTSCHRITT.md.*
-- [x] **Nachtest 2.4.17 (Miix, Webcam-Box):** bestanden 2026-08-07 — Priorität ✓, Regler
-  VERIFIZIERT ✓ (Box nutzt Custom-Energieplan ohne Flyout-Slider — kein Handlungsbedarf),
-  Start-/Idle-Freezes weg ✓.
-- [ ] **Nachtest 2.4.18:** (1) App über 3198-Menü beenden → EXE darf NICHT mehr im
-  Task-Manager stehen, Installer läuft ohne Meldung durch. (2) Kunden-Menü 2015 →
-  „🔧 Schnellhilfe" drücken → Lauftext, dann „Schnellhilfe abgeschlossen" + Neustart-Button;
-  im Log `SCHNELLHILFE:`-Zeilen für alle 5 Schritte.
-- [x] **Echter System-Test bei neuem Event** — *umgesetzt in 2.4.19 (2026-08-07): 6 Schritte
-  mit Zeitmessung + Schwellwerten, dreistufiges Ergebnis (grün/orange/rot),
-  `SYSTEMTEST-MESSWERTE:`-Zeile im Log; Details FORTSCHRITT.md.*
-- [ ] **Nachtest 2.4.19:** Event-Wechsel auslösen → System-Test zeigt 6 Schritte („System
-  prüfen" + „Kamera prüfen" neu), am Ende grüne „Alle Messwerte im Normalbereich"-Meldung
-  (oder orange Auffälligkeiten in Klartext); im Log `SYSTEMTEST-MESSWERTE:`-Zeile prüfen.
-  Zusätzlich: Log-Zeile `Speicherpfade initialisiert:` muss jetzt `C:\FexoBooth\BILDER`
-  zeigen (NICHT mehr `_internal`), ggf. `BILDER-Migration: N Dateien` beim ersten Start;
-  im Firmen-WLAN muss der Update-Dialog FRAGEN statt sofort zu installieren.
-  Idee für später: Messwerte zusätzlich ans Monitoring/Dashboard melden (Box-Gesundheit
-  vor Event-Versand sichtbar).
-- [ ] **Nachtest 2.4.22 (Werkstatt, idealerweise eine der 47 stummen Boxen):**
-  (1) Installer durchlaufen lassen → Schritt "Firmen-WLAN wird eingerichtet" + Log
-  `logs/company_wlan_setup.log`; Box haengt danach OHNE Neustart im fexon WLAN.
-  (2) App-Log: bei geklemmtem WLAN `WLAN-Selbstheilung: ... repariere Profil` →
-  `Erfolgreich mit Firmen-WLAN verbunden`; Box taucht im Dashboard auf.
-  (3) Schnellhilfe zeigt Schritt "Firmen-WLAN" im Log. (4) 3198-Menue → Allgemein →
-  WLAN-Radikal-Reparatur: 1. Klick warnt, 10s warten → entschaerft sich; 2x Klick →
-  Reset laeuft, Box startet neu, verbindet sich danach.
-- [ ] ⚠️ **Rollout-Hinweis Flotte:** Beim Update AUF 2.4.19 läuft noch das alte BAT der
-  Vorversion → dort werden `_internal\BILDER`-Fotos noch gelöscht. Werkstatt-Anweisung:
-  vor dem 2.4.19-Update Bilder ziehen (danach ist das Problem dauerhaft behoben).
+- [ ] ⚠️ **Rollout-Hinweis (gilt nur noch für 001/029/117 auf 2.4.14):** Beim Update
+  auf ≥ 2.4.19 läuft noch das alte BAT der Vorversion → dort werden `_internal\BILDER`-Fotos
+  noch gelöscht. Werkstatt-Anweisung: vor dem Update Bilder ziehen (danach ist das Problem
+  dauerhaft behoben). Alle anderen Boxen sind längst über 2.4.19 hinaus.
 - [ ] Bekannt, nach dem Release angehen: ~3 s UI-Hänger beim tatsächlichen SELPHY-Druck
   (Druckpfad ist live-flotten-kritisch — nicht vorher umbauen); Startscreen-Neuaufbau mit
   USB-Template ~5 s (läuft zwischen Sessions, kein Gast-Kontakt).
-- [x] Nikon-Capture-Feintuning Teil 1: **JPEG-Größe „M" wird jetzt automatisch gesetzt**
-  (`nikon_bridge.image_size`, Bridge setzt „Image Size" beim Verbinden; D3300: 4496×3000).
-  Wirkung im Nachtest messen.
 - [ ] Nikon-Capture-Feintuning Teil 2 (optional, falls immer noch zu langsam): `noaf`-Capture
   für vorfokussierte Box-Distanz (Bridge kann CapturePhotoNoAf bereits als AF-Fallback).
 
@@ -408,10 +267,8 @@ Session-Ende (in 2.4.45 im Feld enthalten!). Fix ist 2.4.66.
 
 ## Bugs 🐞 (beim nächsten Software-Update nebenbei mitfixen)
 
-- [ ] **Filter-Screen läuft nicht automatisch ab.** Der Filter-Screen soll automatisch weiterlaufen/ablaufen, tut das aber erst, nachdem man **einmal den Filter gewechselt** hat. (Wahrscheinlich startet der Auto-Ablauf-Timer erst beim ersten Filter-Wechsel statt direkt beim Anzeigen des Screens.)
-- [ ] **Box friert nach dem ersten Video ein.** Nach dem ersten Video hängt die Software; ein Tipp auf den Touchscreen löst sie wieder. Vermutlich UI-Thread / Video-Handling (evtl. Zusammenhang mit dem Galerie-Server prüfen). Muss stabilisiert werden.
-- [ ] **Drucker-Status-Log entspammen** (nur Loghygiene, kein Verhaltensfehler). Bei ausgeschaltetem Drucker loggt die Box `DRUCKER AUS!` + „Overlay wird gezeigt / kein Overlay" **jede Sekunde** (im Dev-Log aus 2026-06-14: tausende identische Zeilen über ~40 Min) und verdeckt echte Events. Fix: nur bei **Status-WECHSEL** loggen (in `src/app.py` Drucker-Status-Check + `src/printer/controller.py get_error`), Poll-/Klassifizierungs-/Overlay-Logik unverändert lassen. Die INFO-Zeile „Drucker-Fehler erkannt → Overlay wird gezeigt" ist zudem irreführend (danach folgt „kein Overlay (other)") → mitklären. **Erst im Dev-Mode testen** (Kernprinzip 8), nicht in einen Same-Day-Flotten-Build.
-- [ ] **Windows-Update-Lockdown härter machen** (nicht dringend, entschieden 2026-07-03: erstmal so lassen). `windows_update_lockdown.log` endet „mit Warnungen": `sc.exe konnte Starttyp nicht setzen: WaaSMedicSvc (Exit 5)` und `DoSvc (Exit 5)` — diese zwei besonders geschützten Dienste lassen sich per `sc.exe config` nicht deaktivieren (Exit 5 = Zugriff verweigert). Ausgerechnet **WaaSMedicSvc** (Update Medic) kann abgeschaltete Updates theoretisch reaktivieren. In der Praxis greift der Lockdown (seit 15.06. keine ungewollten Updates/Neustarts), aber nicht 100 % wasserdicht. **Fix-Idee:** in `setup/disable_windows_update.ps1` für diese zwei Dienste den `Start`-Wert direkt in der Registry (`HKLM\SYSTEM\CurrentControlSet\Services\WaaSMedicSvc` bzw. `DoSvc` → `Start=4`) setzen statt über `sc.exe`; ggf. Registry-Owner/ACL vorher übernehmen. **Live-Flotten-Boot-Script → separat + vorsichtig testen**, nicht in einen Same-Day-Build.
+- [ ] **Box friert nach dem ersten Video ein.** Nach dem ersten Video hängt die Software; ein Tipp auf den Touchscreen löst sie wieder. Vermutlich UI-Thread / Video-Handling (evtl. Zusammenhang mit dem Galerie-Server prüfen). (06.09.: nicht am Code prüfbar – wahrscheinlich durch 2.4.45/2.4.64 (VLC-Lifecycle) behoben; beim VLC-Langzeitlauf mit beobachten, erst dann abhaken.)
+- [ ] **Windows-Update-Lockdown härter machen** (nicht dringend, entschieden 2026-07-03: erstmal so lassen). `windows_update_lockdown.log` endet „mit Warnungen": `sc.exe konnte Starttyp nicht setzen: WaaSMedicSvc (Exit 5)` und `DoSvc (Exit 5)` — diese zwei besonders geschützten Dienste lassen sich per `sc.exe config` nicht deaktivieren (Exit 5 = Zugriff verweigert). Ausgerechnet **WaaSMedicSvc** (Update Medic) kann abgeschaltete Updates theoretisch reaktivieren. In der Praxis greift der Lockdown (seit 15.06. keine ungewollten Updates/Neustarts), aber nicht 100 % wasserdicht. **Fix-Idee:** in `setup/disable_windows_update.ps1` für diese zwei Dienste den `Start`-Wert direkt in der Registry (`HKLM\SYSTEM\CurrentControlSet\Services\WaaSMedicSvc` bzw. `DoSvc` → `Start=4`) setzen statt über `sc.exe`; ggf. Registry-Owner/ACL vorher übernehmen. **Live-Flotten-Boot-Script → separat + vorsichtig testen**, nicht in einen Same-Day-Build. (Stand 06.09.: Registry-Variante `Start=4` weiterhin nicht umgesetzt.)
 
 ---
 
@@ -420,40 +277,26 @@ Session-Ende (in 2.4.45 im Feld enthalten!). Fix ist 2.4.66.
 > digiCamControl-App-Ansatz (Variante 2) am 2026-07-02 **verworfen** (sichtbares Fenster +
 > Webserver antwortet nie). Neu: eigene unsichtbare `FexoNikonBridge.exe` (C#/.NET 4.8,
 > Motor: MIT-Bibliothek `CameraControl.Devices`, rohes PTP über Windows-WPD — wie dslrBooth).
-> Python-Seite fertig + gegen Fake-Bridge End-to-End verifiziert.
 > Vertrag/Details: [bridge/README.md](bridge/README.md) + [ROADMAP.md](ROADMAP.md).
+> (Stand 06.09.: Bridge seit 02.07.2026 hardware-validiert, Box 252 läuft auf 2.4.63 —
+> die Erstinbetriebnahme-Punkte (Bridge solo, CI 2.4.11, Setup, LiveView, Capture,
+> OTA-Bootstrap) sind überholt → Erledigt. Übrig: Robustheit + die Code-Restpunkte unten.)
 
-- [x] **Bridge lokal gebaut + ohne Kamera getestet (2026-07-02):** .NET-SDK 8 auf dem Work-PC
-  installiert, `dotnet build` → 0 Fehler; ping/list/init/quit gegen die echte EXE sauber
-  (Library-stdout-Banner entdeckt + stummgeschaltet). Python-Client gegen echte Bridge 8/8 OK.
-- [ ] **Bridge solo mit angesteckter D3300 prüfen** (am Work-PC möglich, vor dem Fotobox-Test):
-  PowerShell: `'{"id":1,"cmd":"init"}' | bridge\FexoNikonBridge\bin\Release\net48\FexoNikonBridge.exe`
-  → muss `"ok":true,"camera":"..."` liefern; danach `frame`/`capture` durchspielen
-  (oder direkt den kompletten Booth-Flow im Dev-Mode: `python src\main.py --dev`).
-- [ ] **CI-Build einmal mitlaufen lassen** (beim nächsten Push; GitHub → Actions → Version `2.4.11`):
-  bestätigt, dass auch der Cloud-Build die Bridge baut (Gate schlägt sonst an).
-- [ ] **Setup 2.4.11 auf der Fotobox installieren**, `camera_type = nikon` (Admin-Menü),
-  Dev-Mode starten. Prüfen: Log „Nikon-Bridge-Warmup: bereit" kurz nach dem Start,
-  **kein sichtbares Fremdfenster**, Startscreen bleibt vorn.
-- [ ] **LiveView prüfen:** Bild im Session-Screen? (Log: „Nikon/FexoNikonBridge bereit: …")
-- [ ] **Capture prüfen:** Vollauflösungs-Foto (≈6000×4000) kommt zurück, kein LiveView-Fallback-Log.
 - [ ] **Robustheit:** USB ab-/anstecken während Idle → Status-Warnung erscheint/verschwindet;
   Bridge-Prozess stirbt (Taskmanager) → nächste Session startet ihn neu (initialize-Pfad).
-- [ ] **Erst nach erfolgreichem Hardware-Test** als „hardware-validiert" in ROADMAP/FORTSCHRITT markieren.
 
 **Bekannte offene Punkte (Nikon-only, 0 Live-Flotten-Impact):**
 - [ ] **(major, entschärft) Erste Session initialisiert auf dem UI-Thread.** Durch den Warmup
   (Bridge-Start + Kamera-Vorverbindung im Hintergrund) bleiben normal nur `lv_start` + erster
   Frame (~1–3 s). Sauberer Fix wäre `initialize()` in einen Worker-Thread in `session.py`
-  (Muster `_capture_photo_worker`) — erst nach dem Hardware-Test angehen, betrifft auch Canon-Flow.
+  (Muster `_capture_photo_worker`) — betrifft auch Canon-Flow.
+  (Stand 06.09.: unverändert, `initialize()` läuft weiter im UI-Thread, `session.py:302`.)
 - [ ] **(minor) Doppel-Capture** im Fehlerfall: schlägt `capture_photo()` mit `None` fehl, ruft der
   Webcam-Fallthrough in `session.py` `get_high_res_frame()` → erneut `capture_photo()`.
-  Spiegelt Canon-Verhalten; ggf. DSLR-Pfad autoritativ machen + Log-Zeile.
+  (Stand 06.09.: Canon-Seite erledigt → Erledigt; der Nikon-Fallthrough ist weiterhin offen.)
 - [ ] **(minor) Capture blockiert Frames:** während `capture` läuft, wartet `get_frame()` am
   Bridge-Lock (eine Anfrage gleichzeitig; Timeout deckt das Lock-Warten jetzt ab). Für den
-  Booth-Flow okay (LiveView pausiert beim Auslösen sowieso).
-- [ ] **OTA-Bootstrap beachten:** Das ERSTE Update auf 2.4.11 läuft noch mit dem alten
-  Update-BAT (kopiert `bridge/` nicht) → Nikon-Testbox per **Installer** aktualisieren, nicht OTA.
+  Booth-Flow okay (LiveView pausiert beim Auslösen sowieso). (Stand 06.09.: unverändert.)
 
 ---
 
@@ -486,7 +329,7 @@ Session-Ende (in 2.4.45 im Feld enthalten!). Fix ist 2.4.66.
   Staff-Auth Service-PIN 6588 (als HMAC), nur im Idle. Detailplan: [PLAN-APP-OTA.md](PLAN-APP-OTA.md).
 - [x] **Soft-Mode bleibt** – keine Signatur-Prüfung; Log-Warnung „in v2.5.0…" entschärft.
 
-**Noch offen (folgt mit den jeweiligen Features / App-Seite):**
+**Noch offen (folgt mit den jeweiligen Features / App-Seite):** (Stand 06.09.: alle drei unverändert offen)
 - [ ] **`apply/assets`-Verbraucher:** Endpunkt nimmt Asset-ZIPs sicher entgegen + legt sie ab (Staging).
   Ein konkreter Box-seitiger Verbraucher (z. B. neues Loading-Video übernehmen) wird mit dem Feature nachgezogen.
 - [ ] **App-OTA auf einer echten Box testen** (M4 aus PLAN-APP-OTA.md): inkl. absichtlich kaputter ZIP →
@@ -498,7 +341,8 @@ Session-Ende (in 2.4.45 im Feld enthalten!). Fix ist 2.4.66.
 
 ## Hoch 🔴
 
-- [x] KRITISCH: Canon DSLR Freeze bei Host-Download behoben (EdsSetObjectEventHandler blockierte Message-Pump)
+- Siehe die beiden ➡️-Abschnitte ganz oben: 2.4.66-Kette (Kurztest → Hotspot-Reparatur/QR → Rollout)
+  und VLC-Langzeitlauf auf Box 167.
 
 ---
 
@@ -510,15 +354,15 @@ Session-Ende (in 2.4.45 im Feld enthalten!). Fix ist 2.4.66.
       Box 248 ohne SD-Karte weiter optimieren
       (`0xa102` ist offiziell `OBJECT_NOTREADY`, nicht EVF_INTERNAL_ERROR)
 - [ ] Print-Queue Anzeige
-- [ ] Drucker-Reset + Fehler-Overlay auf echtem Tablet mit Canon SELPHY testen
-- [ ] Event-Wechsel & Systemtest auf Tablet testen (echte Hardware)
-- [ ] Erstes GitHub Release erstellen + OTA-Update auf Tablet testen
 - [ ] Deployment: Referenz-Tablet einrichten und erstes Image testen
-- [ ] Deployment: Clonezilla USB-Stick auf Miix 310 testen (Boot + Capture + Restore)
+- [ ] Werkstatt-Skripte nachziehen: `setup/setup_hotspot.ps1` und `setup/diagnose_hotspot.ps1` nutzen
+      noch die alte „erstes Profil"-Logik ohne Firmen-WLAN-Ausschluss (laufen nicht im Kundenbetrieb —
+      aber irgendwann an die App-Logik angleichen). (Stand 06.09.: unverändert.)
 
 ### Heim-WLAN-Workflow Phase 1 — "Bilder sichern"-Screen lokal
 
 Details siehe ROADMAP.md Abschnitt "Heim-WLAN-Workflow". Kein Backend nötig.
+(Stand 06.09.: unbegonnen.)
 
 - [ ] `BookingSettings` um Feld `online_gallery: bool` erweitern (`src/storage/booking.py`)
 - [ ] `from_dict` mappt `features.online_gallery` aus settings.json
@@ -532,6 +376,7 @@ Details siehe ROADMAP.md Abschnitt "Heim-WLAN-Workflow". Kein Backend nötig.
 ### Heim-WLAN-Workflow Phase 2 — Box-Identität + Heim-Check-API
 
 Details siehe ROADMAP.md. Setzt Phase 1 voraus, braucht Laravel-Backend-Code.
+(Stand 06.09.: unbegonnen.)
 
 - [ ] [laravel] `POST /api/v1/box/learn-identity`: Booking-IDs + HMAC-Timestamp → `box_barcode` + Sanctum-Token
 - [ ] [laravel] `GET /api/v1/box/{barcode}/homecheck` (Sanctum): letzte Buchung, Alerts, pending Aktionen
@@ -550,12 +395,13 @@ Details siehe ROADMAP.md Abschnitt "Update-Strategie / Staged Rollout".
 Bis Phase 2 steht: Disziplin mit GitHub-Pre-Release-Flag (kein Code).
 
 **Stufe Auto-Rollback (eigenständig, unabhängig von Phase 2):**
+(Stand 06.09.: unbegonnen – `src/updater.py` ~Zeile 600 löscht `_internal_OLD` weiterhin sofort.)
 - [ ] `src/updater.py`: `_internal_OLD/` 24 h aufbewahren statt sofort löschen
 - [ ] Beim ersten App-Start nach Update: Smoke-Test (Kamera/Drucker/Config/Galerie-Server)
 - [ ] Bei Smoke-Test-Fehler: automatischer Rollback auf `_internal_OLD/`
 - [ ] Markierung in `update_history.json` damit kein Endlos-Rollback-Loop entsteht
 
-**Stufe Release-Manager (mit Phase 2):**
+**Stufe Release-Manager (mit Phase 2):** (Stand 06.09.: unbegonnen.)
 - [ ] [laravel] Tabelle `photobox_version_pins` (photobox_id, target_version, channel, set_at)
 - [ ] [laravel] Heim-Check-Response um `update_channel` + optional `target_version` erweitern
 - [ ] Booth: `update_channel` + optionalen Pin im Updater berücksichtigen (statt nur GitHub-Latest)
@@ -571,6 +417,7 @@ Bis Phase 2 steht: Disziplin mit GitHub-Pre-Release-Flag (kein Code).
 ### Heim-WLAN-Workflow Phase 3 — Auto-Upload (optional, nach DSGVO-Klärung)
 
 Details siehe ROADMAP.md. Datenschutz vorab klären, dann erst angehen.
+(Stand 06.09.: unbegonnen.)
 
 - [ ] Datenschutz prüfen: Upload nur bei `online_gallery == True` reicht als Zustimmung?
 - [ ] Workflow definieren: Mitarbeiter-Freigabe vor Sichtbarmachung in Kundengalerie?
@@ -583,6 +430,27 @@ Details siehe ROADMAP.md. Datenschutz vorab klären, dann erst angehen.
 ---
 
 ## Erledigt ✅
+
+### 2026-09-06 (Abgleich mit Ist-Stand)
+- [x] Installer 2.4.66 bauen – erledigt 05.09.2026, Beleg: GitHub-Action-Run 33978302086 grün, Artefakt `FexoBooth-2.4.66` (182 MB); kein Release, keine Box im Feld
+- [x] 2.4.64 bauen + auf Testbox installieren – erledigt vor 06.09., Beleg: Dashboard-Meldung Box 167 = 2.4.64 (TODO nannte fälschlich Box 155)
+- [x] 2.4.62 bauen + auf Box 248 installieren – erledigt vor 06.09., Beleg: Dashboard-Meldung Box 248 = 2.4.62
+- [x] 2.4.43 Dauerbetrieb HD auf einer Testbox prüfen (6 Punkte) – überholt, Beleg: Schalter in 2.4.45 entfernt, Dauerbetrieb HD ist Standard in der Flotte
+- [x] 2.4.36 Gegenprüfung Kamera-Messung (bedienbar, Abbrechen, `kamera-messung.txt`) – überholt/erledigt, Beleg: durch 2.4.37/2.4.39 ersetzt, Messung gelaufen
+- [x] 2.4.35 Beenden-Knopf (3198) auf der Box bestätigt – erledigt 20.08.2026, Beleg: Log 09:08:52, sauber beendet in 0,3 s inkl. Kamera-Freigabe
+- [x] ROUTER/DHCP-Block: Gegentest Box 19/38, Lease-Liste/MAC-Abgleich, feste-IP-Gegenprobe – erledigt/überholt 02./03.09.2026, Beleg: Boxen 19/31/38 melden sich mit 2.4.45 (Ursache Router-DHCP-Pool, 19.08. auf `.130–.250` erweitert)
+- [x] Boxen 19/31/38 melden sich nicht (2.4.32-Nachstart + `netzwerk.log`-Urteil) – erledigt 02./03.09.2026, Beleg: alle drei im Dashboard mit 2.4.45
+- [x] Abstürze 2.4.30: Nachtest 2.4.31 auf Box 044 bestanden; CPU-Fehlalarm beim Testdruck in 2.4.32 gefixt; WER-Dumps einsammeln + Dashboard-Auslöser-Prüfung überholt – Beleg: Ursache Kamera-Doppelzugriff (absturz.log 19.08.), Fix 2.4.31, Flotte auf 2.4.45
+- [x] Vor Flotten-Rollout 2.4.29: Hotspot-Rückkehr beim Kunden – erledigt 05.09.2026, Beleg: 2.4.65-Fixes + Box-101-Test (Hotspot 12:00–18:14 stabil); GitHub-Release + Auto-Update – erledigt, Beleg: Latest v2.4.45 (20.08.), Auto-Update zeigt darauf; stumme Boxen 116/016 – erledigt, melden sich wieder (073 bleibt offen, siehe Flotte)
+- [x] Firmen-WLAN 2.4.27 auf echter Hardware prüfen (Build auf stummer Box, NETZ-BILANZ-Urteil, DHCP-/Hotspot-Konflikt-Auswertung, Anker-Tausch) – überholt, Beleg: Ursache war der Router-DHCP-Pool (19.08.), Box-200-Feldtest 18.08. grün, Flotte auf 2.4.45
+- [x] Galerie Thumbnail-Cache: Cache `BILDER/.thumbs/` + Aufräumen beim Event-Wechsel – erledigt 03.07.2026 (5 Tests); eigener Build-Kandidat – überholt, Beleg: mit den regulären Builds ausgeliefert, Flotte auf 2.4.45
+- [x] Performance-Nachtests: 2.4.12/2.4.13/2.4.16/2.4.17 bestanden (Juli/Aug. 2026), 2.4.18/2.4.19/2.4.22 erledigt, Nachtest 2.4.14 überholt – Beleg: Flotte auf 2.4.45; Tk-Anzeigepfad (2.4.16), System-Test mit Messwerten (2.4.19), Nikon JPEG-Größe „M" umgesetzt
+- [x] Bug: Filter-Screen läuft nicht automatisch ab – erledigt, Beleg: Auto-Ablauf-Timer startet beim Anzeigen (`filter.py:716`)
+- [x] Bug: Drucker-Status-Log entspammen – erledigt, Beleg: Commit 17c16e6 (nur bei Status-Wechsel loggen)
+- [x] Nikon-Bridge Erstinbetriebnahme (Bridge solo mit D3300, CI-Build 2.4.11, Setup 2.4.11 auf Box, LiveView, Capture, „hardware-validiert" markieren, OTA-Bootstrap 2.4.11) – überholt, Beleg: Nikon hardware-validiert 02.07.2026, Box 252 läuft auf 2.4.63
+- [x] Doppel-Capture im Fehlerfall, Canon-Seite – erledigt, Beleg: 2.4.61-Test Box 245 ohne Doppelbild/Retry (Nikon-Fallthrough bleibt offen)
+- [x] KRITISCH: Canon DSLR Freeze bei Host-Download behoben (EdsSetObjectEventHandler blockierte Message-Pump)
+- [x] Mittel-Liste: Drucker-Reset + Fehler-Overlay auf echtem Tablet – überholt (Drucker-Steuerung seit März 2026 in der Flotte); Event-Wechsel & Systemtest auf Tablet – erledigt (System-Test 2.4.19 in der Flotte); erstes GitHub-Release + OTA-Update – erledigt (Releases bis v2.4.45, Auto-Update aktiv); Clonezilla-Stick auf Miix 310 – erledigt, Beleg: Prüfung 06.09.
 
 ### 2026-07-02
 - [x] **🎉 Nikon D3300 hardware-validiert:** FexoNikonBridge auf der Fotobox erfolgreich —
