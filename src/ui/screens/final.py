@@ -10,7 +10,10 @@ from pathlib import Path
 import threading
 import time
 
-from src.ui.theme import COLORS, FONTS, SIZES
+from src.ui.theme import (
+    COLORS, FONTS, FONTS_UI, RADII, SEMIBOLD, SIZES, bind_pressed,
+    style_primary, style_secondary,
+)
 from src.ui.error_images import load_printer_error_image
 from src.utils.logging import get_logger
 from src.i18n import t
@@ -39,93 +42,199 @@ class FinalScreen(ctk.CTkFrame):
         self._setup_ui()
 
     def _setup_ui(self):
-        """Erstellt die UI - Bild oben, schwarze Button-Leiste unten.
+        """Erstellt die UI — Redesign 2.4.70: Bild links, Aktionen rechts.
 
-        Pack-Reihenfolge: bottom-Elemente ZUERST, dann expand=True für Bild.
+        Pack-Reihenfolge: Fußzeile ZUERST (bottom), dann Kopfzeile, dann
+        Inhalt mit expand — bleibt so auch im Dev-Mode (weniger Höhe) stabil.
         """
-        # === 1. Progress-Bar ganz unten (zuerst packen!) ===
+        # === Fußzeile: Auto-Rückkehr-Balken + Text (zuerst packen!) ===
         self.progress_bar = ctk.CTkProgressBar(
             self,
-            height=4,
+            height=6,
             fg_color=COLORS["bg_light"],
             progress_color=COLORS["primary"],
-            corner_radius=2
+            corner_radius=3
         )
-        self.progress_bar.pack(fill="x", side="bottom")
+        self.progress_bar.pack(fill="x", side="bottom", padx=40, pady=(0, 14))
         self.progress_bar.set(1.0)
 
-        # === 2. Schwarze Button-Leiste (vor dem Bild packen!) ===
-        bottom_bar = ctk.CTkFrame(self, fg_color=COLORS["bg_medium"], corner_radius=0, height=90)
-        bottom_bar.pack(fill="x", side="bottom")
-        bottom_bar.pack_propagate(False)
-
-        # Innerer Container für zentrierte Ausrichtung
-        bar_inner = ctk.CTkFrame(bottom_bar, fg_color="transparent")
-        bar_inner.pack(expand=True, fill="both", padx=15, pady=8)
-
-        # Druck-Info (oben in der Leiste)
-        self.print_info = ctk.CTkLabel(
-            bar_inner,
-            text="",
-            font=FONTS["small"],
-            text_color=COLORS["text_muted"],
-            fg_color="transparent"
-        )
-        self.print_info.pack(side="top", pady=(0, 2))
-
-        # Button-Container (unten in der Leiste)
-        btn_frame = ctk.CTkFrame(bar_inner, fg_color="transparent")
-        btn_frame.pack(side="bottom", fill="x", pady=(0, 2))
-
-        # DRUCKEN Button (mitte, prominent) - nur wenn Drucken aktiviert
-        if self.config.get("print_enabled", True):
-            self.print_btn = ctk.CTkButton(
-                btn_frame,
-                text=t(self.config, "common.print"),
-                font=("Segoe UI", 22, "bold"),
-                width=220,
-                height=55,
-                fg_color=COLORS["success"],
-                hover_color="#00e676",
-                corner_radius=14,
-                command=self._on_print
-            )
-            self.print_btn.pack(side="left", expand=True)
-        else:
-            self.print_btn = None
-
-        # FERTIG Button (rechts)
-        if not self.config.get("hide_finish_button", False):
-            self.finish_btn = ctk.CTkButton(
-                btn_frame,
-                text=t(self.config, "common.finish"),
-                font=("Segoe UI", 18, "bold"),
-                width=160,
-                height=50,
-                fg_color=COLORS["bg_light"],
-                hover_color=COLORS["bg_card"],
-                text_color=COLORS["text_primary"],
-                corner_radius=12,
-                command=self._on_finish
-            )
-            self.finish_btn.pack(side="right", padx=(0, 10))
-
-        # === 3. Countdown-Text oben ===
         self.subtitle_label = ctk.CTkLabel(
             self,
             text="",
-            font=FONTS["small"],
+            font=FONTS_UI["caption"],
             text_color=COLORS["text_secondary"],
-            fg_color=COLORS["bg_dark"]
+            anchor="w"
         )
-        self.subtitle_label.pack(fill="x", side="top", pady=(2, 0))
+        self.subtitle_label.pack(fill="x", side="bottom", padx=40, pady=(0, 6))
 
-        # === 4. Bild-Container (füllt den restlichen Raum) ===
-        self.image_frame = ctk.CTkFrame(self, fg_color=COLORS["bg_dark"], corner_radius=0)
-        self.image_frame.pack(fill="both", expand=True, padx=10, pady=(0, 0))
+        # === Kopfzeile: Titel + Untertitel links ===
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.pack(fill="x", padx=40, pady=(18, 0))
+
+        self.title_label = ctk.CTkLabel(
+            header,
+            text=t(self.config, "final.title_ready"),
+            font=FONTS_UI["h1"],
+            text_color=COLORS["text_primary"]
+        )
+        self.title_label.pack(anchor="w")
+
+        self.sub_label = ctk.CTkLabel(
+            header,
+            text=t(self.config, "final.sub_ready"),
+            font=FONTS_UI["label"],
+            text_color=COLORS["text_secondary"]
+        )
+        self.sub_label.pack(anchor="w", pady=(4, 0))
+
+        # === Inhalt: Bild links (780×520), Aktions-Spalte rechts (280) ===
+        content = ctk.CTkFrame(self, fg_color="transparent")
+        content.pack(fill="both", expand=True, padx=40, pady=(14, 8))
+
+        self.image_frame = ctk.CTkFrame(
+            content, width=780, height=520,
+            fg_color=COLORS["bg_dark"], corner_radius=0
+        )
+        self.image_frame.pack(side="left", anchor="n")
+        self.image_frame.pack_propagate(False)
 
         self.preview_label = ctk.CTkLabel(self.image_frame, text="", fg_color="transparent")
         self.preview_label.pack(expand=True, fill="both")
+
+        # Render-Panel („Dein Bild wird erstellt …") — überdeckt die Bildfläche,
+        # solange der Hintergrund-Renderer arbeitet.
+        self._render_panel = ctk.CTkFrame(
+            self.image_frame,
+            fg_color=COLORS["bg_medium"],
+            corner_radius=RADII["card"],
+            border_width=1,
+            border_color=COLORS["border"]
+        )
+        panel_inner = ctk.CTkFrame(self._render_panel, fg_color="transparent")
+        panel_inner.place(relx=0.5, rely=0.5, anchor="center")
+
+        self._render_illu = None
+        try:
+            illu_path = Path(__file__).resolve().parent.parent.parent.parent / "assets" / "ui" / "illu_rendering_160.png"
+            illu_img = Image.open(illu_path)
+            self._render_illu = ctk.CTkImage(light_image=illu_img, dark_image=illu_img, size=(160, 160))
+            ctk.CTkLabel(panel_inner, image=self._render_illu, text="").pack()
+        except Exception as e:
+            logger.debug(f"Render-Illustration nicht ladbar: {e}")
+
+        self._render_title = ctk.CTkLabel(
+            panel_inner,
+            text=t(self.config, "final.rendering"),
+            font=FONTS_UI["h2"],
+            text_color=COLORS["text_primary"]
+        )
+        self._render_title.pack(pady=(28, 0))
+
+        self._render_sub = ctk.CTkLabel(
+            panel_inner,
+            text=t(self.config, "final.rendering_sub"),
+            font=FONTS_UI["label"],
+            text_color=COLORS["text_secondary"]
+        )
+        self._render_sub.pack(pady=(6, 0))
+
+        # 5-Segment-Fortschritt (1 Schritt/s, kein indeterminate)
+        segments = ctk.CTkFrame(panel_inner, fg_color="transparent")
+        segments.pack(pady=(28, 0))
+        self._render_segments = []
+        for _ in range(5):
+            seg = ctk.CTkFrame(
+                segments, width=56, height=8,
+                fg_color=COLORS["bg_light"], corner_radius=4
+            )
+            seg.pack(side="left", padx=4)
+            self._render_segments.append(seg)
+        self._render_segment_pos = 0
+        self._render_anim_job = None
+
+        # Rechte Aktions-Spalte
+        side = ctk.CTkFrame(content, fg_color="transparent", width=280)
+        side.pack(side="right", anchor="n", padx=(0, 0))
+        side.pack_propagate(False)
+        side.configure(height=520)
+
+        # DRUCKEN (Primary 280×96) - nur wenn Drucken aktiviert
+        if self.config.get("print_enabled", True):
+            self.print_btn = ctk.CTkButton(
+                side,
+                text=t(self.config, "common.print"),
+                command=self._on_print,
+                **style_primary(width=280, height=96, font_key="button_xl")
+            )
+            bind_pressed(self.print_btn, COLORS["primary"], COLORS["primary_pressed"])
+            self.print_btn.pack(pady=(0, 0))
+        else:
+            self.print_btn = None
+
+        # Druck-Info („3 Ausdrucke verfügbar")
+        self.print_info = ctk.CTkLabel(
+            side,
+            text="",
+            font=FONTS_UI["caption"],
+            text_color=COLORS["text_secondary"],
+            wraplength=280,
+            justify="center",
+            fg_color="transparent"
+        )
+        self.print_info.pack(pady=(12, 0))
+
+        # FERTIG (Secondary 280×72)
+        if not self.config.get("hide_finish_button", False):
+            self.finish_btn = ctk.CTkButton(
+                side,
+                text=t(self.config, "common.finish"),
+                command=self._on_finish,
+                **style_secondary(width=280, height=72, font_key="button_s")
+            )
+            bind_pressed(self.finish_btn, COLORS["bg_light"], COLORS["pressed_secondary"])
+            self.finish_btn.pack(pady=(20, 0))
+
+    def _show_render_panel(self):
+        """Zeigt das Render-Panel über der Bildfläche (Segment-Anzeige läuft an)."""
+        self._render_panel.place(relx=0.5, rely=0.5, anchor="center",
+                                 relwidth=1.0, relheight=1.0)
+        self._render_panel.lift()
+        self._render_segment_pos = 0
+        for seg in self._render_segments:
+            seg.configure(fg_color=COLORS["bg_light"])
+        if self._render_anim_job is None:
+            self._render_anim_job = self.after(1000, self._advance_render_segment)
+
+    def _hide_render_panel(self):
+        self._render_panel.place_forget()
+        if self._render_anim_job is not None:
+            try:
+                self.after_cancel(self._render_anim_job)
+            except Exception:
+                pass
+            self._render_anim_job = None
+
+    def _advance_render_segment(self):
+        """Füllt pro Sekunde ein Segment (max. 4 von 5 — das letzte gehört dem
+        fertigen Bild). 1 configure/s, kein indeterminate-Geflacker."""
+        self._render_anim_job = None
+        if not self._render_panel.winfo_ismapped():
+            return
+        if self._render_segment_pos < 4:
+            self._render_segments[self._render_segment_pos].configure(
+                fg_color=COLORS["primary"]
+            )
+            self._render_segment_pos += 1
+        self._render_anim_job = self.after(1000, self._advance_render_segment)
+
+    def _set_header_state(self, ready: bool):
+        """Titelzeile: „Dein Bild ist fertig!" vs. „Einen Moment …"."""
+        if ready:
+            self.title_label.configure(text=t(self.config, "final.title_ready"))
+            self.sub_label.configure(text=t(self.config, "final.sub_ready"))
+        else:
+            self.title_label.configure(text=t(self.config, "final.title_rendering"))
+            self.sub_label.configure(text=t(self.config, "final.rendering_sub"))
 
     def _render_final_image(self, photos, filter_name, boxes, overlay) -> Image.Image:
         """Rendert das finale Bild aus der übergebenen Momentaufnahme.
@@ -185,7 +294,8 @@ class FinalScreen(ctk.CTkFrame):
             text=t(self.config, "final.auto_return", seconds=int(remaining))
         )
 
-        self.after(100, self._update_countdown)
+        # Redesign: Timer-Updates max. 2x/s
+        self.after(500, self._update_countdown)
 
     def _on_print(self):
         """Drucken gedrückt"""
@@ -242,7 +352,7 @@ class FinalScreen(ctk.CTkFrame):
                 logger.warning("Kein finales Bild zum Drucken vorhanden")
                 self.print_info.configure(
                     text=t(self.config, "final.no_image"),
-                    text_color=COLORS["error"]
+                    text_color=COLORS["primary"]
                 )
                 self._restore_print_button_after_error()
                 return
@@ -261,7 +371,7 @@ class FinalScreen(ctk.CTkFrame):
                     had_error = True
                     self.print_info.configure(
                         text=t(self.config, "final.save_error"),
-                        text_color=COLORS["error"]
+                        text_color=COLORS["primary"]
                     )
                     break
 
@@ -289,14 +399,14 @@ class FinalScreen(ctk.CTkFrame):
             self.print_btn.configure(
                 state="disabled",
                 text=t(self.config, "final.printing"),
-                fg_color=COLORS["success"]
+                fg_color=COLORS["primary_pressed"]
             )
 
         if quantity > 1:
             info_text = t(self.config, "final.jobs_sending", quantity=quantity)
         else:
             info_text = t(self.config, "final.job_sending")
-        self.print_info.configure(text=info_text, text_color=COLORS["success"])
+        self.print_info.configure(text=info_text, text_color=COLORS["text_secondary"])
 
     def _update_print_button_state(self, printed_count: int = 0):
         """Aktualisiert Button und Info ohne Limit-Hinweis für Gäste."""
@@ -316,9 +426,9 @@ class FinalScreen(ctk.CTkFrame):
                 self.print_btn.configure(
                     state="normal",
                     text=button_text,
-                    fg_color=COLORS["success"]
+                    fg_color=COLORS["primary"]
                 )
-            self.print_info.configure(text=info_text, text_color=COLORS["success"])
+            self.print_info.configure(text=info_text, text_color=COLORS["text_secondary"])
             return
 
         if printed_count > 1:
@@ -332,11 +442,11 @@ class FinalScreen(ctk.CTkFrame):
             self.print_btn.configure(
                 state="disabled",
                 text=t(self.config, "final.printing") if printed_count > 0 else button_text,
-                fg_color=COLORS["success"] if printed_count > 0 else COLORS["bg_light"]
+                fg_color=COLORS["primary"] if printed_count > 0 else COLORS["bg_light"]
             )
         self.print_info.configure(
             text=info_text,
-            text_color=COLORS["success"] if printed_count > 0 else COLORS["text_muted"]
+            text_color=COLORS["primary"] if printed_count > 0 else COLORS["text_muted"]
         )
 
     def _restore_print_button_after_error(self):
@@ -349,7 +459,7 @@ class FinalScreen(ctk.CTkFrame):
             self.print_btn.configure(
                 state="normal",
                 text=button_text,
-                fg_color=COLORS["success"]
+                fg_color=COLORS["primary"]
             )
         else:
             self.print_btn.configure(
@@ -401,9 +511,9 @@ class FinalScreen(ctk.CTkFrame):
         card = ctk.CTkFrame(
             bg_frame,
             fg_color=COLORS["bg_medium"],
-            border_color=COLORS["success"],
-            border_width=3,
-            corner_radius=20
+            border_color=COLORS["border_light"],
+            border_width=2,
+            corner_radius=RADII["dialog"]
         )
         card.place(relx=0.5, rely=0.5, anchor="center")
         card.bind("<Button-1>", lambda e: "break")
@@ -436,8 +546,8 @@ class FinalScreen(ctk.CTkFrame):
                 font=("Segoe UI", 32, "bold"),
                 width=button_size,
                 height=button_size,
-                fg_color=COLORS["success"],
-                hover_color="#00e676",
+                fg_color=COLORS["primary"],
+                hover_color=COLORS["primary"],
                 text_color=COLORS["text_primary"],
                 corner_radius=16,
                 command=lambda value=amount: choose_quantity(value)
@@ -450,9 +560,11 @@ class FinalScreen(ctk.CTkFrame):
             width=min(260, int(card_w * 0.48)),
             height=48,
             fg_color=COLORS["bg_light"],
-            hover_color=COLORS["bg_card"],
-            text_color=COLORS["text_secondary"],
-            corner_radius=SIZES["corner_radius"],
+            hover_color=COLORS["bg_light"],
+            border_width=2,
+            border_color=COLORS["border_light"],
+            text_color=COLORS["text_primary"],
+            corner_radius=RADII["button"],
             command=close_dialog
         ).pack(pady=(0, 32))
 
@@ -576,7 +688,7 @@ class FinalScreen(ctk.CTkFrame):
         ctk.CTkLabel(
             container, text=message,
             font=("Segoe UI", 16, "bold"),
-            text_color=COLORS["warning"],
+            text_color=COLORS["text_primary"],
             fg_color="transparent",
             wraplength=container_w - 80,
             justify="center"
@@ -620,7 +732,7 @@ class FinalScreen(ctk.CTkFrame):
             logger.warning(f"pywin32-ImportError: {e} - Druck nur unter Windows")
             self.print_info.configure(
                 text=t(self.config, "final.print_windows_only"),
-                text_color=COLORS["warning"]
+                text_color=COLORS["text_secondary"]
             )
             return
 
@@ -645,7 +757,7 @@ class FinalScreen(ctk.CTkFrame):
                     logger.info(f"Verfügbare Drucker: {available_printers}")
                     self.print_info.configure(
                         text=t(self.config, "final.printer_missing", printer=printer_name),
-                        text_color=COLORS["error"]
+                        text_color=COLORS["primary"]
                     )
                     return
 
@@ -715,7 +827,7 @@ class FinalScreen(ctk.CTkFrame):
             logger.error(f"Print: ImportError (nicht pywin32): {e}", exc_info=True)
             self.print_info.configure(
                 text=t(self.config, "final.module_missing", error=e),
-                text_color=COLORS["error"]
+                text_color=COLORS["primary"]
             )
         except Exception as e:
             logger.error(f"Druckfehler: {e}")
@@ -734,7 +846,7 @@ class FinalScreen(ctk.CTkFrame):
 
             self.print_info.configure(
                 text=msg,
-                text_color=COLORS["error"]
+                text_color=COLORS["primary"]
             )
 
     def _save_final_image(self):
@@ -786,18 +898,20 @@ class FinalScreen(ctk.CTkFrame):
         # SOFORT mit Hinweis, statt den UI-Thread ~3s zu blockieren
         # (Messung Miix 310: 3.3s UI-HITCH beim Screenwechsel zu final).
         self.final_image = None
+        self._set_header_state(ready=False)
         self._show_rendering_placeholder()
         if self.print_btn:
-            self.print_btn.configure(state="disabled")
+            self.print_btn.configure(state="disabled", fg_color=COLORS["bg_light"],
+                                     text_color=COLORS["text_muted"])
 
         # Container-Größe VOR dem Thread ermitteln (Tk nur im UI-Thread nutzen)
         self.update_idletasks()
         container_w = self.image_frame.winfo_width()
         container_h = self.image_frame.winfo_height()
         if container_w < 100:
-            container_w = 1000
+            container_w = 780
         if container_h < 100:
-            container_h = 500
+            container_h = 520
 
         # Session-Daten JETZT kopieren, nicht erst im Worker: Drückt der Gast
         # „Fertig", während noch gerendert wird, leert reset_session() Fotos,
@@ -823,7 +937,7 @@ class FinalScreen(ctk.CTkFrame):
         self.subtitle_label.configure(text="")
 
     def _show_rendering_placeholder(self):
-        """Zeigt 'Dein Bild wird erstellt…' und entfernt das Bild der Vorsession.
+        """Zeigt das Render-Panel und entfernt das Bild der Vorsession.
 
         Wichtig: Ohne das Leeren wäre bis zum Render-Ende noch das fertige Bild
         der VORHERIGEN Gäste sichtbar. CTkLabel löscht ein Bild nicht über
@@ -832,13 +946,13 @@ class FinalScreen(ctk.CTkFrame):
         if not hasattr(self, "_blank_ctk"):
             blank = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
             self._blank_ctk = ctk.CTkImage(light_image=blank, dark_image=blank, size=(1, 1))
-        self.preview_label.configure(
-            image=self._blank_ctk,
-            text=t(self.config, "final.rendering"),
-            font=("Segoe UI", 26, "bold"),
-            text_color=COLORS["text_primary"],
-        )
+        self.preview_label.configure(image=self._blank_ctk, text="")
         self.preview_label.image = self._blank_ctk
+
+        # Panel-Texte in aktueller Sprache + Segment-Anzeige starten
+        self._render_title.configure(text=t(self.config, "final.rendering"))
+        self._render_sub.configure(text=t(self.config, "final.rendering_sub"))
+        self._show_render_panel()
 
     def _render_final_worker(self, container_w: int, container_h: int, session_snapshot):
         """Worker-Thread: finales Bild rendern, speichern, Vorschau vorbereiten."""
@@ -886,6 +1000,8 @@ class FinalScreen(ctk.CTkFrame):
         self.auto_return_time = time.time() + self.config.get("final_time", 30)
         self.progress_bar.set(1.0)
         self._update_countdown()
+        self._hide_render_panel()
+        self._set_header_state(ready=True)
 
         if preview is None or self.final_image is None:
             self.preview_label.configure(text=t(self.config, "final.no_image"))
@@ -902,7 +1018,8 @@ class FinalScreen(ctk.CTkFrame):
 
         # Druck-Button freigeben
         if self.print_btn:
-            self.print_btn.configure(state="normal")
+            self.print_btn.configure(state="normal", fg_color=COLORS["primary"],
+                                     text_color=COLORS["text_primary"])
             self._update_print_button_state()
         else:
             self.print_info.configure(
@@ -913,4 +1030,5 @@ class FinalScreen(ctk.CTkFrame):
     def on_hide(self):
         """Screen wird verlassen"""
         self.is_active = False
+        self._hide_render_panel()
         self._close_print_quantity_dialog()

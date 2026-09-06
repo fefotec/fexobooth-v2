@@ -61,6 +61,8 @@ TESTS = [
      "Freeze >30 s schreibt alle Thread-Stacks nach absturz.log"),
     ("Tkinter-GC-Deadlock-Schutz", "test_gc_hauptfaden.py",
      "Zyklen-Sammler nur im Hauptthread; kein Font.__del__ im fremden Thread"),
+    ("UI-Redesign-Vertraege", "test_redesign_vertraege.py",
+     "Nur Pink+Neutral in Gaeste-Screens; i18n-Paritaet; Assets im Budget"),
 ]
 
 def main() -> int:

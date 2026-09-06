@@ -159,7 +159,7 @@ def main() -> int:
     _check_contains(ci, "--no-incremental", "build-release.yml: CI baut Bridge nicht inkrementell", errors)
     _check_contains(ci, "nikon_bridge_protocol_test.py", "build-release.yml: CI prüft Bridge-Protokoll", errors)
     _check_contains(ci, "tests/alle_tests.py", "build-release.yml: Kamera-/Video-Regressionen", errors)
-    _check_contains(ci, "default: '2.4.68'", "build-release.yml: aktueller Build 2.4.68 als Default", errors)
+    _check_contains(ci, "default: '2.4.70'", "build-release.yml: aktueller Build 2.4.70 als Default", errors)
     _check_not_contains(ci, "digiCamControlsetup", "build-release.yml: DCC-Download entfernt", errors)
 
     # --- OTA-Update-Pfade liefern bridge/ mit aus (sonst erreicht Nikon nie bestehende Boxen) ---
@@ -206,8 +206,8 @@ def main() -> int:
     _check_contains(program, "TransferFile", "Program.cs: Vollbild-Transfer implementiert", errors)
 
     app_version = _read_text("src/__init__.py")
-    _check_contains(app_version, '__version__ = "2.4.68"', "src/__init__.py: App-Version 2.4.68", errors)
-    _check_contains(installer, "FexoBooth_Setup_2.4.68.exe", "installer.iss: Versionsbeispiel 2.4.68", errors)
+    _check_contains(app_version, '__version__ = "2.4.70"', "src/__init__.py: App-Version 2.4.70", errors)
+    _check_contains(installer, "FexoBooth_Setup_2.4.70.exe", "installer.iss: Versionsbeispiel 2.4.70", errors)
 
     # --- Booking: Reload springt nicht hart auf Canon zurück ---
     booking = _read_text("src/storage/booking.py")

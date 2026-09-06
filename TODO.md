@@ -30,6 +30,17 @@ Session 6) den Stack-Dump geliefert → Ursache Tkinter-GC-Deadlock, Fix in
       176 neue Prints / 0 weiße, Hotspot 0 Reparaturen. Müllabfuhr: 397
       Läufe, Ø 102 ms, max 225 ms — UI-Hitches pro Session unverändert
       (9,4 vs. 9,2 im Vormittagslauf).
+- [x] **2.4.70 UI-Redesign umgesetzt** (06.09. nachts, Handoff „Fexobox
+      UI-Redesign Modern"): alle 5 Gäste-Screens + Drucker-Dialog, i18n
+      7 Sprachen, Assets ~60 KB, `test_redesign_vertraege.py` grün.
+      Details FORTSCHRITT.md (inkl. 4 dokumentierte Handoff-Abweichungen).
+- [ ] **Dauertest 2.4.70 auf Box 101** (Christian): Installer laden,
+      Dev-Mode, einmal ALLE Screens von Hand durchgehen (Start mit QR-Panel,
+      Session mit Pills + Review-Leiste, Filter-Kacheln, Final mit
+      Render-Panel + Drucken, Drucker-Dialog per Dev-Button „DRUCKER
+      RESET"), DANN Stress-Test über Nacht. Erwartung: Optik neu, Verhalten
+      identisch — 0 weiße Prints, 0 Freezes, UI-Hitches pro Session ~9,
+      keine neuen Log-Fehler. Danach Logs an Claude.
 - [ ] **Noch offen aus dem 2.4.65-Plan:** Reparatur-Test (Hotspot in Windows
       von Hand ausschalten → nach ≤2 Min von selbst wieder an, Block in
       `netzwerk.log`) und QR-Sofort-Scan direkt nach Box-Neustart.

@@ -6,6 +6,14 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### Ein Design-Handoff wird übersetzt, nicht abgeschrieben (2.4.70)
+
+| | |
+|---|---|
+| **Kontext** | UI-Redesign nach Claude-Design-Handoff (HTML-Referenz + README mit exakten Tokens). Umsetzung in CustomTkinter auf Miix 310. |
+| **Entscheidung** | Werte 1:1 übernehmen (Farben, Radien, Fonts, Maße), aber an drei Stellen bewusst abweichen: (1) Drucker-Texte bleiben Handlungsaufforderungen — Selbstbedienungs-Realität schlägt Design-Beispieltext. (2) Glow-PNG mit rein-flachen Textzonen, weil Tk-Labels keine echte Transparenz können — sonst dunkle Rechtecke im Verlauf. (3) Logo in die bestehende Top-Bar statt doppelt auf den Screen. |
+| **Merke** | Verläufe/Schatten in PNGs einbacken kostet zur Laufzeit nichts — aber jede Fläche, auf der DYNAMISCHER Text liegt, muss im Asset einfarbig sein. Gedrückt-Feedback via bind auf ButtonPress/Release braucht einen Disabled-Wächter, sonst färbt ein Touch den grauen Button ein. Und: Vor dem Abschreiben eines Handoff-Texts prüfen, ob er zur Betriebsrealität passt. |
+
 ### Tkinter + Threads + automatischer GC = Deadlock-Lotterie (2.4.68)
 
 | | |

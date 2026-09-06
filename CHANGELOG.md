@@ -6,6 +6,67 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.70] - 2026-09-06 - UI-Redesign: Gäste-Oberfläche modernisiert
+
+> Umsetzung des Design-Handoffs „Fexobox UI-Redesign Modern" (Claude Design,
+> Paket im Repo: docs/design/). Reines Design-Release auf Basis des stabilen 2.4.68 —
+> KEINE Änderung an Kamera-, Drucker-, Galerie- oder Netzwerk-Logik.
+> Alle harten Grenzen eingehalten: nur Flächen/Radien/Rahmen/Segoe UI/
+> statische PNGs; Verläufe ausschließlich eingebacken; keine Animationen
+> (Timer-Anzeigen max. 2×/s bzw. 1×/s); Live-Kamerabereich unangetastet.
+
+### Geaendert
+
+- **theme.py:** Redesign-Tokens (`FONTS_UI`, `RADII`, `paper`/`white`/
+  `pressed_secondary`), Button-Fabriken (Primary/Secondary/Tertiary),
+  `bind_pressed()` (Touch-Gedrückt-Feedback, Hover neutralisiert, schützt
+  deaktivierte Buttons). Ampelfarben bleiben für Admin/Service erhalten.
+- **Start:** Glow-Hintergrund (gebackenes PNG, Textzonen bewusst flach),
+  Eyebrow „WILLKOMMEN", Karten 380×330 mit Pink-Auswahlrahmen + Häkchen-Badge,
+  Einzelfoto-Karte mit Bildträger-Grafik, START-Button 480×96 Pink,
+  QR-Panel 288 px (weißer QR-Träger, EVENT-CODE in Pink, WLAN-Zeilen),
+  Lade-Overlay mit 5-Segment-Anzeige (1 Schritt/s statt 11-fps-Ping-Pong).
+  Marken-Logo ersetzt den „FEXOBOOTH"-Schriftzug in der Top-Bar.
+- **Session:** Screen-Grund jetzt dunkel statt Weiß, Top-Zeile 72 px mit
+  „Foto x von y" + Fortschritts-Pills, Abbrechen als Tertiary, Kamera in
+  zentriertem 1004×674-Rahmen (höhenadaptiv im Dev-Mode), Hinweiszeile
+  („Schau in die Kamera…"/„Gefällt dir das Foto?"), Review-Leiste 128 px
+  dunkel mit NOCHMAL (Secondary) + WEITER (Primary) statt Rot/Grün.
+- **Filter:** 4×2-Grid großer Foto-Kacheln (262 px, Häkchen-Badge), die
+  separate Groß-Vorschau entfällt; Kacheln zeigen sofort das schnelle
+  Einzelfoto-Thumb und werden vom Precache mit der echten Collagen-Vorschau
+  veredelt (max_size 500 statt 800/900 → Precache deutlich billiger).
+  Auto-Weiter mit Balken + Live-Sekunden-Text, Takt 2×/s statt 10×/s.
+- **Final:** Layout Bild links (780×520) / Aktions-Spalte rechts (DRUCKEN
+  280×96 Pink, „x Ausdrucke verfügbar", FERTIG Secondary), Titelzeile
+  („Dein Bild ist fertig!" / „Einen Moment …"), Render-Panel mit
+  Illustration + 5-Segment-Anzeige statt Textzeile, Mengen-Dialog in Pink,
+  Auto-Rückkehr-Zeile unten. Countdown-Takt 2×/s.
+- **Drucker-Dialog:** freundliche Karte (r 28, grauer Rahmen statt Alarm-Rot),
+  Eyebrow „KURZE PAUSE", gastfreundliche Titel je Fehlerart („Papier wird
+  gewechselt" …), Handlungsaufforderung bleibt (Selbstbedienung — bewusste
+  Abweichung vom Handoff-Beispieltext), technischer Fehlertext klein für die
+  Hotline, VERSTANDEN-Button Pink, Papierstau-Reset mit Segment-Anzeige
+  statt Spinner+Indeterminate. PIN-Ausstieg unverändert.
+- **i18n:** Redesign-Texte in DE/EN/FR/NL/IT/ES/PL (Emojis/Pfeile aus allen
+  Kiosk-Strings entfernt), u. a. `session.hint_*`, `filter.auto_continue`,
+  `final.title_*`, `printer.title_*`/`body_*`.
+- **Assets:** `assets/ui/` (~60 KB gesamt, Budget 15 MB) — Glow, Badges,
+  Bildträger, Render-Illustration, vorskaliertes Logo; Generator:
+  `tools/gen_redesign_assets.py`.
+- **Hotline:** `support/HOTLINE_PROMPT_FELIX.md` um das neue Aussehen des
+  Fehlerfensters ergänzt (Titel, Pink-Button, Segment-Anzeige).
+
+### Tests
+
+- `tests/test_redesign_vertraege.py` (neu, in `alle_tests.py`): Gäste-Screens
+  ohne Ampelfarben, i18n-Parität der neuen Keys (DE/EN/FR), Kiosk-Strings
+  emoji-/pfeilfrei, Assets vorhanden + im Budget, bind_pressed-Vertrag.
+- Alle bestehenden Verträge (Hotspot, Weiße-Prints, Hänge-Wächter, GC,
+  DSLR-Suite) laufen unverändert grün.
+
+---
+
 ## [2.4.68] - 2026-09-06 - Freeze-Ursache gefixt: Tkinter-GC-Deadlock
 
 > Anlass: Dritter Freeze im Stress-Test (Box 101, 2.4.67, 14:17 Uhr) — und

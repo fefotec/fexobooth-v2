@@ -17,7 +17,7 @@ on:
       version:
         description: 'Version X.Y.Z (nur für Dateiname/Anzeige; kein Release)'
         required: true
-        default: '2.4.68'
+        default: '2.4.70'
         type: string
       allow_no_bridge:
         description: 'Build auch OHNE FexoNikonBridge zulassen (Nikon-Support fehlt dann)'

@@ -13,7 +13,9 @@ import threading
 import time
 from typing import Optional, TYPE_CHECKING
 
-from src.ui.theme import COLORS, FONTS
+from src.ui.theme import (
+    COLORS, FONTS, FONTS_UI, RADII, SEMIBOLD, bind_pressed, style_primary,
+)
 from src.ui.error_images import load_printer_error_image
 from src.utils.logging import get_logger
 from src.i18n import t
@@ -197,136 +199,159 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
 
         screen_w = self.winfo_screenwidth()
         screen_h = self.winfo_screenheight()
-        compact = screen_w <= 1280 or screen_h <= 800
+        compact = screen_h <= 820
         card_w = min(760, max(420, screen_w - 80))
-        text_w = max(320, card_w - 80)
-        icon_size = 58 if compact else 72
-        title_size = 29 if compact else 36
-        error_size = 17 if compact else 20
-        status_size = 16 if compact else 18
-        hint_size = 11 if compact else 13
-        top_pad = 18 if compact else 36
-        bottom_pad = 16 if compact else 32
-        image_size = 118 if compact else 156
+        text_w = max(320, card_w - 120)
+        title_size = 30 if compact else 34
+        top_pad = 24 if compact else 40
+        bottom_pad = 20 if compact else 36
+        image_size = 148 if compact else 184
         self._error_image_size = (image_size, image_size)
 
-        # Zentrierte Karte
+        # Zentrierte Karte (Redesign 2.4.70: freundlich statt Alarm-Rot)
         self.card = ctk.CTkFrame(
             self.main_frame,
             width=card_w,
             fg_color=COLORS["bg_medium"],
-            border_color=COLORS["error"],
-            border_width=3,
-            corner_radius=20
+            border_color=COLORS["border_light"],
+            border_width=2,
+            corner_radius=RADII["dialog"]
         )
         self.card.place(relx=0.5, rely=0.5, anchor="center")
 
-        # Icon
+        title_text = self._get_friendly_title()
         if self.error_category == "jam":
-            icon_text = "⚙"
-            title_text = t(self.config, "printer.paper_jam_title")
-            subtitle = t(self.config, "printer.resolving")
-            title_color = COLORS["warning"]
+            subtitle = t(self.config, "printer.body_jam")
         else:
-            icon_text = "⚠"
-            title_text = t(self.config, "printer.problem_title")
-            subtitle = self._get_instruction_text()
-            title_color = COLORS["error"]
+            subtitle = self._get_friendly_body()
 
-        # Fehlerbild ersetzt das grosse Emoji, falls ein passendes Asset existiert.
-        if not self._create_error_image(top_pad):
-            ctk.CTkLabel(
-                self.card,
-                text=icon_text,
-                font=("Segoe UI", icon_size),
-                text_color=title_color
-            ).pack(pady=(top_pad, 8))
+        # Illustration im weissen Träger (falls Asset existiert)
+        self._create_error_image(top_pad)
 
-        # Titel
+        # Eyebrow „KURZE PAUSE" (Pink, Versalien)
+        ctk.CTkLabel(
+            self.card,
+            text=t(self.config, "printer.eyebrow").upper(),
+            font=FONTS_UI["label"],
+            text_color=COLORS["primary"]
+        ).pack(pady=(12 if self._error_image_label else top_pad, 0))
+
+        # Titel (gastfreundlich, weiß)
         self.title_label = ctk.CTkLabel(
             self.card,
             text=title_text,
             font=("Segoe UI", title_size, "bold"),
-            text_color=title_color,
-            wraplength=text_w,
-            justify="center"
-        )
-        self.title_label.pack(pady=(0, 5))
-
-        # Fehlertext original
-        self.error_label = ctk.CTkLabel(
-            self.card,
-            text=self.error_text,
-            font=("Segoe UI", error_size, "bold"),
-            text_color=COLORS["text_secondary"],
-            wraplength=text_w,
-            justify="center"
-        )
-        self.error_label.pack(pady=(0, 8 if compact else 12), padx=35)
-
-        # Status/Anweisung
-        self.status_label = ctk.CTkLabel(
-            self.card,
-            text=subtitle,
-            font=("Segoe UI", status_size),
             text_color=COLORS["text_primary"],
             wraplength=text_w,
             justify="center"
         )
-        self.status_label.pack(pady=(0, 8 if compact else 10))
+        self.title_label.pack(pady=(6, 0))
 
-        # Animations-Bereich (für Reset)
+        # Status/Anweisung (Body 20)
+        self.status_label = ctk.CTkLabel(
+            self.card,
+            text=subtitle,
+            font=FONTS_UI["body"],
+            text_color=COLORS["text_secondary"],
+            wraplength=text_w,
+            justify="center"
+        )
+        self.status_label.pack(pady=(12, 0), padx=40)
+
+        # Original-Fehlertext klein für Service/Hotline (Felix fragt danach)
+        self.error_label = ctk.CTkLabel(
+            self.card,
+            text=self.error_text,
+            font=FONTS_UI["micro"],
+            text_color=COLORS["text_muted"],
+            wraplength=text_w,
+            justify="center"
+        )
+        self.error_label.pack(pady=(8, 0), padx=35)
+
+        # animation_label bleibt als (jetzt statischer) Status-Platzhalter
         self.animation_label = ctk.CTkLabel(
             self.card,
             text="",
-            font=("Segoe UI", 24 if compact else 28),
-            text_color=COLORS["warning"]
+            font=FONTS_UI["body"],
+            text_color=COLORS["text_secondary"]
         )
-        self.animation_label.pack(pady=(3 if compact else 5, 3 if compact else 5))
+        self.animation_label.pack(pady=(2, 0))
 
-        # Progress-Bar (für Reset)
-        self.progress_bar = ctk.CTkProgressBar(
-            self.card,
-            width=350,
-            height=8,
-            fg_color=COLORS["bg_dark"],
-            progress_color=COLORS["warning"],
-            corner_radius=4,
-            mode="indeterminate"
-        )
+        # 5-Segment-Fortschritt für den Papierstau-Reset (statt indeterminate)
+        self._reset_segments_frame = ctk.CTkFrame(self.card, fg_color="transparent")
+        self._reset_segments = []
+        for _ in range(5):
+            seg = ctk.CTkFrame(
+                self._reset_segments_frame, width=56, height=8,
+                fg_color=COLORS["bg_light"], corner_radius=4
+            )
+            seg.pack(side="left", padx=4)
+            self._reset_segments.append(seg)
+        self._reset_segment_pos = 0
         if self.error_category == "jam":
-            self.progress_bar.pack(pady=(5, 10))
-            self.progress_bar.start()
+            self._reset_segments_frame.pack(pady=(12, 0))
 
         # ===== Bestätigungs-Button (für consumable Fehler) =====
         self.confirm_btn = ctk.CTkButton(
             self.card,
             text=self._get_button_text(),
-            font=("Segoe UI", 20 if compact else 22, "bold"),
-            fg_color=COLORS["success"],
-            hover_color="#1a8f3a",
-            text_color="#ffffff",
-            height=56 if compact else 60,
-            width=min(400, card_w - 100),
-            corner_radius=12,
-            command=self._on_confirm
+            command=self._on_confirm,
+            **style_primary(width=min(400, card_w - 120), height=88)
         )
+        bind_pressed(self.confirm_btn, COLORS["primary"], COLORS["primary_pressed"])
         if self.error_category != "jam":
-            self.confirm_btn.pack(pady=(15, 10))
+            self.confirm_btn.pack(pady=(24, 0))
 
         # Hinweis unten
         hint_text = (t(self.config, "printer.dont_turn_off")
                      if self.error_category == "jam"
-                     else t(self.config, "printer.material_hint"))
+                     else t(self.config, "printer.after_hint"))
         self.hint_label = ctk.CTkLabel(
             self.card,
             text=hint_text,
-            font=("Segoe UI", hint_size),
+            font=FONTS_UI["micro"],
             text_color=COLORS["text_muted"],
             wraplength=text_w,
             justify="center"
         )
-        self.hint_label.pack(pady=(5, bottom_pad), padx=50)
+        self.hint_label.pack(pady=(16, bottom_pad), padx=50)
+
+    def _get_friendly_title(self) -> str:
+        """Gastfreundlicher Titel je Fehlerart (Redesign 2.4.70)."""
+        upper = self.error_text.upper()
+        if self.error_category == "jam":
+            return t(self.config, "printer.title_jam")
+        if "PAPIER" in upper:
+            return t(self.config, "printer.title_paper")
+        if "TINTE" in upper or "KASSETTE" in upper:
+            return t(self.config, "printer.title_ink")
+        if "KLAPPE" in upper:
+            return t(self.config, "printer.title_cover")
+        return t(self.config, "printer.title_generic")
+
+    def _get_friendly_body(self) -> str:
+        """Gastfreundlicher Erklärtext je Fehlerart."""
+        upper = self.error_text.upper()
+        if "PAPIER" in upper:
+            return t(self.config, "printer.body_paper")
+        if "TINTE" in upper or "KASSETTE" in upper:
+            return t(self.config, "printer.body_ink")
+        if "KLAPPE" in upper:
+            return t(self.config, "printer.body_cover")
+        return t(self.config, "printer.body_generic")
+
+    def _advance_reset_segment(self):
+        """Ein Reset-Schritt = ein Segment Pink (max. 4 — das letzte gehört
+        dem erfolgreichen Abschluss in _switch_to_confirm_mode)."""
+        try:
+            if self._reset_segment_pos < 4:
+                self._reset_segments[self._reset_segment_pos].configure(
+                    fg_color=COLORS["primary"]
+                )
+                self._reset_segment_pos += 1
+        except Exception:
+            pass
 
     def _create_error_image(self, top_pad: int) -> bool:
         """Creates the compact error illustration if an asset is available."""
@@ -342,10 +367,10 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
             self.card,
             width=frame_size,
             height=frame_size,
-            fg_color="#ffffff",
-            corner_radius=14
+            fg_color=COLORS["white"],
+            corner_radius=20
         )
-        image_frame.pack(pady=(top_pad, 8))
+        image_frame.pack(pady=(top_pad, 0))
         image_frame.pack_propagate(False)
 
         self._error_image_label = ctk.CTkLabel(
@@ -511,13 +536,13 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
             self.error_label.configure(text=error)
             self.status_label.configure(
                 text=t(self.config, "printer.still_error", instruction=self._get_instruction_text()),
-                text_color=COLORS["error"]
+                text_color=COLORS["primary"]
             )
-            self.animation_label.configure(text="⚠", text_color=COLORS["error"])
+            self.animation_label.configure(text="")
             self.confirm_btn.configure(
                 state="normal",
                 text=self._get_button_text(),
-                fg_color=COLORS["success"]
+                fg_color=COLORS["primary"]
             )
             # Canon-Dialoge wieder verstecken
             self._hide_canon_dialogs()
@@ -544,13 +569,13 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
         from src.printer.controller import get_printer_controller
         controller = get_printer_controller()
 
-        # Animation starten
-        self._animate_reset()
-
         def on_step(text):
             if self._is_open:
                 translated = self._translate_reset_step(text)
-                self.after(0, lambda: self.status_label.configure(text=translated))
+                def _update():
+                    self.status_label.configure(text=translated)
+                    self._advance_reset_segment()
+                self.after(0, _update)
 
         def on_done(success, message):
             if not self._is_open:
@@ -561,27 +586,18 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
 
         controller.reset_printer(on_step=on_step, on_done=on_done)
 
-    def _animate_reset(self):
-        """Zeigt rotierende Animation während Reset"""
-        if not self._is_open:
-            return
-
-        frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-        self._animation_frame = (self._animation_frame + 1) % len(frames)
-        self.animation_label.configure(text=frames[self._animation_frame])
-
-        if self._reset_started and self._is_open:
-            self.after(120, self._animate_reset)
-
     def _switch_to_confirm_mode(self, success: bool, message: str):
         """Nach Reset: Bestätigungs-Button anzeigen"""
         logger.info(f"Reset fertig (success={success}): {message}")
 
         self._reset_started = False
-        self.progress_bar.stop()
-        self.progress_bar.pack_forget()
-
         if success:
+            # Letztes Segment füllen: Reset komplett
+            try:
+                for seg in self._reset_segments:
+                    seg.configure(fg_color=COLORS["primary"])
+            except Exception:
+                pass
             self.status_label.configure(
                 text=t(self.config, "printer.reset_done"),
                 text_color=COLORS["text_primary"]
@@ -590,14 +606,14 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
         else:
             self.status_label.configure(
                 text=t(self.config, "printer.manual_check", message=message),
-                text_color=COLORS["warning"]
+                text_color=COLORS["text_primary"]
             )
-            self.animation_label.configure(text="⚠", text_color=COLORS["warning"])
+            self.animation_label.configure(text="")
 
         # Bestätigungs-Button zeigen
         self.confirm_btn.configure(text=t(self.config, "printer.button_fixed"))
-        self.confirm_btn.pack(pady=(15, 10))
-        self.hint_label.configure(text=t(self.config, "printer.material_hint"))
+        self.confirm_btn.pack(pady=(24, 0))
+        self.hint_label.configure(text=t(self.config, "printer.after_hint"))
 
     # ========== Service-Ausstieg mit PIN (Bug #49) ==========
 
@@ -744,14 +760,14 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
 
     def _show_resolved(self):
         """Fehler behoben → Kurz Erfolg zeigen, dann schließen"""
-        self.animation_label.configure(text="✓", text_color=COLORS["success"])
+        self.animation_label.configure(text="")
         self.status_label.configure(
             text=t(self.config, "printer.ready"),
-            text_color=COLORS["success"]
+            text_color=COLORS["primary"]
         )
         self.error_label.configure(
             text=t(self.config, "printer.resolved"),
-            text_color=COLORS["success"]
+            text_color=COLORS["text_secondary"]
         )
         self.confirm_btn.pack_forget()
         self.hint_label.configure(text="")

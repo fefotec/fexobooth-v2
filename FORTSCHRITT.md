@@ -4,6 +4,43 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-09-06 (Nacht) — 2.4.70: UI-Redesign der Gäste-Oberfläche umgesetzt
+
+**Grundlage:** Design-Handoff „Fexobox UI-Redesign Modern" (Claude Design;
+ZIP im Repo-Root, README darin = Spezifikation mit Tokens, Maßen, i18n).
+Reines Design-Release auf 2.4.68-Basis — Kamera-/Drucker-/Netzwerk-Logik
+unangetastet, alle Stress-Test-Schnittstellen (cards, _select_card,
+filter_buttons, _on_continue …) unverändert.
+
+**Umgesetzt:** Tokens+Button-System in theme.py; Start (Glow-PNG, Eyebrow,
+380er-Karten mit Badge, Pink-START 480×96, neues QR-Panel, Segment-Loader);
+Session (dunkler Grund, Pills, zentrierter Kamera-Rahmen 1004×674 mit
+Dev-Mode-Höhenanpassung, Hinweiszeile, Review-Leiste Secondary/Primary);
+Filter (4×2-Foto-Kacheln, Groß-Vorschau entfernt, Precache auf Kachelgröße
+verbilligt, Auto-Weiter 2×/s mit Sekundentext); Final (Bild links/Aktionen
+rechts, Render-Panel mit Illustration + 5 Segmenten, Pink-Mengen-Dialog);
+Drucker-Dialog (freundliche Karte, Eyebrow, Titel je Fehlerart, Pink-Button,
+Reset-Segmente statt Spinner); i18n DE/EN/FR/NL/IT/ES/PL; Assets ~60 KB via
+tools/gen_redesign_assets.py; Felix-Hotline-Doku ergänzt.
+
+**Bewusste Abweichungen vom Handoff (dokumentiert):**
+1. Drucker-Body-Texte bleiben Handlungsaufforderungen („Bitte Papier
+   nachlegen…") statt „Unser Team kümmert sich" — fexobox ist
+   Selbstbedienung, der Gastgeber muss selbst wechseln.
+2. Glow-Hintergrund: Textzonen im Asset rein #08080C, Glows nur obere
+   Ecken — Tk-Labels malen ihre Fläche in Hintergrundfarbe (keine echte
+   Transparenz), sonst gäbe es dunkle Rechtecke im Verlauf.
+3. Kein zweites Logo auf dem Start-Screen — die App-Top-Bar (auf Start immer
+   sichtbar) trägt jetzt das Marken-Logo statt des Schriftzugs.
+4. Karten-/Kachelhöhen leicht reduziert (330→je nach Kartenzahl, 224→200),
+   damit alles inkl. Top-Bar auf 1280×800 passt.
+
+**Tests:** `test_redesign_vertraege.py` neu (Ampelfarben-Verbot, i18n-Parität,
+Emoji-Verbot, Asset-Budget, bind_pressed); Suite lokal 24/25 (nur die
+Windows-only-Belichtungsdiagnose rot wie immer auf macOS; CI verifiziert).
+
+---
+
 ## 2026-09-06 (Abend) — 2.4.68-Dauerlauf bestanden: Freeze weg, alles gruen
 
 Box 101, 15:21–18:41 Uhr, 175 Stress-Sessions: **kein Freeze** (vorher im

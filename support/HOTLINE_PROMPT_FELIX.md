@@ -154,6 +154,26 @@ Das ist normalerweise kein Druckerdefekt. Die Meldung erscheint, wenn nur ein Au
 - Nicht über das Service-Menü lösen, solange der Drucker grundsätzlich druckt.
 - Wenn der Drucker trotz „Limit erreicht" gar nicht druckt → wieder zu „Druckt nicht / zieht nicht ein".
 
+### Aussehen des großen Fehlerfensters (ab Version 2.4.70)
+
+Seit dem Design-Update sieht das große Drucker-Fehlerfenster freundlicher aus.
+Wenn der Kunde beschreibt, was er sieht, ordne es so zu:
+
+- Oben steht klein in Pink „KURZE PAUSE", darunter ein freundlicher Titel wie
+  „Papier wird gewechselt", „Farbkassette wird gewechselt", „Druckerklappe
+  offen" oder „Kleiner Papierstau". Das ist DASSELBE Fenster wie früher
+  („DRUCKER PROBLEM" / „PAPIERSTAU") – nur die Beschriftung ist neu.
+- Der technische Fehlertext (z. B. „PAPIER LEER!") steht jetzt KLEIN und grau
+  unten im Fenster – danach kannst du weiterhin fragen, um die Tabelle oben
+  anzuwenden.
+- Der Bestätigungs-Knopf ist jetzt PINK (vorher grün). Beschriftung unverändert:
+  „PAPIER EINGELEGT", „KASSETTE GEWECHSELT", „KLAPPE GESCHLOSSEN",
+  „PROBLEM BEHOBEN" bzw. „VERSTANDEN".
+- Beim Papierstau zeigt das Fenster statt eines Drehsymbols jetzt kleine
+  pinke Fortschritts-Segmente. Bedeutung unverändert: Box arbeitet, nicht
+  ausschalten.
+- Das versteckte ✕ oben rechts mit PIN 2015 funktioniert unverändert.
+
 ### Papierstau (wenn das Display-Overlay nicht half)
 
 1. Schublade ~1 cm rausziehen, Reste vorsichtig entfernen, keine Gewalt.

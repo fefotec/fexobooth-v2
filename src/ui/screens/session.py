@@ -19,7 +19,10 @@ import random
 import threading
 
 from src.config.config import vorschau_aufloesung
-from src.ui.theme import COLORS, FONTS, SIZES
+from src.ui.theme import (
+    COLORS, FONTS, FONTS_UI, SIZES, bind_pressed, style_primary,
+    style_secondary, style_tertiary,
+)
 from src.utils.logging import get_logger
 from src.i18n import t
 
@@ -75,7 +78,7 @@ class SessionScreen(ctk.CTkFrame):
     """Session-Screen mit Vollbild-LiveView"""
 
     def __init__(self, parent, app: "PhotoboothApp"):
-        super().__init__(parent, fg_color="#FFFFFF")
+        super().__init__(parent, fg_color=COLORS["bg_dark"])
         self.app = app
         self.config = app.config
 
@@ -172,46 +175,63 @@ class SessionScreen(ctk.CTkFrame):
         self._setup_ui()
 
     def _setup_ui(self):
-        """Erstellt die UI"""
-        # Info-Leiste oben
-        info_bar = ctk.CTkFrame(self, fg_color=COLORS["bg_medium"], height=45)
+        """Erstellt die UI — Redesign 2.4.70 (Top-Zeile, Kamera-Rahmen, Hinweis)"""
+        # Top-Zeile (72 hoch, transparent auf Screen-Hintergrund)
+        info_bar = ctk.CTkFrame(self, fg_color="transparent", height=72)
         info_bar.pack(fill="x")
         info_bar.pack_propagate(False)
 
-        # Foto-Fortschritt
+        # Foto-Fortschritt: „Foto 2 von 4" + Pills
         self.progress_label = ctk.CTkLabel(
             info_bar,
             text=t(self.config, "session.photo_progress", current=1, total=1),
-            font=FONTS["body_bold"],
+            font=FONTS_UI["h3"],
             text_color=COLORS["text_primary"]
         )
-        self.progress_label.pack(side="left", padx=20, pady=10)
+        self.progress_label.pack(side="left", padx=(40, 0), pady=14)
 
-        # Abbrechen-Button
+        # Fortschritts-Pills (40×10, gap 8) — Anzahl wird in _update_progress gepflegt
+        self._pills_frame = ctk.CTkFrame(info_bar, fg_color="transparent")
+        self._pills_frame.pack(side="left", padx=(20, 0))
+        self._pills = []
+
+        # Abbrechen-Button (Tertiary)
         cancel_btn = ctk.CTkButton(
             info_bar,
             text=t(self.config, "common.cancel"),
-            font=FONTS["small"],
-            width=120,
-            height=32,
-            fg_color=COLORS["bg_light"],
-            hover_color=COLORS["error"],
-            corner_radius=SIZES["corner_radius_small"],
-            command=self._on_cancel
+            command=self._on_cancel,
+            **style_tertiary(width=180, height=56)
         )
-        cancel_btn.pack(side="right", padx=20, pady=6)
+        bind_pressed(cancel_btn, COLORS["bg_medium"], COLORS["bg_light"])
+        cancel_btn.pack(side="right", padx=(0, 40), pady=8)
 
-        # Hauptbereich
+        # Hinweiszeile unter der Kamera (zuerst unten packen)
+        self.hint_label = ctk.CTkLabel(
+            self,
+            text="",
+            font=FONTS_UI["body"],
+            text_color=COLORS["text_secondary"]
+        )
+        self.hint_label.pack(side="bottom", fill="x", pady=(10, 14))
+
+        # Hauptbereich: Kamera-Rahmen zentriert (Ziel 1004×674, Rahmen 2 px).
+        # Die Größe wird in _fit_camera_frame an den echten Platz angepasst —
+        # im Dev-Mode nimmt die App-Top-Bar Höhe weg.
         main_frame = ctk.CTkFrame(self, fg_color="transparent")
-        main_frame.pack(fill="both", expand=True, padx=0, pady=0)
+        main_frame.pack(fill="both", expand=True)
+        self._camera_outer = main_frame
 
-        # Preview Container (volle Größe)
         self.preview_container = ctk.CTkFrame(
             main_frame,
-            fg_color="#FFFFFF",
+            width=1004,
+            height=674,
+            fg_color=COLORS["bg_dark"],
+            border_width=2,
+            border_color=COLORS["border"],
             corner_radius=0
         )
-        self.preview_container.pack(expand=True, fill="both")
+        self.preview_container.place(relx=0.5, rely=0.5, anchor="center")
+        self.preview_container.pack_propagate(False)
 
         # Preview Label
         self.preview_label = ctk.CTkLabel(
@@ -219,43 +239,58 @@ class SessionScreen(ctk.CTkFrame):
             text="",
             fg_color="transparent"
         )
-        self.preview_label.pack(expand=True, fill="both")
+        self.preview_label.pack(expand=True, fill="both", padx=2, pady=2)
 
-        # Button-Leiste: tkinter.Frame mit place() (CTkFrame place/lift unzuverlässig!)
-        self._button_bar = tk.Frame(self, bg="#000000", height=80)
+        # Review-Leiste: tkinter.Frame mit place() (CTkFrame place/lift unzuverlässig!)
+        # Redesign: dunkles Panel mit 2-px-Oberkante statt Schwarz mit Rot/Grün.
+        self._button_bar = tk.Frame(self, bg=COLORS["bg_medium"], height=128)
+        tk.Frame(self._button_bar, bg=COLORS["border"], height=2).pack(fill="x", side="top")
         # Versteckt - wird per place() eingeblendet
 
         self._redo_btn = ctk.CTkButton(
             self._button_bar,
             text=t(self.config, "session.redo"),
-            font=("Segoe UI", 22, "bold"),
-            width=220,
-            height=55,
-            fg_color=COLORS["error"],
-            hover_color="#cc3344",
-            text_color=COLORS["text_primary"],
-            corner_radius=SIZES["corner_radius"],
-            command=self._on_redo_photo
+            command=self._on_redo_photo,
+            **style_secondary(width=320, height=88)
         )
+        bind_pressed(self._redo_btn, COLORS["bg_light"], COLORS["pressed_secondary"])
 
         self._continue_btn = ctk.CTkButton(
             self._button_bar,
             text=t(self.config, "session.continue"),
-            font=("Segoe UI", 22, "bold"),
-            width=220,
-            height=55,
-            fg_color=COLORS["success"],
-            hover_color="#00b85c",
-            text_color=COLORS["text_primary"],
-            corner_radius=SIZES["corner_radius"],
-            command=self._on_continue_photo
+            command=self._on_continue_photo,
+            **style_primary(width=320, height=88)
         )
+        bind_pressed(self._continue_btn, COLORS["primary"], COLORS["primary_pressed"])
+
+    def _fit_camera_frame(self):
+        """Passt den Kamera-Rahmen an den real verfügbaren Platz an (Dev-Top-Bar)."""
+        try:
+            self.update_idletasks()
+            avail_h = self._camera_outer.winfo_height()
+            avail_w = self._camera_outer.winfo_width()
+            if avail_h < 100 or avail_w < 100:
+                return
+            h = min(674, avail_h)
+            w = min(1004, avail_w, int((h - 4) * 1000 / 670) + 4)
+            self.preview_container.configure(width=w, height=h)
+        except Exception as e:
+            logger.debug(f"Kamera-Rahmen-Anpassung übersprungen: {e}")
+
+    def _set_hint(self, key: str):
+        """Hinweiszeile unter der Kamera (countdown/review)."""
+        try:
+            self.hint_label.configure(text=t(self.config, key))
+        except Exception:
+            pass
 
     def on_show(self):
         """Screen wird angezeigt"""
         self.config = self.app.config
         self._redo_btn.configure(text=t(self.config, "session.redo"))
         self._continue_btn.configure(text=t(self.config, "session.continue"))
+        self._fit_camera_frame()
+        self._set_hint("session.hint_countdown")
 
         # Template-Overlay Einstellung bei jedem Show neu lesen (Admin kann es ändern)
         self._template_overlay_enabled = self.config.get("liveview_template_overlay", False)
@@ -344,7 +379,7 @@ class SessionScreen(ctk.CTkFrame):
         self._cached_template_boxes_scaled = []
 
     def _update_progress(self, override_current: int = 0):
-        """Aktualisiert die Fortschrittsanzeige"""
+        """Aktualisiert die Fortschrittsanzeige (Text + Pills)"""
         if override_current > 0:
             current = override_current
         else:
@@ -352,6 +387,23 @@ class SessionScreen(ctk.CTkFrame):
         self.progress_label.configure(
             text=t(self.config, "session.photo_progress", current=current, total=self.total_photos)
         )
+
+        # Pills (40×10): erledigt + aktuell Pink, offen Border-Grau.
+        # Anzahl an total_photos angleichen (Templates haben 1–6 Slots).
+        if len(self._pills) != self.total_photos:
+            for pill in self._pills:
+                pill.destroy()
+            self._pills = []
+            if self.total_photos > 1:
+                for _ in range(self.total_photos):
+                    pill = ctk.CTkFrame(
+                        self._pills_frame, width=40, height=10,
+                        fg_color=COLORS["border"], corner_radius=5
+                    )
+                    pill.pack(side="left", padx=4)
+                    self._pills.append(pill)
+        for i, pill in enumerate(self._pills):
+            pill.configure(fg_color=COLORS["primary"] if i < current else COLORS["border"])
 
     def _update_live_view(self):
         """Aktualisiert die Live-Vorschau (Vollbild, Performance-optimiert)"""
@@ -1177,6 +1229,7 @@ class SessionScreen(ctk.CTkFrame):
 
         self._waiting_for_restore_countdown = False
         logger.info(f"=== Starte Countdown für Foto {self.app.current_photo_index + 1}/{self.total_photos} ===")
+        self._set_hint("session.hint_countdown")
         self.is_countdown_active = True
         self.countdown_value = self.config.get("countdown_time", 5)
         self._countdown_tick()
@@ -1853,15 +1906,16 @@ class SessionScreen(ctk.CTkFrame):
             logger.error(f"Fehler beim Speichern: {e}")
 
     def _show_redo_button(self):
-        """Zeigt die Button-Leiste (Nochmal + Weiter) am unteren Bildschirmrand"""
+        """Zeigt die Review-Leiste (Nochmal + Weiter) am unteren Bildschirmrand"""
         logger.info(f"_show_redo_button aufgerufen - Foto {self.app.current_photo_index}/{self.total_photos}")
         self._redo_visible = True
+        self._set_hint("session.hint_review")
         # tkinter place() auf self - funktioniert zuverlässig (kein CTk place-Bug)
-        self._button_bar.place(x=0, rely=1.0, anchor="sw", relwidth=1.0, height=80)
+        self._button_bar.place(x=0, rely=1.0, anchor="sw", relwidth=1.0, height=128)
         self._button_bar.tkraise()  # Über alle anderen Widgets heben
-        # Buttons nebeneinander zentriert
-        self._redo_btn.pack(side="left", padx=(0, 15), expand=True, anchor="e")
-        self._continue_btn.pack(side="left", padx=(15, 0), expand=True, anchor="w")
+        # Buttons nebeneinander zentriert (Gap 32)
+        self._redo_btn.pack(side="left", padx=(0, 16), pady=(20, 20), expand=True, anchor="e")
+        self._continue_btn.pack(side="left", padx=(16, 0), pady=(20, 20), expand=True, anchor="w")
         logger.info("Button-Leiste eingeblendet (Nochmal + Weiter)")
 
         # Stress-Test: 15% Redo, 85% Weiter
@@ -1946,8 +2000,8 @@ class SessionScreen(ctk.CTkFrame):
     def _show_error(self, message: str):
         """Zeigt Fehlermeldung"""
         self.preview_label.configure(
-            text=f"❌ {message}",
-            font=FONTS["heading"],
-            text_color=COLORS["error"]
+            text=message,
+            font=FONTS_UI["h2"],
+            text_color=COLORS["text_primary"]
         )
         self.after(3000, lambda: self.app.show_screen("start"))

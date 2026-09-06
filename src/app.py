@@ -1491,12 +1491,22 @@ class PhotoboothApp:
                     text_color=COLORS["primary"]
                 ).pack(side="left")
         else:
-            ctk.CTkLabel(
-                logo_frame,
-                text="FEXOBOOTH",
-                font=FONTS["heading"],
-                text_color=COLORS["primary"]
-            ).pack(side="left")
+            # Redesign 2.4.70: gebackenes Marken-Logo statt Schriftzug —
+            # Fallback bleibt der Text, falls das Asset fehlt.
+            try:
+                bundled = Path(__file__).resolve().parent.parent / "assets" / "ui" / "fexobox-logo-weiss.png"
+                brand_img = Image.open(bundled)
+                self.logo_ctk = ctk.CTkImage(
+                    light_image=brand_img, dark_image=brand_img, size=(40, 40)
+                )
+                ctk.CTkLabel(logo_frame, image=self.logo_ctk, text="").pack(side="left")
+            except Exception:
+                ctk.CTkLabel(
+                    logo_frame,
+                    text="FEXOBOOTH",
+                    font=FONTS["heading"],
+                    text_color=COLORS["primary"]
+                ).pack(side="left")
 
         ctk.CTkLabel(
             logo_frame,
