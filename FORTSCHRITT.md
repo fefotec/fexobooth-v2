@@ -4,6 +4,24 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-09-06 (Nacht II) — 2.4.72: Layout-Fixes diesmal VERIFIZIERT statt geraten
+
+Christians zweiter Box-Test zeigte: 2.4.71 hatte nichts behoben. Zwei echte
+Ursachen gefunden: (1) `set_widget_scaling(1.0)` war wirkungslos, weil CTk
+`monitor_dpi × widget_scaling` rechnet — jetzt wird der Monitor-Faktor
+ausgelesen und invers kompensiert (Produkt exakt 1.0, Bild bleibt scharf).
+(2) Die Start-Kartenposition wurde VOR dem Einblenden des QR-Panels
+berechnet (relx 0.5 statt 0.37) → Einzelfoto-Karte exakt unterm Panel;
+_update_qr_code positioniert jetzt immer selbst mit. Filter: Footer
+bottom-first (WEITER kann nie mehr rausrutschen), Kacheln 250x190.
+
+Wichtigste Neuerung: `tools/ui_layout_probe.py` — rendert die Screens lokal
+in einem echten 1280x800-Fenster mit emulierbarem DPI-Faktor und misst alle
+kritischen Abstaende. Der Pruefstand hat den Box-Fehler exakt reproduziert
+(Einzelfoto-Karte bei x=1299, unter dem Panel) und nach den Fixes laufen
+beide Faktoren (1.0 / 1.0588) inkl. Worst-Case-Szenario komplett gruen.
+
+
 ## 2026-09-06 (spaet) — 2.4.71: Redesign-Feinschliff nach Christians Box-Test
 
 Box-Test 2.4.70 ergab 5 Maengel; Kernursache von dreien: CustomTkinters

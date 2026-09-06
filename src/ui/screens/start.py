@@ -1064,6 +1064,8 @@ class StartScreen(ctk.CTkFrame):
             self.gallery_banner.pack_forget()
         except Exception:
             pass
+        # Ohne Panel gehören die Karten in die Bildschirmmitte
+        self._position_main_content()
 
     def _update_qr_code(self):
         """Zeigt das Galerie-Banner unten rechts."""
@@ -1204,6 +1206,12 @@ class StartScreen(ctk.CTkFrame):
             # Rechts, vertikal mittig im Bereich über dem Start-Button
             self.gallery_banner.place(relx=1.0, rely=0.44, x=-48, anchor="e")
             self.gallery_banner.lift()
+
+            # Kartenposition IMMER zusammen mit dem Panel-Zustand setzen:
+            # Wurde die Position vorher ohne aktives Panel berechnet (relx
+            # 0.5), stünde die Einzelfoto-Karte mittig — exakt unter dem
+            # Panel (Box-Foto 06.09.). Ein Aufruf hier macht das unmöglich.
+            self._position_main_content()
 
             logger.info(f"✅ App-Galerie-QR angezeigt: {url}")
 

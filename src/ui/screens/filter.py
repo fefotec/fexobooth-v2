@@ -177,10 +177,48 @@ class FilterScreen(ctk.CTkFrame):
         self._setup_ui()
 
     def _setup_ui(self):
-        """Erstellt die UI — Titel links, Kachel-Grid, Auto-Weiter-Zeile unten"""
+        """Erstellt die UI — Titel links, Kachel-Grid, Auto-Weiter-Zeile unten.
+
+        Pack-Reihenfolge: Fußzeile und Balken ZUERST mit side="bottom" —
+        damit können WEITER-Button und Auto-Weiter-Zeile NIE aus dem Bild
+        gedrückt werden, egal wie viel Höhe Top-Bar/Grid brauchen
+        (Box-Test 06.09.: Footer lag unterhalb des Bildschirms, WEITER
+        war nicht klickbar).
+        """
+        # Fußzeile: Auto-Weiter-Text links, WEITER rechts (ZUERST packen!)
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.pack(side="bottom", fill="x", padx=40, pady=(10, 16))
+
+        self.auto_label = ctk.CTkLabel(
+            footer,
+            text="",
+            font=FONTS_UI["label"],
+            text_color=COLORS["text_secondary"]
+        )
+        self.auto_label.pack(side="left")
+
+        self.continue_btn = ctk.CTkButton(
+            footer,
+            text=t(self.config, "filter.continue"),
+            command=self._on_continue,
+            **style_primary(width=400, height=88)
+        )
+        bind_pressed(self.continue_btn, COLORS["primary"], COLORS["primary_pressed"])
+        self.continue_btn.pack(side="right")
+
+        self.auto_progress = ctk.CTkProgressBar(
+            self,
+            height=6,
+            fg_color=COLORS["bg_light"],
+            progress_color=COLORS["primary"],
+            corner_radius=3
+        )
+        self.auto_progress.pack(side="bottom", fill="x", padx=40)
+        self.auto_progress.set(1.0)
+
         # Kopfzeile: Titel + Untertitel links, Tertiary „Fotos nochmal" rechts
         header = ctk.CTkFrame(self, fg_color="transparent")
-        header.pack(fill="x", padx=40, pady=(18, 0))
+        header.pack(fill="x", padx=40, pady=(14, 0))
 
         head_text = ctk.CTkFrame(header, fg_color="transparent")
         head_text.pack(side="left")
@@ -210,41 +248,10 @@ class FilterScreen(ctk.CTkFrame):
         bind_pressed(back_btn, COLORS["bg_medium"], COLORS["bg_light"])
         back_btn.pack(side="right", pady=(6, 0))
 
-        # Kachel-Grid 4×2 (zentriert, Zellen 262, Gap 24)
+        # Kachel-Grid 4×2 (zentriert im verbleibenden Raum)
         grid_frame = ctk.CTkFrame(self, fg_color="transparent")
-        grid_frame.pack(pady=(16, 0))
+        grid_frame.pack(expand=True)
         self._create_filter_grid(grid_frame)
-
-        # Fußzeile: Auto-Weiter-Balken + Text links, WEITER rechts
-        self.auto_progress = ctk.CTkProgressBar(
-            self,
-            height=6,
-            fg_color=COLORS["bg_light"],
-            progress_color=COLORS["primary"],
-            corner_radius=3
-        )
-        self.auto_progress.pack(fill="x", padx=40, pady=(14, 0))
-        self.auto_progress.set(1.0)
-
-        footer = ctk.CTkFrame(self, fg_color="transparent")
-        footer.pack(fill="x", padx=40, pady=(10, 16))
-
-        self.auto_label = ctk.CTkLabel(
-            footer,
-            text="",
-            font=FONTS_UI["label"],
-            text_color=COLORS["text_secondary"]
-        )
-        self.auto_label.pack(side="left")
-
-        self.continue_btn = ctk.CTkButton(
-            footer,
-            text=t(self.config, "filter.continue"),
-            command=self._on_continue,
-            **style_primary(width=400, height=88)
-        )
-        bind_pressed(self.continue_btn, COLORS["primary"], COLORS["primary_pressed"])
-        self.continue_btn.pack(side="right")
 
     def _create_filter_grid(self, parent):
         """Erstellt das 4×2-Kachel-Grid (feste Kachelgröße, kein Resize-Flackern)"""
@@ -252,8 +259,9 @@ class FilterScreen(ctk.CTkFrame):
         num_cols = 4
 
         # Auf 1280×800 mit Kopf- und Fußzeile bleibt für 2 Reihen weniger als
-        # 2×224 — die Kachelhöhe wird passend reduziert, Breite bleibt 262.
-        tile_h = 200
+        # 2×224 — Kacheln kompakter (250×190, Gap 20): Reihe = 1080 px,
+        # passt auch mit Dev-Top-Bar und DPI-Reserven sicher aufs Display.
+        tile_w, tile_h = 250, 190
 
         for idx, (key, name) in enumerate(filters):
             display_name = t(self.config, f"filter.{key}")
@@ -264,10 +272,10 @@ class FilterScreen(ctk.CTkFrame):
                 filter_key=key,
                 filter_name=display_name if display_name != f"filter.{key}" else name,
                 on_click=lambda b: self._select_filter(b),
-                card_width=TILE_W,
+                card_width=tile_w,
                 card_height=tile_h,
             )
-            card.grid(row=row, column=col, padx=12, pady=12)
+            card.grid(row=row, column=col, padx=10, pady=10)
             self.filter_buttons[key] = card
 
     def _select_filter(self, button: FilterCard):

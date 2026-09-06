@@ -6,6 +6,46 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.72] - 2026-09-06 - Layout endlich verifiziert: DPI-Fix wirksam + Pruefstand
+
+> Christians zweiter Box-Test: Start-Ueberlappung und abgeschnittener/nicht
+> klickbarer Filter-Footer BESTANDEN WEITER. Grund: Der 2.4.71-Fix
+> `set_widget_scaling(1.0)` war wirkungslos — CustomTkinter rechnet
+> effektiv `monitor_dpi × widget_scaling`, und gesetzt wurde nur der zweite
+> Faktor (der schon 1.0 war). Diesmal wurde NICHT auf der Box geraten,
+> sondern lokal verifiziert.
+
+### Behoben
+
+- **DPI-Kompensation, die wirklich greift** (`app.py`): Nach Fenster-
+  Erzeugung wird der Monitor-DPI-Faktor ausgelesen und
+  `widget_scaling = 1/Faktor` gesetzt → Produkt exakt 1.0. DPI-Awareness
+  bleibt AN (scharfes Bild, echtes 1280x800). Dev-Log-Zeile
+  „DPI-Kompensation: Monitor-Faktor …" belegt den aktiven Faktor.
+- **Start-Ueberlappung an der Wurzel:** Die Kartenposition wurde berechnet,
+  BEVOR das QR-Panel eingeblendet war (Galerie-Flag kommt aus den
+  Booking-Settings) → Karten standen mittig, Einzelfoto-Karte exakt unter
+  dem Panel. Jetzt zieht `_update_qr_code` die Kartenposition IMMER selbst
+  nach (ein-/ausblenden) — die beiden Zustaende koennen nicht mehr
+  auseinanderlaufen.
+- **Filter-Footer unkaputtbar:** WEITER-Button und Auto-Weiter-Zeile werden
+  ZUERST mit side="bottom" gepackt — sie koennen nie mehr vom Grid aus dem
+  Bild gedrueckt werden (das war der „kann nicht weiterklicken"-Fehler,
+  verstaerkt durch die Dev-Top-Bar). Kacheln kompakter (250x190, Reihe
+  1080 px) — alle 8 sicher im Bild.
+
+### Neu
+
+- **`tools/ui_layout_probe.py`:** Layout-Pruefstand, der Start- und
+  Filter-Screen OHNE Box in einem echten 1280x800-Fenster rendert, jeden
+  kritischen Abstand misst (Element im Bild? Karte unter QR-Panel? WEITER
+  sichtbar?) und den Box-DPI-Faktor emulieren kann
+  (`python tools/ui_layout_probe.py 1.0588`). Beide Faktoren (1.0 und
+  1.0588) laufen fuer 2.4.72 komplett gruen — inklusive des Worst-Case
+  „Galerie wird erst nach dem ersten Layout aktiv".
+
+---
+
 ## [2.4.71] - 2026-09-06 - Redesign-Feinschliff nach erstem Box-Test
 
 > Christians Box-Test von 2.4.70 (Box 101, 20:05-Lauf): 5 sichtbare Maengel

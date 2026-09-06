@@ -37,7 +37,11 @@ Session 6) den Stack-Dump geliefert → Ursache Tkinter-GC-Deadlock, Fix in
 - [x] Erster Box-Test 2.4.70 (06.09. abends): 5 Maengel gefunden →
       alle in 2.4.71 behoben (DPI-Skalierung war Kernursache; Details
       CHANGELOG 2.4.71).
-- [ ] **Dauertest 2.4.71 auf Box 101** (Christian): Installer laden,
+- [x] Zweiter Box-Test (2.4.71): Ueberlappung + Filter-Footer WEITER kaputt
+      → 2.4.72 mit wirksamer DPI-Kompensation, gekoppelter QR-Panel-Position,
+      bottom-first-Filter und Layout-Pruefstand (tools/ui_layout_probe.py,
+      beide DPI-Faktoren gruen).
+- [ ] **Dauertest 2.4.72 auf Box 101** (Christian): Installer laden,
       Dev-Mode, einmal ALLE Screens von Hand durchgehen (Start mit QR-Panel,
       Session mit Pills + Review-Leiste, Filter-Kacheln, Final mit
       Render-Panel + Drucken, Drucker-Dialog per Dev-Button „DRUCKER

@@ -79,23 +79,36 @@ class PhotoboothApp:
 
         # CustomTkinter Setup
         ctk.set_appearance_mode("dark")
-        # Redesign 2.4.71: Pixel-genaues Kiosk-Layout. CustomTkinter
-        # multipliziert sonst ALLE width/height/font-Angaben mit der
-        # Windows-DPI-Skalierung (Miix: ~1,06) — dadurch waren die
-        # Redesign-Maße 6% zu groß (Karten am Rand beschnitten, Kamera-
-        # Rahmen 1063×715 statt 1004×674 → oben/unten abgeschnitten und
-        # LiveView-Frames unnötig teuer). Die Box ist genau EIN Gerät mit
-        # 1280×800 — 1 Design-Pixel = 1 Bildschirm-Pixel.
-        try:
-            ctk.set_widget_scaling(1.0)
-            ctk.set_window_scaling(1.0)
-        except Exception as e:
-            logger.debug(f"Widget-Scaling nicht setzbar: {e}")
-        
+
         # Hauptfenster
         self.root = ctk.CTk()
         self.root.title("Fexobooth")
         self.root.configure(fg_color=COLORS["bg_dark"])
+
+        # Pixel-genaues Kiosk-Layout (2.4.72): CustomTkinter rechnet effektiv
+        # window_dpi_scaling × widget_scaling auf JEDE width/height/font-
+        # Angabe. Der 2.4.71-Versuch set_widget_scaling(1.0) war deshalb
+        # WIRKUNGSLOS — er setzte nur den zweiten Faktor, der ohnehin 1.0
+        # war; der Monitor-DPI-Faktor des Miix (~1,06) blieb. Folge: alle
+        # Redesign-Maße 6% zu groß (Start-Überlappung, Kamera-Rahmen
+        # beschnitten, LiveView-Einbruch). Fix: Monitor-Faktor auslesen und
+        # widget_scaling auf 1/Faktor setzen → Produkt exakt 1.0. Die
+        # DPI-Awareness bleibt AN (Fenster bleibt scharf und echt 1280×800);
+        # deactivate_automatic_dpi_awareness wäre Bitmap-Matsch.
+        try:
+            from customtkinter import ScalingTracker
+            self.root.update_idletasks()
+            dpi_faktor = ScalingTracker.get_window_dpi_scaling(self.root)
+            if abs(dpi_faktor - 1.0) > 0.001:
+                ctk.set_widget_scaling(1.0 / dpi_faktor)
+            ctk.set_window_scaling(1.0)
+            logger.info(
+                f"🔍 DPI-Kompensation: Monitor-Faktor {dpi_faktor:.4f} → "
+                f"widget_scaling {1.0 / dpi_faktor:.4f} (effektiv 1.0 — "
+                f"1 Design-Pixel = 1 Bildschirm-Pixel)"
+            )
+        except Exception as e:
+            logger.warning(f"DPI-Kompensation nicht möglich: {e}")
 
         # 2.4.30: Fehler aus Tk-Callbacks abfangen, BEVOR irgendein Screen läuft.
         # Ohne das geht Tkinter über sys.stderr — im Fenster-Build ist der aber
