@@ -263,13 +263,21 @@ class SessionScreen(ctk.CTkFrame):
         )
         bind_pressed(self._continue_btn, COLORS["primary"], COLORS["primary_pressed"])
 
-    def _fit_camera_frame(self):
-        """Passt den Kamera-Rahmen an den real verfügbaren Platz an (Dev-Top-Bar)."""
+    def _fit_camera_frame(self, retry: int = 3):
+        """Passt den Kamera-Rahmen an den real verfügbaren Platz an (Dev-Top-Bar).
+
+        Beim allerersten Aufbau liefert winfo noch 1 — dann kurz warten und
+        erneut messen, sonst bleibt der Rahmen größer als der Platz und wird
+        oben/unten abgeschnitten (Befund 06.09. 20:05-Lauf: Container 715 hoch
+        bei ~610 Platz).
+        """
         try:
             self.update_idletasks()
             avail_h = self._camera_outer.winfo_height()
             avail_w = self._camera_outer.winfo_width()
             if avail_h < 100 or avail_w < 100:
+                if retry > 0:
+                    self.after(50, lambda: self._fit_camera_frame(retry - 1))
                 return
             h = min(674, avail_h)
             w = min(1004, avail_w, int((h - 4) * 1000 / 670) + 4)

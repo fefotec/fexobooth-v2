@@ -4,6 +4,19 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-09-06 (spaet) — 2.4.71: Redesign-Feinschliff nach Christians Box-Test
+
+Box-Test 2.4.70 ergab 5 Maengel; Kernursache von dreien: CustomTkinters
+DPI-Skalierung (~1,06) machte alle pixelgenauen Masse 6% zu gross (Karten am
+Rand/unterm QR-Panel, Kamera-Rahmen 1063x715 → oben/unten beschnitten,
+LiveView 6,4 statt ~12,8 fps). Fixes: set_widget_scaling(1.0) +
+set_window_scaling(1.0); _fit_camera_frame mit Mess-Retry; Start-Karten
+360x316; Filter ohne Collagen-Nachladen (nur Erst-Foto-Thumbs, spart ~10 s
+CPU pro Filter-Screen); Druckzaehler nur bei Mehrfachdruck sichtbar, nie
+„noch 0", Singular-Key final.print_available_one in 7 Sprachen.
+Log-Analyse 20:05-Lauf: 4472-ms-Hitch = Kamera-Warmstart (alt), GC Ø 95 ms ok.
+
+
 ## 2026-09-06 (Nacht) — 2.4.70: UI-Redesign der Gäste-Oberfläche umgesetzt
 
 **Grundlage:** Design-Handoff „Fexobox UI-Redesign Modern" (Claude Design;

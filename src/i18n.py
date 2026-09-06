@@ -600,6 +600,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
 
 
 TRANSLATIONS["de-DE"].update({
+    "final.print_available_one": "1 Ausdruck verfügbar",
     "printer.reset_step_jobs": "Schritt 1/3: Druckaufträge löschen...",
     "printer.reset_step_spooler": "Schritt 2/3: Druckdienst neu starten...",
     "printer.reset_step_usb": "Schritt 3/3: USB-Verbindung zurücksetzen...",
@@ -607,6 +608,7 @@ TRANSLATIONS["de-DE"].update({
 })
 
 TRANSLATIONS["en-GB"].update({
+    "final.print_available_one": "1 print available",
     "printer.reset_step_jobs": "Step 1/3: Deleting print jobs...",
     "printer.reset_step_spooler": "Step 2/3: Restarting print service...",
     "printer.reset_step_usb": "Step 3/3: Resetting USB connection...",
@@ -614,6 +616,7 @@ TRANSLATIONS["en-GB"].update({
 })
 
 TRANSLATIONS["fr-FR"].update({
+    "final.print_available_one": "1 impression disponible",
     "common.start": "START",
     "common.ok": "OK",
     "topbar.booking_empty": "Réservation : ---",
@@ -897,6 +900,7 @@ for _locale, _values in TOPBAR_TRANSLATIONS.items():
     TRANSLATIONS[_locale].update(_values)
 
 TRANSLATIONS["nl-NL"].update({
+    "final.print_available_one": "1 afdruk beschikbaar",
     "common.start": "START",
     "common.ok": "OK",
     "common.test_print": "Testprint",
@@ -962,6 +966,7 @@ TRANSLATIONS["nl-NL"].update({
 })
 
 TRANSLATIONS["it-IT"].update({
+    "final.print_available_one": "1 stampa disponibile",
     "common.start": "START",
     "common.ok": "OK",
     "common.test_print": "Stampa di prova",
@@ -1035,6 +1040,7 @@ TRANSLATIONS["it-IT"].update({
 })
 
 TRANSLATIONS["es-ES"].update({
+    "final.print_available_one": "1 impresión disponible",
     "common.start": "START",
     "common.ok": "OK",
     "common.test_print": "Prueba de impresión",
@@ -1108,6 +1114,7 @@ TRANSLATIONS["es-ES"].update({
 })
 
 TRANSLATIONS["pl-PL"].update({
+    "final.print_available_one": "Dostępny 1 wydruk",
     "common.start": "START",
     "common.ok": "OK",
     "common.test_print": "Wydruk testowy",

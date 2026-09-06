@@ -6,6 +6,41 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.71] - 2026-09-06 - Redesign-Feinschliff nach erstem Box-Test
+
+> Christians Box-Test von 2.4.70 (Box 101, 20:05-Lauf): 5 sichtbare Maengel
+> + Performance-Regression. Kernursache von 3 Punkten: CustomTkinter
+> multipliziert ALLE width/height/font-Angaben mit der Windows-DPI-Skalierung
+> (~1,06) — die pixelgenauen Redesign-Masse waren dadurch 6% zu gross.
+
+### Behoben
+
+- **DPI-Skalierung deaktiviert** (`ctk.set_widget_scaling(1.0)`): 1 Design-
+  Pixel = 1 Bildschirm-Pixel. Behebt: Karten am linken Rand beschnitten /
+  Einzelfoto-Karte unter dem QR-Panel (Start), Kamera-Rahmen real 1063x715
+  statt 1004x674 → oben/unten abgeschnitten UND LiveView auf 6,4 fps
+  eingebrochen (jeder Frame wurde auf die zu grosse Flaeche gerechnet).
+- **Kamera-Rahmen-Anpassung robuster:** misst der erste Aufbau noch 0,
+  wird kurz gewartet und erneut gemessen (vorher blieb der Rahmen zu gross).
+- **Start kompakter:** Karten 360x316 (2er) bzw. 240x226 (3er) — links Luft,
+  rechts sicherer Abstand zum QR-Panel.
+- **Filter radikal vereinfacht** (Wunsch Christian): Kacheln zeigen NUR das
+  erste Foto mit Filter (<1 s fuer alle 8). Das nachtraegliche Ersetzen durch
+  Collagen-Vorschauen ist komplett raus — es dauerte sichtbar lange und
+  kostete ~10 s CPU genau waehrend der Gast waehlt.
+- **Druckzaehler nur bei Mehrfachdruck:** Bei max. 1 Ausdruck erscheint KEIN
+  „1 Ausdrucke verfuegbar" und nie „noch 0 verfuegbar"; bei Mehrfachdruck
+  korrekt „1 Ausdruck verfuegbar" (Singular, neuer Key in 7 Sprachen).
+
+### Einordnung Performance-Log (20:05-Lauf)
+
+- UI-HITCH 4472 ms = Kamera-Warmstart beim App-Boot (unveraendert alt),
+  1698 ms = Service-Menue-Tab (lazy, nicht gaesterelevant).
+- Muellabfuhr: 14 Laeufe, Ø 95 ms — unauffaellig.
+- LiveView 6,4 fps: siehe DPI-Fix oben; Erwartung nach Fix wieder ~12 fps.
+
+---
+
 ## [2.4.70] - 2026-09-06 - UI-Redesign: Gäste-Oberfläche modernisiert
 
 > Umsetzung des Design-Handoffs „Fexobox UI-Redesign Modern" (Claude Design,

@@ -34,13 +34,17 @@ Session 6) den Stack-Dump geliefert → Ursache Tkinter-GC-Deadlock, Fix in
       UI-Redesign Modern"): alle 5 Gäste-Screens + Drucker-Dialog, i18n
       7 Sprachen, Assets ~60 KB, `test_redesign_vertraege.py` grün.
       Details FORTSCHRITT.md (inkl. 4 dokumentierte Handoff-Abweichungen).
-- [ ] **Dauertest 2.4.70 auf Box 101** (Christian): Installer laden,
+- [x] Erster Box-Test 2.4.70 (06.09. abends): 5 Maengel gefunden →
+      alle in 2.4.71 behoben (DPI-Skalierung war Kernursache; Details
+      CHANGELOG 2.4.71).
+- [ ] **Dauertest 2.4.71 auf Box 101** (Christian): Installer laden,
       Dev-Mode, einmal ALLE Screens von Hand durchgehen (Start mit QR-Panel,
       Session mit Pills + Review-Leiste, Filter-Kacheln, Final mit
       Render-Panel + Drucken, Drucker-Dialog per Dev-Button „DRUCKER
-      RESET"), DANN Stress-Test über Nacht. Erwartung: Optik neu, Verhalten
-      identisch — 0 weiße Prints, 0 Freezes, UI-Hitches pro Session ~9,
-      keine neuen Log-Fehler. Danach Logs an Claude.
+      RESET"), DANN Stress-Test über Nacht. Erwartung: nichts mehr beschnitten/
+      überlappend, LiveView wieder ~12 fps (Log: LIVEVIEW-PERF), Filter-
+      Kacheln sofort da, kein Druckzähler bei Einzeldruck; 0 weiße Prints,
+      0 Freezes. Danach Logs an Claude.
 - [ ] **Noch offen aus dem 2.4.65-Plan:** Reparatur-Test (Hotspot in Windows
       von Hand ausschalten → nach ≤2 Min von selbst wieder an, Block in
       `netzwerk.log`) und QR-Sofort-Scan direkt nach Box-Neustart.

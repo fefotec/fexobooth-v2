@@ -79,6 +79,18 @@ class PhotoboothApp:
 
         # CustomTkinter Setup
         ctk.set_appearance_mode("dark")
+        # Redesign 2.4.71: Pixel-genaues Kiosk-Layout. CustomTkinter
+        # multipliziert sonst ALLE width/height/font-Angaben mit der
+        # Windows-DPI-Skalierung (Miix: ~1,06) — dadurch waren die
+        # Redesign-Maße 6% zu groß (Karten am Rand beschnitten, Kamera-
+        # Rahmen 1063×715 statt 1004×674 → oben/unten abgeschnitten und
+        # LiveView-Frames unnötig teuer). Die Box ist genau EIN Gerät mit
+        # 1280×800 — 1 Design-Pixel = 1 Bildschirm-Pixel.
+        try:
+            ctk.set_widget_scaling(1.0)
+            ctk.set_window_scaling(1.0)
+        except Exception as e:
+            logger.debug(f"Widget-Scaling nicht setzbar: {e}")
         
         # Hauptfenster
         self.root = ctk.CTk()

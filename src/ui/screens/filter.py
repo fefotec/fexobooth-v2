@@ -1,11 +1,12 @@
 """Filter-Auswahl Screen — Redesign 2.4.70
 
-8 große Foto-Kacheln im 4×2-Grid, jede zeigt das eigene Bild mit dem
+8 große Foto-Kacheln im 4×2-Grid, jede zeigt das ERSTE Gast-Foto mit dem
 jeweiligen Filter. Die frühere separate Groß-Vorschau entfällt (Handoff:
-„Kacheln sind groß genug") — das spart pro Screen 8 große Collagen-Renders
-NUR für die Anzeige; die Kachel-Vorschauen rechnen auf einer verkleinerten
-Arbeitskopie und werden vom sequentiellen Precache mit der echten
-Collagen-Vorschau (inkl. Template) veredelt, sobald sie fertig ist.
+„Kacheln sind groß genug"). 2.4.71: Auch das nachträgliche Ersetzen durch
+Collagen-Vorschauen ist raus (Christian, Box-Test 06.09.): das Nachladen
+dauerte zu lange und die 8 Collagen-Renders (~10 s CPU) liefen genau dann,
+wenn der Gast wählt. Jetzt: 8 schnelle Filter aufs erste Foto (<1 s gesamt),
+fertig. Das finale Druckbild rendert weiterhin aus den Originalen (final.py).
 """
 
 import customtkinter as ctk
@@ -161,17 +162,12 @@ class FilterScreen(ctk.CTkFrame):
 
         self.selected_filter = "none"
         self.filter_buttons: Dict[str, FilterCard] = {}
-        self.preview_cache: Dict[str, Image.Image] = {}
         # Verkleinerte Arbeitskopien der Fotos für ALLE Vorschauen: Filter auf
         # den 6000x4000-Nikon-Originalen dauerten pro Klick viele Sekunden
         # (4x 24 MP); für die Vorschau reicht ~1000px. Das finale Druckbild
         # rendert weiterhin aus den Originalen (final.py).
         self._preview_photos = None
         self._preview_photos_lock = threading.Lock()
-        self._precache_active = False
-        # In-Flight-Merkliste: verhindert, dass zwei Worker denselben Filter
-        # doppelt rechnen.
-        self._rendering_filters = set()
         self._auto_continue_job = None
         self._auto_continue_until = 0.0
         self._auto_continue_seconds = 0.0
@@ -314,84 +310,25 @@ class FilterScreen(ctk.CTkFrame):
                 )
             return self._preview_photos
 
-    def _render_filter_preview(self, filter_key: str):
-        """Rendert die Collagen-Vorschau für einen Filter (auf Arbeitskopien).
-
-        Seit dem Redesign nur noch in Kachelgröße gebraucht — max_size 500
-        statt 800/900 macht den Precache pro Filter deutlich billiger.
-        """
-        t0 = time.perf_counter()
-        photos = self._get_preview_photos()
-        filtered_photos = [
-            self.app.filter_manager.apply(photo, filter_key)
-            for photo in photos
-        ]
-        preview = self.app.renderer.render_preview(
-            filtered_photos,
-            self.app.template_boxes,
-            self.app.overlay_image,
-            max_size=500
-        )
-        logger.info(
-            f"Filter-Vorschau '{filter_key}' gerendert: "
-            f"{(time.perf_counter() - t0) * 1000:.0f}ms"
-        )
-        return preview
-
-    def _precache_all_filters(self):
-        """Rendert alle Collagen-Vorschauen nacheinander vor (Hintergrund).
-
-        Jede fertige Vorschau ersetzt das schnelle Einzelfoto-Thumb der
-        Kachel durch die echte Collage mit Template. Sequentiell — parallele
-        Render-Threads würden den schwachen Prozessor gegenseitig ausbremsen.
-        """
-        for key in AVAILABLE_FILTERS.keys():
-            if not self._precache_active:
-                return
-            if key in self.preview_cache:
-                continue
-            with self._preview_photos_lock:
-                if key in self._rendering_filters:
-                    continue
-                self._rendering_filters.add(key)
-            try:
-                preview = self._render_filter_preview(key)
-                if not self._precache_active:
-                    return
-                self.preview_cache[key] = preview
-                card = self.filter_buttons.get(key)
-                if card is not None:
-                    self.after(0, lambda c=card, img=preview: c.set_preview(img))
-            except Exception as e:
-                logger.debug(f"Filter-Precache '{key}' fehlgeschlagen: {e}")
-            finally:
-                with self._preview_photos_lock:
-                    self._rendering_filters.discard(key)
-            # Kurz Luft lassen: 2 CPU-Kerne — Dauerrechnen im Hintergrund
-            # macht sonst Touch spürbar zäh (UI-HITCH-Messung).
-            time.sleep(0.15)
-        logger.info("Filter-Vorschauen komplett vorgerendert")
-
     def _generate_filter_previews(self):
-        """Schnelle Erst-Thumbs: das erste Foto mit jedem Filter (Hintergrund).
-
-        Läuft in <1s über alle 8 Filter und füllt die Kacheln sofort; der
-        Precache ersetzt sie danach durch die echte Collagen-Vorschau.
-        """
+        """Kachel-Thumbs: das erste Foto mit jedem Filter (Hintergrund, <1 s)."""
         if not self.app.photos_taken:
             return
 
+        t0 = time.perf_counter()
         sample = self._get_preview_photos()[0].copy()
         sample.thumbnail((THUMB_W, THUMB_H), Image.Resampling.BILINEAR)
 
         for key, card in self.filter_buttons.items():
-            if key in self.preview_cache:
-                continue  # Collagen-Vorschau ist schon da
             try:
                 filtered = self.app.filter_manager.apply(sample, key)
                 self.after(0, lambda c=card, img=filtered: c.set_preview(img))
             except Exception as e:
                 logger.warning(f"Filter-Preview Fehler für {key}: {e}")
+        logger.info(
+            f"Filter-Kacheln gerendert: {len(self.filter_buttons)} Thumbs in "
+            f"{(time.perf_counter() - t0) * 1000:.0f}ms"
+        )
 
     def _on_back(self):
         """Zurück - neue Fotos machen"""
@@ -499,11 +436,9 @@ class FilterScreen(ctk.CTkFrame):
         self.subtitle_label.configure(text=t(self.config, "filter.hint"))
         self.continue_btn.configure(text=t(self.config, "filter.continue"))
 
-        # Caches leeren (neue Fotos → neue Arbeitskopien)
-        self.preview_cache = {}
+        # Arbeitskopien leeren (neue Fotos)
         with self._preview_photos_lock:
             self._preview_photos = None
-            self._rendering_filters = set()
 
         # Standard-Filter auswählen
         self.selected_filter = "none"
@@ -514,12 +449,8 @@ class FilterScreen(ctk.CTkFrame):
                 card.name_label.configure(text=display_name)
             card.set_selected(key == "none")
 
-        # Schnelle Erst-Thumbs im Hintergrund generieren
+        # Kachel-Thumbs im Hintergrund generieren (ein einziger kurzer Worker)
         threading.Thread(target=self._generate_filter_previews, daemon=True).start()
-
-        # Collagen-Vorschauen sequentiell vorrendern (ersetzen die Erst-Thumbs)
-        self._precache_active = True
-        threading.Thread(target=self._precache_all_filters, daemon=True).start()
 
         # Ohne Eingabe automatisch nach fester Inaktivitätsdauer weiter.
         self._bind_activity_events()
@@ -527,9 +458,7 @@ class FilterScreen(ctk.CTkFrame):
 
     def on_hide(self):
         """Screen wird verlassen"""
-        self._precache_active = False
         self._unbind_activity_events()
         self._cancel_auto_continue_timer()
-        self.preview_cache = {}
         with self._preview_photos_lock:
             self._preview_photos = None

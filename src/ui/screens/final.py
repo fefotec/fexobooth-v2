@@ -409,16 +409,27 @@ class FinalScreen(ctk.CTkFrame):
         self.print_info.configure(text=info_text, text_color=COLORS["text_secondary"])
 
     def _update_print_button_state(self, printed_count: int = 0):
-        """Aktualisiert Button und Info ohne Limit-Hinweis für Gäste."""
+        """Aktualisiert Button und Info ohne Limit-Hinweis für Gäste.
+
+        2.4.71 (Christian, Box-Test 06.09.): Bei nur EINEM erlaubten Ausdruck
+        wird KEIN Zähler angezeigt — „1 Ausdrucke verfügbar" oder „noch 0
+        verfügbar" irritiert Gäste nur. Der Zähler erscheint ausschließlich,
+        wenn Mehrfachdruck (max > 1) gebucht ist, und nie mit Rest 0.
+        """
         remaining = self._get_remaining_prints()
+        zeige_zaehler = self._get_max_prints() > 1
         button_text = t(self.config, "common.print")
 
         if remaining > 0:
-            if printed_count > 0:
+            if not zeige_zaehler:
+                info_text = ""
+            elif printed_count > 0:
                 if printed_count == 1:
                     info_text = t(self.config, "final.job_sent_remaining", remaining=remaining)
                 else:
                     info_text = t(self.config, "final.jobs_sent_remaining", printed=printed_count, remaining=remaining)
+            elif remaining == 1:
+                info_text = t(self.config, "final.print_available_one")
             else:
                 info_text = t(self.config, "final.prints_available", remaining=remaining)
 
@@ -431,12 +442,13 @@ class FinalScreen(ctk.CTkFrame):
             self.print_info.configure(text=info_text, text_color=COLORS["text_secondary"])
             return
 
-        if printed_count > 1:
+        # Rest 0: kein „noch 0 verfügbar" — nur was passiert ist (oder nichts)
+        if printed_count > 1 and zeige_zaehler:
             info_text = t(self.config, "final.jobs_sent", printed=printed_count)
-        elif printed_count == 1:
+        elif printed_count >= 1:
             info_text = t(self.config, "final.job_sent")
         else:
-            info_text = t(self.config, "final.print_unavailable")
+            info_text = ""
 
         if self.print_btn:
             self.print_btn.configure(
@@ -446,7 +458,7 @@ class FinalScreen(ctk.CTkFrame):
             )
         self.print_info.configure(
             text=info_text,
-            text_color=COLORS["primary"] if printed_count > 0 else COLORS["text_muted"]
+            text_color=COLORS["text_secondary"] if printed_count > 0 else COLORS["text_muted"]
         )
 
     def _restore_print_button_after_error(self):

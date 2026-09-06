@@ -304,7 +304,7 @@ class StartScreen(ctk.CTkFrame):
         # Mit QR-Panel (288 px rechts) rückt die Auswahl in die Mitte der
         # verbleibenden Fläche (x 80–880), ohne QR in die Bildschirmmitte.
         qr_active = self._is_gallery_banner_enabled()
-        relx = 0.375 if qr_active else 0.5
+        relx = 0.37 if qr_active else 0.5
         self.inner_frame.place(relx=relx, rely=0.5, anchor="center")
 
     def _active_template_is_app_upload(self) -> bool:
@@ -415,10 +415,14 @@ class StartScreen(ctk.CTkFrame):
         card_count = self._count_expected_cards()
         qr_active = self._is_gallery_banner_enabled()
 
+        # 2.4.71: etwas kompakter, damit links Luft bleibt und rechts nie
+        # etwas unter das QR-Panel rutscht (Box-Test 06.09.: 380er Karten
+        # klebten am Rand). Reihe bei 2 Karten: 2×360 + 80 Gap = 800 px,
+        # zentriert im Bereich links vom Panel (x 0–944).
         if card_count <= 2:
-            card_w, card_h = 380, 330
+            card_w, card_h = 360, 316
         else:
-            card_w, card_h = (246, 236) if qr_active else (300, 270)
+            card_w, card_h = (240, 226) if qr_active else (290, 264)
 
         # Karten-Gap 40 (padx wirkt je Seite)
         card_padx = 20 if card_count <= 2 else 12
