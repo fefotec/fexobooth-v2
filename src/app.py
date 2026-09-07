@@ -1654,6 +1654,8 @@ class PhotoboothApp:
         self.camera_status.pack_forget()  # Verstecken wenn OK
         self._camera_blink_state = False
         self._camera_check_running = False  # Hintergrund-Prüfung aktiv?
+        self._system_test_running = None  # Besitz-Token bis einschliesslich Cleanup
+        self._camera_probe_epoch = 0      # Alte Ergebnisse nach Event-Test verwerfen
         # Wann lief zuletzt eine VOLLE Kamerasuche (list_cameras)? 2.4.40:
         # Blinken und Suchen sind getrennt. Die Warnung blinkt weiter alle 2 s
         # (reine Anzeige), die teure Suche läuft im Problemfall höchstens alle
@@ -2705,7 +2707,8 @@ class PhotoboothApp:
         # kann damit einen Messschritt scheitern lassen (im Bericht sieht das
         # aus wie "1080p geht auf dieser Box nicht" — ein reines Messartefakt)
         # oder im schlimmsten Fall selbst im Oeffnen haengen bleiben.
-        if getattr(self, "_kamera_messung_laeuft", False):
+        if (getattr(self, "_kamera_messung_laeuft", False)
+                or getattr(self, "_system_test_running", None)):
             # Bewusst seltener nachsehen als sonst: Waehrend der Messung zaehlt
             # jede CPU-Scheibe auf dem Atom-Tablet, und die Messwerte sollen
             # nicht durch die eigene Oberflaeche verfaelscht werden.
@@ -2728,6 +2731,16 @@ class PhotoboothApp:
             target=self._camera_status_probe, daemon=True, name="camera-check"
         ).start()
 
+    def _camera_probe_blocked(self):
+        """Unter der Webcam-Hardware-Sperre nochmals den aktuellen Besitz pruefen."""
+        return bool(
+            getattr(self, "_system_test_running", None)
+            or getattr(self, "_kamera_messung_laeuft", False)
+            or getattr(self, "_shutdown_started", False)
+            or self.current_screen_name != "start"
+            or self.camera_manager.is_initialized
+        )
+
     def _camera_status_probe(self):
         """Hintergrund-Thread: eigentliche Kamera-Erreichbarkeits-Prüfung.
 
@@ -2738,11 +2751,34 @@ class PhotoboothApp:
         """
         problem_text = None
         found_webcam_index = None
+        probe_epoch = getattr(self, "_camera_probe_epoch", 0)
+        webcam_lock = None
 
         try:
             camera_type = self.config.get("camera_type", "webcam")
+            skip_probe = self._camera_probe_blocked()
+            if not skip_probe and camera_type not in ("canon", "nikon"):
+                from src.camera.webcam import camera_hardware_lock
+                lock = camera_hardware_lock()
+                if lock.acquire(timeout=5.0):
+                    webcam_lock = lock
+                    # 2.4.73: initialize() kann WAEHREND unserer Wartezeit
+                    # fertig werden. Ein zweiter DSHOW-Open/Release stoppt
+                    # sonst die gerade gestartete Kamera (Box 210/008).
+                    # Gilt fuer ALLE drei Pfade, auch list_cameras()/Index -1.
+                    skip_probe = self._camera_probe_blocked()
+                else:
+                    skip_probe = True
 
-            if camera_type == "canon":
+            if skip_probe:
+                logger.debug(
+                    "Kamera-Pruefung uebersprungen: belegt/aktiv "
+                    "(test=%s, init=%s, screen=%s, epoch=%s)",
+                    bool(getattr(self, "_system_test_running", None)),
+                    self.camera_manager.is_initialized,
+                    self.current_screen_name, probe_epoch,
+                )
+            elif camera_type == "canon":
                 if self.camera_manager.is_initialized:
                     # Kamera ist aktiv (Session offen) → alles OK
                     # KEINE weiteren EDSDK-Aufrufe! (Deadlock-Gefahr!)
@@ -2907,23 +2943,20 @@ class PhotoboothApp:
                     # auch KEINE Warnung gemeldet: "gerade belegt" ist kein
                     # Beweis fuer "Kamera fehlt".
                     import cv2
-                    from src.camera.webcam import camera_hardware_lock
-                    sperre = camera_hardware_lock()
-                    if sperre.acquire(timeout=5.0):
-                        try:
-                            cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW)
-                            if cap.isOpened():
-                                cap.release()
-                            else:
-                                problem_text = t(self.config, "topbar.camera_missing")
-                        finally:
-                            sperre.release()
-                    else:
-                        logger.debug(
-                            "Kamera-Pruefung uebersprungen: Hardware-Sperre belegt"
-                        )
+                    # Die aeussere Sperre samt Besitzpruefung umfasst jetzt
+                    # auch volle Listen und die Suche ohne gesetzten Index.
+                    cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW)
+                    try:
+                        if not cap.isOpened():
+                            problem_text = t(self.config, "topbar.camera_missing")
+                    finally:
+                        cap.release()
         except Exception:
+            logger.warning("Kamera-Statuspruefung fehlgeschlagen", exc_info=True)
             problem_text = t(self.config, "topbar.camera_error")
+        finally:
+            if webcam_lock is not None:
+                webcam_lock.release()
 
         # Ergebnis zurück auf den UI-Thread (Config-Änderung + Label-Update).
         # Crash-sicher: Läuft die Mainloop (noch) nicht, würde root.after() aus
@@ -2932,7 +2965,8 @@ class PhotoboothApp:
         for _attempt in range(30):
             try:
                 self.root.after(
-                    0, lambda p=problem_text, idx=found_webcam_index: self._on_camera_status_result(p, idx)
+                    0, lambda p=problem_text, idx=found_webcam_index, epoch=probe_epoch:
+                    self._on_camera_status_result(p, idx, epoch)
                 )
                 return
             except RuntimeError:
@@ -2941,9 +2975,16 @@ class PhotoboothApp:
         # (vom Main-Thread neu geplant) nicht dauerhaft blockiert bleibt.
         self._camera_check_running = False
 
-    def _on_camera_status_result(self, problem_text, found_webcam_index):
+    def _on_camera_status_result(self, problem_text, found_webcam_index, probe_epoch=None):
         """UI-Thread: Ergebnis der Hintergrund-Prüfung anzeigen + neu planen."""
         self._camera_check_running = False
+
+        if (self._camera_probe_blocked()
+                or (probe_epoch is not None
+                    and probe_epoch != getattr(self, "_camera_probe_epoch", 0))):
+            logger.debug("Kamera-Pruefergebnis verworfen: Besitzer/Zustand inzwischen geaendert")
+            self.root.after(5000, self._check_camera_status)
+            return
 
         if found_webcam_index is not None:
             self.config["camera_index"] = found_webcam_index
@@ -3297,6 +3338,20 @@ class PhotoboothApp:
         """Startet den automatischen System-Test nach Event-Wechsel"""
         from src.ui.dialogs.system_test import SystemTestDialog
 
+        if getattr(self, "_system_test_running", None):
+            logger.warning("System-Test: Doppelstart verhindert, Kamera noch reserviert")
+            return
+        owner = object()
+        self._system_test_running = owner
+        self._camera_probe_epoch = getattr(self, "_camera_probe_epoch", 0) + 1
+        logger.info("SYSTEMTEST-KAMERA: reserviert, epoch=%s", self._camera_probe_epoch)
+
+        def on_finished():
+            # Reine Zustandsaenderung, KEIN Tk-Aufruf aus dem Worker.
+            if self._system_test_running is owner:
+                self._system_test_running = None
+                logger.info("SYSTEMTEST-KAMERA: Reservierung nach Worker/Cleanup aufgehoben")
+
         def on_complete(success: bool, errors: list):
             logger.info(f"System-Test abgeschlossen: success={success}, errors={errors}")
 
@@ -3312,12 +3367,18 @@ class PhotoboothApp:
             logger.info("System-Test: Öffne Druckkorrektur nach Testdruck")
             self._adjust_print_then_show_confirmation()
 
-        SystemTestDialog(
-            self.root,
-            self,
-            on_complete=on_complete,
-            on_adjust_print=on_adjust_print
-        )
+        try:
+            SystemTestDialog(
+                self.root,
+                self,
+                on_complete=on_complete,
+                on_adjust_print=on_adjust_print,
+                on_finished=on_finished,
+            )
+        except Exception:
+            on_finished()
+            logger.exception("System-Test: Dialog konnte nicht gestartet werden")
+            raise
 
     def _show_print_mode_confirmation(self):
         """Zeigt nach erfolgreichem Event-Test die Druckmodus-Bestätigung."""

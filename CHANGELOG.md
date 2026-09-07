@@ -6,6 +6,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [2.4.73] - 2026-09-07 - Event-Test: Kamera-Rennen Box 210/008
+
+- Kamera-Statuspruefung pausiert waehrend des Event-Tests. Auch bereits
+  wartende Webcam-Pruefungen kontrollieren NACH Erwerb der Hardware-Sperre
+  nochmals den Besitzer; umfasst Kurzcheck, volle Suche und Index -1.
+- Alte Status-/Index-Ergebnisse werden nach Testbeginn verworfen.
+- Kamera, Testdatei und Bilder werden auch bei Init-/Fotofehler, Abbruch,
+  Timeout oder zerstoertem Dialog im Worker-finally aufgeraeumt.
+  Abbruch wartet auf diesen Abschluss, ohne `release()` im UI-Thread.
+- Dev-Logs `SYSTEMTEST-KAMERA` dokumentieren Besitz und Freigabe.
+  Regressionstests reproduzieren das Rennen ohne echte Hardware.
+- Webcam-Aufnahme, Warmstart, DSLR-Ausloesung, Layout und Druckpfad bleiben
+  unveraendert. Testkandidat: physischer Nachtest auf 210/008 noch offen.
+
 ## [2.4.72] - 2026-09-06 - Layout endlich verifiziert: DPI-Fix wirksam + Pruefstand
 
 > Christians zweiter Box-Test: Start-Ueberlappung und abgeschnittener/nicht

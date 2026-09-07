@@ -4,6 +4,19 @@
 
 Aufgabenliste mit Prioritäten.
 
+## Aktueller Testkandidat 07.09.2026: 2.4.73 — Box 210/008
+
+- [x] Kamera-Probe-Rennen und fehlendes Fehler-Cleanup reproduziert und behoben.
+- [x] Dev-Logging und 14 Regressionstests fuer Probe-/Test-Lebenszyklus ergaenzt.
+- [ ] Christian: auf 210 und/oder 008 im Dev-Mode Event-Test zweimal ohne
+      App-Neustart, einmal Abbruch mit erneutem Test, danach normale Fotosession.
+- [ ] Dev-Logs senden: Bildlieferung/Testdruck und Reihenfolge
+      `SYSTEMTEST-KAMERA` nachweisen. Ein nativer Treiberhaenger bleibt ein
+      Hardware-Blocker; kein unkontrollierter zweiter Kamera-Zugriff als Ausweg.
+
+Die untenstehende Flottenaufnahme ist historisch vom 06.09.; v2.4.72 wurde
+inzwischen auf GitHub veroeffentlicht. 2.4.73 ist zunaechst ein lokaler Testbuild.
+
 > **Flottenstand 06.09.2026** (280 Boxen, 239 melden sich): **221× 2.4.45**, 9× 2.4.33,
 > Nachzügler **001/029/117 auf 2.4.14**, **237 auf 2.4.25**; Testbuilds: 245 = 2.4.61,
 > 248 + 027 = 2.4.62, 252 = 2.4.63, 167 = 2.4.64. **Box 073 stumm seit 19.08.**

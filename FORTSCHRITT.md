@@ -4,6 +4,34 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-09-07 — 2.4.73: Event-Test Kamera-Besitz (Box 210/008)
+
+Cloud-Logs beider C922-Boxen: erfolgreicher MJPG-HD-Warmstart, danach alle
+Reads sofort leer und FOURCC unbekannt. Das reproduzierte Software-Rennen:
+Statusprobe pruefte Bereitschaft vor der Sperre, oeffnete nach erfolgreichem
+Test-Init dennoch DirectShow und stoppte beim Release die aktive Verbindung.
+Ausserdem wurde Cleanup nach Kamera-/Fotofehlern uebersprungen.
+
+Umgesetzt: Testreservierung bis Worker-Cleanup; alle Webcam-Probewege mit
+zeitbegrenzter aeusserer Hardware-Sperre und erneuter Besitzpruefung;
+Ergebnis-Generationen gegen alte Index-/Warnungsupdates; Cleanup im finally,
+kein Kamera-Release mehr im UI-Abbruch. Ergebnis/Schliessen erst danach.
+Dev-Logs begleiten Besitz, Unterdrueckung und Freigabe. 14 neue automatisierte
+Tests, darunter 12 gezielt erzwungene Thread-Ueberschneidungen, laufen im
+Developer-Logging-Pfad. Keine Aenderung in webcam.py/Canon-/Nikon-Implementierung.
+
+Freigabe: Christian testet Installer 2.4.73; physischer Dev-Mode-Test mit
+Kamera und Testdruck steht aus. Felix-Kamera-Runbook geprueft: Warntexte und
+Kundenaktionen sind unveraendert, kein Hotline-Textwechsel erforderlich.
+Design/Umsetzungsplan: docs/superpowers/specs/2026-09-07-event-test-camera-design.md.
+
+Checks: Alle 27 Gruppen von `tests/alle_tests.py` unter Windows/Python 3.13.1
+bestanden (auch erneut im Builder). Echter CTk-Testdialog im Dev-Logging-Modus
+mit gefaelschten Geraeten: Erfolg und Abbruch mit sichtbarem OK erst nach
+Cleanup bestanden; `release()` nachweislich nicht im Hauptthread. Kein echter
+Kamerazugriff/Testdruck auf dem Entwickler-PC. Bestehende reine
+Zeilenende-Aenderungen bleiben unangetastet; Commit enthaelt nur Nutzdiffs.
+
 ## 2026-09-06 (Nacht II) — 2.4.72: Layout-Fixes diesmal VERIFIZIERT statt geraten
 
 Christians zweiter Box-Test zeigte: 2.4.71 hatte nichts behoben. Zwei echte

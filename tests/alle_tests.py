@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 
 TESTS = [
+    ("Event-Test Kamera-Besitz", "test_system_test_camera.py",
+     "wartende Probes, Abbruch/Timeout und Fehler-Cleanup ohne Kamera-Rennen"),
     ("Build-DLL-Pfad", "test_dll_loader.py",
      "installierte EXE findet EDSDK unter PyInstaller _internal"),
     ("Typen gegen Canon-Header", "test_edsdk_typen.py",

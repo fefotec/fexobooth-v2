@@ -6,9 +6,9 @@ Diese Datei enthält die Anforderungen und geplanten Features.
 
 ## Aktuelle Version
 
-**Status:** Produktiv im Einsatz; VLC-2.4.64-Langzeittest auf Box 155 offen; Nikon-Ausfall auf Box 252 war das USB-Kabel; Canon-2.4.62-Nachtest ohne SD-Karte ebenfalls offen
-**Version:** 2.4.64 (lokal, noch kein Hardware-/GitHub-Release)
-**Letzte Änderung:** 2026-09-02
+**Status:** v2.4.72 auf GitHub veroeffentlicht; 2.4.73 behebt das reproduzierte Event-Test-Kamera-Rennen, Hardware-Nachtest auf Box 210/008 offen. Aeltere offene Hardwarechecks siehe TODO.md.
+**Version:** 2.4.73 (Testkandidat, kein automatischer Flotten-Rollout)
+**Letzte Änderung:** 2026-09-07
 
 ---
 

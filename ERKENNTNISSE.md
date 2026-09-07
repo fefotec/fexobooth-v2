@@ -6,6 +6,25 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### Eine Hardware-Sperre ersetzt keine erneute Besitzpruefung (2.4.73)
+
+Box 210/008 initialisierten die C922 erfolgreich; direkt danach kein einziges
+Bild mehr und unbekannter FOURCC. Der Statusprobe konnte vor initialize()
+`is_initialized=False` lesen, am RLock warten und danach trotzdem die aktive
+DirectShow-Kamera oeffnen/freigeben. OpenCV DirectShow teilt seinen nativen
+videoInput-Zustand; `isOpened()` allein beweist danach keine Bildlieferung.
+
+Der neue Vertrag: Besitzer nach dem Lock erneut pruefen, saemtliche
+Probewege schuetzen, Test vor Dialogstart bis inklusive Cleanup reservieren.
+Ein Modal-Fenster verhindert keine Hintergrundzugriffe. Ein Cleanup als
+normaler letzter Testschritt wird bei fruehem break nie erreicht: Hardware
+gehoert ins Worker-finally. UI-Abbruch signalisiert nur und wartet auf
+Worker-Ende. Eine native Blockade laesst sich dadurch nicht gewaltsam loesen;
+bis zum echten Ende darf kein zweiter Besitzer zugelassen werden.
+
+Regressionen verwenden echte Methoden und kontrollierte RLocks/Events;
+keine Timing-Lotterie und keine echten Kameras/Drucker im Test.
+
 ### Ein Design-Handoff wird übersetzt, nicht abgeschrieben (2.4.70)
 
 | | |

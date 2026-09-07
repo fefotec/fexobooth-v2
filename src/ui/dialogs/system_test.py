@@ -65,12 +65,18 @@ class SystemTestDialog(ctk.CTkToplevel):
     Hat einen globalen Timeout und Abbrechen-Button für den Notfall.
     """
 
-    def __init__(self, parent, app, on_complete: callable, on_adjust_print: callable = None):
+    def __init__(self, parent, app, on_complete: callable, on_adjust_print: callable = None,
+                 on_finished: callable = None):
         super().__init__(parent)
 
         self.app = app
         self._on_complete = on_complete
         self._on_adjust_print = on_adjust_print
+        self._on_finished = on_finished
+        self._camera_manager = app.camera_manager
+        self._worker_started = False
+        self._worker_done = threading.Event()
+        self._close_requested = False
         self._test_photos: List[Image.Image] = []
         self._test_result: Optional[Image.Image] = None
         self._test_file: Optional[Path] = None
@@ -116,6 +122,7 @@ class SystemTestDialog(ctk.CTkToplevel):
 
         # Test nach kurzem Delay starten
         self.after(500, self._start_test)
+        self.after(100, self._poll_test_finished)
         logger.info(f"System-Test Dialog geöffnet ({self._num_photos} Foto-Slots, Timeout: {GLOBAL_TIMEOUT}s)")
 
     def _build_ui(self, screen_w: int, screen_h: int):
@@ -294,48 +301,62 @@ class SystemTestDialog(ctk.CTkToplevel):
 
     def _start_test(self):
         """Startet den Test in einem Background-Thread"""
-        thread = threading.Thread(target=self._run_test, daemon=True)
-        thread.start()
+        if self._destroyed or self._worker_started or self._worker_done.is_set():
+            return
+        self._worker_started = True
+        try:
+            threading.Thread(target=self._run_test, daemon=True, name="system-test").start()
+        except Exception:
+            self._errors.append("Test fehlgeschlagen")
+            logger.exception("System-Test: Worker-Start fehlgeschlagen")
+            self._finish_worker()
+
+    def _finish_worker(self):
+        """Besitz genau einmal freigeben; funktioniert auch ohne lebendes Tk."""
+        callback, self._on_finished = self._on_finished, None
+        try:
+            if callback:
+                callback()
+        finally:
+            self._worker_done.set()
+            logger.info("SYSTEMTEST-KAMERA: Worker beendet, cancelled=%s, errors=%s",
+                        self._cancelled.is_set(), len(self._errors))
+
+    def _poll_test_finished(self):
+        """Nur der Hauptthread zeigt das Ergebnis NACH dem Cleanup an."""
+        if self._destroyed:
+            return
+        if not self._worker_done.is_set():
+            self.after(100, self._poll_test_finished)
+        elif self._close_requested:
+            self._close()
+        else:
+            self._update_status("Test abgeschlossen", 1.0)
+            self._show_result()
+
+    def _request_cancel(self, reason):
+        if self._destroyed or self._worker_done.is_set() or self._cancelled.is_set():
+            return
+        self._cancelled.set()
+        self._errors.append(reason)
+        logger.warning("System-Test: %s; warte auf Worker/Cleanup", reason)
+        self.cancel_btn.configure(state="disabled")
+        self._update_status(self.STEPS[-1][1], 5 / 6)
 
     def _on_cancel(self):
         """Abbrechen-Button gedrückt"""
-        logger.warning("System-Test: Vom Benutzer abgebrochen")
-        self._cancelled.set()
-        self._errors.append("Vom Benutzer abgebrochen")
-        # Kamera freigeben (falls aktiv)
-        try:
-            self.app.camera_manager.release()
-        except Exception:
-            pass
-        self.after(500, self._show_result)
+        self._request_cancel("Vom Benutzer abgebrochen")
 
     def _on_timeout(self):
         """Globaler Timeout erreicht - Test abbrechen"""
-        if self._destroyed or not self._cancelled.is_set():
-            logger.error(f"System-Test: TIMEOUT nach {GLOBAL_TIMEOUT}s!")
-            self._cancelled.set()
-            self._errors.append(f"Timeout nach {GLOBAL_TIMEOUT}s")
-            # Kamera freigeben (falls aktiv)
-            try:
-                self.app.camera_manager.release()
-            except Exception:
-                pass
-            self.after(500, self._show_result)
+        self._request_cancel(f"Timeout nach {GLOBAL_TIMEOUT}s")
 
     def _force_abort(self):
-        """Ctrl+Shift+Q im Dialog - sofort schließen"""
-        logger.warning("System-Test: Force-Abort via Ctrl+Shift+Q")
-        self._cancelled.set()
-        try:
-            self.app.camera_manager.release()
-        except Exception:
-            pass
-        self._destroyed = True
-        self._errors.append("Force-Abort (Ctrl+Shift+Q)")
-        self.grab_release()
-        self.destroy()
-        if self._on_complete:
-            self._on_complete(False, self._errors)
+        """Ctrl+Shift+Q: Schliesswunsch vormerken, Kamera nicht parallel loesen."""
+        self._close_requested = True
+        self._request_cancel("Force-Abort (Ctrl+Shift+Q)")
+        if self._worker_done.is_set():
+            self._close()
 
     def _run_test(self):
         """Führt alle Test-Schritte durch"""
@@ -345,46 +366,46 @@ class SystemTestDialog(ctk.CTkToplevel):
             self._step_capture_photos,
             self._step_apply_template,
             self._step_print,
-            self._step_cleanup,
         ]
 
-        for i, step_func in enumerate(steps):
-            # Abbruch prüfen
-            if self._cancelled.is_set():
-                for j in range(i, len(steps)):
-                    self.after(0, lambda idx=j: self._update_step(idx, "error", "Abgebrochen"))
-                break
-
-            step_name, status_text = self.STEPS[i]
-            progress = i / len(steps)
-
-            self.after(0, lambda idx=i: self._update_step(idx, "running"))
-            self.after(0, lambda t=status_text, p=progress: self._update_status(t, p))
-
-            # Kurze Pause damit UI-Update sichtbar ist
-            time.sleep(0.3)
-
-            try:
-                step_func()
-                if not self._cancelled.is_set():
-                    self.after(0, lambda idx=i: self._update_step(idx, "success"))
-            except Exception as e:
-                error_msg = str(e)
-                self._errors.append(f"{step_name}: {error_msg}")
-                self.after(0, lambda idx=i, err=error_msg: self._update_step(idx, "error", err))
-                logger.error(f"System-Test Schritt '{step_name}' fehlgeschlagen: {e}")
-
-                # Bei Kamera- oder Foto-Fehler: restliche Schritte überspringen
-                # (Index 1 = Kamera, 2 = Fotos; der System-Check wirft nie)
-                if i in (1, 2):
-                    for j in range(i + 1, len(steps)):
-                        self.after(0, lambda idx=j: self._update_step(idx, "error", "Übersprungen"))
+        try:
+            for i, step_func in enumerate(steps):
+                if self._cancelled.is_set():
+                    for j in range(i, len(steps)):
+                        self.after(0, lambda idx=j: self._update_step(idx, "error", "Abgebrochen"))
                     break
 
-        # Ergebnis anzeigen (nur wenn nicht bereits durch Cancel/Timeout geschehen)
-        if not self._destroyed:
-            self.after(0, lambda: self._update_status("Test abgeschlossen", 1.0))
-            self.after(100, lambda: self._show_result())
+                step_name, status_text = self.STEPS[i]
+                self.after(0, lambda idx=i: self._update_step(idx, "running"))
+                self.after(0, lambda t=status_text, p=i / 6: self._update_status(t, p))
+                if self._cancelled.wait(0.3):
+                    break
+                try:
+                    step_func()
+                    if not self._cancelled.is_set():
+                        self.after(0, lambda idx=i: self._update_step(idx, "success"))
+                except Exception as e:
+                    error_msg = str(e)
+                    self._errors.append(f"{step_name}: {error_msg}")
+                    logger.error("System-Test Schritt '%s' fehlgeschlagen: %s", step_name, e)
+                    self.after(0, lambda idx=i, err=error_msg: self._update_step(idx, "error", err))
+                    if i in (1, 2):
+                        for j in range(i + 1, len(steps)):
+                            self.after(0, lambda idx=j: self._update_step(idx, "error", "Übersprungen"))
+                        break
+        except Exception:
+            # Auch ein zerstoerter Dialog/fehlgeschlagenes after() darf das
+            # Hardware-Cleanup nicht ueberspringen.
+            self._errors.append("Test fehlgeschlagen")
+            logger.exception("System-Test: Worker unterbrochen")
+        finally:
+            try:
+                self._step_cleanup()
+            except Exception:
+                self._errors.append("Aufräumen: Test fehlgeschlagen")
+                logger.exception("SYSTEMTEST-KAMERA: Cleanup fehlgeschlagen")
+            finally:
+                self._finish_worker()
 
     def _warn(self, text: str):
         """Auffälligkeit vermerken (Test läuft weiter) + loggen."""
@@ -499,12 +520,12 @@ class SystemTestDialog(ctk.CTkToplevel):
 
         # Betriebsart VOR dem Oeffnen anmelden (2.4.44) — siehe
         # WebcamManager.set_dauerbetrieb_hd().
-        setzer = getattr(self.app.camera_manager, "set_dauerbetrieb_hd", None)
+        setzer = getattr(self._camera_manager, "set_dauerbetrieb_hd", None)
         if setzer is not None:
             setzer(hd_dauerbetrieb)
 
         t0 = time.perf_counter()
-        success = self.app.camera_manager.initialize(cam_index, breite, hoehe)
+        success = self._camera_manager.initialize(cam_index, breite, hoehe)
         init_s = time.perf_counter() - t0
         if not success:
             raise Exception("Kamera nicht erreichbar")
@@ -525,7 +546,7 @@ class SystemTestDialog(ctk.CTkToplevel):
             for _ in range(15):
                 if self._cancelled.is_set():
                     raise Exception("Abgebrochen")
-                if self.app.camera_manager.get_frame(use_cache=False) is not None:
+                if self._camera_manager.get_frame(use_cache=False) is not None:
                     frames += 1
             elapsed = time.perf_counter() - t0
             fps = frames / elapsed if elapsed > 0 else 0
@@ -565,7 +586,7 @@ class SystemTestDialog(ctk.CTkToplevel):
         if self._cancelled.is_set():
             raise Exception("Abgebrochen")
 
-        mgr = self.app.camera_manager
+        mgr = self._camera_manager
         frame = None
 
         # Webcam: echter High-Res-Aufnahmepfad (wie im Betrieb)
@@ -645,7 +666,7 @@ class SystemTestDialog(ctk.CTkToplevel):
         # erste echte Vorschau nach dem Test unnötig langsam).
         # Im HD-Dauerbetrieb (2.4.43) wurde nie umgeschaltet — dann ist das
         # Zurückschalten nicht nur überflüssig, es wäre falsch.
-        mgr = self.app.camera_manager
+        mgr = self._camera_manager
         cam_settings = self.app.config.get("camera_settings", {})
         # Dieselben drei Bedingungen wie in session._dauerbetrieb_aktiv()
         # (2.4.44): Schalter an UND Kamera im Dauerbetrieb UND es steht
@@ -832,25 +853,28 @@ class SystemTestDialog(ctk.CTkToplevel):
 
     def _step_cleanup(self):
         """Schritt 6: Testdateien aufräumen"""
-        if self._test_file and self._test_file.exists():
-            try:
+        logger.info("SYSTEMTEST-KAMERA: Cleanup beginnt, init=%s, cancelled=%s",
+                    self._camera_manager.is_initialized, self._cancelled.is_set())
+        try:
+            if self._test_file and self._test_file.exists():
                 self._test_file.unlink()
                 logger.info("System-Test: Testdatei gelöscht")
-            except Exception as e:
-                logger.warning(f"Testdatei löschen fehlgeschlagen: {e}")
-
-        # Kamera freigeben
+        except Exception as e:
+            logger.warning(f"Testdatei löschen fehlgeschlagen: {e}")
+        # Ausschliesslich der Worker gibt SEINEN Manager frei. Der App-
+        # Manager koennte beim Shutdown bereits ausgetauscht worden sein.
         try:
-            self.app.camera_manager.release()
-        except Exception:
-            pass
-
-        self._test_photos = []
-        self._test_result = None
+            self._camera_manager.release()
+            logger.info("SYSTEMTEST-KAMERA: Kamera freigegeben, init=%s",
+                        self._camera_manager.is_initialized)
+        finally:
+            self._test_photos = []
+            self._test_result = None
+            self._test_file = None
 
     def _show_result(self):
         """Zeigt das Testergebnis an"""
-        if self._destroyed:
+        if self._destroyed or not self._worker_done.is_set():
             return
 
         # Timeout-Timer abbrechen
@@ -862,6 +886,7 @@ class SystemTestDialog(ctk.CTkToplevel):
 
         # Abbrechen-Button durch OK-Button ersetzen
         self.cancel_btn.pack_forget()
+        self._update_step(5, "error" if self._errors else "success")
 
         # Alle Messwerte gesammelt ins Log (eine Zeile, gut vergleichbar)
         if self._metrics:
@@ -936,6 +961,11 @@ class SystemTestDialog(ctk.CTkToplevel):
 
     def _close(self):
         """Dialog schließen"""
+        if self._destroyed:
+            return
+        if not self._worker_done.is_set():
+            self._force_abort()
+            return
         self._destroyed = True
         self._cancelled.set()
         success = len(self._errors) == 0
@@ -949,4 +979,6 @@ class SystemTestDialog(ctk.CTkToplevel):
         """Override destroy um Flag zu setzen"""
         self._destroyed = True
         self._cancelled.set()
+        if not self._worker_started and not self._worker_done.is_set():
+            self._finish_worker()
         super().destroy()
