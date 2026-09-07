@@ -32,6 +32,14 @@ Cleanup bestanden; `release()` nachweislich nicht im Hauptthread. Kein echter
 Kamerazugriff/Testdruck auf dem Entwickler-PC. Bestehende reine
 Zeilenende-Aenderungen bleiben unangetastet; Commit enthaelt nur Nutzdiffs.
 
+Lokaler Windows-Installer erfolgreich gebaut: `installer_output/FexoBooth_Setup_2.4.73.exe`
+(115.652.885 Bytes; SHA-256 `6a589c073dbd09387f66f01c94ed4d8bcb18ac83d4954d36ddc6b502ebbdacbf`).
+Vor dem ZIP-Packen direkt im eingebetteten Python-Archiv geprueft: Version
+2.4.73 und neue Probe-/Cleanup-Methoden enthalten. VLC samt Plugins und beide
+Canon-DLLs vorhanden; Nikon-Bridge frisch gebaut (0 Fehler/Warnungen),
+Developer-/Produktions-Protokolltest gruen. Vorherige 2.4.72-Artefakte gesichert
+unter `dist/release-backups/2.4.72/`. Kein neuer GitHub-Release/Flotten-Rollout.
+
 ## 2026-09-06 (Nacht II) — 2.4.72: Layout-Fixes diesmal VERIFIZIERT statt geraten
 
 Christians zweiter Box-Test zeigte: 2.4.71 hatte nichts behoben. Zwei echte
