@@ -6,8 +6,8 @@ Diese Datei enthält die Anforderungen und geplanten Features.
 
 ## Aktuelle Version
 
-**Status:** v2.4.72 auf GitHub veroeffentlicht; 2.4.73 behebt das reproduzierte Event-Test-Kamera-Rennen, Hardware-Nachtest auf Box 210/008 offen. Aeltere offene Hardwarechecks siehe TODO.md.
-**Version:** 2.4.73 (Testkandidat, kein automatischer Flotten-Rollout)
+**Status:** Christian bestaetigt den 2.4.73-Praxistest; v2.4.73 als neuestes GitHub-Release mit identischem getestetem Installer und OTA-ZIP veroeffentlicht. Keine Boxen in diesem Schritt ferninstalliert. Aeltere offene Hardwarechecks siehe TODO.md.
+**Version:** 2.4.73 (GitHub Latest Release)
 **Letzte Änderung:** 2026-09-07
 
 ---

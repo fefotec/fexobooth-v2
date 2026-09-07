@@ -6,6 +6,22 @@ Chronologisches Protokoll aller Änderungen.
 
 ## 2026-09-07 — 2.4.73: Event-Test Kamera-Besitz (Box 210/008)
 
+**Nachtrag Release-Freigabe:** Christian bestaetigt den Praxistest mit
+„ok läuft“ und beauftragt den GitHub-Release. Keine konkrete Testbox oder
+vollstaendige Checkliste genannt; keine neuen Feld-Logs in diesem Schritt
+ausgewertet. Es werden exakt die zuvor getesteten Dateien hochgeladen,
+kein neuer Build und keine weitere Funktionsaenderung. Release-Ziel:
+`7c1799fb366e38b58b08afac6108bbec8291715a`. SHA-256 des OTA-ZIP:
+`2b202680a258d4281944255eac45d8a267b065f5d8c3b7c81e08e40fcfd3c477`.
+
+**Veroeffentlicht:** https://github.com/fefotec/fexobooth-v2/releases/tag/v2.4.73
+am 07.09.2026, 09:47:12 UTC, als Latest (kein Draft/Prerelease).
+Installer und OTA-ZIP vollstaendig hochgeladen; GitHub-SHA-256 beider Assets
+identisch mit den lokalen Testdateien, ZIP-Integritaetspruefung bestanden.
+Latest-API danach kontrolliert: zeigt auf v2.4.73. Keine Ferninstallation
+auf Boxen durchgefuehrt. Die folgenden Testkandidaten-Notizen dokumentieren
+den Stand vor Christians Freigabe.
+
 Cloud-Logs beider C922-Boxen: erfolgreicher MJPG-HD-Warmstart, danach alle
 Reads sofort leer und FOURCC unbekannt. Das reproduzierte Software-Rennen:
 Statusprobe pruefte Bereitschaft vor der Sperre, oeffnete nach erfolgreichem

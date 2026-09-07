@@ -18,7 +18,8 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 - Dev-Logs `SYSTEMTEST-KAMERA` dokumentieren Besitz und Freigabe.
   Regressionstests reproduzieren das Rennen ohne echte Hardware.
 - Webcam-Aufnahme, Warmstart, DSLR-Ausloesung, Layout und Druckpfad bleiben
-  unveraendert. Testkandidat: physischer Nachtest auf 210/008 noch offen.
+  unveraendert. Christian bestaetigt am 07.09.2026: „ok läuft“ und gibt
+  die Veroeffentlichung der unveraenderten 2.4.73-Artefakte frei.
 
 ## [2.4.72] - 2026-09-06 - Layout endlich verifiziert: DPI-Fix wirksam + Pruefstand
 
