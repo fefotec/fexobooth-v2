@@ -28,6 +28,43 @@ aktueller Versions-/Release-Stand. Aktueller Stand siehe ROADMAP.md.
 
 ---
 
+## Nächstes Box-Update: QR-Code ohne App darf nicht ins Leere laufen 🔴 (Christian, 18.09.2026)
+
+**Problem:** Kunden mit Live-Upgrade scannen den QR-Code auf dem Startbildschirm mit
+der normalen Handykamera, ohne die FexoBox-App installiert zu haben. Der Code ist ein
+reines App-Schema (`fexobox://g?…`, `src/gallery/server.py::_build_app_pairing_url`),
+das Handy findet keine App und zeigt nur eine Betriebssystem-Fehlermeldung. Serverseitig
+ist das nicht abfangbar (kein Server wird gefragt). Der Panel-Text
+„QR-Code mit der Handykamera scannen“ (`gallery.banner_sub`, 7 Sprachen in `src/i18n.py`)
+führt die Kunden aktuell genau in diese Falle. Zwischenlösung in adminFexobox seit
+18.09.: Onboarding-Mail und Nachbuch-Bestätigung sagen jetzt deutlich „ohne App kein QR“.
+
+**A) Sofern machbar: QR-Code als Web-Link mit Erklärseite (Universal Link)**
+- [ ] QR-Payload auf `https://fexobox.de/g?v=1&a=…&t=…&c=…&s=…&p=…` umstellen
+      (eine Zeile in `_build_app_pairing_url`, Schema-Version `v` prüfen/erhöhen).
+      App installiert → Handy öffnet direkt die App (iOS: `applinks:fexobox.de` steht
+      schon in `fexobox-app/app.json`; Android: Intent-Filter gilt bisher nur für
+      `/app-login`, muss um `/g` erweitert werden). App nicht installiert → Browser
+      zeigt Seite „Bitte zuerst die FexoBox-App installieren“ mit Store-Buttons.
+- [ ] Reihenfolge zwingend: **1. Website** (fexobox-next: Seite `/g` + Apple-AASA- und
+      Google-`assetlinks.json`-Dateien) → **2. App** (Parser `src/lib/qr/parser.ts`
+      akzeptiert zusätzlich den https-Link, Android-Intent-Filter, Store-Update
+      durch) → **3. Box**. Sonst meldet die alte App „kein fexobox-QR-Code“.
+- [ ] Machbarkeit prüfen: Handys, die schon im Box-Hotspot (ohne Internet) hängen,
+      können die Erklärseite nicht laden → die Bildschirm-Lösung B bleibt trotzdem
+      nötig. Erklärseite darf den Pairing-Token aus der URL nicht speichern/loggen.
+- [ ] Ausrollen per Auto-Update im Firmen-WLAN; bis alle Boxen durch sind, laufen
+      beide QR-Varianten parallel (App muss beide lesen).
+
+**B) Auf jeden Fall: Hinweis „App installieren“ auf dem Startbildschirm**
+- [ ] `gallery.banner_sub` in allen 7 Sprachen ändern, sinngemäß: „Zuerst die
+      kostenlose FexoBox-App installieren, dann den Code in der App scannen“.
+- [ ] Kleine Zusatzzeile im QR-Panel (`src/ui/screens/start.py::_update_qr_code`,
+      Panel 288 px breit): „App laden: fexobox.de/fexobox-live“ (Seite hat beide
+      Store-Links). Optional zweiter kleiner QR-Code auf diese Seite, falls Platz
+      neben Event-Code und WLAN-Zeilen bleibt – am Gerät prüfen, nicht raten.
+- [ ] Layout-Probe mit `tools/ui_layout_probe.py`, dann Box-Test mit Handy ohne App.
+
 ## ➡️ NÄCHSTER TEST: 2.4.68 DAUERLAUF, DANN ROLLOUT 🔴
 
 Stand 06.09. nachmittags: Der Hänge-Wächter hat beim dritten Freeze (14:17,
