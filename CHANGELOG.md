@@ -6,7 +6,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
-## [Unreleased] - geplant 2.4.74 - Druckkorrektur mit Tasten, Drucker-Fehler verlassbar
+## [2.4.74] - 2026-09-28 - Druckkorrektur mit Tasten, Drucker-Fehler verlassbar
 
 - Druck-Korrektur (Kundenmenü PIN 2015 und Admin-Tab Drucker): Slider durch
   große − / + Tasten ersetzt (`src/ui/widgets/stepper.py`). Tippen = ±1,
