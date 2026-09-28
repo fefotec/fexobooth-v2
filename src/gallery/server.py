@@ -154,10 +154,12 @@ def _current_template_fingerprint() -> str:
 #   True  -> https://fexobox.de/g#v=1&a=...  Mit App oeffnet das Handy direkt die
 #            App, ohne App zeigt fexobox.de/g "App erforderlich" + Store-Links.
 #   False -> fexobox://g?v=1&a=...  (bisher; ohne App nur OS-Fehlermeldung)
-# ERST auf True stellen, wenn FexoBox-App 1.4.7 in App Store UND Google Play live
-# ist – aeltere Apps lehnen den Web-Link als "kein fexobox-QR-Code" ab.
+# Seit 2.4.74 AN (Christian, 28.09.2026: ab heute gehen alle Boxen mit neuer
+# Software raus, erste Nutzer ab Freitag). Voraussetzung: FexoBox-App 1.4.7 ist
+# bis dahin in App Store UND Google Play – aeltere Apps (<= 1.4.6) lehnen den
+# Web-Link als "kein fexobox-QR-Code" ab.
 # Die Daten stehen im #-Fragment: der Browser schickt es nie an den Server.
-APP_QR_WEB_LINK = False
+APP_QR_WEB_LINK = True
 APP_QR_WEB_BASE = "https://fexobox.de/g"
 
 

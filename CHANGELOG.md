@@ -18,7 +18,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
   10 Minuten); die Top-Bar blinkt weiter. Meldet der Drucker wieder
   fehlerfrei, gilt die Sperre nicht mehr, ein neuer Fehler zeigt das Fenster.
 - Neue Texte `printer.service_exit` in allen 7 Sprachen. Felix-Prompt angepasst.
-- Dazu (noch aus): `APP_QR_WEB_LINK` für den App-QR als Web-Link.
+- **App-QR ist jetzt ein Web-Link** (`APP_QR_WEB_LINK = True`): `https://fexobox.de/g#…`.
+  Mit FexoBox-App (ab 1.4.7) öffnet die Handykamera direkt die App, ohne App
+  zeigt fexobox.de/g „App erforderlich“ mit App-Store-/Google-Play-Links statt
+  einer Fehlermeldung. Voraussetzung: App 1.4.7 in beiden Stores.
 
 ## [2.4.73] - 2026-09-07 - Event-Test: Kamera-Rennen Box 210/008
 

@@ -43,9 +43,10 @@ führt die Kunden aktuell genau in diese Falle. Zwischenlösung in adminFexobox 
 **Stand 28.09.2026:** Website `/g` + AASA live (fexobox-next 46ebcf7), App 1.4.7
 gebaut im Code (fexobox-app e90201b, Store-Einreichung offen), Box-Code fertig
 hinter Schalter `APP_QR_WEB_LINK = False` in `src/gallery/server.py`.
-- [ ] **Schalter `APP_QR_WEB_LINK = True` erst, wenn App 1.4.7 in App Store UND
-      Google Play live ist** – dann Build/Release wie gewohnt (Test `test_app_qr_link.py`
-      erwartet aktuell False, beim Umschalten mit anpassen).
+- [x] Schalter `APP_QR_WEB_LINK = True` ab 2.4.74 (Christian, 28.09.2026: alle Boxen
+      gehen ab heute mit neuer Software raus, erste Nutzer ab Freitag 02.10.).
+- [ ] **App 1.4.7 muss bis Freitag in App Store UND Google Play live sein**, sonst
+      lehnt die alte App den neuen QR ab.
 - [x] QR-Payload auf `https://fexobox.de/g#v=1&a=…&t=…&c=…&s=…&p=…` umstellen (Code, Schalter aus)
       (eine Zeile in `_build_app_pairing_url`, Schema-Version `v` prüfen/erhöhen).
       App installiert → Handy öffnet direkt die App (iOS: `applinks:fexobox.de` steht

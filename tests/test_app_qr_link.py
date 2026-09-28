@@ -1,8 +1,8 @@
 """App-QR als Web-Link (28.09.2026). Braucht KEINE Box.
 
 Sichert ab:
-  1. Solange APP_QR_WEB_LINK aus ist, bleibt der QR exakt das alte fexobox://-Schema
-     (aeltere Apps <= 1.4.6 kennen nur dieses).
+  1. Seit 2.4.74 ist APP_QR_WEB_LINK AN (Web-Link am Startbildschirm). Das alte
+     fexobox://-Schema bleibt per web_link=False abrufbar (Manifest, Rueckfall).
   2. Mit web_link=True entsteht https://fexobox.de/g#<gleiche Parameter> – die
      Daten stehen im Fragment (nie im Server-Log), kein '?' vor dem '#'.
   3. Das Manifest (urls.app_scheme) bleibt immer beim fexobox://-Schema.
@@ -26,8 +26,10 @@ server._gallery_context = {
 }
 BASE = "http://192.168.137.1:8080"
 
-# ── 1. Standard: altes Schema ────────────────────────────────────
-assert server.APP_QR_WEB_LINK is False, "Web-Link erst nach App 1.4.7 in beiden Stores einschalten"
+# ── 1. Standard: Web-Link an, altes Schema weiter abrufbar ───────
+assert server.APP_QR_WEB_LINK is True, "Seit 2.4.74 zeigt die Box den Web-Link (Christian, 28.09.2026)"
+server_src = (ROOT / "src/gallery/server.py").read_text(encoding="utf-8")
+assert "web_link=APP_QR_WEB_LINK" in server_src, "Startbildschirm-QR muss dem Schalter folgen"
 alt = server._build_app_pairing_url(BASE)
 assert alt.startswith("fexobox://g?v=1&a=http://192.168.137.1:8080/api/v1&t="), alt
 
@@ -46,4 +48,4 @@ assert web.split("#", 1)[1] == alt.split("?", 1)[1], "beide Varianten muessen di
 # ── 3. QR-Laenge bleibt im Rahmen (200-px-QR am Startbildschirm) ─
 assert len(web) - len(alt) <= 10, f"Web-Link unerwartet lang: +{len(web) - len(alt)} Zeichen"
 
-print("OK: App-QR fexobox:// (Standard) und https://fexobox.de/g# (Web-Link) korrekt")
+print("OK: App-QR https://fexobox.de/g# (Standard) und fexobox:// (Manifest) korrekt")

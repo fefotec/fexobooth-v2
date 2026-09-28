@@ -58,7 +58,7 @@ TESTS = [
     ("Hotspot-Waechter + QR-Adresse", "test_hotspot_watchdog.py",
      "QR nur ueber 192.168.137.x; Waechter wartet/repariert/ruht; Installer verdrahtet"),
     ("App-QR Web-Link", "test_app_qr_link.py",
-     "fexobox:// bleibt Standard; https://fexobox.de/g# traegt dieselben Daten im Fragment"),
+     "https://fexobox.de/g# ist Standard; traegt dieselben Daten wie fexobox:// im Fragment"),
     ("Drucker-Ausstieg + Druck-Tasten", "test_drucker_ausstieg.py",
      "Service-Knopf sichtbar; Overlay zu bis Fehler weg; -/+ Tasten zaehlen und begrenzen"),
     ("Weisse-Print-Race", "test_final_render_race.py",
