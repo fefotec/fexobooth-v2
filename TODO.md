@@ -40,7 +40,13 @@ führt die Kunden aktuell genau in diese Falle. Zwischenlösung in adminFexobox 
 18.09.: Onboarding-Mail und Nachbuch-Bestätigung sagen jetzt deutlich „ohne App kein QR“.
 
 **A) Sofern machbar: QR-Code als Web-Link mit Erklärseite (Universal Link)**
-- [ ] QR-Payload auf `https://fexobox.de/g?v=1&a=…&t=…&c=…&s=…&p=…` umstellen
+**Stand 28.09.2026:** Website `/g` + AASA live (fexobox-next 46ebcf7), App 1.4.7
+gebaut im Code (fexobox-app e90201b, Store-Einreichung offen), Box-Code fertig
+hinter Schalter `APP_QR_WEB_LINK = False` in `src/gallery/server.py`.
+- [ ] **Schalter `APP_QR_WEB_LINK = True` erst, wenn App 1.4.7 in App Store UND
+      Google Play live ist** – dann Build/Release wie gewohnt (Test `test_app_qr_link.py`
+      erwartet aktuell False, beim Umschalten mit anpassen).
+- [x] QR-Payload auf `https://fexobox.de/g#v=1&a=…&t=…&c=…&s=…&p=…` umstellen (Code, Schalter aus)
       (eine Zeile in `_build_app_pairing_url`, Schema-Version `v` prüfen/erhöhen).
       App installiert → Handy öffnet direkt die App (iOS: `applinks:fexobox.de` steht
       schon in `fexobox-app/app.json`; Android: Intent-Filter gilt bisher nur für

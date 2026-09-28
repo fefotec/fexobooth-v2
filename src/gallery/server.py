@@ -150,11 +150,24 @@ def _current_template_fingerprint() -> str:
         return ""
 
 
-def _build_app_pairing_url(base_url: str) -> str:
+# QR-Code als Web-Link statt reinem App-Schema (Universal Link / Android App Link):
+#   True  -> https://fexobox.de/g#v=1&a=...  Mit App oeffnet das Handy direkt die
+#            App, ohne App zeigt fexobox.de/g "App erforderlich" + Store-Links.
+#   False -> fexobox://g?v=1&a=...  (bisher; ohne App nur OS-Fehlermeldung)
+# ERST auf True stellen, wenn FexoBox-App 1.4.7 in App Store UND Google Play live
+# ist – aeltere Apps lehnen den Web-Link als "kein fexobox-QR-Code" ab.
+# Die Daten stehen im #-Fragment: der Browser schickt es nie an den Server.
+APP_QR_WEB_LINK = False
+APP_QR_WEB_BASE = "https://fexobox.de/g"
+
+
+def _build_app_pairing_url(base_url: str, web_link: bool = False) -> str:
     """Baut den kompakten App-Pairing-Payload fuer eine konkrete Base-URL.
 
     Schema (siehe docs/FEXOBOX-APP-API.md):
         fexobox://g?v=1&a=<api>&t=<token>&l=<locale>&b=<box_id>&e=<booking>&s=<ssid>&p=<password>
+    bzw. mit web_link=True dieselben Parameter als Fragment:
+        https://fexobox.de/g#v=1&a=<api>&t=<token>&...
 
     Die WLAN-Daten (s/p) werden mitgegeben, damit die App das richtige Box-WLAN
     kennt – auch wenn eine Box eine von den Defaults abweichende SSID/Passwort hat.
@@ -179,17 +192,22 @@ def _build_app_pairing_url(base_url: str) -> str:
     if ssid:
         params["s"] = ssid
         params["p"] = _gallery_context.get("hotspot_password", "")
-    return f"fexobox://g?{urlencode(params, safe=':/')}"
+    query = urlencode(params, safe=':/')
+    if web_link:
+        return f"{APP_QR_WEB_BASE}#{query}"
+    return f"fexobox://g?{query}"
 
 
 def get_app_pairing_url(port: int = DEFAULT_PORT) -> str:
-    """QR-Payload fuer die spaetere fexobox Smartphone-App.
+    """QR-Payload fuer die fexobox Smartphone-App (Start-Bildschirm).
 
-    Der Payload ist bewusst als Custom-Scheme kurz gehalten. Die App kann ihn
-    direkt aus dem QR-Code lesen und bekommt damit API-Adresse, Token, Box und
-    WLAN-Daten, ohne die Box erneut aktualisieren zu muessen.
+    Die App kann ihn direkt aus dem QR-Code lesen und bekommt damit API-Adresse,
+    Token, Box und WLAN-Daten. Web-Link oder App-Schema: siehe APP_QR_WEB_LINK.
     """
-    return _build_app_pairing_url(get_gallery_url(port))
+    payload = _build_app_pairing_url(get_gallery_url(port), web_link=APP_QR_WEB_LINK)
+    # Nur die Variante loggen, nie Token/WLAN-Passwort.
+    logger.debug(f"App-QR: {'Web-Link ' + APP_QR_WEB_BASE if APP_QR_WEB_LINK else 'fexobox://-Schema'}")
+    return payload
 
 
 def get_app_display_code() -> str:

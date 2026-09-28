@@ -57,6 +57,8 @@ TESTS = [
      "Owner, 0x208, JPEG, Queue und atomarer Cleanup als Gesamtkette"),
     ("Hotspot-Waechter + QR-Adresse", "test_hotspot_watchdog.py",
      "QR nur ueber 192.168.137.x; Waechter wartet/repariert/ruht; Installer verdrahtet"),
+    ("App-QR Web-Link", "test_app_qr_link.py",
+     "fexobox:// bleibt Standard; https://fexobox.de/g# traegt dieselben Daten im Fragment"),
     ("Weisse-Print-Race", "test_final_render_race.py",
      "Session-Ende waehrend Rendern speichert nie mehr eine weisse Vorlage"),
     ("Haenge-Waechter", "test_haenge_waechter.py",

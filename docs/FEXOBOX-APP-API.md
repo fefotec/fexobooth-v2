@@ -14,6 +14,18 @@ Custom-Scheme:
 fexobox://g?v=1&a=http://192.168.137.1:8080/api/v1&t=<token>&c=123456
 ```
 
+Ab dem Box-Update mit `APP_QR_WEB_LINK = True` (`src/gallery/server.py`) steht
+derselbe Inhalt als Web-Link im Fragment (Universal Link / Android App Link):
+
+```text
+https://fexobox.de/g#v=1&a=http://192.168.137.1:8080/api/v1&t=<token>&c=123456
+```
+
+Mit installierter App oeffnet das Handy direkt die App (FexoBox-App ab 1.4.7).
+Ohne App zeigt `fexobox.de/g` „App erforderlich“ mit den Store-Links. Das
+Fragment schickt der Browser nie an den Server. `urls.app_scheme` im Manifest
+bleibt beim `fexobox://`-Schema.
+
 Parameter:
 
 - `v`: QR-Schema-Version, aktuell `1`

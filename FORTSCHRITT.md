@@ -4,6 +4,17 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-09-28 — App-QR als Web-Link vorbereitet (Schalter aus, kein Build)
+
+- `src/gallery/server.py`: `_build_app_pairing_url(..., web_link=)` erzeugt wahlweise
+  `https://fexobox.de/g#<Parameter>` (Daten im Fragment). Der Start-Bildschirm nimmt
+  diesen Web-Link nur bei `APP_QR_WEB_LINK = True`, der Standard bleibt **False** →
+  unverändert `fexobox://g?…`. Das Dev-Log nennt die Variante (nie Token/Passwort).
+- Grund: Mit Web-Link öffnet das Handy mit installierter App direkt die App. Ohne App
+  zeigt fexobox.de/g „App erforderlich“ + Store-Links statt einer OS-Fehlermeldung.
+  Umschalten erst, wenn FexoBox-App 1.4.7 in beiden Stores live ist.
+- Neuer Test `tests/test_app_qr_link.py` (in `alle_tests.py`), alle Tests grün.
+
 ## 2026-09-07 — 2.4.73: Event-Test Kamera-Besitz (Box 210/008)
 
 **Nachtrag Release-Freigabe:** Christian bestaetigt den Praxistest mit
