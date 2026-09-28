@@ -172,7 +172,7 @@ Wenn der Kunde beschreibt, was er sieht, ordne es so zu:
 - Beim Papierstau zeigt das Fenster statt eines Drehsymbols jetzt kleine
   pinke Fortschritts-Segmente. Bedeutung unverändert: Box arbeitet, nicht
   ausschalten.
-- Das versteckte ✕ oben rechts mit PIN 2015 funktioniert unverändert.
+- Der PIN-Ausstieg (PIN 2015) funktioniert weiter, siehe „Großes Fehlerfenster lässt sich nicht schließen".
 
 ### Papierstau (wenn das Display-Overlay nicht half)
 
@@ -183,17 +183,24 @@ Wenn der Kunde beschreibt, was er sieht, ordne es so zu:
 ### Großes Fehlerfenster lässt sich nicht schließen (ab Version 2.4.15)
 
 Situation: Das große Drucker-Fehlerfenster bleibt trotz „Problem behoben"-Button
-immer wieder stehen (z. B. weil ein Druckauftrag hängt, ohne dass der Drucker
-selbst einen Fehler meldet). Die Box muss dafür NICHT mehr ausgeschaltet werden:
+immer wieder stehen (z. B. Papier/Kassette gerade nicht zur Hand oder ein
+Druckauftrag hängt). Die Box muss dafür NICHT ausgeschaltet werden.
 
-1. „Tippen Sie oben rechts in die Ecke des dunklen Fehlerfensters – dort sitzt ein unauffälliges ✕."
+**Ab Version 2.4.74** (steht oben links neben „FEXOBOOTH"):
+1. „Unten im dunklen Fehlerfenster, unter dem großen pinken Knopf, gibt es einen schmaleren Knopf ‚Service: Fenster schließen (PIN)'. Bitte tippen Sie darauf."
 2. „Es öffnet sich ein PIN-Feld. Bitte tippen Sie genau diese vier Ziffern ein: zwei – null – eins – fünf."
-3. Das Fenster schließt sich und bleibt für 10 Minuten weg; die kleine rote Warnung oben rechts bleibt sichtbar.
-4. Danach zum passenden Runbook: meist „Druckt nicht / zieht nicht ein" → Service-Menü → „Druckstau beheben".
-5. Wichtig: Das ✕ behebt den Druckerfehler NICHT – es macht nur die Box wieder bedienbar. Ohne Anschluss-Lösung kommt das Fenster nach 10 Minuten wieder, falls der Fehler weiterbesteht.
+3. Das Fenster schließt sich und bleibt zu, **solange der Druckerfehler besteht**. Oben rechts blinkt die Drucker-Warnung weiter. Fotos machen geht, Drucke warten.
+4. Sobald der Drucker wieder fehlerfrei ist (z. B. Papier nachgelegt), verschwindet die Warnung oben von selbst. Ein späterer, neuer Fehler zeigt das große Fenster wieder normal.
+5. Danach, wenn nötig, zum passenden Runbook: meist „Druckt nicht / zieht nicht ein" → Service-Menü → „Druckstau beheben".
 
-Bei Boxen mit älterer Software (Version unter 2.4.15, steht oben links neben
-„FEXOBOOTH") gibt es dieses ✕ noch nicht → dann wie bisher: Box über den
+**Version 2.4.15 bis 2.4.73:** Der Knopf unten fehlt noch.
+1. „Tippen Sie oben rechts in die Ecke des dunklen Fehlerfensters – dort sitzt ein unauffälliges ✕."
+2. PIN wie oben: zwei – null – eins – fünf.
+3. Das Fenster bleibt nur 10 Minuten weg; besteht der Fehler weiter, kommt es danach wieder.
+
+Wichtig (alle Versionen): Der PIN-Ausstieg behebt den Druckerfehler NICHT – er macht nur die Box wieder bedienbar.
+
+Bei Boxen mit älterer Software (Version unter 2.4.15) gibt es beides noch nicht → dann wie bisher: Box über den
 Power-Button neu starten und direkt nach dem Start zum Service-Menü-Block.
 
 ### Schublade passt nicht

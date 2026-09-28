@@ -129,7 +129,8 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
         self.bind("<Control-Shift-Q>", lambda e: self._emergency_quit())
         self.bind("<Control-Shift-q>", lambda e: self._emergency_quit())
 
-        # Service-Ausstieg (Bug-Report #49): Hängt ein Druckjob ohne dass der
+        # Service-Ausstieg (Bug-Report #49, sichtbar seit 28.09.2026 – Button
+        # unter der Karte + ✕ oben rechts): Hängt ein Druckjob ohne dass der
         # Drucker einen Fehler meldet, kam man aus dem Overlay nie wieder raus
         # (Bestätigungs-Check schlug endlos fehl; Ctrl+Shift+Q braucht eine
         # Tastatur, die am Tablet fehlt → Box musste hart ausgeschaltet werden).
@@ -315,7 +316,27 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
             wraplength=text_w,
             justify="center"
         )
-        self.hint_label.pack(pady=(16, bottom_pad), padx=50)
+        self.hint_label.pack(pady=(16, 0), padx=50)
+
+        # Sichtbarer Service-Ausstieg (28.09.2026): Das ✕ oben rechts war so
+        # dezent, dass es niemand fand – bei Dauerfehler kam man nie raus.
+        # PIN-geschützt (3198 / 2015 / Service-PIN), danach bleibt der Fehler
+        # nur noch in der Top-Bar, bis er wirklich behoben ist.
+        self.service_exit_btn = ctk.CTkButton(
+            self.card,
+            text=t(self.config, "printer.service_exit"),
+            command=self._show_service_pin,
+            width=min(400, card_w - 120),
+            height=48,
+            font=("Segoe UI", 16),
+            fg_color="transparent",
+            hover_color=COLORS["bg_light"],
+            text_color=COLORS["text_secondary"],
+            border_color=COLORS["border_light"],
+            border_width=1,
+            corner_radius=RADII["button"],
+        )
+        self.service_exit_btn.pack(pady=(14, bottom_pad))
 
     def _get_friendly_title(self) -> str:
         """Gastfreundlicher Titel je Fehlerart (Redesign 2.4.70)."""
@@ -733,7 +754,8 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
         if entered in valid_pins:
             logger.warning(
                 f"Service-Ausstieg: Overlay per PIN geschlossen "
-                f"(Fehler war: '{self.error_text}') – Auto-Overlay 10 Min pausiert"
+                f"(Fehler war: '{self.error_text}') – Overlay bleibt zu, "
+                f"bis der Drucker wieder fehlerfrei meldet (Top-Bar warnt weiter)"
             )
             self._force_close()
         else:
@@ -746,14 +768,15 @@ class PrinterErrorOverlay(ctk.CTkToplevel):
         """Schließt das Overlay OHNE Drucker-Prüfung (Service-Entscheidung).
 
         Wichtig: Der Status-Poll in app.py würde das Overlay sonst beim
-        nächsten Tick sofort wieder öffnen → Snooze setzen. Die rote
-        Top-Bar-Warnung bleibt sichtbar, der Fehler wird also nicht versteckt.
+        nächsten Tick sofort wieder öffnen → unterdrücken, bis der Drucker
+        wieder fehlerfrei meldet. Die blinkende Top-Bar-Warnung bleibt so lange
+        sichtbar, der Fehler wird also nicht versteckt.
         """
         try:
-            if hasattr(self.app, "snooze_printer_overlay"):
-                self.app.snooze_printer_overlay(600)
+            if hasattr(self.app, "suppress_printer_overlay_until_resolved"):
+                self.app.suppress_printer_overlay_until_resolved()
         except Exception as e:
-            logger.debug(f"snooze_printer_overlay Fehler: {e}")
+            logger.debug(f"suppress_printer_overlay_until_resolved Fehler: {e}")
         self._close()
 
     # ========== Erfolg + Lifecycle ==========

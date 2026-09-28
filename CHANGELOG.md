@@ -6,6 +6,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [Unreleased] - geplant 2.4.74 - Druckkorrektur mit Tasten, Drucker-Fehler verlassbar
+
+- Druck-Korrektur (Kundenmenü PIN 2015 und Admin-Tab Drucker): Slider durch
+  große − / + Tasten ersetzt (`src/ui/widgets/stepper.py`). Tippen = ±1,
+  Halten zählt schnell weiter (ab 15 Schritten in 5er-Schritten). Werte,
+  Grenzen, Testdruck und Speichern unverändert. Kundenmenü-Buttons größer.
+- Drucker-Fehlerfenster: sichtbarer Knopf „Service: Fenster schließen (PIN)"
+  unter dem Hauptknopf (PINs 2015 / 3198 / Service-PIN wie bisher). Nach dem
+  PIN-Ausstieg bleibt das Fenster zu, SOLANGE der Fehler besteht (vorher nur
+  10 Minuten); die Top-Bar blinkt weiter. Meldet der Drucker wieder
+  fehlerfrei, gilt die Sperre nicht mehr, ein neuer Fehler zeigt das Fenster.
+- Neue Texte `printer.service_exit` in allen 7 Sprachen. Felix-Prompt angepasst.
+- Dazu (noch aus): `APP_QR_WEB_LINK` für den App-QR als Web-Link.
+
 ## [2.4.73] - 2026-09-07 - Event-Test: Kamera-Rennen Box 210/008
 
 - Kamera-Statuspruefung pausiert waehrend des Event-Tests. Auch bereits

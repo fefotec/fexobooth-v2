@@ -350,7 +350,9 @@ class PhotoboothApp:
         # Bug #49: Nach Service-Ausstieg (PIN im Fehler-Overlay) das automatische
         # Wieder-Öffnen pausieren – sonst holt der Sekunden-Poll das Overlay
         # sofort zurück. Top-Bar-Warnung läuft trotzdem weiter.
-        self._printer_overlay_snooze_until = 0.0
+        # Service-Ausstieg per PIN: Overlay bleibt zu, bis der Drucker wieder
+        # fehlerfrei meldet (Top-Bar warnt weiter). Siehe suppress_printer_...
+        self._printer_overlay_suppressed = False
 
         # WICHTIG: Settings ZUERST laden, BEVOR UI erstellt wird!
         # Sonst zeigt die UI falsche Optionen (z.B. Single-Foto obwohl deaktiviert)
@@ -2586,6 +2588,9 @@ class PhotoboothApp:
             # Alles OK -> Warnung verstecken
             if status_changed and self._last_printer_problem is not None:
                 logger.info("Drucker-Status wieder OK")
+            if self._printer_overlay_suppressed:
+                self._printer_overlay_suppressed = False
+                logger.info("Drucker fehlerfrei → Overlay-Unterdrückung (Service-PIN) aufgehoben")
             self._printer_blink_state = False
             self.printer_status.pack_forget()
             self._last_printer_problem = None
@@ -2604,13 +2609,14 @@ class PhotoboothApp:
         """
         from src.ui.dialogs.printer_error import PrinterErrorOverlay, classify_error
 
-        # Bug #49: Service hat das Overlay per PIN geschlossen → für die
-        # Snooze-Dauer nicht automatisch wieder öffnen (Top-Bar warnt weiter).
-        if time.time() < self._printer_overlay_snooze_until:
+        # Service hat das Overlay per PIN geschlossen → nicht wieder öffnen,
+        # solange der Fehler besteht (Top-Bar blinkt weiter). Aufgehoben wird
+        # das in _check_printer_status, sobald der Drucker fehlerfrei meldet.
+        if self._printer_overlay_suppressed:
             if log:
                 logger.info(
-                    f"Drucker-Fehler '{error_text}' → Overlay pausiert bis "
-                    f"{time.strftime('%H:%M:%S', time.localtime(self._printer_overlay_snooze_until))}"
+                    f"Drucker-Fehler '{error_text}' → Overlay per Service-PIN "
+                    f"ausgeblendet, nur Top-Bar"
                 )
             return
 
@@ -2631,15 +2637,18 @@ class PhotoboothApp:
             self.root, self, error_text, category
         )
 
-    def snooze_printer_overlay(self, seconds: int):
-        """Bug #49: Pausiert das automatische Drucker-Fehler-Overlay.
+    def suppress_printer_overlay_until_resolved(self):
+        """Service-Ausstieg per PIN: Overlay bleibt zu, solange der Fehler besteht.
 
-        Wird vom Service-Ausstieg im PrinterErrorOverlay aufgerufen, nachdem
-        das Overlay per PIN erzwungen geschlossen wurde.
+        Früher (Bug #49) nur 10 Minuten Pause – danach sprang das Overlay bei
+        Dauerfehler wieder auf und man kam praktisch nie raus (28.09.2026).
+        Jetzt: nur noch blinkende Top-Bar, bis der Drucker fehlerfrei meldet.
+        Ein NEUER Fehler danach zeigt das Overlay wieder ganz normal.
         """
-        self._printer_overlay_snooze_until = time.time() + max(0, int(seconds))
+        self._printer_overlay_suppressed = True
         logger.warning(
-            f"Drucker-Overlay pausiert für {seconds}s (Service-Ausstieg per PIN)"
+            "Drucker-Overlay per Service-PIN ausgeblendet – nur Top-Bar, "
+            "bis der Drucker wieder fehlerfrei meldet"
         )
 
     def trigger_printer_reset(self):

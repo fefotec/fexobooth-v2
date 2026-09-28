@@ -4,6 +4,24 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-09-28 — Druckkorrektur mit − / + Tasten, Drucker-Fehler verlassbar (für 2.4.74)
+
+- **Druckkorrektur (Christian: „Slider gehen beschissen“):** Neues Widget
+  `src/ui/widgets/stepper.py` (`NumberStepper`). Es ersetzt die Slider im Kundenmenü
+  (PIN 2015) und im Admin-Tab: Tippen = ±1, Halten = schnell (ab 15 Schritten ±5),
+  Grenzen bleiben gleich (X/Y −100…+100 px, Zoom 50…150 %), Offsets mit Vorzeichen.
+  `get()` wie beim Slider → Testdruck/Speichern unverändert. Kundenmenü-Buttons
+  150×56, Karte wächst mit. Layout-Probe 1280×800 @1.0588 (DE/FR/PL): Karte 163–685 px.
+- **Drucker-Fehler:** Sichtbarer Knopf „Service: Fenster schließen (PIN)“ unter dem
+  Hauptknopf (das ✕ oben rechts fand niemand). Nach dem PIN-Ausstieg bleibt das
+  Overlay zu, solange der Fehler besteht (`suppress_printer_overlay_until_resolved`,
+  statt 10-Min-Snooze); die Top-Bar blinkt weiter. Meldet der Drucker fehlerfrei, fällt
+  die Sperre (Dev-Log), ein neuer Fehler zeigt das Overlay wieder. Probe 1280×800:
+  Karte endet bei 768 px, Knopf bei 747 px.
+- `printer.service_exit` in 7 Sprachen, Felix-Prompt (PIN-Ausstieg je Version), CHANGELOG
+  `[Unreleased]`. Neuer Test `tests/test_drucker_ausstieg.py`, alle Tests grün.
+- Versionsnummer noch NICHT erhöht (erst beim Build auf 2.4.74).
+
 ## 2026-09-28 — App-QR als Web-Link vorbereitet (Schalter aus, kein Build)
 
 - `src/gallery/server.py`: `_build_app_pairing_url(..., web_link=)` erzeugt wahlweise

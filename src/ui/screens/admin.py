@@ -989,7 +989,7 @@ class AdminDialog(ctk.CTkToplevel):
         frame.pack(fill="both", expand=True)
 
         screen_w = self.winfo_screenwidth()
-        card_w = min(520, int(screen_w * 0.86))
+        card_w = min(560, int(screen_w * 0.86))
         card = ctk.CTkFrame(
             frame,
             fg_color=COLORS["bg_medium"],
@@ -1002,9 +1002,9 @@ class AdminDialog(ctk.CTkToplevel):
         ctk.CTkLabel(
             card,
             text=self._tr("service.print_adjustment"),
-            font=("Segoe UI", 22, "bold"),
+            font=("Segoe UI", 24, "bold"),
             text_color=COLORS["primary"]
-        ).pack(pady=(20, 5), padx=30)
+        ).pack(pady=(18, 4), padx=30)
 
         ctk.CTkLabel(
             card,
@@ -1055,14 +1055,16 @@ class AdminDialog(ctk.CTkToplevel):
         status_label.pack(pady=(0, 8), padx=30)
 
         btn_frame = ctk.CTkFrame(card, fg_color="transparent")
-        btn_frame.pack(pady=(0, 15))
+        # padx: Karte wächst mit der (breiteren) Buttonzeile mit, statt dass
+        # die Buttons am Rand kleben.
+        btn_frame.pack(pady=(0, 18), padx=24)
 
         ctk.CTkButton(
             btn_frame,
             text=self._tr("common.test_print"),
-            font=("Segoe UI", 15, "bold"),
-            width=135,
-            height=44,
+            font=("Segoe UI", 17, "bold"),
+            width=150,
+            height=56,
             fg_color=COLORS["primary"],
             hover_color=COLORS["primary_hover"],
             corner_radius=12,
@@ -1078,9 +1080,9 @@ class AdminDialog(ctk.CTkToplevel):
         ctk.CTkButton(
             btn_frame,
             text=self._tr("common.save"),
-            font=("Segoe UI", 15, "bold"),
-            width=135,
-            height=44,
+            font=("Segoe UI", 17, "bold"),
+            width=150,
+            height=56,
             fg_color=COLORS["success"],
             hover_color="#22aa44",
             corner_radius=12,
@@ -1090,9 +1092,9 @@ class AdminDialog(ctk.CTkToplevel):
         ctk.CTkButton(
             btn_frame,
             text=self._tr("service.back") if parent_frame is not None else self._tr("service.close"),
-            font=("Segoe UI", 15, "bold"),
-            width=135,
-            height=44,
+            font=("Segoe UI", 17, "bold"),
+            width=150,
+            height=56,
             fg_color=COLORS["bg_light"],
             hover_color=COLORS["bg_card"],
             text_color=COLORS["text_primary"],
@@ -2979,44 +2981,31 @@ class AdminDialog(ctk.CTkToplevel):
         thread.start()
 
     def _create_print_slider(self, parent, label: str, value: int,
-                              min_val: int, max_val: int, suffix: str) -> ctk.CTkSlider:
-        """Slider für Druck-Einstellungen mit Wertanzeige"""
+                              min_val: int, max_val: int, suffix: str):
+        """Druck-Einstellung mit großen − / + Tasten (28.09.2026, statt Slider).
+
+        Gibt einen NumberStepper zurück – get()/set() wie der frühere Slider,
+        Testdruck und Speichern bleiben unverändert.
+        """
+        from src.ui.widgets.stepper import NumberStepper
+
         frame = ctk.CTkFrame(parent, fg_color="transparent")
-        frame.pack(fill="x", padx=15, pady=5)
-        
-        label_frame = ctk.CTkFrame(frame, fg_color="transparent")
-        label_frame.pack(fill="x")
-        
+        frame.pack(fill="x", padx=15, pady=(8, 2))
+
         ctk.CTkLabel(
-            label_frame,
+            frame,
             text=label,
-            font=FONTS["small"],
+            font=FONTS["body_bold"],
             text_color=COLORS["text_secondary"]
         ).pack(side="left")
-        
-        value_label = ctk.CTkLabel(
-            label_frame,
-            text=f"{value}{suffix}",
-            font=FONTS["body_bold"],
-            text_color=COLORS["primary"]
+
+        stepper = NumberStepper(
+            frame, value, min_val, max_val, suffix=suffix,
+            name=label.rstrip(":"), button_size=64
         )
-        value_label.pack(side="right")
-        
-        slider = ctk.CTkSlider(
-            frame,
-            from_=min_val,
-            to=max_val,
-            number_of_steps=max_val - min_val,
-            width=250,
-            fg_color=COLORS["bg_light"],
-            progress_color=COLORS["primary"]
-        )
-        slider.set(value)
-        slider.pack(anchor="w", pady=(3, 0))
-        
-        slider.configure(command=lambda v: value_label.configure(text=f"{int(v)}{suffix}"))
-        
-        return slider
+        stepper.pack(side="right")
+
+        return stepper
     
     def _get_available_printers(self) -> List[str]:
         """Ermittelt verfügbare Drucker"""
