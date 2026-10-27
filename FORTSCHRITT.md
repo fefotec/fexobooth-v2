@@ -4,6 +4,20 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-10-27 - Felix-Prompt mit Fonio-Export und Anrufen abgeglichen
+
+- `support/HOTLINE_PROMPT_FELIX.md`: aktuelle Fonio-Fassung als Grundlage,
+  bestaetigte Nachdruck- und Druckstau-Regeln eingearbeitet. Keine feste
+  Ausschaltpause; laufende Druckauftraege eingeschaltet abarbeiten lassen.
+- Farbkassette vor Test wieder einsetzen, Testdruck ausdruecklich ausloesen,
+  Kundenmenue-Bezeichnungen korrigiert und widerspruechliche Kurzablaeufe entfernt.
+- `support/HOTLINE_FELIX_PRUEFUNG.md`: Herkunft, Entscheidungen, Grenzen und
+  Gespraechstestfaelle dokumentiert. Keine Software-/Build-Aenderung.
+- Nur lokale Textfassung; nicht in Fonio installiert. Aktionskonfiguration,
+  Startnachricht, Telefon- und Hardwaretests bleiben vor Live-Freigabe offen.
+
+---
+
 ## 2026-09-28 — Druckkorrektur mit − / + Tasten, Drucker-Fehler verlassbar (für 2.4.74)
 
 - **Druckkorrektur (Christian: „Slider gehen beschissen“):** Neues Widget

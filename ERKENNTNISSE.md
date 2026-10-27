@@ -6,6 +6,23 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### Felix-Prompt: operative Quelle und bestaetigte Regeln (2026-10-27)
+
+- Der aktuelle Fonio-Export und die lokale Hotline-Datei waren auseinander gelaufen.
+  Fonio hatte App-/Versandablaeufe, lokal standen neuere V2-Menuehinweise.
+  Keine Seite darf ungeprueft die andere ersetzen.
+- Bestaetigt: Druckstau zuerst ueber Kundenmenue/PIN 2015 behandeln; nach Reset
+  oder Neustart laufende Auftraege eingeschaltet abarbeiten lassen, keine
+  zehnminuetige Ausschaltpause. Alte Fotos sind nicht an der Box nachwaehlbar.
+- Kundenmenue und aktuelles Ergebnisbild unterscheiden: Multiprint erlaubt keine
+  beliebige Auswahl frueherer Fotos. Eine fertige Collage startet keinen Druck
+  ohne den Drucken-Button. Nach Entnahme der Folie muss sie vor dem Test hinein.
+- Wiederholte Kurzablaeufe koennen Pflichtschritte umgehen. Ein Template-Ablauf
+  steuert Vorschau, Zustimmung, Neuversand und Fehlerbehandlung; andere Stellen
+  verweisen darauf. Einzelne Aktionsnamen im Prompt beweisen keine Konfiguration.
+- Ein Textabgleich ist kein Live-Test. Dokumentation der Prueffaelle und offenen
+  Fonio-Konfiguration: `support/HOTLINE_FELIX_PRUEFUNG.md`.
+
 ### Eine Hardware-Sperre ersetzt keine erneute Besitzpruefung (2.4.73)
 
 Box 210/008 initialisierten die C922 erfolgreich; direkt danach kein einziges

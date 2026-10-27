@@ -4,6 +4,15 @@
 
 Aufgabenliste mit Prioritäten.
 
+## Felix-Hotline: Freigabe der Prompt-Fassung vom 27.10.2026
+
+- [x] Aktuellen Fonio-Export mit V2-Code und bestaetigten Antworten abgleichen;
+  korrigierte Gesamtfassung in `support/HOTLINE_PROMPT_FELIX.md` erstellen.
+- [ ] Fonio-Aktionen und separate Startnachricht gegen
+  `support/HOTLINE_FELIX_PRUEFUNG.md` pruefen.
+- [ ] Fassung nach Freigabe in Fonio einspielen und die dokumentierten
+  Gespraechsfaelle testen. Noch nicht veroeffentlicht oder telefonisch getestet.
+
 ## Release-Freigabe 07.09.2026: 2.4.73 — Fix fuer Box 210/008
 
 - [x] Kamera-Probe-Rennen und fehlendes Fehler-Cleanup reproduziert und behoben.
