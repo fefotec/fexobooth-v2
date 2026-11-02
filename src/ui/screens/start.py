@@ -1149,6 +1149,18 @@ class StartScreen(ctk.CTkFrame):
                 justify="center"
             ).pack(pady=(6, 0))
 
+            # Wohin zum App-Laden (TODO 18.09.2026 „QR ohne App"): Seite mit
+            # beiden Store-Links, Domain je Sprache. Handys im Box-WLAN haben
+            # kein Internet für die Web-Erklärseite – darum steht es hier.
+            ctk.CTkLabel(
+                content,
+                text=t(self.config, "gallery.banner_app"),
+                font=FONTS_UI["small_semibold"],
+                text_color=COLORS["primary"],
+                wraplength=224,
+                justify="center"
+            ).pack(pady=(4, 0))
+
             # Weisser QR-Träger 224×224, r 16, QR 200×200
             qr_container = ctk.CTkFrame(
                 content, width=224, height=224,

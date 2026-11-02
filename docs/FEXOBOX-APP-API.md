@@ -59,6 +59,13 @@ Authorization: Bearer <token>
 `/api/v1/status` und `/api/v1/manifest` sind ohne Token lesbar, enthalten dann
 aber kein Passwort und kein Token.
 
+**Lebensdauer (ab 2.4.75):** Der Token gilt pro Buchung und überlebt Neustarts
+der Box-Software (`.booking_cache/app_pairing_token.json`). Neue Buchung = neuer
+Token. Boxen bis 2.4.74 würfeln ihn bei jedem Programmstart neu – deshalb muss
+die App bei `401` auf Foto-Routen selbst per `pair-by-code` neu koppeln
+(Fall NX-141687). Ein erfolgreiches `/status` beweist NICHT, dass der Token
+noch gilt.
+
 ## Endpunkte
 
 ```text

@@ -6,6 +6,30 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
+## [Unreleased] - geplant 2.4.75 - App-Kopplung überlebt Neustart, QR-Hinweis, Abschalt-Diagnose
+
+- **Pairing-Token bleibt pro Buchung gleich** (`src/gallery/server.py`,
+  `.booking_cache/app_pairing_token.json`). Bisher wurde er bei jedem
+  Programmstart neu erzeugt: Nach einem Box-Neustart bekamen alle gekoppelten
+  Handys still keine Fotos mehr (`/photos` 401, `/status` lief weiter).
+  Fall NX-141687: 5 Neustarts in einer Feier, 121 von 310 Fotos fehlten in der
+  App. Neue Buchung = neuer Token.
+- **QR-Feld:** Untertitel sagt jetzt „Erst die kostenlose FexoBox-App laden,
+  dann QR-Code scannen“, darunter in Pink „App: fexobox.de/fexobox-live“
+  (FR: fexobox.fr, NL: fexobox.nl). Neue Texte `gallery.banner_app`, alle
+  7 Sprachen.
+- **Diagnose Bug #80** (Herunterfahren dauert ewig, dann „Neustart“):
+  60 s nach dem Start liest die Box einmal im Hintergrund das
+  Windows-Ereignisprotokoll (wer hat abgeschaltet/neu gestartet, Windows-
+  Update-Installationen, ausstehende Neustart-Merker) und schreibt es bei
+  Änderung ins absturz.log (`src/utils/power_history.py`).
+- **Uhrzeit richtig halten** (`setup/time_sync.ps1`, gestartet aus der
+  SYSTEM-Boot-Aufgabe ohne Warten): Zeitzone MEZ/MESZ mit Sommerzeit,
+  Windows-Zeitdienst an (NTP nur wenn Internet da ist = Firmen-WLAN, dann
+  stündlich, große Korrekturen erlaubt), Sperre: Uhr wird nie vor die letzte
+  gute Zeit gestellt (Tablet-Akku leer). Beim Kunden bleibt alles offline.
+  Log `logs/uhrzeit.log`. Galerie-Server erlaubt Header `X-Client-Time`.
+
 ## [2.4.74] - 2026-09-28 - Druckkorrektur mit Tasten, Drucker-Fehler verlassbar
 
 - Druck-Korrektur (Kundenmenü PIN 2015 und Admin-Tab Drucker): Slider durch

@@ -263,6 +263,24 @@ if (Test-Path $keepaliveScript) {
     Write-LockdownLog "Hotspot-Keepalive-Script nicht gefunden: $keepaliveScript" "WARN"
 }
 
+# 2.4.75: Uhrzeit richtig halten (Zeitzone, NTP im Firmen-WLAN, Sperre gegen
+# zurueckgesprungene Uhr). Ohne Warten starten: der Abgleich probiert bis zu
+# 2 Minuten, bis das WLAN steht. Eigenes Log: logs\uhrzeit.log
+$timeSyncScript = Join-Path $InstallDir "setup\time_sync.ps1"
+if (Test-Path $timeSyncScript) {
+    try {
+        Start-Process -FilePath "powershell.exe" -WindowStyle Hidden -ArgumentList @(
+            "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", "`"$timeSyncScript`"", "-InstallDir", "`"$InstallDir`""
+        ) | Out-Null
+        Write-LockdownLog "Uhrzeit-Pruefung gestartet (Details: uhrzeit.log)"
+    } catch {
+        Write-LockdownLog "Uhrzeit-Pruefung nicht startbar: $($_.Exception.Message)" "WARN"
+    }
+} else {
+    Write-LockdownLog "Uhrzeit-Script nicht gefunden: $timeSyncScript" "WARN"
+}
+
 try {
     $wuStart = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\wuauserv" -Name "Start" -ErrorAction SilentlyContinue).Start
     $noAuto = (Get-ItemProperty -Path $auPolicyPath -Name "NoAutoUpdate" -ErrorAction SilentlyContinue).NoAutoUpdate

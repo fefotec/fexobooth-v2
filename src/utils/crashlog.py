@@ -92,6 +92,35 @@ def write_crash_report(context: str, exc_type=None, exc_value=None, exc_tb=None)
     return False
 
 
+def write_info_block(context: str, lines) -> bool:
+    """Schreibt einen Diagnose-Block (keine Exception) ins absturz.log.
+
+    Fuer Befunde, die ohne Developer-Mode mit dem Log-Upload zurueckkommen
+    sollen (z. B. Abschalt-Verlauf, src/utils/power_history.py).
+    """
+    from pathlib import Path
+
+    try:
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        block = (
+            f"----- {stamp} | Version {_version()} | {context} -----\n"
+            + "\n".join(str(l) for l in lines) + "\n\n"
+        )
+    except Exception:
+        return False
+
+    for ziel in (_crash_log_path(), Path(r"C:\ProgramData\FexoBox") / CRASH_LOG_NAME):
+        try:
+            ziel.parent.mkdir(parents=True, exist_ok=True)
+            with open(ziel, "a", encoding="utf-8") as f:
+                f.write(block)
+            _trim(ziel)
+            return True
+        except Exception:
+            continue
+    return False
+
+
 def _trim(path) -> None:
     """Datei klein halten (bei Überlänge die ältere Hälfte wegwerfen)."""
     try:

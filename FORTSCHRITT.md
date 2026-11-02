@@ -4,6 +4,42 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-11-02 - App-Kopplung überlebt Neustart, QR-Hinweis, Abschalt-Diagnose (für 2.4.75)
+
+- **Fall NX-141687 (Box 018) aufgeklärt:** Box hatte 310 Dateien, App-Cloud nur
+  185. Ursache: Pairing-Token wurde bei jedem Programmstart neu gewürfelt, die
+  Box startete in der Feier 5× neu (absturz.log). Danach `/status` ok,
+  `/photos`/`/thumb` 401 → Handys bekamen still nichts mehr.
+- `src/gallery/server.py`: Token pro Buchung in
+  `.booking_cache/app_pairing_token.json` (atomar geschrieben, vom Updater
+  geschützt). Gleiche Buchung nach Neustart = gleicher Token, neue Buchung =
+  neuer Token, ohne Buchung/kaputte Datei = Verhalten wie bisher. Log nennt
+  nur den Pfad, nie den Token.
+- QR-Feld (`src/ui/screens/start.py`, `src/i18n.py`): neuer Untertitel „Erst die
+  kostenlose FexoBox-App laden, dann QR-Code scannen“ + pinke Zeile
+  „App: fexobox.de/fexobox-live“ (Domain je Sprache, alle Seiten mit
+  Store-Links geprüft). Layout-Prüfstand ok (Panel 53–651 px, keine Überlappung).
+- Bug #80: `src/utils/power_history.py` + `crashlog.write_info_block()` –
+  einmal pro Start (60 s verzögert, Hintergrund, ohne Fenster) Ereignisse
+  1074/6006/6008/41 + WindowsUpdateClient 19/20/43 + Kernel-Boot und
+  Neustart-Merker ins absturz.log, nur bei Änderung. Am Entwickler-PC
+  getestet (Parsing + Umlaute).
+- Checks: `tests/alle_tests.py` alle bestanden; eigener Token-Test (6 Fälle) ok;
+  `tools/ui_layout_probe.py` ok. Kein Build, keine Versionsnummer geändert.
+- **Uhrzeit (Christian: „Zuhause + Sperre“):** Log-Abgleich 28 Boxen: 002 ~9 h
+  nach, 102 ~12 h nach, 206 ~1,75 h vor, 210/218 ~1 h vor. Neu
+  `setup/time_sync.ps1` (aus `disable_windows_update.ps1` ohne Warten gestartet,
+  läuft als SYSTEM): Zeitzone „W. Europe Standard Time“ + Sommerzeit,
+  w32time auto mit NTP-Servern, `SpecialPollInterval=3600`,
+  Max*PhaseCorrection unbegrenzt, `w32tm /resync` bis 6× (2 Min), danach gute
+  Zeit in `%ProgramData%\FexoBox\uhrzeit_letzte_gute.txt`; Sperre stellt eine
+  zurückgefallene Uhr beim Start auf diese Zeit vor. Log `logs/uhrzeit.log`.
+  PowerShell-Parser ok, Probelauf ohne Admin ok (bricht sauber ab); der Teil mit
+  Admin-Rechten ist nur auf einer echten Box testbar.
+- Nicht enthalten (nicht freigegeben): USB-Kopie aus dem Hauptthread nehmen.
+
+---
+
 ## 2026-10-27 - Felix-Prompt mit Fonio-Export und Anrufen abgeglichen
 
 - `support/HOTLINE_PROMPT_FELIX.md`: aktuelle Fonio-Fassung als Grundlage,

@@ -122,6 +122,16 @@ class PhotoboothApp:
         except Exception as e:
             logger.debug(f"Tk-Fehler-Handler nicht gesetzt: {e}")
 
+        # Bug #80 (langes Herunterfahren, dann Neustart): einmal pro Start,
+        # 60 s verzoegert im Hintergrund das Windows-Ereignisprotokoll
+        # auswerten -> absturz.log. Siehe src/utils/power_history.py.
+        if os.name == "nt":
+            try:
+                from src.utils.power_history import start_power_history_async
+                start_power_history_async()
+            except Exception as e:
+                logger.debug(f"Abschalt-Verlauf nicht gestartet: {e}")
+
         # Fenster-Icon setzen
         self._set_window_icon()
 

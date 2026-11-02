@@ -6,6 +6,15 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### Box-Uhrzeit: zuhause per NTP stellen + Sperre, beim Kunden offline (2026-11-02)
+
+| | |
+|---|---|
+| **Kontext** | Box-Uhren gingen 1–12 h falsch (Log-Abgleich 28 Boxen). Boxen haben nur zuhause Internet – das bleibt so. Tablet-Akku kann unterwegs ganz leer werden. |
+| **Entscheidung** | `setup/time_sync.ps1` in der SYSTEM-Boot-Aufgabe: Zeitzone MEZ/MESZ, w32time mit NTP (stuendlich, unbegrenzte Korrektur) – greift nur mit Internet. Nach erfolgreichem Abgleich „letzte gute Zeit“ merken; liegt die Uhr beim Start davor, wird sie dorthin vorgestellt (nie rueckwaerts). |
+| **Alternativen** | (a) Uhr offline nach den Handys der Gaeste stellen (App schickt `X-Client-Time`) – vertagt, erst nach App-Update sinnvoll, mehr Test-Aufwand. (b) Nur Software-Offset fuer Logs – Dateinamen/mtime blieben falsch. |
+| **Begruendung** | Einfach, kein Risiko beim Kunden. Rueckwaerts-Spruenge waehrend einer Feier waeren gefaehrlich: die App fragt per `?since` nach Fotos, eine zurueckgesprungene Box-Uhr liesse neue Fotos unsichtbar (App erkennt das seit 02.11. zusaetzlich selbst). |
+
 ### Felix-Prompt: operative Quelle und bestaetigte Regeln (2026-10-27)
 
 - Der aktuelle Fonio-Export und die lokale Hotline-Datei waren auseinander gelaufen.
@@ -793,6 +802,15 @@ Betrifft: `_display_preview()`, `_build_flash_cache()`, `_show_main_preview()`, 
 ---
 
 ## Lessons Learned
+
+### „Box erreichbar" heisst nicht „Handy darf Fotos holen" – Token ueberlebte keinen Neustart (02.11.2026)
+
+| | |
+|---|---|
+| **Problem** | NX-141687 (Box 018): Kundin sah massig weisse Felder in der App. Box hatte 310 Dateien, App-Cloud nur 185; Luecke 22:00–00:11 und 03:00–05:00. |
+| **Ursache** | `_gallery_pairing_token = secrets.token_urlsafe(12)` lief bei jedem Programmstart neu. Box startete in der Feier 5× neu (absturz.log). `/api/v1/status` braucht keinen Token → das Kontakt-Protokoll der App meldete weiter „Box erreicht“, waehrend `/photos` und `/thumb` mit 401 antworteten. Die App koppelte nicht neu und zeigte keinen Fehler. |
+| **Loesung** | Token pro Buchung in `.booking_cache/app_pairing_token.json` (2.4.75). App koppelt bei 401 zusaetzlich selbst per Event-Code neu (fexobox-app). |
+| **Merke** | Ein Gesundheits-Endpunkt ohne Auth beweist nur „Server lebt“, nie „Client ist berechtigt“. Zustand, den Clients sich merken (Tokens, IDs), darf nicht an die Prozess-Lebensdauer gebunden sein, wenn der Prozess neu starten kann. Beweisweg fuer solche Faelle: `online_gallery_images` gegen `event_box_photos` per Dateiname abgleichen + absturz.log auf `Start`-Zeilen + `relay-cycle` in `fexobox-app-debug.log`. |
 
 ### Lange Kamera-Arbeit gehoert in einen eigenen PROZESS, nicht in einen Thread (20.08.2026)
 

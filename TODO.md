@@ -73,13 +73,37 @@ hinter Schalter `APP_QR_WEB_LINK = False` in `src/gallery/server.py`.
       beide QR-Varianten parallel (App muss beide lesen).
 
 **B) Auf jeden Fall: Hinweis „App installieren“ auf dem Startbildschirm**
-- [ ] `gallery.banner_sub` in allen 7 Sprachen ändern, sinngemäß: „Zuerst die
-      kostenlose FexoBox-App installieren, dann den Code in der App scannen“.
-- [ ] Kleine Zusatzzeile im QR-Panel (`src/ui/screens/start.py::_update_qr_code`,
-      Panel 288 px breit): „App laden: fexobox.de/fexobox-live“ (Seite hat beide
-      Store-Links). Optional zweiter kleiner QR-Code auf diese Seite, falls Platz
-      neben Event-Code und WLAN-Zeilen bleibt – am Gerät prüfen, nicht raten.
-- [ ] Layout-Probe mit `tools/ui_layout_probe.py`, dann Box-Test mit Handy ohne App.
+- [x] `gallery.banner_sub` in allen 7 Sprachen geändert (02.11.2026, für 2.4.75)
+- [x] Zusatzzeile „App: fexobox.de/fexobox-live“ (FR .fr, NL .nl) in Pink im QR-Panel
+      (02.11.2026). Zweiter QR-Code bewusst weggelassen (Verwechslungsgefahr).
+- [x] Layout-Probe `tools/ui_layout_probe.py` ok (Panel 53–651 px)
+- [ ] Box-Test mit Handy ohne App (nach Build 2.4.75)
+
+## 2.4.75 vorbereitet (02.11.2026) – Build + Test durch Christian 🔴
+- [ ] Version auf 2.4.75 setzen (`src/__init__.py`, `build-release.yml`, `installer.iss`,
+      `tools/nikon_smoke_test.py`, CHANGELOG-Überschrift) und bauen
+- [ ] Test Token: Handy per QR koppeln, Box-Software beenden/neu starten → App zeigt
+      weiter neue Fotos (ohne neu scannen)
+- [ ] Test Bug #80: Box normal herunterfahren, wieder starten, nach 2 Min Logs ans
+      Dashboard → absturz.log-Block „Abschalt-Verlauf“ auswerten
+- [ ] Test Uhrzeit: im Firmen-WLAN starten → `uhrzeit.log` zeigt „Zeit abgeglichen“ +
+      „Gute Zeit gemerkt“. Dann Uhr am Tablet von Hand 1 Tag zurückstellen, neu starten
+      → „Uhr lag … VOR der letzten guten Zeit … vorgestellt“
+- [ ] Später (optional): Box-Uhr offline nach Handy-Zeit stellen (`X-Client-Time`, App
+      schickt es ab dem nächsten Update) – bewusst noch nicht gebaut (Christian 02.11.)
+- [ ] 🔴 **USB-Kopie aus dem Hauptthread** (nicht freigegeben, Vorschlag): Box 018 hing
+      in der Feier >30× je 30+ s in `usb.py:281 copy_to_usb` (save_single/save_print/
+      _start_prints, Hauptthread); Prints werden zudem doppelt kopiert
+      (`local.save_print` + `final.py:378/878`)
+
+## Bug #80: Herunterfahren dauert ewig, dann „wird neu gestartet“ 🟡 (wieder offen 02.11.2026)
+- Box-Software ruft nur `shutdown /s /f /t 5` – Neustart kommt nicht von ihr.
+- Verdacht: Windows spielt beim Ausschalten Updates ein. Box 018 meldet im Lockdown-Log
+  gelegentlich `wuauserv.Start=3` ~20 s nach „Dienst deaktiviert“ → Windows (Update Medic)
+  setzt den Dienst zurück; `WaaSMedicSvc`/`DoSvc` lassen sich per sc.exe nicht abschalten.
+- [x] Diagnose eingebaut (2.4.75, `src/utils/power_history.py`)
+- [ ] Nach erstem Befund entscheiden: Registry-Variante `Start=4` für WaaSMedicSvc/DoSvc
+      (siehe Bugs-Abschnitt „Windows-Update-Lockdown härter machen“)
 
 ## ➡️ NÄCHSTER TEST: 2.4.68 DAUERLAUF, DANN ROLLOUT 🔴
 
@@ -223,9 +247,8 @@ geliefert.
 - [ ] 🟡 **Box 027 (Normalbox) meldet den DSLR-Testbuild 2.4.62** – prüfen, wie
       der Build dort hinkam (versehentlich installiert?); beim 2.4.66-Rollout
       auf den regulären Stand bringen.
-- [ ] 🟡 **Uhrzeit-Sync Box 202/036** (Punkt aus der zentralen TODO
-      `fexobox-next/TODO.md`, hier bisher nicht geführt) – aus der DB nicht
-      ableitbar, nur Build-seitig lösbar (Zeitabgleich in der Box-Software).
+- [x] 🟡 **Uhrzeit-Sync Box 202/036** – flottenweit gelöst mit `setup/time_sync.ps1`
+      (2.4.75, 02.11.2026); nach Rollout an 202/036 im `uhrzeit.log` gegenprüfen.
 - [ ] **Box 073 stumm seit 19.08.** (letzte Meldung 2.4.33) – in der Werkstatt
       mit 2.4.66 durchtesten. (116/016 melden sich wieder.)
 - [ ] 🟢 **41 Boxen (von 280) ohne Software-Meldung** im Dashboard – bei

@@ -10,6 +10,7 @@ UX; Download funktioniert weiterhin, natives File-Sharing fällt per JS zurück.
 """
 
 import io
+import json
 import os
 import hashlib
 import hmac
@@ -25,6 +26,7 @@ from PIL import Image
 
 from src.utils.logging import get_logger
 from src.i18n import get_gallery_texts, normalize_locale
+from src.storage.paths import persistent_data_path
 
 logger = get_logger(__name__)
 
@@ -38,6 +40,71 @@ _gallery_locale = "de-DE"
 _gallery_context: Dict[str, Any] = {}
 _gallery_pairing_token = secrets.token_urlsafe(12)
 _gallery_server_started_at = int(time.time())
+
+# Pairing-Token bleibt pro BUCHUNG gleich – auch ueber Neustarts der Software.
+# Fall NX-141687 (Box 018, 23./24.10.2026): Der Token wurde bei jedem
+# Programmstart neu gewuerfelt, die Box startete in der Feier 5x neu. Danach
+# antwortete /status (ohne Token) weiter, /photos + /thumb aber mit 401 – alle
+# gekoppelten Handys bekamen still keine neuen Fotos mehr (121 von 310 fehlten
+# in der App). Neue Buchung = neuer Token (Gaeste der alten Feier sperren).
+# Liegt in .booking_cache/, das der Updater schuetzt.
+PAIRING_TOKEN_FILE = persistent_data_path(".booking_cache/app_pairing_token.json")
+
+
+def _valid_token(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and 12 <= len(value) <= 64
+        and all(ch.isalnum() or ch in "-_" for ch in value)
+    )
+
+
+def _sync_pairing_token(booking_id: str) -> None:
+    """Holt den gespeicherten Token dieser Buchung oder speichert den aktuellen.
+
+    Ohne Buchungs-ID bleibt der zufaellige Token dieses Programmstarts.
+    Fehler beim Lesen/Schreiben sind nie fatal – dann gilt wie bisher der
+    zufaellige Token (Verhalten vor dem Fix).
+    """
+    global _gallery_pairing_token
+    booking_id = str(booking_id or "").strip()
+    if not booking_id:
+        logger.debug("Pairing-Token: keine Buchungs-ID -> zufaelliger Token dieses Starts")
+        return
+
+    stored: Dict[str, Any] = {}
+    try:
+        if PAIRING_TOKEN_FILE.exists():
+            loaded = json.loads(PAIRING_TOKEN_FILE.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                stored = loaded
+    except Exception as e:
+        logger.warning(f"Pairing-Token-Datei unlesbar ({type(e).__name__}) -> wird neu geschrieben")
+
+    stored_token = stored.get("token")
+    if stored.get("booking_id") == booking_id and _valid_token(stored_token):
+        if stored_token != _gallery_pairing_token:
+            _gallery_pairing_token = stored_token
+        # Nie den Token selbst loggen – nur, welcher Pfad genommen wurde.
+        logger.info(f"Pairing-Token: gespeicherter Token fuer Buchung {booking_id} weiterverwendet")
+        return
+
+    grund = "andere Buchung" if stored.get("booking_id") else "noch keiner gespeichert"
+    try:
+        PAIRING_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = PAIRING_TOKEN_FILE.with_name(f".{PAIRING_TOKEN_FILE.name}.tmp")
+        tmp.write_text(
+            json.dumps({
+                "booking_id": booking_id,
+                "token": _gallery_pairing_token,
+                "created_at": int(time.time()),
+            }),
+            encoding="utf-8",
+        )
+        os.replace(tmp, PAIRING_TOKEN_FILE)
+        logger.info(f"Pairing-Token: neuer Token fuer Buchung {booking_id} gespeichert ({grund})")
+    except Exception as e:
+        logger.warning(f"Pairing-Token konnte nicht gespeichert werden ({type(e).__name__}: {e})")
 
 # --- App-Plattform-Fundament -------------------------------------------------
 # Der lokale Service-Kanal (Hotspot + dieser Flask-Server) laeuft ab jetzt IMMER
@@ -122,6 +189,7 @@ def set_app_context(context: Optional[Dict[str, Any]] = None) -> None:
         else:
             safe_context[key] = str(value)
     _gallery_context = safe_context
+    _sync_pairing_token(safe_context.get("booking_id", ""))
     logger.info(
         "Galerie-App-Kontext aktualisiert: "
         f"box_id={safe_context.get('box_id', '') or '-'} "
@@ -251,7 +319,9 @@ def _create_flask_app(locale: str = "de-DE"):
         response.headers.setdefault("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         response.headers.setdefault(
             "Access-Control-Allow-Headers",
-            "Authorization, Content-Type, X-FexoBox-Token, X-FexoBox-App"
+            # X-Client-Time: Handy-Uhrzeit (App ab 02.11.2026), heute nur erlaubt,
+            # spaeter evtl. Uhr-Abgleich offline beim Kunden.
+            "Authorization, Content-Type, X-FexoBox-Token, X-FexoBox-App, X-Client-Time"
         )
         response.headers.setdefault("Cache-Control", "no-store")
         return response
