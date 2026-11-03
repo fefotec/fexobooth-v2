@@ -82,7 +82,9 @@ function Set-DwordValue {
     try {
         if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
         $current = (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue).$Name
-        if ($null -eq $current -or [int32]$current -ne $bits) {
+        # Vergleich ueber das 32-Bit-Muster: Die Registry liefert 0xFFFFFFFF je nach
+        # Weg als -1 ODER als 4294967295 (Box 018, 02.11.2026: [int32]-Cast scheiterte).
+        if ($null -eq $current -or ([int64]$current -band 0xFFFFFFFFL) -ne ([int64]$bits -band 0xFFFFFFFFL)) {
             New-ItemProperty -Path $Path -Name $Name -PropertyType DWord -Value $bits -Force | Out-Null
             Write-TimeLog "Gesetzt: $Name = $Value (vorher: $current)"
             return $true

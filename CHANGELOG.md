@@ -6,7 +6,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.0.0/).
 
 ---
 
-## [Unreleased] - geplant 2.4.75 - App-Kopplung überlebt Neustart, QR-Hinweis, Abschalt-Diagnose
+## [2.4.75] - 2026-11-03 - App-Kopplung überlebt Neustart, QR-Hinweis, Abschalt-Diagnose
 
 - **Pairing-Token bleibt pro Buchung gleich** (`src/gallery/server.py`,
   `.booking_cache/app_pairing_token.json`). Bisher wurde er bei jedem
