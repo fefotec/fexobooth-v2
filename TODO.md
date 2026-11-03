@@ -80,8 +80,8 @@ hinter Schalter `APP_QR_WEB_LINK = False` in `src/gallery/server.py`.
 - [ ] Box-Test mit Handy ohne App (nach Build 2.4.75)
 
 ## 2.4.75 vorbereitet (02.11.2026) – Build + Test durch Christian 🔴
-- [ ] Version auf 2.4.75 setzen (`src/__init__.py`, `build-release.yml`, `installer.iss`,
-      `tools/nikon_smoke_test.py`, CHANGELOG-Überschrift) und bauen
+- [x] Version 2.4.75 gesetzt, gebaut, als GitHub-Latest veröffentlicht (03.11.2026)
+- [ ] Nach Rollout: `uhrzeit.log` von 002/102/206/210/218/202/036 gegenprüfen
 - [ ] Test Token: Handy per QR koppeln, Box-Software beenden/neu starten → App zeigt
       weiter neue Fotos (ohne neu scannen)
 - [ ] Test Bug #80: Box normal herunterfahren, wieder starten, nach 2 Min Logs ans

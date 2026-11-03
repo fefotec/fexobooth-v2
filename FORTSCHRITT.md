@@ -4,6 +4,22 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-11-03 — Release v2.4.75 veröffentlicht
+
+Auf Christians Auftrag („neue Releases … damit die Boxen updaten“). Vorher Box 018 mit
+identischem Code (lokaler Build 02.11., noch als 2.4.74 beschriftet) im Feld geprüft:
+Token blieb nach Neustarts gleich („gespeicherter Token … weiterverwendet“), iPhone lud ohne
+Neu-Scan, `uhrzeit.log` gleich −14 s ab, Abschalt-Verlauf im absturz.log korrekt.
+Fix danach: `time_sync.ps1` verglich 0xFFFFFFFF per [int32]-Cast → Warnung bei jedem Lauf.
+Version auf 2.4.75 (5 Stellen), `tests/alle_tests.py` + `tools/nikon_smoke_test.py` grün,
+`build_installer.bat` neu gebaut. ZIP geprüft: intakt, `src.__version__` = 2.4.75,
+time_sync mit Fix. Commit `1e3b2f6`.
+**Veröffentlicht:** https://github.com/fefotec/fexobooth-v2/releases/tag/v2.4.75 als Latest,
+`/releases/latest` = v2.4.75. SHA-256 OTA-ZIP `729aef52…58c31` (GitHub-Digest = lokal).
+Flotte updatet ab jetzt im Firmen-WLAN.
+
+---
+
 ## 2026-11-02 - App-Kopplung überlebt Neustart, QR-Hinweis, Abschalt-Diagnose (für 2.4.75)
 
 - **Fall NX-141687 (Box 018) aufgeklärt:** Box hatte 310 Dateien, App-Cloud nur
