@@ -4,6 +4,39 @@ Chronologisches Protokoll aller Änderungen.
 
 ---
 
+## 2026-11-09 - Separate Kompaktfassung fuer Felix
+
+- `support/HOTLINE_PROMPT_FELIX_KOMPAKT.md`: Wiederholungen und lange
+  Diagnoseformulierungen gestrafft; bei LF-Zeilenenden 81.377 auf 54.119 Zeichen
+  (33,5 %). Callback, Kamera, Template/Upgrades, App und Kurzinfos wortgleich.
+- Die aktuelle vollstaendige Prompt-Datei nicht ersetzt; SHA-256 unveraendert.
+  Keine Wissensbasis ausgelagert, keine Fonio-Einstellung oder Aktion geaendert.
+- 53/53 statische Pruefungen bestanden; Gespraechswirkung nicht live getestet.
+  Weiter ueber 12.500 Zeichen; keine weiteren Fachregeln fuer das Limit gestrichen.
+- Uebergabe, Erkenntnisse und TODO um Vergleichskandidat/Live-Testgrenze ergaenzt.
+
+---
+
+## 2026-11-09 - Felix: App-Nachbuchung, Vorabtest und Designaenderung
+
+- 35 neue Anrufberichte vom 27.10. bis 08.11. gelesen (33 Felix, zwei Mark).
+  Christian bestaetigt: Oktober-Prompt seit 27.10. in Fonio aktiv.
+- `support/HOTLINE_PROMPT_FELIX.md`: fehlender App-QR fuehrt zuerst ueber
+  App-Buchung, Nachbuchungszeitpunkt und neue settings.json aus der E-Mail.
+  Erst dann sichtbarer Pairing-QR, gestartete App und exaktes Box-WLAN.
+  Nachtraegliche Online-Galerie erst nach Rueckversand klar abgegrenzt.
+- Bestaetigt eingearbeitet: Funktionstest inklusive Testdruck direkt nach Erhalt
+  dringend empfohlen; Papier/Farbfolie duerfen geoeffnet werden. Designaenderung
+  nach Ankunft nur gegen Gebuehr und mit Freischaltung durch fexobox.
+- `support/HOTLINE_FELIX_PRUEFUNG.md`: Stand, neue Testfaelle, Anrufbefunde und
+  offene Versandbefugnis dokumentiert. `ERKENNTNISSE.md` und `TODO.md` gepflegt.
+- Checks: 28/28 gezielte statische Textpruefungen und `git diff --check` bestanden.
+  Rueckruf- und Template-Versand-Aktionsbloecke unveraendert.
+- Keine Software-/Build-Aenderung, keine Versandaktion, keine Fonio-Aenderung.
+  Ergaenzungen vom 09.11. muessen noch in Fonio eingespielt und getestet werden.
+
+---
+
 ## 2026-11-03 — Release v2.4.75 veröffentlicht
 
 Auf Christians Auftrag („neue Releases … damit die Boxen updaten“). Vorher Box 018 mit

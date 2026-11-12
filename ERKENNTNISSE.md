@@ -6,6 +6,32 @@ Lessons Learned und Technologie-Entscheidungen für zukünftige Referenz.
 
 ## Technologie-Entscheidungen
 
+### Felix: Nachbuchung ist noch keine Freischaltung auf der Box (2026-11-09)
+
+- Christian bestaetigt den Wochenendfall: App nachgebucht, als die Box schon
+  beim Kunden war, aber neue settings.json aus der E-Mail nicht aufgespielt.
+  Deshalb fehlte der Pairing-QR; Buchung und lokal uebernommene Settings trennen.
+- Supportfolge bei fehlendem QR: App gebucht -> nach Versand/Ankunft nachgebucht
+  -> neue settings.json gemaess Mail uebernommen -> sichtbaren QR bestaetigen
+  -> gestartete App, Box-WLAN und Pairing. Ohne Box-QR keine App-Kopplung.
+- Code bestaetigt den Zusammenhang: BookingSettings.live_gallery setzt
+  gallery_enabled; die Startansicht bindet daran die QR-Anzeige.
+- Nachtraegliche Online-Galerie ist ein separates Angebot erst nach Rueckversand,
+  kein Nachweis einer App-Buchung und kein Fall fuer WLAN-Troubleshooting.
+- Weitere ausdruecklich bestaetigte Produktregeln: Vorabtest samt Testdruck
+  direkt nach Erhalt dringend empfehlen, Papier/Farbfolie duerfen geoeffnet
+  werden; Designaenderung nach Ankunft gegen Gebuehr und nur mit Freischaltung
+  durch fexobox. Keine unbestaetigten Preise oder Verpflichtungen ableiten.
+- Die seit 27.10. aktive Prompt-Fassung wird laut Anrufberichten nicht immer
+  befolgt. Statische Textregeln ersetzen keine Pruefung von Fonio-Aktionen,
+  Parametern, Zustimmungen und doppelten Ausloesungen.
+- Separate Kompaktfassung reduziert Wiederholungen um 33,5 % Zeichen, behaelt
+  kritische Aktions-/Produktablaeufe wortgleich und ersetzt die Ausgangsdatei nicht.
+  Textabdeckung (53 Checks) beweist keine unveraenderte Gespraechsqualitaet.
+- Fonios 12.500-Zeichen-Hinweis nicht durch Streichen benoetigter Fachregeln
+  erfuellen. Fuer deutlich kuerzere Steuerung ist eine gesondert eingerichtete
+  und getestete Wissensbasis noetig; deren Verfuegbarkeit nicht voraussetzen.
+
 ### Box-Uhrzeit: zuhause per NTP stellen + Sperre, beim Kunden offline (2026-11-02)
 
 | | |

@@ -4,14 +4,24 @@
 
 Aufgabenliste mit Prioritäten.
 
-## Felix-Hotline: Freigabe der Prompt-Fassung vom 27.10.2026
+## Felix-Hotline: Stand 09.11.2026
 
 - [x] Aktuellen Fonio-Export mit V2-Code und bestaetigten Antworten abgleichen;
   korrigierte Gesamtfassung in `support/HOTLINE_PROMPT_FELIX.md` erstellen.
+- [x] Oktober-Fassung seit 27.10. in Fonio aktiv (Christian am 09.11. bestaetigt).
+- [x] Neue Anrufberichte geprueft; bestaetigte App-Nachbuchungs-, Vorabtest- und
+  Designaenderungsregeln lokal eingearbeitet, Pruefungsuebergabe aktualisiert.
+- [x] Separate Kompaktfassung erstellt, 33,5 % kuerzer und 53 statische Checks
+  bestanden. Vollstaendige Ausgangsfassung unveraendert erhalten.
+- [ ] Vor einem moeglichen Wechsel zur Kompaktfassung die dokumentierten
+  Gespraechsfaelle vergleichend in Fonio testen; sonst bisherige Fassung behalten.
 - [ ] Fonio-Aktionen und separate Startnachricht gegen
-  `support/HOTLINE_FELIX_PRUEFUNG.md` pruefen.
-- [ ] Fassung nach Freigabe in Fonio einspielen und die dokumentierten
-  Gespraechsfaelle testen. Noch nicht veroeffentlicht oder telefonisch getestet.
+  `support/HOTLINE_FELIX_PRUEFUNG.md` pruefen: falsche Template-SMS im App-Fall,
+  doppelte Rueckruf-Aktion, Mailbox-Zustimmung und Nummernuebernahme.
+- [ ] Klaeren, ob die Dateiversand-Aktion eine nicht auffindbare App-Nachbuchungs-Mail
+  ersetzen darf. Bis dahin keine neue Versandbefugnis fuer diesen Fall.
+- [ ] Ergaenzungen vom 09.11. in Fonio einspielen und dokumentierte Gespraechsfaelle
+  testen. Diese Ergaenzungen sind noch nicht veroeffentlicht/telefonisch getestet.
 
 ## Release-Freigabe 07.09.2026: 2.4.73 — Fix fuer Box 210/008
 
